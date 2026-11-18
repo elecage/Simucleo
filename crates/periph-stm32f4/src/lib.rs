@@ -810,11 +810,11 @@ impl Stm32f401Bus {
                 return;
             }
             map::ADC1_BASE => {
-                if !self.gated(0x44, 8, "ADC1", "RCC.APB2ENR.ADC1EN") {
-                    if self.adc.write(off, value, lanes) == AdcAction::Start {
-                        let (now, clocks) = (self.now, self.clocks);
-                        self.adc.begin(now, &clocks, &mut self.sched);
-                    }
+                if !self.gated(0x44, 8, "ADC1", "RCC.APB2ENR.ADC1EN")
+                    && self.adc.write(off, value, lanes) == AdcAction::Start
+                {
+                    let (now, clocks) = (self.now, self.clocks);
+                    self.adc.begin(now, &clocks, &mut self.sched);
                 }
                 return;
             }

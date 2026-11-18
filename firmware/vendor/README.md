@@ -8,7 +8,7 @@ Only the files the example firmware needs, unmodified.
 | `cmsis_device_f4` | [STMicroelectronics/cmsis_device_f4](https://github.com/STMicroelectronics/cmsis_device_f4) | Apache-2.0 (`cmsis_device_f4/LICENSE.md`) |
 | `freertos` | [STMicroelectronics/stm32_mw_freertos](https://github.com/STMicroelectronics/stm32_mw_freertos) `Source/` (FreeRTOS Kernel V11.3.1 as packaged for STM32CubeMX, with the CMSIS-RTOS v2 wrapper `CMSIS_RTOS_V2/`; only the GCC ARM_CM4F port and heap_4) | MIT (`freertos/LICENSE`) |
 | `CMSIS/RTOS2/Include` | [ARM-software/CMSIS_6](https://github.com/ARM-software/CMSIS_6) v6.1.0 `CMSIS/RTOS2/Include` (`cmsis_os2.h` API 2.3.0, `os_tick.h`) | Apache-2.0 (`CMSIS/LICENSE.txt`) |
-| `stm32f4xx_hal_driver` | [STMicroelectronics/stm32f4xx_hal_driver](https://github.com/STMicroelectronics/stm32f4xx_hal_driver) | BSD-3-Clause (`stm32f4xx_hal_driver/LICENSE.md`) |
+| `stm32f4xx_hal_driver` (v1.8.6) | [STMicroelectronics/stm32f4xx_hal_driver](https://github.com/STMicroelectronics/stm32f4xx_hal_driver) | BSD-3-Clause (`stm32f4xx_hal_driver/LICENSE.md`) |
 
 The register table of the simulator is generated from ST's SVD
 (`crates/periph-stm32f4/svd/STM32F401.svd`, Apache-2.0, from

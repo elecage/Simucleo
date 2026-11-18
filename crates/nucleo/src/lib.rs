@@ -73,6 +73,10 @@ impl ExternalCircuit for CircuitLink {
             .collect();
         self.0.borrow_mut().update(time, &d)
     }
+
+    fn voltage(&self, port: u8, pin: u8) -> Option<f64> {
+        self.0.borrow().mcu_voltage(port, pin)
+    }
 }
 
 pub struct Nucleo {

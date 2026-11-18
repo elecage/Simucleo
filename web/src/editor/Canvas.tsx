@@ -14,6 +14,8 @@ interface Props {
   onAddWire: (a: PinRef, b: PinRef, points: Point[]) => void;
   /** The bend points of a wire were edited. */
   onUpdateWire?: (id: string, points: Point[]) => void;
+  /** A live input on a part (e.g. a potentiometer knob) was dragged. */
+  onPropChange?: (id: string, key: string, value: number) => void;
   /** An end of a wire was dragged onto another pin. */
   onMoveWireEnd?: (id: string, end: "a" | "b", pin: PinRef) => void;
   /** Live state from the simulator, by part id (LED brightness, …). */
@@ -33,7 +35,8 @@ type Drag =
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
   | { kind: "wire"; sx: number; sy: number; moved: boolean }
   | { kind: "point"; wire: string; index: number }
-  | { kind: "end"; wire: string; end: "a" | "b" };
+  | { kind: "end"; wire: string; end: "a" | "b" }
+  | { kind: "prop"; part: string; prop: string; sy: number; start: number; min: number; max: number };
 
 interface Pending {
   start: PinRef;
@@ -73,6 +76,7 @@ export function Canvas({
   onAddWire,
   onUpdateWire,
   onMoveWireEnd,
+  onPropChange,
   visuals,
   onPartAction,
   fitKey,
@@ -306,6 +310,11 @@ export function Canvas({
       setView((v) => ({ ...v, x: drag.vx - (e.clientX - drag.sx) / v.scale, y: drag.vy - (e.clientY - drag.sy) / v.scale }));
     } else if (drag?.kind === "wire" && !drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > DRAG_START) {
       setDrag({ ...drag, moved: true });
+    } else if (drag?.kind === "prop") {
+      // Drag up to turn up: 150 px for the full range.
+      const span = drag.max - drag.min;
+      const v = Math.min(drag.max, Math.max(drag.min, drag.start + ((drag.sy - e.clientY) / 150) * span));
+      onPropChange?.(drag.part, drag.prop, Math.round(v * 1000) / 1000);
     } else if (drag?.kind === "point" && onUpdateWire) {
       const w = project.wires.find((x) => x.id === drag.wire);
       if (w?.points) {
@@ -341,6 +350,21 @@ export function Canvas({
               e.stopPropagation();
               if (pending) {
                 wiringClick(toCanvas(e));
+                return;
+              }
+              const knob = (e.target as Element).closest("[data-drag-prop]");
+              if (knob && onPropChange) {
+                const prop = knob.getAttribute("data-drag-prop")!;
+                onSelect(part.id);
+                startDrag(e, {
+                  kind: "prop",
+                  part: part.id,
+                  prop,
+                  sy: e.clientY,
+                  start: Number(part.props[prop] ?? def.props?.[prop] ?? 0),
+                  min: Number(knob.getAttribute("data-min") ?? 0),
+                  max: Number(knob.getAttribute("data-max") ?? 1),
+                });
                 return;
               }
               const action = (e.target as Element).closest("[data-action]")?.getAttribute("data-action");

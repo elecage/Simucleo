@@ -37,6 +37,9 @@ const R_SUPPLY: f64 = 0.05;
 const GMIN: f64 = 1e-9;
 /// LED dynamic resistance once conducting.
 const R_LED: f64 = 15.0;
+/// No-load speed of the DC motor at full drive (small 3–6 V hobby motor
+/// with gearbox).
+const MOTOR_MAX_RPM: f64 = 200.0;
 /// Absolute maximum current of an I/O pin (datasheet: ±25 mA).
 const PIN_MAX: f64 = 0.025;
 
@@ -145,6 +148,27 @@ enum Element {
         v: f64,
         name: &'static str,
     },
+    /// Voltage output `v` (with resistance `r`) from `out` to `gnd`, working
+    /// only while the part's supply `vs` − `gnd` is at least `vmin`
+    /// (analog temperature sensors).
+    Sensor {
+        vs: usize,
+        out: usize,
+        gnd: usize,
+        v: f64,
+        r: f64,
+        vmin: f64,
+        visual: usize,
+    },
+    /// High-impedance input a part reads as a logic level: `a` − `b` above
+    /// `threshold` (servo signal, motor driver inputs, supply detection).
+    Sense {
+        a: usize,
+        b: usize,
+        threshold: f64,
+        visual: usize,
+        channel: usize,
+    },
 }
 
 /// What a part shows, integrated over one display frame.
@@ -166,6 +190,15 @@ pub struct PartVisual {
     pub freq: Option<f64>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub pressed: bool,
+    /// Servo horn or motor shaft angle (degrees).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub angle: Option<f64>,
+    /// Motor speed (rev/min, negative = reverse).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpm: Option<f64>,
+    /// The part's supply is too low to work.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unpowered: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +207,12 @@ enum VisualKind {
     BuzzerActive,
     BuzzerPassive,
     Switch,
+    /// Channels: 0 = signal, 1 = supply present.
+    Servo,
+    /// Channels: 0 = IA, 1 = IB, 2 = supply present.
+    Motor,
+    /// Channel 0 = supply present.
+    Sensor,
 }
 
 #[derive(Debug, Clone)]
@@ -188,6 +227,13 @@ struct VisualSlot {
     /// Times of the first and last rising edge this frame (passive buzzer).
     first_rise: Cycles,
     last_rise: Cycles,
+    /// Servo: start of the pulse being measured, last pulse width (cycles).
+    pulse_start: Option<Cycles>,
+    pulse: Option<Cycles>,
+    /// Servo horn / motor shaft angle (°), servo target, motor speed (rpm).
+    angle: f64,
+    target: f64,
+    rpm: f64,
 }
 
 /// The DC operating point for one combination of pin drives.
@@ -457,10 +503,22 @@ impl CircuitSim {
                 rises: 0,
                 first_rise: 0,
                 last_rise: 0,
+                pulse_start: None,
+                pulse: None,
+                angle: 90.0,
+                target: 90.0,
+                rpm: 0.0,
             });
             visuals.len() - 1
         };
         let prop = |p: &PartInstance, k: &str| p.props.get(k).cloned();
+        let prop_f64 = |p: &PartInstance, k: &str, d: f64| -> f64 {
+            match p.props.get(k) {
+                Some(serde_json::Value::Number(n)) => n.as_f64().unwrap_or(d),
+                Some(serde_json::Value::String(s)) => s.trim().parse().unwrap_or(d),
+                _ => d,
+            }
+        };
         let prop_str = |p: &PartInstance, k: &str, d: &str| {
             p.props
                 .get(k)
@@ -575,6 +633,91 @@ impl CircuitSim {
                 "tact-switch" => {
                     add_visual(&p.id, VisualKind::Switch, 0);
                 }
+                "potentiometer" => {
+                    // 1 —[R·pos]— W —[R·(1−pos)]— 2
+                    let r = prop(p, "ohms")
+                        .as_ref()
+                        .and_then(parse_ohms)
+                        .unwrap_or(10_000.0);
+                    let pos = prop_f64(p, "position", 0.5).clamp(0.0, 1.0);
+                    let (a, w, b) = (
+                        node(PinRef::new(&p.id, "1"), &mut map),
+                        node(PinRef::new(&p.id, "W"), &mut map),
+                        node(PinRef::new(&p.id, "2"), &mut map),
+                    );
+                    elements.push(Element::Resistor {
+                        a,
+                        b: w,
+                        r: (r * pos).max(1.0),
+                    });
+                    elements.push(Element::Resistor {
+                        a: w,
+                        b,
+                        r: (r * (1.0 - pos)).max(1.0),
+                    });
+                }
+                "ldr" => {
+                    // Light-dependent resistor (GL55xx class): 10 kΩ at 10 lux, γ = 0.7.
+                    let lux = prop_f64(p, "lux", 300.0).max(0.01);
+                    let r = (10_000.0 * (lux / 10.0).powf(-0.7)).clamp(50.0, 2e6);
+                    elements.push(Element::Resistor {
+                        a: node(PinRef::new(&p.id, "1"), &mut map),
+                        b: node(PinRef::new(&p.id, "2"), &mut map),
+                        r,
+                    });
+                }
+                "temp-sensor" => {
+                    // TMP36: 0.5 V + 10 mV/°C from 2.7 V; LM35: 10 mV/°C, needs 4 V.
+                    let t = prop_f64(p, "temp", 25.0);
+                    let lm35 = prop_str(p, "model", "TMP36") == "LM35";
+                    let (v, vmin) = if lm35 {
+                        ((0.01 * t).max(0.0), 4.0)
+                    } else {
+                        ((0.5 + 0.01 * t).max(0.0), 2.7)
+                    };
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    elements.push(Element::Sensor {
+                        vs: node(PinRef::new(&p.id, "VS"), &mut map),
+                        out: node(PinRef::new(&p.id, "OUT"), &mut map),
+                        gnd: node(PinRef::new(&p.id, "GND"), &mut map),
+                        v,
+                        r: 50.0,
+                        vmin,
+                        visual: vis,
+                    });
+                }
+                "servo" => {
+                    let vis = add_visual(&p.id, VisualKind::Servo, 2);
+                    let gnd = node(PinRef::new(&p.id, "GND"), &mut map);
+                    elements.push(Element::Sense {
+                        a: node(PinRef::new(&p.id, "SIG"), &mut map),
+                        b: gnd,
+                        threshold: 1.5,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    elements.push(Element::Sense {
+                        a: node(PinRef::new(&p.id, "V+"), &mut map),
+                        b: gnd,
+                        threshold: 3.0,
+                        visual: vis,
+                        channel: 1,
+                    });
+                }
+                "dc-motor" => {
+                    // Motor with an H-bridge driver module (L9110S class).
+                    let vis = add_visual(&p.id, VisualKind::Motor, 3);
+                    let gnd = node(PinRef::new(&p.id, "GND"), &mut map);
+                    for (ch, pin, threshold) in [(0, "IA", 1.5), (1, "IB", 1.5), (2, "VCC", 2.5)] {
+                        elements.push(Element::Sense {
+                            a: node(PinRef::new(&p.id, pin), &mut map),
+                            b: gnd,
+                            threshold,
+                            visual: vis,
+                            channel: ch,
+                        });
+                    }
+                }
                 _ => {}
             }
         }
@@ -601,6 +744,11 @@ impl CircuitSim {
                 slot.acc = old.acc.clone();
                 slot.overcurrent = old.overcurrent;
                 slot.rises = old.rises;
+                slot.pulse_start = old.pulse_start;
+                slot.pulse = old.pulse;
+                slot.angle = old.angle;
+                slot.target = old.target;
+                slot.rpm = old.rpm;
             }
         }
         // Value problems describe the circuit as it is now.
@@ -621,25 +769,39 @@ impl CircuitSim {
         let n = self.nodes;
         // Per-LED on/off state, iterated to consistency.
         let leds: Vec<usize> = (0..self.elements.len())
-            .filter(|&i| matches!(self.elements[i], Element::Led { .. }))
+            .filter(|&i| {
+                matches!(
+                    self.elements[i],
+                    Element::Led { .. } | Element::Sensor { .. }
+                )
+            })
             .collect();
-        let mut on = vec![false; self.elements.len()];
+        // Sensors start powered; LEDs start off.
+        let mut on: Vec<bool> = self
+            .elements
+            .iter()
+            .map(|e| matches!(e, Element::Sensor { .. }))
+            .collect();
         let mut v = vec![0.0; n];
         for _ in 0..32 {
             v = self.nodal(drives, &on);
             let mut changed = false;
             for &i in &leds {
-                if let Element::Led { a, k, vf, .. } = self.elements[i] {
-                    let vd = v[a] - v[k];
-                    let now = if on[i] {
-                        vd - vf > -1e-9
-                    } else {
-                        vd > vf + 1e-6
-                    };
-                    if now != on[i] {
-                        on[i] = now;
-                        changed = true;
+                let now = match self.elements[i] {
+                    Element::Led { a, k, vf, .. } => {
+                        let vd = v[a] - v[k];
+                        if on[i] {
+                            vd - vf > -1e-9
+                        } else {
+                            vd > vf + 1e-6
+                        }
                     }
+                    Element::Sensor { vs, gnd, vmin, .. } => v[vs] - v[gnd] >= vmin - 1e-6,
+                    _ => on[i],
+                };
+                if now != on[i] {
+                    on[i] = now;
+                    changed = true;
                 }
             }
             if !changed {
@@ -676,6 +838,31 @@ impl CircuitSim {
                 }
                 Element::Load { a, b, visual, .. } => {
                     level[visual][0] = if v[a] - v[b] > 2.0 { 1.0 } else { 0.0 };
+                }
+                Element::Sense {
+                    a,
+                    b,
+                    threshold,
+                    visual,
+                    channel,
+                } => {
+                    level[visual][channel] = if v[a] - v[b] > threshold { 1.0 } else { 0.0 };
+                }
+                Element::Sensor {
+                    vs,
+                    gnd,
+                    vmin,
+                    visual,
+                    ..
+                } => {
+                    level[visual][0] = if on[i] { 1.0 } else { 0.0 };
+                    let supply = v[vs] - v[gnd];
+                    if !on[i] && supply > 0.5 {
+                        warnings.push(format!(
+                            "{}: supply {supply:.1} V is below the sensor's {vmin:.1} V minimum — no output",
+                            self.visuals[visual].id
+                        ));
+                    }
                 }
                 Element::Supply { n, v: vs, name } => {
                     let cur = (vs - v[n]) / R_SUPPLY;
@@ -747,6 +934,7 @@ impl CircuitSim {
                     union(&mut parent, a, b)
                 }
                 Element::Led { a, k, .. } if on[i] => union(&mut parent, a, k),
+                Element::Sensor { out, gnd, .. } if on[i] => union(&mut parent, out, gnd),
                 _ => {}
             }
         }
@@ -810,6 +998,17 @@ impl CircuitSim {
                     }
                 }
                 Element::Supply { n, v, .. } => source(&mut g, &mut rhs, n, v, R_SUPPLY),
+                Element::Sensor { out, gnd, v, r, .. } if on[i] => {
+                    // Norton source v/r from gnd into out, with r across.
+                    let c = 1.0 / r;
+                    stamp(&mut g, out, gnd, c);
+                    if out > 0 {
+                        rhs[out - 1] += v * c;
+                    }
+                    if gnd > 0 {
+                        rhs[gnd - 1] -= v * c;
+                    }
+                }
                 _ => {}
             }
         }
@@ -874,6 +1073,17 @@ impl CircuitSim {
                 slot.last_rise = time;
                 slot.rises += 1;
             }
+            // Servo: measure the width of each signal pulse.
+            if slot.kind == VisualKind::Servo {
+                let now = sol.level[i].first() > Some(&0.5);
+                if !was && now {
+                    slot.pulse_start = Some(time);
+                } else if was && !now {
+                    if let Some(start) = slot.pulse_start.take() {
+                        slot.pulse = Some(time - start);
+                    }
+                }
+            }
         }
         self.drives = Some(drives.to_vec());
         let changed = old.is_none_or(|o| o.inputs != sol.inputs);
@@ -918,6 +1128,35 @@ impl CircuitSim {
                     }
                 }
                 VisualKind::Switch => v.pressed = self.pressed.contains(&slot.id),
+                VisualKind::Servo => {
+                    let powered = avg.get(1).copied().unwrap_or(0.0) > 0.5;
+                    // Pulse width → angle: 0.5 ms = 0°, 1.5 ms = 90°, 2.5 ms = 180°.
+                    if let (Some(p), true) = (slot.pulse, seconds > 0.0 && span > 0.0) {
+                        let width = p as f64 * seconds / span;
+                        if (0.0003..0.003).contains(&width) {
+                            slot.target = ((width - 0.0005) / 0.002 * 180.0).clamp(0.0, 180.0);
+                        }
+                    }
+                    if powered {
+                        // About 0.1 s per 60° (SG90 class).
+                        let step = 600.0 * seconds;
+                        slot.angle += (slot.target - slot.angle).clamp(-step, step);
+                    }
+                    v.angle = Some(slot.angle);
+                    v.unpowered = !powered;
+                }
+                VisualKind::Motor => {
+                    let powered = avg.get(2).copied().unwrap_or(0.0) > 0.5;
+                    let duty = avg[0] - avg[1];
+                    let target = if powered { duty * MOTOR_MAX_RPM } else { 0.0 };
+                    // First-order response, time constant 0.15 s.
+                    slot.rpm = target + (slot.rpm - target) * (-seconds / 0.15).exp();
+                    slot.angle = (slot.angle + slot.rpm / 60.0 * 360.0 * seconds).rem_euclid(360.0);
+                    v.rpm = Some(slot.rpm);
+                    v.angle = Some(slot.angle);
+                    v.unpowered = !powered;
+                }
+                VisualKind::Sensor => v.unpowered = avg.first().copied().unwrap_or(0.0) < 0.5,
             }
             slot.acc.iter_mut().for_each(|a| *a = 0.0);
             // The next frame starts in the present operating point.
@@ -927,6 +1166,13 @@ impl CircuitSim {
         }
         self.frame_start = time;
         out
+    }
+
+    /// Voltage on an MCU pin (port 0 = A) from the present operating point,
+    /// if the circuit connects anything to it (for the ADC).
+    pub fn mcu_voltage(&self, port: u8, pin: u8) -> Option<f64> {
+        let &(_, node) = self.mcu.iter().find(|(p, _)| *p == (port, pin))?;
+        Some(self.current.as_ref().map_or(0.0, |s| s.v[node]))
     }
 
     /// Voltage of the net a pin is on (for probes), from the present
@@ -1286,6 +1532,149 @@ mod tests {
         parts[1] = part("r1", "resistor", &[("ohms", "")]);
         s.set_circuit(&Circuit { parts, wires }, 0);
         assert_eq!(s.warnings.len(), 1);
+    }
+
+    fn part_num(id: &str, kind: &str, props: &[(&str, f64)]) -> PartInstance {
+        PartInstance {
+            id: id.into(),
+            kind: kind.into(),
+            props: props
+                .iter()
+                .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
+                .collect(),
+        }
+    }
+
+    fn settle(s: &mut CircuitSim) {
+        let d = drives(s, |_| Drive::Float);
+        s.update(0, &d);
+    }
+
+    #[test]
+    fn potentiometer_divides_the_supply() {
+        // 3V3 — pot — GND, wiper on A0 (PA0).
+        let mut s = sim(
+            vec![part_num("pot", "potentiometer", &[("position", 0.25)])],
+            vec![
+                wire(("mcu", "3V3"), ("pot", "2")),
+                wire(("pot", "1"), ("mcu", "GND")),
+                wire(("pot", "W"), ("mcu", "PA0")),
+            ],
+        );
+        settle(&mut s);
+        let v = s.mcu_voltage(0, 0).unwrap();
+        assert!((v - 0.25 * VDD).abs() < 0.01, "{v}");
+    }
+
+    #[test]
+    fn ldr_divider_follows_light() {
+        // 3V3 — 10k — A1 — LDR — GND
+        let make = |lux: f64| {
+            let mut s = sim(
+                vec![
+                    part("r", "resistor", &[("ohms", "10k")]),
+                    part_num("ldr", "ldr", &[("lux", lux)]),
+                ],
+                vec![
+                    wire(("mcu", "3V3"), ("r", "1")),
+                    wire(("r", "2"), ("mcu", "PA1")),
+                    wire(("ldr", "1"), ("mcu", "PA1")),
+                    wire(("ldr", "2"), ("mcu", "GND")),
+                ],
+            );
+            settle(&mut s);
+            s.mcu_voltage(0, 1).unwrap()
+        };
+        let (dark, bright) = (make(1.0), make(1000.0));
+        // 1 lux ≈ 50 kΩ, 1000 lux ≈ 400 Ω against 10 kΩ.
+        assert!(dark > 2.6 && bright < 0.2, "dark {dark}, bright {bright}");
+    }
+
+    #[test]
+    fn temperature_sensor_needs_its_supply() {
+        let make = |supply: &str, model: &str| {
+            let mut p = part_num("t", "temp-sensor", &[("temp", 30.0)]);
+            p.props.insert("model".into(), model.into());
+            let mut s = sim(
+                vec![p],
+                vec![
+                    wire(("mcu", supply), ("t", "VS")),
+                    wire(("t", "GND"), ("mcu", "GND")),
+                    wire(("t", "OUT"), ("mcu", "PA4")),
+                ],
+            );
+            settle(&mut s);
+            (s.mcu_voltage(0, 4).unwrap(), s.warnings.clone())
+        };
+        let (v, w) = make("3V3", "TMP36");
+        assert!((v - 0.8).abs() < 0.01 && w.is_empty(), "{v} {w:?}");
+        let (v, _) = make("5V", "LM35");
+        assert!((v - 0.3).abs() < 0.01, "{v}");
+        let (v, w) = make("3V3", "LM35");
+        assert!(v < 0.01, "LM35 needs 4 V: {v}");
+        assert!(w.iter().any(|w| w.starts_with("t: supply 3.3 V")), "{w:?}");
+    }
+
+    #[test]
+    fn servo_follows_pulse_width_and_motor_follows_duty() {
+        let mut s = sim(
+            vec![part("sv", "servo", &[]), part("m", "dc-motor", &[])],
+            vec![
+                wire(("mcu", "5V"), ("sv", "V+")),
+                wire(("sv", "GND"), ("mcu", "GND")),
+                wire(("mcu", "PC7"), ("sv", "SIG")),
+                wire(("mcu", "5V"), ("m", "VCC")),
+                wire(("m", "GND"), ("mcu", "GND")),
+                wire(("mcu", "PB4"), ("m", "IA")),
+                wire(("mcu", "PB5"), ("m", "IB")),
+            ],
+        );
+        let pins = s.mcu_pins();
+        let at = |sig: bool, ia: bool| {
+            pins.iter()
+                .map(|&p| match p {
+                    (2, 7) => {
+                        if sig {
+                            Drive::High
+                        } else {
+                            Drive::Low
+                        }
+                    }
+                    (1, 4) => {
+                        if ia {
+                            Drive::High
+                        } else {
+                            Drive::Low
+                        }
+                    }
+                    (1, 5) => Drive::Low,
+                    _ => Drive::Float,
+                })
+                .collect::<Vec<_>>()
+        };
+        // 1 kHz cycles per "second" = 1000 cycles: 20 ms frames, pulses
+        // of 2.0 ms (→ 135°) every 20 ms; IA at 50 % duty.
+        let cps = 1000.0; // cycles per second in this test
+        let mut t = 0u64;
+        s.end_frame(0, 0.0);
+        let mut angle = 0.0;
+        for frame in 0..50 {
+            for k in 0..20u64 {
+                let base = t + k;
+                s.update(base, &at(k < 2, k % 2 == 0));
+            }
+            t += 20;
+            let v = s.end_frame(t, 20.0 / cps);
+            let sv = visual(&v, "sv");
+            angle = sv.angle.unwrap();
+            assert!(!sv.unpowered);
+            if frame == 49 {
+                let m = visual(&v, "m");
+                let rpm = m.rpm.unwrap();
+                assert!((rpm - 0.5 * MOTOR_MAX_RPM).abs() < 5.0, "{rpm}");
+            }
+        }
+        assert!((angle - 135.0).abs() < 1.0, "{angle}");
     }
 
     #[test]

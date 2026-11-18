@@ -19,7 +19,7 @@ test.beforeEach(async ({ page }) => {
 
 test("LED and resistor on the breadboard form the expected nets", async ({ page }) => {
   await page.getByRole("button", { name: "LED 5mm" }).click();
-  await page.getByRole("button", { name: "저항" }).click();
+  await page.getByRole("button", { name: "저항", exact: true }).click();
   const led = await partId(page, "led");
   const res = await partId(page, "resistor");
 
@@ -142,7 +142,7 @@ test("LED legs are marked + and −", async ({ page }) => {
 });
 
 test("resistor colour bands follow the value", async ({ page }) => {
-  await page.getByRole("button", { name: "저항" }).click();
+  await page.getByRole("button", { name: "저항", exact: true }).click();
   const res = await partId(page, "resistor");
   const bands = page.locator(`[data-id="${res}"] [data-bands]`);
   await expect(bands).toHaveAttribute("data-bands", "red,red,brown,gold");
@@ -192,7 +192,7 @@ test("a wire end can be dragged to another pin", async ({ page }) => {
 });
 
 test("3-, 4-, 5- and 6-band colour codes with tolerance and tempco (IEC 60062)", async ({ page }) => {
-  await page.getByRole("button", { name: "저항" }).click();
+  await page.getByRole("button", { name: "저항", exact: true }).click();
   const res = await partId(page, "resistor");
   const bands = page.locator(`[data-id="${res}"] [data-bands]`);
   const info = page.getByTestId("ohms-parsed");

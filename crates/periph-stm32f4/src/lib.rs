@@ -7,6 +7,7 @@
 //! GUI can show which peripheral the firmware relies on that is not
 //! simulated yet.
 
+pub mod adc;
 pub mod exti;
 pub mod gpio;
 pub mod map;
@@ -21,6 +22,7 @@ pub mod usart;
 
 use std::collections::BTreeSet;
 
+use adc::{Adc, AdcAction};
 use exti::Exti;
 use gpio::{Gpio, PinDrive, PinEvent};
 use rcc::{Clocks, Rcc, ResetCause};
@@ -43,6 +45,9 @@ pub enum Event {
     },
     Timer {
         idx: u8,
+        gen: u32,
+    },
+    Adc {
         gen: u32,
     },
 }
@@ -91,6 +96,10 @@ pub trait ExternalCircuit {
     /// each of those pins sees from outside (`None`: nothing drives it) if
     /// that may have changed.
     fn update(&mut self, time: Cycles, drives: &[PinDrive]) -> Option<Vec<Option<bool>>>;
+    /// Voltage the circuit puts on a pin (for the ADC), if it is connected.
+    fn voltage(&self, _port: u8, _pin: u8) -> Option<f64> {
+        None
+    }
 }
 
 /// USART instances: (name, base, IRQ, on APB2, ENR offset, enable bit).
@@ -160,6 +169,7 @@ pub struct Stm32f401Bus {
     pub usart: [Usart; 3],
     pub exti: Exti,
     pub syscfg: Syscfg,
+    pub adc: Adc,
     /// TIM1, TIM2, TIM3, TIM4, TIM5, TIM9, TIM10, TIM11.
     pub timers: [Timer; 8],
     /// Firmware read a register whose value changes with time alone (a
@@ -207,6 +217,7 @@ impl Stm32f401Bus {
             usart: USARTS.map(|(name, _, irq, apb2, ..)| Usart::new(name, irq, apb2)),
             exti: Exti::default(),
             syscfg: Syscfg::default(),
+            adc: Adc::default(),
             timers: TIMERS.map(Timer::new),
             time_read: false,
             levels: [0; 8],
@@ -222,6 +233,7 @@ impl Stm32f401Bus {
         };
         bus.retime_timers();
         bus.update_timer_gates();
+        bus.update_adc_gate();
         bus.sync_levels();
         bus
     }
@@ -238,6 +250,22 @@ impl Stm32f401Bus {
                 self.timers[i].gated = gated;
                 self.reschedule_timer(i);
             }
+        }
+    }
+
+    /// Pause the ADC while its bus clock is off: the conversion in progress
+    /// is dropped from the schedule and starts over when the clock returns.
+    fn update_adc_gate(&mut self) {
+        let gated = !self.rcc.clock_enabled(0x44, 8);
+        if self.adc.gated == gated {
+            return;
+        }
+        self.adc.gated = gated;
+        if gated {
+            self.adc.gen = self.adc.gen.wrapping_add(1);
+        } else if self.adc.converting.is_some() {
+            let (now, clocks) = (self.now, self.clocks);
+            self.adc.begin(now, &clocks, &mut self.sched);
         }
     }
 
@@ -393,6 +421,34 @@ impl Stm32f401Bus {
         }
     }
 
+    /// Voltage at an ADC channel: the internal sources, or the pin as the
+    /// external circuit (or, without one, the pin's own drive) sets it.
+    fn channel_voltage(&self, ch: u8) -> f64 {
+        if let Some(v) = self.adc.internal_voltage(ch) {
+            return v;
+        }
+        let Some(&(port, pin)) = adc::CHANNEL_PINS.get(ch as usize) else {
+            return 0.0;
+        };
+        self.pin_voltage(port, pin)
+    }
+
+    /// Voltage on a pin (V).
+    pub fn pin_voltage(&self, port: u8, pin: u8) -> f64 {
+        if let Some(v) = self.circuit.as_ref().and_then(|c| c.voltage(port, pin)) {
+            return v;
+        }
+        let level = match self.gpio[port as usize].drive(pin) {
+            PinDrive::High | PinDrive::PullUp => true,
+            PinDrive::Low | PinDrive::PullDown | PinDrive::Float => false,
+        };
+        if level {
+            adc::VREF
+        } else {
+            0.0
+        }
+    }
+
     /// Drive a pin from outside the chip (`Some(level)`), or release it
     /// (`None`: it floats and follows its pull resistor).
     pub fn set_external(&mut self, port: usize, pin: u8, level: Option<bool>) {
@@ -433,12 +489,14 @@ impl Stm32f401Bus {
         }
         self.exti = Exti::default();
         self.syscfg = Syscfg::default();
+        self.adc.reset();
         let now = self.sched.now().max(self.now);
         for t in &mut self.timers {
             t.reset(now);
         }
         self.regs.clear();
         self.update_timer_gates();
+        self.update_adc_gate();
         self.sync_levels();
         self.circuit_update(now);
         let now = self.sched.now();
@@ -478,6 +536,16 @@ impl Stm32f401Bus {
             match ev {
                 Event::Usart { idx, kind, gen } => {
                     self.usart[idx as usize].event(idx, kind, gen, at, &clocks, &mut self.sched)
+                }
+                Event::Adc { gen } => {
+                    if self.adc.gen == gen {
+                        if let Some(ch) = self.adc.converting {
+                            let v = self.channel_voltage(ch);
+                            if self.adc.complete(v) {
+                                self.adc.begin(at, &clocks, &mut self.sched);
+                            }
+                        }
+                    }
                 }
                 Event::Timer { idx, gen } => {
                     let i = idx as usize;
@@ -568,6 +636,8 @@ impl Stm32f401Bus {
                 self.pwr = Pwr::default();
             } else if name == "SYSCFG" {
                 self.syscfg = Syscfg::default();
+            } else if name == "ADC1" {
+                self.adc.reset();
             } else if let Some(p) = regmap::peripheral_by_name(name) {
                 self.regs.reset_block(p.base);
             }
@@ -621,6 +691,13 @@ impl Stm32f401Bus {
                 map::RCC_BASE => self.rcc.read(off),
                 map::FLASH_IF_BASE => self.flash_if.read(off),
                 map::EXTI_BASE => self.exti.read(off),
+                map::ADC1_BASE => {
+                    if enabled(0x44, 8) {
+                        self.adc.peek(off)
+                    } else {
+                        0
+                    }
+                }
                 map::SYSCFG_BASE => {
                     if enabled(0x44, 14) {
                         self.syscfg.read(off)
@@ -673,6 +750,12 @@ impl Stm32f401Bus {
             map::RCC_BASE => return self.rcc.read(off),
             map::FLASH_IF_BASE => return self.flash_if.read(off),
             map::EXTI_BASE => return self.exti.read(off),
+            map::ADC1_BASE => {
+                if self.gated(0x44, 8, "ADC1", "RCC.APB2ENR.ADC1EN") {
+                    return 0;
+                }
+                return self.adc.read(off);
+            }
             map::SYSCFG_BASE => {
                 if self.gated(0x44, 14, "SYSCFG", "RCC.APB2ENR.SYSCFGEN") {
                     return 0;
@@ -733,6 +816,7 @@ impl Stm32f401Bus {
                 }
                 if matches!(off, 0x40 | 0x44) {
                     self.update_timer_gates();
+                    self.update_adc_gate();
                 }
                 return;
             }
@@ -742,6 +826,15 @@ impl Stm32f401Bus {
             }
             map::EXTI_BASE => {
                 self.exti.write(off, value, lanes);
+                return;
+            }
+            map::ADC1_BASE => {
+                if !self.gated(0x44, 8, "ADC1", "RCC.APB2ENR.ADC1EN")
+                    && self.adc.write(off, value, lanes) == AdcAction::Start
+                {
+                    let (now, clocks) = (self.now, self.clocks);
+                    self.adc.begin(now, &clocks, &mut self.sched);
+                }
                 return;
             }
             map::SYSCFG_BASE => {
@@ -894,6 +987,9 @@ impl Bus for Stm32f401Bus {
             if u.irq_line() {
                 sys.set_irq_pending(u.irq);
             }
+        }
+        if self.adc.irq_line() {
+            sys.set_irq_pending(18);
         }
         for irq in self.exti.irqs() {
             sys.set_irq_pending(irq);
@@ -1128,6 +1224,42 @@ mod tests {
         assert_eq!(bus.read_u32(tim2 + 0x24).unwrap(), 7);
         bus.poll(&mut sys);
         assert_eq!(sys.time_reads, before + 1);
+    }
+
+    #[test]
+    fn adc_conversion_waits_while_its_clock_is_off() {
+        let mut bus = Stm32f401Bus::new();
+        let mut sys = CortexM::new();
+        let w = |bus: &mut Stm32f401Bus, a: u32, v: u32| bus.write(a, AccessSize::Word, v).unwrap();
+        w(&mut bus, map::RCC_BASE + 0x44, 1 << 8); // ADC1EN
+        let adc = map::ADC1_BASE;
+        w(&mut bus, adc + 0x304, 1 << 23); // TSVREFE
+        w(&mut bus, adc + 0x34, 17); // SQ1 = VREFINT
+        w(&mut bus, adc + 0x04, 1 << 5); // EOCIE
+        w(&mut bus, adc + 0x08, 1); // ADON
+        w(&mut bus, adc + 0x08, 1 | 1 << 30); // SWSTART
+                                              // Clock off before the conversion ends: nothing completes.
+        w(&mut bus, map::RCC_BASE + 0x44, 0);
+        for t in (0..10_000u64).step_by(100) {
+            bus.set_time(t);
+            bus.run_events(t);
+        }
+        assert_eq!(bus.adc.sr & adc::EOC, 0);
+        bus.poll(&mut sys);
+        assert_eq!(
+            sys.peek(0xE000_E200, AccessSize::Word) & (1 << 18),
+            0,
+            "no ADC IRQ"
+        );
+        // Clock back on: the conversion starts over and completes.
+        bus.set_time(10_000);
+        w(&mut bus, map::RCC_BASE + 0x44, 1 << 8);
+        for t in (10_000..20_000u64).step_by(100) {
+            bus.set_time(t);
+            bus.run_events(t);
+        }
+        assert_eq!(bus.adc.sr & adc::EOC, adc::EOC);
+        assert_eq!(bus.adc.dr, bus.adc.code(adc::VREFINT));
     }
 
     #[test]

@@ -11,9 +11,9 @@
 //! Modelled: up/down counting, prescaler and auto-reload with preload,
 //! one-pulse mode, UG/CCxG, update and compare interrupts, output compare
 //! (frozen, active/inactive/toggle on match, force) and PWM modes 1/2 with
-//! polarity, and BDTR.MOE on TIM1. Not yet: center-aligned counting (counts
-//! up), the repetition counter, input capture, slave modes, DMA requests and
-//! complementary outputs.
+//! polarity, BDTR.MOE on TIM1, and DMA requests on update and compare events
+//! (CCDS). Not yet: center-aligned counting (counts up), the repetition
+//! counter, input capture, slave modes and complementary outputs.
 
 use simucleo_core::Cycles;
 
@@ -27,6 +27,11 @@ const ARPE: u32 = 1 << 7;
 // SR / DIER
 pub const UIF: u32 = 1 << 0;
 const CC_IF: [u32; 4] = [1 << 1, 1 << 2, 1 << 3, 1 << 4];
+// DIER DMA enables
+const UDE: u32 = 1 << 8;
+const CC_DE: [u32; 4] = [1 << 9, 1 << 10, 1 << 11, 1 << 12];
+// CR2
+const CCDS: u32 = 1 << 3;
 // BDTR
 const MOE: u32 = 1 << 15;
 
@@ -225,6 +230,8 @@ pub struct Timer {
     pub gen: u32,
     /// The bus clock (RCC TIMxEN) is off: the counter and outputs freeze.
     pub gated: bool,
+    /// Pending DMA requests: bit 0 update, bits 1–4 capture/compare 1–4.
+    pub dma_req: u32,
 }
 
 impl Timer {
@@ -255,6 +262,7 @@ impl Timer {
             ocref: [false; 4],
             gen: 0,
             gated: false,
+            dma_req: 0,
         }
     }
 
@@ -336,6 +344,9 @@ impl Timer {
             return;
         };
         self.sr |= CC_IF[ch];
+        if self.dier & CC_DE[ch] != 0 && self.cr2 & CCDS == 0 {
+            self.dma_req |= 2 << ch;
+        }
         match mode {
             1 => self.ocref[ch] = true,
             2 => self.ocref[ch] = false,
@@ -366,6 +377,17 @@ impl Timer {
     fn update_event(&mut self, set_flag: bool) {
         if set_flag {
             self.sr |= UIF;
+        }
+        if self.dier & UDE != 0 {
+            self.dma_req |= 1;
+        }
+        // CCDS: capture/compare DMA requests go out on the update event.
+        if self.cr2 & CCDS != 0 {
+            for (ch, de) in CC_DE.iter().enumerate().take(self.info.channels as usize) {
+                if self.dier & de != 0 {
+                    self.dma_req |= 2 << ch;
+                }
+            }
         }
         self.psc_act = self.psc;
         self.arr_act = self.arr;
@@ -406,13 +428,15 @@ impl Timer {
             }
             self.ref_cycle += tick;
             self.cnt = if self.down() { self.arr_act } else { 0 };
+            // The update loads the preloaded registers first; the new
+            // compare values apply to the counter's first value.
+            if self.cr1 & UDIS == 0 {
+                self.update_event(true);
+            }
             for ch in 0..self.info.channels as usize {
                 if self.ccr_act[ch] == self.cnt {
                     self.compare_match(ch, 1);
                 }
-            }
-            if self.cr1 & UDIS == 0 {
-                self.update_event(true);
             }
             if self.cr1 & OPM != 0 {
                 self.cr1 &= !CEN;
@@ -491,7 +515,14 @@ impl Timer {
         };
         let any_pwm = (0..self.info.channels as usize)
             .any(|ch| self.output_enabled(ch) && matches!(self.oc_mode(ch), Some(6 | 7)));
-        if self.dier & UIF != 0 || !self.shadows_settled() || self.cr1 & OPM != 0 || any_pwm {
+        let dma_on_update =
+            self.dier & UDE != 0 || (self.cr2 & CCDS != 0 && self.dier & 0x1E00 != 0);
+        if self.dier & UIF != 0
+            || dma_on_update
+            || !self.shadows_settled()
+            || self.cr1 & OPM != 0
+            || any_pwm
+        {
             consider(Some(self.ticks_to_wrap()));
         }
         for ch in 0..self.info.channels as usize {
@@ -499,7 +530,7 @@ impl Timer {
                 continue;
             };
             let visible = self.output_enabled(ch) && matches!(mode, 1 | 2 | 3 | 6 | 7);
-            if self.dier & CC_IF[ch] != 0 || visible {
+            if self.dier & (CC_IF[ch] | CC_DE[ch]) != 0 || visible {
                 consider(self.ticks_to_value(self.ccr_act[ch]));
             }
         }

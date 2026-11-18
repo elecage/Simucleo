@@ -3,6 +3,8 @@
 //! exchanges. Each keeps the state a student would observe (display RAM,
 //! clock registers, measurements).
 
+use std::collections::{HashMap, VecDeque};
+
 /// Simulated seconds since power-up, given to devices that keep time.
 pub type Seconds = f64;
 
@@ -525,20 +527,378 @@ impl I2cDevice for Aht20 {
     }
 }
 
+// ------------------------------------------------------------- SD card
+
+/// CRC-7 of SD commands and registers (polynomial x⁷ + x³ + 1).
+pub fn crc7(data: &[u8]) -> u8 {
+    let mut crc = 0u8;
+    for &b in data {
+        for i in (0..8).rev() {
+            let bit = (b >> i) & 1 ^ (crc >> 6) & 1;
+            crc = (crc << 1) & 0x7F;
+            if bit != 0 {
+                crc ^= 0x09;
+            }
+        }
+    }
+    crc
+}
+
+/// CRC-16-CCITT of SD data blocks.
+pub fn crc16(data: &[u8]) -> u16 {
+    let mut crc = 0u16;
+    for &b in data {
+        crc ^= (b as u16) << 8;
+        for _ in 0..8 {
+            crc = if crc & 0x8000 != 0 {
+                (crc << 1) ^ 0x1021
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
+pub const SD_BLOCK: usize = 512;
+
+#[derive(Debug, Clone)]
+enum SdWrite {
+    /// Waiting for a start token (0xFE single, 0xFC multiple, 0xFD stop).
+    Token { block: u32, multi: bool },
+    /// Collecting a data block and its CRC.
+    Data {
+        block: u32,
+        multi: bool,
+        buf: Vec<u8>,
+    },
+}
+
+/// SDHC card in SPI mode: CMD0/8/55/ACMD41/58 initialisation, CSD/CID,
+/// single and multiple block reads and writes. Blocks never written read
+/// as zeros; storage is sparse.
+#[derive(Debug, Clone)]
+pub struct SdCard {
+    pub blocks: u32,
+    /// The size the card was made with (MB), before any image replaced it.
+    pub nominal_mb: u32,
+    data: HashMap<u32, Box<[u8; SD_BLOCK]>>,
+    cmd: Vec<u8>,
+    out: VecDeque<u8>,
+    idle: bool,
+    app_cmd: bool,
+    init_tries: u32,
+    write: Option<SdWrite>,
+    /// Next block of a CMD18 transfer.
+    multi_read: Option<u32>,
+    /// Blocks read and written since the last look (for the UI).
+    pub reads: u32,
+    pub writes: u32,
+    /// Contents changed since the image was last exported.
+    pub dirty: bool,
+}
+
+impl SdCard {
+    pub fn new(megabytes: u32) -> Self {
+        Self {
+            blocks: megabytes.clamp(1, 32 * 1024) * 2048,
+            nominal_mb: megabytes,
+            data: HashMap::new(),
+            cmd: Vec::new(),
+            out: VecDeque::new(),
+            idle: true,
+            app_cmd: false,
+            init_tries: 0,
+            write: None,
+            multi_read: None,
+            reads: 0,
+            writes: 0,
+            dirty: false,
+        }
+    }
+
+    /// Protocol state back to power-up; the contents stay.
+    pub fn power_cycle(&mut self) {
+        let mut fresh = Self::new(1);
+        fresh.blocks = self.blocks;
+        fresh.nominal_mb = self.nominal_mb;
+        fresh.data = std::mem::take(&mut self.data);
+        fresh.dirty = self.dirty;
+        *self = fresh;
+    }
+
+    pub fn read_block(&self, block: u32) -> [u8; SD_BLOCK] {
+        self.data.get(&block).map_or([0; SD_BLOCK], |b| **b)
+    }
+
+    pub fn write_block(&mut self, block: u32, data: &[u8]) {
+        let mut b = [0u8; SD_BLOCK];
+        b[..data.len().min(SD_BLOCK)].copy_from_slice(&data[..data.len().min(SD_BLOCK)]);
+        if b.iter().all(|&x| x == 0) {
+            self.data.remove(&block);
+        } else {
+            self.data.insert(block, Box::new(b));
+        }
+        self.dirty = true;
+    }
+
+    /// The whole card as a disk image.
+    pub fn image(&self) -> Vec<u8> {
+        let mut img = vec![0u8; self.blocks as usize * SD_BLOCK];
+        for (&n, b) in &self.data {
+            let at = n as usize * SD_BLOCK;
+            img[at..at + SD_BLOCK].copy_from_slice(&b[..]);
+        }
+        img
+    }
+
+    /// Replace the contents with a disk image; the card takes its size
+    /// (rounded up to whole 512 KiB units, as the CSD counts them).
+    pub fn load_image(&mut self, img: &[u8]) {
+        self.data.clear();
+        let blocks = img.len().div_ceil(SD_BLOCK) as u32;
+        self.blocks = blocks.div_ceil(1024).max(1) * 1024;
+        for (n, chunk) in img.chunks(SD_BLOCK).enumerate() {
+            if chunk.iter().any(|&x| x != 0) {
+                self.write_block(n as u32, chunk);
+            }
+        }
+        self.dirty = false;
+    }
+
+    fn csd(&self) -> [u8; 16] {
+        let c = self.blocks / 1024 - 1;
+        let mut r = [
+            0x40,
+            0x0E,
+            0x00,
+            0x32,
+            0x5B,
+            0x59,
+            0x00,
+            (c >> 16) as u8 & 0x3F,
+            (c >> 8) as u8,
+            c as u8,
+            0x7F,
+            0x80,
+            0x0A,
+            0x40,
+            0x00,
+            0x00,
+        ];
+        r[15] = crc7(&r[..15]) << 1 | 1;
+        r
+    }
+
+    fn cid() -> [u8; 16] {
+        let mut r = [
+            0x03, b'S', b'M', b'S', b'I', b'M', b'U', b'C', 0x10, 0x12, 0x34, 0x56, 0x78, 0x01,
+            0x9A, 0,
+        ];
+        r[15] = crc7(&r[..15]) << 1 | 1;
+        r
+    }
+
+    fn r1(&self) -> u8 {
+        self.idle as u8
+    }
+
+    fn queue_block(&mut self, data: &[u8]) {
+        let crc = crc16(data);
+        self.out.extend([0xFF, 0xFE]);
+        self.out.extend(data);
+        self.out.extend([(crc >> 8) as u8, crc as u8]);
+    }
+
+    fn queue_read(&mut self, block: u32) {
+        let b = self.read_block(block);
+        self.reads += 1;
+        self.queue_block(&b);
+    }
+
+    fn command(&mut self, c: [u8; 6]) {
+        let idx = c[0] & 0x3F;
+        let arg = u32::from_be_bytes([c[1], c[2], c[3], c[4]]);
+        let app = std::mem::take(&mut self.app_cmd);
+        // In SPI mode only CMD0 and CMD8 are CRC-checked.
+        if (idx == 0 || idx == 8) && crc7(&c[..5]) << 1 | 1 != c[5] {
+            self.out.extend([0xFF, self.r1() | 0x08]);
+            return;
+        }
+        // NCR: one byte before the response.
+        self.out.push_back(0xFF);
+        let ready = !self.idle;
+        let in_range = arg < self.blocks;
+        match (app, idx) {
+            (_, 0) => {
+                self.idle = true;
+                self.init_tries = 0;
+                self.write = None;
+                self.multi_read = None;
+                self.out.push_back(0x01);
+            }
+            (_, 8) => self
+                .out
+                .extend([self.r1(), 0x00, 0x00, (arg >> 8) as u8 & 0x0F, arg as u8]),
+            (_, 55) => {
+                self.app_cmd = true;
+                self.out.push_back(self.r1());
+            }
+            (true, 41) | (false, 1) => {
+                // Ready on the second try, as cards take a while.
+                self.init_tries += 1;
+                if self.init_tries >= 2 {
+                    self.idle = false;
+                }
+                self.out.push_back(self.r1());
+            }
+            (_, 58) => {
+                let ocr0 = if ready { 0xC0 } else { 0x40 };
+                self.out.extend([self.r1(), ocr0, 0xFF, 0x80, 0x00]);
+            }
+            (_, 59) | (_, 16) | (true, 23) | (false, 23) => self.out.push_back(self.r1()),
+            (_, 9) if ready => {
+                self.out.push_back(0x00);
+                let csd = self.csd();
+                self.queue_block(&csd);
+            }
+            (_, 10) if ready => {
+                self.out.push_back(0x00);
+                self.queue_block(&Self::cid());
+            }
+            (true, 13) if ready => {
+                self.out.extend([0x00, 0x00]);
+                self.queue_block(&[0u8; 64]);
+            }
+            (true, 51) if ready => {
+                self.out.push_back(0x00);
+                self.queue_block(&[0x02, 0x35, 0x80, 0x00, 0, 0, 0, 0]);
+            }
+            (_, 13) => self.out.extend([self.r1(), 0x00]),
+            (_, 12) => {
+                // Stop: drop the block in flight; R1b with a short busy.
+                self.multi_read = None;
+                self.out.clear();
+                self.out.extend([0xFF, 0x00, 0x00, 0xFF]);
+            }
+            (_, 17) | (_, 18) | (_, 24) | (_, 25) if ready && !in_range => self.out.push_back(0x40),
+            (_, 17) if ready => {
+                self.out.push_back(0x00);
+                self.queue_read(arg);
+            }
+            (_, 18) if ready => {
+                self.out.push_back(0x00);
+                self.queue_read(arg);
+                self.multi_read = Some(arg + 1);
+            }
+            (_, 24) | (_, 25) if ready => {
+                self.out.push_back(0x00);
+                self.write = Some(SdWrite::Token {
+                    block: arg,
+                    multi: idx == 25,
+                });
+            }
+            _ => self.out.push_back(self.r1() | 0x04), // illegal command
+        }
+    }
+
+    fn receive(&mut self, b: u8) {
+        match self.write.take() {
+            Some(SdWrite::Token { block, multi }) => {
+                self.write = match b {
+                    0xFE if !multi => Some(SdWrite::Data {
+                        block,
+                        multi,
+                        buf: Vec::with_capacity(514),
+                    }),
+                    0xFC if multi => Some(SdWrite::Data {
+                        block,
+                        multi,
+                        buf: Vec::with_capacity(514),
+                    }),
+                    0xFD if multi => {
+                        // Stop token: a little busy, then done.
+                        self.out.extend([0xFF, 0x00, 0x00]);
+                        None
+                    }
+                    _ => Some(SdWrite::Token { block, multi }),
+                };
+            }
+            Some(SdWrite::Data {
+                block,
+                multi,
+                mut buf,
+            }) => {
+                buf.push(b);
+                if buf.len() < SD_BLOCK + 2 {
+                    self.write = Some(SdWrite::Data { block, multi, buf });
+                } else if block >= self.blocks {
+                    self.out.extend([0x0D, 0x00, 0xFF]); // write error
+                } else {
+                    self.write_block(block, &buf[..SD_BLOCK]);
+                    self.writes += 1;
+                    // Data accepted, then busy while "programming".
+                    self.out.extend([0x05, 0x00, 0x00, 0x00]);
+                    if multi {
+                        self.write = Some(SdWrite::Token {
+                            block: block + 1,
+                            multi,
+                        });
+                    }
+                }
+            }
+            None => {
+                if self.cmd.is_empty() && b & 0xC0 != 0x40 {
+                    return;
+                }
+                self.cmd.push(b);
+                if self.cmd.len() == 6 {
+                    let c: [u8; 6] = self.cmd[..].try_into().unwrap();
+                    self.cmd.clear();
+                    self.command(c);
+                }
+            }
+        }
+    }
+
+    /// One byte each way while the card is selected.
+    pub fn exchange(&mut self, b: u8) -> u8 {
+        let reply = self.out.pop_front().unwrap_or(0xFF);
+        // A command can stop a multiple-block read mid-stream.
+        if self.multi_read.is_some() && self.cmd.is_empty() && b == 0x4C {
+            self.cmd.push(b);
+            return reply;
+        }
+        self.receive(b);
+        if self.out.is_empty() && self.cmd.is_empty() {
+            if let Some(n) = self.multi_read {
+                if n < self.blocks {
+                    self.queue_read(n);
+                    self.multi_read = Some(n + 1);
+                }
+            }
+        }
+        reply
+    }
+}
+
 /// A bus device part's state, kept across circuit edits.
 #[derive(Debug, Clone)]
 pub enum Device {
     Oled(Box<Ssd1306>),
     Rtc(Ds3231),
     Aht(Aht20),
+    Sd(Box<SdCard>),
 }
 
 impl Device {
-    pub fn i2c(&mut self) -> &mut dyn I2cDevice {
+    /// The I2C side of the device, if it has one.
+    pub fn i2c(&mut self) -> Option<&mut dyn I2cDevice> {
         match self {
-            Device::Oled(d) => d.as_mut(),
-            Device::Rtc(d) => d,
-            Device::Aht(d) => d,
+            Device::Oled(d) => Some(d.as_mut()),
+            Device::Rtc(d) => Some(d),
+            Device::Aht(d) => Some(d),
+            Device::Sd(_) => None,
         }
     }
 
@@ -547,6 +907,7 @@ impl Device {
             Device::Oled(d) => d.address,
             Device::Rtc(_) => 0x68,
             Device::Aht(_) => 0x38,
+            Device::Sd(_) => 0,
         }
     }
 }
@@ -670,5 +1031,106 @@ mod tests {
         assert_eq!(base64(b"Man"), "TWFu");
         assert_eq!(base64(b"Ma"), "TWE=");
         assert_eq!(base64(b"M"), "TQ==");
+    }
+
+    fn sd_cmd(sd: &mut SdCard, idx: u8, arg: u32) -> u8 {
+        let mut c = [
+            0x40 | idx,
+            (arg >> 24) as u8,
+            (arg >> 16) as u8,
+            (arg >> 8) as u8,
+            arg as u8,
+            0,
+        ];
+        c[5] = crc7(&c[..5]) << 1 | 1;
+        for b in c {
+            sd.exchange(b);
+        }
+        // R1: the first byte with bit 7 clear.
+        (0..8)
+            .map(|_| sd.exchange(0xFF))
+            .find(|r| r & 0x80 == 0)
+            .unwrap_or(0xFF)
+    }
+
+    fn sd_init(sd: &mut SdCard) {
+        assert_eq!(crc7(&[0x40, 0, 0, 0, 0]) << 1 | 1, 0x95);
+        assert_eq!(sd_cmd(sd, 0, 0), 0x01);
+        assert_eq!(sd_cmd(sd, 8, 0x1AA), 0x01);
+        let r7: Vec<u8> = (0..4).map(|_| sd.exchange(0xFF)).collect();
+        assert_eq!(r7, [0, 0, 1, 0xAA]);
+        let mut r = 1;
+        for _ in 0..10 {
+            sd_cmd(sd, 55, 0);
+            r = sd_cmd(sd, 41, 1 << 30);
+            if r == 0 {
+                break;
+            }
+        }
+        assert_eq!(r, 0);
+        assert_eq!(sd_cmd(sd, 58, 0), 0);
+        assert_eq!(sd.exchange(0xFF) & 0x40, 0x40, "SDHC");
+        for _ in 0..3 {
+            sd.exchange(0xFF);
+        }
+    }
+
+    #[test]
+    fn sd_card_initialises_writes_and_reads_blocks() {
+        let mut sd = SdCard::new(32);
+        // Wrong CRC on CMD0: CRC error.
+        for b in [0x40, 0, 0, 0, 0, 0x01] {
+            sd.exchange(b);
+        }
+        assert_eq!(sd.exchange(0xFF), 0xFF);
+        assert_eq!(sd.exchange(0xFF), 0x09);
+        sd_init(&mut sd);
+
+        // CSD: C_SIZE = 32 MiB / 512 KiB − 1 = 63.
+        assert_eq!(sd_cmd(&mut sd, 9, 0), 0);
+        while sd.exchange(0xFF) != 0xFE {}
+        let csd: Vec<u8> = (0..16).map(|_| sd.exchange(0xFF)).collect();
+        assert_eq!(csd[0] >> 6, 1);
+        assert_eq!(
+            ((csd[7] as u32 & 0x3F) << 16) | (csd[8] as u32) << 8 | csd[9] as u32,
+            63
+        );
+        sd.exchange(0xFF);
+        sd.exchange(0xFF);
+
+        // Write block 5.
+        assert_eq!(sd_cmd(&mut sd, 24, 5), 0);
+        sd.exchange(0xFF);
+        sd.exchange(0xFE);
+        for i in 0..512u32 {
+            sd.exchange(i as u8);
+        }
+        sd.exchange(0xFF);
+        sd.exchange(0xFF);
+        assert_eq!(sd.exchange(0xFF) & 0x1F, 0x05, "data accepted");
+        while sd.exchange(0xFF) == 0x00 {}
+        assert_eq!(sd.read_block(5)[511], 0xFF);
+
+        // Read it back with CMD18 and stop after one block.
+        assert_eq!(sd_cmd(&mut sd, 18, 5), 0);
+        while sd.exchange(0xFF) != 0xFE {}
+        let data: Vec<u8> = (0..512).map(|_| sd.exchange(0xFF)).collect();
+        assert_eq!(data[300], 300u32 as u8);
+        let crc = (sd.exchange(0xFF) as u16) << 8 | sd.exchange(0xFF) as u16;
+        assert_eq!(crc, crc16(&data));
+        assert_eq!(sd_cmd(&mut sd, 12, 0), 0);
+        while sd.exchange(0xFF) != 0xFF {}
+        assert_eq!(sd_cmd(&mut sd, 13, 0), 0);
+
+        // Out of range.
+        sd.exchange(0xFF);
+        assert_eq!(sd_cmd(&mut sd, 17, 70_000), 0x40);
+        let img = sd.image();
+        assert_eq!(img.len(), 32 << 20);
+        assert_eq!(img[5 * 512 + 2], 2);
+        let mut other = SdCard::new(8);
+        other.load_image(&img);
+        assert_eq!(other.blocks, 65536);
+        assert_eq!(other.read_block(5)[2], 2);
     }
 }

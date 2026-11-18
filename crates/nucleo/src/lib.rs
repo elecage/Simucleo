@@ -91,6 +91,17 @@ impl ExternalCircuit for CircuitLink {
             }
         }
     }
+
+    fn spi(
+        &mut self,
+        time: Cycles,
+        sck: (u8, u8),
+        mosi: (u8, u8),
+        miso: Option<(u8, u8)>,
+        out: u8,
+    ) -> u8 {
+        self.0.borrow_mut().spi(time, sck, mosi, miso, out)
+    }
 }
 
 pub struct Nucleo {
@@ -241,6 +252,16 @@ impl Nucleo {
                 .borrow_mut()
                 .set_clock(s.cycle, s.ns / 1e9, s.hz as f64);
         }
+    }
+
+    /// The SD card of part `id` as a disk image.
+    pub fn sd_image(&self, id: &str) -> Option<Vec<u8>> {
+        self.circuit.borrow().sd_image(id)
+    }
+
+    /// Insert a disk image into the SD card of part `id`.
+    pub fn sd_load(&mut self, id: &str, image: &[u8]) -> bool {
+        self.circuit.borrow_mut().sd_load(id, image)
     }
 
     /// The real date and time (Unix seconds) that clock chips placed from

@@ -20,7 +20,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
-use crate::devices::{Aht20, Device, Ds3231, Ssd1306};
+use crate::devices::{Aht20, Device, Ds3231, SdCard, Ssd1306};
 
 use crate::netlist::{build_netlist, BusCatalog, Circuit, PartCatalog, PartInstance, PinRef, Wire};
 
@@ -285,12 +285,29 @@ pub struct CircuitSim {
     bus_parts: Vec<BusPart>,
     /// Their state (display RAM, clock, …), by part id.
     devices: HashMap<String, Device>,
+    spi_parts: Vec<SpiPart>,
     /// The device addressed on each I2C bus (by SCL pin).
     i2c_active: HashMap<(u8, u8), String>,
     /// Time base: (cycle, seconds at that cycle, Hz).
     clock: (Cycles, f64, f64),
     /// Unix time a newly placed clock chip starts from.
     wall_clock: f64,
+}
+
+/// A part on an SPI bus.
+#[derive(Debug, Clone)]
+struct SpiPart {
+    id: String,
+    vcc: usize,
+    gnd: usize,
+    sck: usize,
+    mosi: usize,
+    miso: Option<usize>,
+    cs: usize,
+    /// Display data/command select and reset (SSD1306).
+    dc: Option<usize>,
+    res: Option<usize>,
+    vmin: f64,
 }
 
 /// A part on an I2C bus.
@@ -354,6 +371,7 @@ impl CircuitSim {
             board_id: String::new(),
             pin_nodes: HashMap::new(),
             bus_parts: Vec::new(),
+            spi_parts: Vec::new(),
             devices: HashMap::new(),
             i2c_active: HashMap::new(),
             clock: (time, 0.0, 16e6),
@@ -373,6 +391,7 @@ impl CircuitSim {
                 Device::Rtc(r) => r.epoch_at_zero += elapsed,
                 Device::Oled(o) => **o = Ssd1306::new(o.address),
                 Device::Aht(a) => *a = Aht20::new(a.temp, a.humidity),
+                Device::Sd(sd) => sd.power_cycle(),
             }
         }
         self.i2c_active.clear();
@@ -545,6 +564,7 @@ impl CircuitSim {
         let mut visuals = Vec::new();
         let mut bad_values: Vec<String> = Vec::new();
         let mut bus_parts = Vec::new();
+        let mut spi_parts = Vec::new();
         let now_s = self.seconds_at(self.last_time);
         let mut map = std::mem::take(&mut self.pin_nodes);
         let mut add_visual = |id: &str, kind: VisualKind, channels: usize| {
@@ -772,6 +792,48 @@ impl CircuitSim {
                         });
                     }
                 }
+                "oled-ssd1306-spi" | "sd-card" => {
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let oled = p.kind == "oled-ssd1306-spi";
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    let (sck, mosi) = if oled { ("D0", "D1") } else { ("SCK", "MOSI") };
+                    // SD modules regulate 5 V down and need at least 3 V.
+                    let vmin = if oled { MODULE_VMIN } else { 3.0 };
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: vmin,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    spi_parts.push(SpiPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        sck: node(pin(sck), &mut map),
+                        mosi: node(pin(mosi), &mut map),
+                        miso: (!oled).then(|| node(pin("MISO"), &mut map)),
+                        cs: node(pin("CS"), &mut map),
+                        dc: oled.then(|| node(pin("DC"), &mut map)),
+                        res: oled.then(|| node(pin("RES"), &mut map)),
+                        vmin,
+                    });
+                    let size = prop_f64(p, "size", 32.0).clamp(1.0, 2048.0) as u32;
+                    let keep = match self.devices.get(&p.id) {
+                        Some(Device::Oled(_)) => oled,
+                        Some(Device::Sd(sd)) => !oled && sd.nominal_mb == size,
+                        _ => false,
+                    };
+                    if !keep {
+                        let fresh = if oled {
+                            Device::Oled(Box::new(Ssd1306::new(0x3C)))
+                        } else {
+                            Device::Sd(Box::new(SdCard::new(size)))
+                        };
+                        self.devices.insert(p.id.clone(), fresh);
+                    }
+                }
                 "oled-ssd1306" | "rtc-ds3231" | "aht20" => {
                     // Breakout module: the chip plus 4.7 kΩ pull-ups from
                     // its VCC to SCL and SDA.
@@ -871,9 +933,14 @@ impl CircuitSim {
         self.value_warnings = bad_values;
         self.pin_nodes = map;
         // Parts that were removed take their state with them.
-        let ids: BTreeSet<&str> = bus_parts.iter().map(|b: &BusPart| b.id.as_str()).collect();
+        let ids: BTreeSet<&str> = bus_parts
+            .iter()
+            .map(|b: &BusPart| b.id.as_str())
+            .chain(spi_parts.iter().map(|b: &SpiPart| b.id.as_str()))
+            .collect();
         self.devices.retain(|id, _| ids.contains(id.as_str()));
         self.bus_parts = bus_parts;
+        self.spi_parts = spi_parts;
         self.i2c_active.clear();
         self.nodes = nodes;
         self.elements = elements;
@@ -1202,6 +1269,14 @@ impl CircuitSim {
                 }
             }
         }
+        // A display held in reset forgets everything.
+        for part in &self.spi_parts {
+            if let (Some(res), Some(Device::Oled(o))) = (part.res, self.devices.get_mut(&part.id)) {
+                if sol.v[res] < 0.3 * VDD {
+                    **o = Ssd1306::new(o.address);
+                }
+            }
+        }
         self.drives = Some(drives.to_vec());
         let changed = old.is_none_or(|o| o.inputs != sol.inputs);
         changed.then(|| sol.inputs.clone())
@@ -1294,6 +1369,16 @@ impl CircuitSim {
                             v.text = Some(r.display(t));
                         }
                         Some(Device::Aht(a)) if !powered_now => *a = Aht20::new(a.temp, a.humidity),
+                        Some(Device::Sd(sd)) => {
+                            if !powered_now {
+                                sd.power_cycle();
+                            }
+                            // The activity LED.
+                            let busy = sd.reads + sd.writes > 0;
+                            v.on = Some(if busy { 1.0 } else { 0.0 });
+                            sd.reads = 0;
+                            sd.writes = 0;
+                        }
                         _ => {}
                     }
                 }
@@ -1380,7 +1465,9 @@ impl CircuitSim {
             return false;
         };
         if let Some(d) = self.devices.get_mut(&id) {
-            d.i2c().start(read, now);
+            if let Some(i) = d.i2c() {
+                i.start(read, now);
+            }
         }
         self.i2c_active.insert(scl, id);
         true
@@ -1395,22 +1482,110 @@ impl CircuitSim {
     pub fn i2c_write(&mut self, time: Cycles, scl: (u8, u8), byte: u8) -> bool {
         let now = self.seconds_at(time);
         self.i2c_device(scl)
-            .is_some_and(|d| d.i2c().write(byte, now))
+            .and_then(|d| d.i2c())
+            .is_some_and(|d| d.write(byte, now))
     }
 
     /// A byte from the addressed device (0xFF: nobody drives SDA).
     pub fn i2c_read(&mut self, time: Cycles, scl: (u8, u8)) -> u8 {
         let now = self.seconds_at(time);
-        self.i2c_device(scl).map_or(0xFF, |d| d.i2c().read(now))
+        self.i2c_device(scl)
+            .and_then(|d| d.i2c())
+            .map_or(0xFF, |d| d.read(now))
     }
 
     /// STOP: the transfer ends.
     pub fn i2c_stop(&mut self, time: Cycles, scl: (u8, u8)) {
         let now = self.seconds_at(time);
-        if let Some(d) = self.i2c_device(scl) {
-            d.i2c().stop(now);
+        if let Some(d) = self.i2c_device(scl).and_then(|d| d.i2c()) {
+            d.stop(now);
         }
         self.i2c_active.remove(&scl);
+    }
+
+    /// One byte on the SPI bus whose SCK and MOSI are the MCU pins `sck` and
+    /// `mosi`: every powered device selected by a low CS takes it; the
+    /// byte the one on `miso` returns comes back (0xFF: nobody drives it).
+    pub fn spi(
+        &mut self,
+        _time: Cycles,
+        sck: (u8, u8),
+        mosi: (u8, u8),
+        miso: Option<(u8, u8)>,
+        out: u8,
+    ) -> u8 {
+        let (Some(kn), Some(mn)) = (self.mcu_node(sck), self.mcu_node(mosi)) else {
+            return 0xFF;
+        };
+        let miso_n = miso.and_then(|p| self.mcu_node(p));
+        let name = |(port, pin): (u8, u8)| format!("P{}{}", (b'A' + port) as char, pin);
+        let mut reply = 0xFF;
+        let mut drivers = Vec::new();
+        for i in 0..self.spi_parts.len() {
+            let part = self.spi_parts[i].clone();
+            if part.sck == mn && part.mosi == kn {
+                self.warnings.insert(format!(
+                    "SPI: SCK and MOSI are swapped on {} ({} / {})",
+                    part.id,
+                    name(sck),
+                    name(mosi)
+                ));
+            }
+            if part.sck != kn || part.mosi != mn {
+                continue;
+            }
+            let v = |n: usize| self.node_voltage(n);
+            if v(part.vcc) - v(part.gnd) < part.vmin || v(part.cs) >= 0.3 * VDD {
+                continue;
+            }
+            let dc_high = part.dc.is_some_and(|n| v(n) >= 0.5 * VDD);
+            match self.devices.get_mut(&part.id) {
+                Some(Device::Oled(o)) => {
+                    if dc_high {
+                        o.data(out);
+                    } else {
+                        o.command(out);
+                    }
+                }
+                Some(Device::Sd(sd)) => {
+                    let r = sd.exchange(out);
+                    match (part.miso, miso_n) {
+                        (Some(a), Some(b)) if a == b => {
+                            reply &= r;
+                            drivers.push(part.id.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        if drivers.len() > 1 {
+            self.warnings.insert(format!(
+                "SPI: {} are selected at once and both drive MISO",
+                drivers.join(" and ")
+            ));
+        }
+        reply
+    }
+
+    /// The SD card in part `id` as a disk image.
+    pub fn sd_image(&self, id: &str) -> Option<Vec<u8>> {
+        match self.devices.get(id) {
+            Some(Device::Sd(sd)) => Some(sd.image()),
+            _ => None,
+        }
+    }
+
+    /// Put a disk image into the SD card of part `id`.
+    pub fn sd_load(&mut self, id: &str, image: &[u8]) -> bool {
+        match self.devices.get_mut(id) {
+            Some(Device::Sd(sd)) => {
+                sd.load_image(image);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Voltage on an MCU pin (port 0 = A) from the present operating point,

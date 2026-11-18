@@ -717,3 +717,107 @@ fn i2c_clock_reads_rtc_and_sensor_and_draws_on_the_oled() {
     assert!(text.contains("seconds set to 00"), "{text}");
     assert!(text.contains("09:00:00"), "{text}");
 }
+
+// --------------------------------------------------------- SPI (M6)
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-spi-sd-logger"]
+fn spi_sd_logger_formats_the_card_and_appends_csv_lines() {
+    use simucleo_nucleo::{BusCatalog, Circuit};
+    use std::collections::HashMap;
+    let w = |a: (&str, &str), b: (&str, &str)| serde_json::json!({"a": {"part": a.0, "pin": a.1}, "b": {"part": b.0, "pin": b.1}});
+    let n = "nucleo";
+    let mut wires = vec![
+        // SD card module (5 V, regulated on board)
+        w((n, "5V"), ("sd", "VCC")),
+        w(("sd", "GND"), (n, "GND")),
+        w((n, "D13"), ("sd", "SCK")),
+        w((n, "D12"), ("sd", "MISO")),
+        w((n, "D11"), ("sd", "MOSI")),
+        w((n, "D10"), ("sd", "CS")),
+        // SPI OLED
+        w((n, "3V3"), ("oled", "VCC")),
+        w(("oled", "GND"), (n, "GND")),
+        w((n, "D13"), ("oled", "D0")),
+        w((n, "D11"), ("oled", "D1")),
+        w((n, "D9"), ("oled", "CS")),
+        w((n, "D8"), ("oled", "DC")),
+        w((n, "D7"), ("oled", "RES")),
+    ];
+    for id in ["rtc", "aht"] {
+        wires.push(w((n, "3V3"), (id, "VCC")));
+        wires.push(w((id, "GND"), (n, "GND")));
+        wires.push(w((n, "D15"), (id, "SCL")));
+        wires.push(w((n, "D14"), (id, "SDA")));
+    }
+    let circuit: Circuit = serde_json::from_value(serde_json::json!({
+        "parts": [
+            {"id": "nucleo", "kind": "nucleo-f401re"},
+            {"id": "sd", "kind": "sd-card", "props": {"size": 32}},
+            {"id": "oled", "kind": "oled-ssd1306-spi"},
+            {"id": "rtc", "kind": "rtc-ds3231"},
+            {"id": "aht", "kind": "aht20", "props": {"temp": 19.0, "humidity": 55}}
+        ],
+        "wires": wires
+    }))
+    .unwrap();
+    let signals: HashMap<String, String> = [
+        ("D15", "PB8"),
+        ("D14", "PB9"),
+        ("D13", "PA5"),
+        ("D12", "PA6"),
+        ("D11", "PA7"),
+        ("D10", "PB6"),
+        ("D9", "PC7"),
+        ("D8", "PA9"),
+        ("D7", "PA8"),
+    ]
+    .into_iter()
+    .map(|(a, b)| (a.to_string(), b.to_string()))
+    .collect();
+
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-spi-sd-logger", "hal-spi-sd-logger"))
+        .unwrap();
+    // 2026-03-01 12:00:00 UTC
+    board.set_wall_clock(1_772_366_400.0);
+    board.set_circuit(&circuit, &BusCatalog::default(), &signals);
+    board.run_for_ns(3500e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("blank card: formatting... done"), "{text}");
+    assert!(text.contains("SD card: FAT16"), "{text}");
+    assert!(text.contains("2026-03-01 12:00:02,19.0,55.0"), "{text}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+    let v = board.circuit_frame(3.5);
+    assert!(v.iter().find(|p| p.id == "oled").unwrap().screen.is_some());
+
+    // The log reads back, on the board and in the card image.
+    board.set_user_button(true);
+    board.run_for_ns(100e6);
+    board.set_user_button(false);
+    board.run_for_ns(200e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("  time,temp_c,humidity_pct"), "{text}");
+    let image = board.sd_image("sd").unwrap();
+    assert_eq!(image.len(), 32 << 20);
+    let hay = String::from_utf8_lossy(&image);
+    assert!(hay.contains("LOG     CSV"), "directory entry");
+    assert!(hay.contains("time,temp_c,humidity_pct\n2026-03-01 12:00:0"));
+
+    // Power-cycle the board with the same card: the file is appended to.
+    board
+        .load_elf(&hal_firmware("hal-spi-sd-logger", "hal-spi-sd-logger"))
+        .unwrap();
+    board.set_circuit(&circuit, &BusCatalog::default(), &signals);
+    board.run_for_ns(1500e6);
+    let text = console_text(&mut board);
+    assert!(!text.contains("formatting"), "{text}");
+    assert!(text.contains("logging to LOG.CSV ("), "{text}");
+    assert!(!text.contains("logging to LOG.CSV (0 bytes)"), "{text}");
+}

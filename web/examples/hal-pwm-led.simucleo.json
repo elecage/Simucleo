@@ -1,0 +1,123 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "PWM 밝기와 RGB LED",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "bb1",
+      "kind": "breadboard-half",
+      "x": 42,
+      "y": 4,
+      "props": {}
+    },
+    {
+      "id": "rgb1",
+      "kind": "rgb-led",
+      "x": 46,
+      "y": 12,
+      "props": {
+        "common": "cathode"
+      }
+    },
+    {
+      "id": "rR",
+      "kind": "resistor",
+      "x": 46,
+      "y": 19,
+      "props": {
+        "ohms": "220"
+      }
+    },
+    {
+      "id": "rG",
+      "kind": "resistor",
+      "x": 48,
+      "y": 18,
+      "props": {
+        "ohms": "220"
+      }
+    },
+    {
+      "id": "rB",
+      "kind": "resistor",
+      "x": 49,
+      "y": 17,
+      "props": {
+        "ohms": "220"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "D3"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "g7"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "D5"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "g9"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D6"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "g10"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "bb1",
+        "pin": "g4"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "bn4"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_P2"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "bn2"
+      },
+      "color": "#212121"
+    }
+  ],
+  "firmware": {
+    "name": "hal-pwm-led",
+    "example": "hal-pwm-led.elf"
+  }
+}

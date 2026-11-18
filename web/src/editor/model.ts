@@ -28,7 +28,7 @@ export interface Project {
 
 /** The circuit as the Rust core sees it (`simucleo_circuit::netlist::Circuit`). */
 export interface CircuitJson {
-  parts: { id: string; kind: string }[];
+  parts: { id: string; kind: string; props?: Record<string, string | number> }[];
   wires: { a: PinRef; b: PinRef }[];
 }
 
@@ -66,7 +66,7 @@ export function toCircuit(project: Project): CircuitJson {
       if (pins[i].part !== pins[0].part) wires.push({ a: pins[0], b: pins[i] });
     }
   }
-  return { parts: project.parts.map(({ id, kind }) => ({ id, kind })), wires };
+  return { parts: project.parts.map(({ id, kind, props }) => ({ id, kind, props })), wires };
 }
 
 let counter = 0;

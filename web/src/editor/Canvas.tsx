@@ -15,6 +15,8 @@ interface Props {
   visuals?: Record<string, VisualState>;
   /** A pressable element (`data-action`) on a part went down or up. */
   onPartAction?: (partId: string, action: string, down: boolean) => void;
+  /** Changes when a different project is loaded: zoom to fit it. */
+  fitKey?: number;
 }
 
 type Drag =
@@ -23,7 +25,7 @@ type Drag =
 
 const LAYER: Record<string, number> = { board: 0, basic: 1 };
 
-export function Canvas({ project, netOf, selected, onSelect, onMovePart, onAddWire, visuals, onPartAction }: Props) {
+export function Canvas({ project, netOf, selected, onSelect, onMovePart, onAddWire, visuals, onPartAction, fitKey }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: 1.6 });
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -46,6 +48,33 @@ export function Canvas({ project, netOf, selected, onSelect, onMovePart, onAddWi
       window.removeEventListener("pointercancel", up);
     };
   }, [pressed, onPartAction]);
+
+  /** Zoom and pan so every part is visible. */
+  const fit = () => {
+    const el = svgRef.current;
+    if (!el || project.parts.length === 0) return;
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const p of project.parts) {
+      const def = PART_BY_KIND[p.kind];
+      if (!def) continue;
+      x0 = Math.min(x0, p.x - 1);
+      y0 = Math.min(y0, p.y - 2);
+      x1 = Math.max(x1, p.x + def.w + 1);
+      y1 = Math.max(y1, p.y + def.h + 1);
+    }
+    const [w, h] = [(x1 - x0) * PITCH, (y1 - y0) * PITCH];
+    const scale = Math.min(6, Math.max(0.4, Math.min(el.clientWidth / w, el.clientHeight / h)));
+    setView({
+      scale,
+      x: x0 * PITCH - (el.clientWidth / scale - w) / 2,
+      y: y0 * PITCH - (el.clientHeight / scale - h) / 2,
+    });
+  };
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
+  useEffect(() => {
+    if (fitKey) fitRef.current();
+  }, [fitKey]);
 
   const partById = new Map(project.parts.map((p) => [p.id, p]));
   const highlighted = hover ? netOf(hover.pin) : new Set<string>();
@@ -171,7 +200,7 @@ export function Canvas({ project, netOf, selected, onSelect, onMovePart, onAddWi
               >
                 {def.render({ ...def.props, ...part.props }, {
                   ...(visuals?.[part.id] ?? {}),
-                  pressed: pressed?.part === part.id && pressed.action === "b1",
+                  pressed: pressed?.part === part.id && pressed.action !== "reset",
                 })}
               </g>
             </g>
@@ -226,6 +255,9 @@ export function Canvas({ project, netOf, selected, onSelect, onMovePart, onAddWi
         )}
       </svg>
       {hover && <div className="tooltip">{hover.label}</div>}
+      <button className="fit-btn" onClick={fit} title="모든 부품이 보이게 맞춤">
+        ⤢ 맞춤
+      </button>
     </div>
   );
 }

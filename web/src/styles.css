@@ -28,7 +28,7 @@ button:disabled { opacity: 0.5; cursor: default; }
   display: grid; height: 100vh;
   grid-template: "bar bar bar" auto "lib main insp" 1fr "bottom bottom bottom" 230px / 180px 1fr 260px;
 }
-.toolbar { grid-area: bar; display: flex; gap: 10px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--border); }
+.toolbar { grid-area: bar; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--border); }
 .status { color: var(--muted); font-size: 13px; }
 .library, .inspector { background: var(--panel); padding: 8px 12px; overflow: auto; font-size: 13px; }
 .library { grid-area: lib; border-right: 1px solid var(--border); }
@@ -107,10 +107,14 @@ main { position: relative; }
   position: absolute; left: 12px; right: 12px; padding: 8px 12px; border-radius: 8px; font-size: 13px; white-space: pre-wrap;
 }
 .diagnosis { top: 12px; background: #fde8e8; color: #8a1c1c; border: 1px solid #f3b4b4; }
-.warning { bottom: 12px; background: #fff6db; color: #6b5200; border: 1px solid #f0d98a; }
+.warnings { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 4px; pointer-events: none; }
+.warnings .warning { position: static; pointer-events: auto; }
+.warning { background: #fff6db; color: #6b5200; border: 1px solid #f0d98a; }
+.warning.circuit { background: #fdecec; color: #8a1c1c; border-color: #f3b4b4; }
 @media (prefers-color-scheme: dark) {
   .diagnosis { background: #3b1515; color: #ffb4b4; border-color: #7a2a2a; }
   .warning { background: #3a3011; color: #f5dc8a; border-color: #6e5a1c; }
+  .warning.circuit { background: #3b1515; color: #ffb4b4; border-color: #7a2a2a; }
 }
 .bottom { grid-area: bottom; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--border); min-height: 0; }
 .tabs { display: flex; gap: 2px; padding: 4px 8px 0; }
@@ -130,3 +134,26 @@ main { position: relative; }
 .board-button { cursor: pointer; }
 .smd-led-glow { fill: #4cff4c; }
 .smd-led-halo { fill: #4cff4c; pointer-events: none; }
+
+/* Circuit parts (M3) */
+.overcurrent { fill: none; stroke: #ef4444; stroke-width: 1.6; stroke-dasharray: 3 2; animation: blink 0.5s steps(2) infinite; pointer-events: none; }
+@keyframes blink { 50% { opacity: 0.2; } }
+.buzzer-body { fill: #1f1f1f; stroke: #555; }
+.buzzer-hole { fill: #555; }
+.sound-waves path { fill: none; stroke: #f59e0b; stroke-width: 1.2; stroke-linecap: round; animation: waves 0.4s ease-in-out infinite alternate; }
+@keyframes waves { from { opacity: 0.3; } to { opacity: 1; } }
+.sound-toggle { font-size: 13px; display: flex; gap: 4px; align-items: center; cursor: pointer; }
+.prop select { font: inherit; padding: 3px; border-radius: 4px; border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+.waveform { display: flex; flex-direction: column; gap: 6px; }
+.wave-controls { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.wave-controls select { font: inherit; padding: 2px; }
+.wave-row { display: grid; grid-template-columns: 130px 1fr; align-items: center; border-bottom: 1px solid var(--border); }
+.wave-label button { margin-left: 6px; padding: 0 6px; }
+.wave-svg { width: 100%; height: 34px; }
+.wave-svg polyline { fill: none; stroke: #16a34a; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.project-menu { display: flex; gap: 4px; align-items: center; }
+.project-menu .check { font-size: 12px; display: flex; align-items: center; gap: 2px; }
+.project-name { width: 130px; font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--text); }
+.notice { position: absolute; top: 12px; left: 12px; right: 90px; padding: 8px 12px; border-radius: 8px; font-size: 13px; white-space: pre-wrap; background: #e8f1fd; color: #1c3d8a; border: 1px solid #b4cbf3; }
+@media (prefers-color-scheme: dark) { .notice { background: #15233b; color: #b4cbff; border-color: #2a3f7a; } }
+.fit-btn { position: absolute; right: 8px; top: 8px; font-size: 12px; padding: 3px 8px; opacity: 0.85; }

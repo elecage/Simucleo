@@ -143,6 +143,11 @@ pub struct Stm32f401Bus {
     pub gpio: [Gpio; 8],
     /// Pin level changes, oldest first. The owner drains it.
     pub pin_events: Vec<PinEvent>,
+    /// Pin *level* changes (as IDR sees them, inputs included) of the pins
+    /// in `probe_mask` (bit n of entry p = pin n of port p), for probes.
+    /// The owner drains it.
+    pub level_events: Vec<PinEvent>,
+    pub probe_mask: [u16; 8],
     pub rcc: Rcc,
     pub pwr: Pwr,
     pub flash_if: FlashIf,
@@ -187,6 +192,8 @@ impl Stm32f401Bus {
             sram: Memory::new(map::SRAM_BASE, map::SRAM_SIZE, true),
             gpio: std::array::from_fn(|i| Gpio::new(i as u8)),
             pin_events: Vec::new(),
+            level_events: Vec::new(),
+            probe_mask: [0; 8],
             rcc,
             pwr: Pwr::default(),
             flash_if: FlashIf::default(),
@@ -275,7 +282,7 @@ impl Stm32f401Bus {
                     });
                 }
             }
-            self.refresh_port(port);
+            self.refresh_port(port, time);
         }
         self.circuit_update(time);
     }
@@ -293,12 +300,23 @@ impl Stm32f401Bus {
     }
 
     /// Re-read the levels of a port's pins and report edges to EXTI.
-    fn refresh_port(&mut self, port: usize) {
+    fn refresh_port(&mut self, port: usize, time: Cycles) {
         let new = self.gpio[port].levels();
         let changed = new ^ self.levels[port];
         self.levels[port] = new;
         if changed == 0 {
             return;
+        }
+        let probed = changed & self.probe_mask[port];
+        if probed != 0 {
+            for pin in (0..16u8).filter(|p| probed & (1 << p) != 0) {
+                self.level_events.push(PinEvent {
+                    time,
+                    port: port as u8,
+                    pin,
+                    level: Some(new & (1 << pin) != 0),
+                });
+            }
         }
         for line in (0..16u8).filter(|l| changed & (1 << l) != 0) {
             if self.exti_source(line) == port {
@@ -347,7 +365,7 @@ impl Stm32f401Bus {
         if let Some(levels) = levels {
             let pins = self.circuit_pins.clone();
             for (&(port, pin), level) in pins.iter().zip(levels) {
-                self.set_external(port as usize, pin, level);
+                self.set_external_at(port as usize, pin, level, time);
             }
         }
     }
@@ -355,6 +373,10 @@ impl Stm32f401Bus {
     /// Drive a pin from outside the chip (`Some(level)`), or release it
     /// (`None`: it floats and follows its pull resistor).
     pub fn set_external(&mut self, port: usize, pin: u8, level: Option<bool>) {
+        self.set_external_at(port, pin, level, self.now);
+    }
+
+    fn set_external_at(&mut self, port: usize, pin: u8, level: Option<bool>, time: Cycles) {
         let g = &mut self.gpio[port];
         let bit = 1u16 << pin;
         match level {
@@ -368,7 +390,7 @@ impl Stm32f401Bus {
             }
             None => g.external_driven &= !bit,
         }
-        self.refresh_port(port);
+        self.refresh_port(port, time);
     }
 
     /// System reset: peripherals return to their reset state; memories,
@@ -511,7 +533,7 @@ impl Stm32f401Bus {
                         });
                     }
                 }
-                self.refresh_port(port);
+                self.refresh_port(port, self.now);
                 self.circuit_update(self.now);
             } else if let Some(i) = USARTS.iter().position(|u| u.0 == name) {
                 self.usart[i].reset(); // also drops its scheduled events
@@ -673,7 +695,7 @@ impl Stm32f401Bus {
             if matches!(off, 0x00 | 0x20 | 0x24) {
                 self.apply_af(self.now);
             }
-            self.refresh_port(port);
+            self.refresh_port(port, self.now);
             self.circuit_update(self.now);
             return;
         }

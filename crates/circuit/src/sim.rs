@@ -159,6 +159,9 @@ struct VisualSlot {
     acc: Vec<f64>,
     overcurrent: bool,
     rises: u32,
+    /// Times of the first and last rising edge this frame (passive buzzer).
+    first_rise: Cycles,
+    last_rise: Cycles,
 }
 
 /// The DC operating point for one combination of pin drives.
@@ -421,6 +424,8 @@ impl CircuitSim {
                 acc: vec![0.0; channels],
                 overcurrent: false,
                 rises: 0,
+                first_rise: 0,
+                last_rise: 0,
             });
             visuals.len() - 1
         };
@@ -615,8 +620,9 @@ impl CircuitSim {
                     channel,
                 } if on[i] => {
                     let cur = ((v[a] - v[k] - vf) / R_LED).max(0.0);
-                    // Perceived brightness: ~full at 10 mA.
-                    level[visual][channel] = (cur / 0.010).sqrt().min(1.0);
+                    // Perceived brightness: a 5 mm LED looks fully lit from
+                    // about 2 mA; below that, roughly with √I.
+                    level[visual][channel] = (cur / 0.002).sqrt().min(1.0);
                     if cur > imax {
                         over[visual] = true;
                         warnings.push(format!(
@@ -821,6 +827,10 @@ impl CircuitSim {
                 .as_ref()
                 .is_some_and(|o| o.level[i].first() > Some(&0.5));
             if slot.kind == VisualKind::BuzzerPassive && !was && sol.level[i].first() > Some(&0.5) {
+                if slot.rises == 0 {
+                    slot.first_rise = time;
+                }
+                slot.last_rise = time;
                 slot.rises += 1;
             }
         }
@@ -860,8 +870,10 @@ impl CircuitSim {
                 VisualKind::BuzzerActive => v.on = avg.first().copied(),
                 VisualKind::BuzzerPassive => {
                     v.on = avg.first().copied();
-                    if seconds > 0.0 && slot.rises > 1 {
-                        v.freq = Some(slot.rises as f64 / seconds);
+                    // Periods between the first and last rising edge.
+                    let between = slot.last_rise.saturating_sub(slot.first_rise) as f64;
+                    if seconds > 0.0 && span > 0.0 && slot.rises > 1 && between > 0.0 {
+                        v.freq = Some((slot.rises - 1) as f64 / (between * seconds / span));
                     }
                 }
                 VisualKind::Switch => v.pressed = self.pressed.contains(&slot.id),
@@ -1011,8 +1023,8 @@ mod tests {
         }
         let v = s.end_frame(1000, 1e-3);
         let b = visual(&v, "led1").brightness[0];
-        // (3.3 − 1.9) / (40 + 220 + 15) = 5.1 mA → sqrt(0.51) ≈ 0.71, × 25 %.
-        assert!((b - 0.25 * 0.714).abs() < 0.02, "{b}");
+        // (3.3 − 1.9) / (40 + 220 + 15) = 5.1 mA: fully lit, × 25 %.
+        assert!((b - 0.25).abs() < 0.01, "{b}");
         assert!(!visual(&v, "led1").overcurrent);
         assert!(s.warnings.is_empty(), "{:?}", s.warnings);
         assert_eq!(visual(&v, "LD2").brightness, vec![0.0]);

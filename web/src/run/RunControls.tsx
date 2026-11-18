@@ -5,6 +5,8 @@ export interface Example {
   name: string;
   file: string;
   description: string;
+  /** A project file with the wiring this firmware expects. */
+  project?: string;
 }
 
 const SPEEDS: [string, number][] = [
@@ -28,7 +30,16 @@ export function useExamples(): Example[] {
   return examples;
 }
 
-export function RunControls({ runner, examples }: { runner: Runner; examples: Example[] }) {
+export function RunControls({
+  runner,
+  examples,
+  onExampleProject,
+}: {
+  runner: Runner;
+  examples: Example[];
+  /** Load the wiring that comes with an example. */
+  onExampleProject?: (ex: Example) => void;
+}) {
   const [speedLabel, setSpeedLabel] = useState("×1 실시간");
   const f = runner.frame;
   const loaded = runner.firmware !== null;
@@ -36,8 +47,12 @@ export function RunControls({ runner, examples }: { runner: Runner; examples: Ex
   const loadExample = async (file: string) => {
     const ex = examples.find((e) => e.file === file);
     if (!ex) return;
+    if (ex.project && onExampleProject) {
+      onExampleProject(ex); // loads the wiring and the firmware
+      return;
+    }
     const bytes = await (await fetch(`./examples/${ex.file}`)).arrayBuffer();
-    runner.load(ex.name, bytes);
+    runner.load(ex.name, bytes, ex.file);
   };
 
   return (
@@ -67,6 +82,7 @@ export function RunControls({ runner, examples }: { runner: Runner; examples: Ex
           {examples.map((ex) => (
             <option key={ex.file} value={ex.file} title={ex.description}>
               {ex.name}
+              {ex.project ? " (배선 포함)" : ""}
             </option>
           ))}
         </select>

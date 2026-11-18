@@ -410,7 +410,7 @@ fn wired_switch_and_led_through_the_circuit_model() {
         board.run_for_ns(20e6);
         let v = board.circuit_frame(0.04);
         let led = v.iter().find(|p| p.id == "led1").unwrap();
-        // (3.3 − 1.9) / (40 + 330 + 15) ≈ 3.6 mA → brightness ≈ 0.6
+        // (3.3 − 1.9) / (40 + 330 + 15) ≈ 3.6 mA: fully lit
         assert_eq!(led.brightness[0] > 0.5, lit, "press {i}: {led:?}");
         assert!(console_text(&mut board).contains(&format!("D2 pressed ({i})")));
     }

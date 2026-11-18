@@ -28,13 +28,26 @@ export interface PartDef {
   /** Pins that are always connected inside the part (breadboard rows, GND pins, …). */
   buses?: string[][];
   props?: Record<string, string | number>;
+  /** Choices offered in the inspector for a property (else free text). */
+  propOptions?: Record<string, string[]>;
+  /** Shown in the part library and inspector. */
+  description?: string;
   /** Renders the body. Pin markers are drawn by the editor. */
   render: (props: Record<string, string | number>, visual: VisualState) => JSX.Element;
 }
 
 /** Per-part state sampled from the simulator at ~60 Hz. */
 export interface VisualState {
+  /** LED brightness, 0–1 (first channel). */
   brightness?: number;
+  /** Brightness per colour channel (RGB LED: R, G, B). */
+  channels?: number[];
+  /** Current above the LED's maximum this frame. */
+  overcurrent?: boolean;
+  /** Fraction of the frame a buzzer was powered. */
+  on?: number;
+  /** Passive buzzer tone in Hz. */
+  freq?: number;
   angle?: number;
   pressed?: boolean;
   burnt?: boolean;

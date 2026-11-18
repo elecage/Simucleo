@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas } from "./editor/Canvas";
 import { defaultProject, newId, pinKey, toCircuit, type PinRef, type Project } from "./editor/model";
 import { PARTS, PART_BY_KIND } from "./parts";
 import { nucleoSignal } from "./parts/nucleo";
 import { BottomPanel } from "./run/BottomPanel";
-import { RunControls, useExamples } from "./run/RunControls";
+import { RunControls, useExamples, type Example } from "./run/RunControls";
+import { ProjectMenu } from "./run/ProjectMenu";
+import { fromBase64, idbGet, idbSet, parse, serialize, toBase64, type Loaded } from "./editor/project";
 import { createSimulator, type Netlist, type SimHandle } from "./sim/simulator";
 import { useRunner } from "./sim/useRunner";
+import { unlockAudio, useBuzzerAudio } from "./sim/audio";
 import type { VisualState } from "./parts/types";
 
 const WIRE_COLORS = ["#e53935", "#1e88e5", "#43a047", "#fdd835", "#fb8c00", "#8e24aa", "#212121"];
@@ -23,21 +26,120 @@ export function App() {
   const [wireColor, setWireColor] = useState(WIRE_COLORS[0]);
   const runner = useRunner();
   const examples = useExamples();
+  const [projectName, setProjectName] = useState("새 프로젝트");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [fitKey, setFitKey] = useState(0);
 
-  // Board state from the running firmware: LD2 is PA5 (lit when high).
+  // ------------------------------------------------ project files
+  const { load } = runner;
+  const applyLoaded = useCallback(
+    async (l: Loaded) => {
+      setProject(l.project);
+      setFitKey((k) => k + 1);
+      setSelected(null);
+      setProjectName(l.name ?? "프로젝트");
+      setNotice(l.notes.length ? l.notes.join("\n") : null);
+      const fw = l.firmware;
+      if (fw?.data) {
+        load(fw.name, fromBase64(fw.data).buffer as ArrayBuffer, fw.example);
+      } else if (fw?.example) {
+        const r = await fetch(`./examples/${fw.example}`);
+        if (r.ok) load(fw.name, await r.arrayBuffer(), fw.example);
+        else setNotice(`예제 펌웨어 ${fw.example}을 찾지 못했습니다.`);
+      }
+    },
+    [load],
+  );
+  const openText = useCallback(
+    (text: string) => {
+      try {
+        void applyLoaded(parse(text));
+      } catch (e) {
+        setNotice(`프로젝트를 열지 못했습니다: ${(e as Error).message}`);
+      }
+    },
+    [applyLoaded],
+  );
+  const dirty = project.wires.length > 0 || project.parts.length > defaultProject().parts.length;
+  const confirmReplace = () => !dirty || window.confirm("지금 배선을 바꿀까요? 저장하지 않은 내용은 사라집니다.");
+  const onNew = () => {
+    if (!confirmReplace()) return;
+    setProject(defaultProject());
+    setProjectName("새 프로젝트");
+    setSelected(null);
+  };
+  const onExampleProject = async (ex: Example) => {
+    if (!confirmReplace()) return;
+    const r = await fetch(`./examples/${ex.project}`);
+    if (r.ok) openText(await r.text());
+  };
+
+  // Autosave to IndexedDB, and restore the last session once the
+  // simulator is ready (so its firmware can be loaded too).
+  const restored = useRef(false);
+  useEffect(() => {
+    if (!runner.ready || restored.current) return;
+    void idbGet<string>("autosave").then((text) => {
+      restored.current = true;
+      if (!text) return;
+      try {
+        void applyLoaded(parse(text));
+      } catch {
+        // A broken autosave is not worth a message.
+      }
+    });
+  }, [runner.ready, applyLoaded]);
+  const { firmware, firmwareBytes, firmwareExample } = runner;
+  useEffect(() => {
+    if (!restored.current) return;
+    const t = setTimeout(() => {
+      const fw = firmware
+        ? { name: firmware, example: firmwareExample ?? undefined, data: firmwareBytes ? toBase64(firmwareBytes) : undefined }
+        : undefined;
+      void idbSet("autosave", serialize(project, projectName, fw));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [project, projectName, firmware, firmwareBytes, firmwareExample]);
+
+  // What each part shows, from the circuit simulation. The board's LD2 is
+  // simulated like any LED (PA5 → resistor → LED → GND).
+  const boardId = project.parts.find((p) => p.kind === "nucleo-f401re")?.id;
   const visuals = useMemo<Record<string, VisualState>>(() => {
-    const ld2 = runner.frame?.pins.find((p) => p.port === "A" && p.pin === 5 && p.driven);
-    return { nucleo: { brightness: ld2?.duty ?? 0 } };
-  }, [runner.frame]);
-  const { setButton, reset } = runner;
+    const out: Record<string, VisualState> = {};
+    for (const v of runner.frame?.parts ?? []) {
+      const state: VisualState = {
+        brightness: v.brightness?.[0],
+        channels: v.brightness,
+        overcurrent: v.overcurrent,
+        on: v.on,
+        freq: v.freq,
+      };
+      if (v.id === "LD2") {
+        if (boardId) out[boardId] = { ...out[boardId], brightness: state.brightness, overcurrent: state.overcurrent };
+      } else if (v.id !== "B1") {
+        out[v.id] = state;
+      }
+    }
+    return out;
+  }, [runner.frame, boardId]);
+  const [sound, setSound] = useState(false);
+  useBuzzerAudio(visuals, project.parts, sound && runner.running);
+
+  const { press, reset, setWiring, ready } = runner;
   const onPartAction = useCallback(
     (part: string, action: string, down: boolean) => {
-      if (part !== "nucleo") return;
-      if (action === "b1") setButton(down);
-      if (action === "reset" && down) reset();
+      if (action === "b1") press("B1", down);
+      else if (action === "reset") {
+        if (down) reset();
+      } else if (action === "press") press(part, down);
     },
-    [setButton, reset],
+    [press, reset],
   );
+
+  // Hot-plug into the running simulation: every edit re-sends the wiring.
+  useEffect(() => {
+    if (ready) setWiring(toCircuit(project));
+  }, [ready, project, setWiring]);
 
   useEffect(() => {
     createSimulator().then(setSim, (e) => setSimError(String(e)));
@@ -114,7 +216,25 @@ export function App() {
     <div className="app">
       <header className="toolbar">
         <strong>Simucleo</strong>
-        <RunControls runner={runner} examples={examples} />
+        <input
+          className="project-name"
+          value={projectName}
+          onChange={(e) => setProjectName(e.target.value)}
+          aria-label="프로젝트 이름"
+        />
+        <ProjectMenu project={project} name={projectName} runner={runner} onNew={onNew} onOpenText={openText} />
+        <RunControls runner={runner} examples={examples} onExampleProject={onExampleProject} />
+        <label className="sound-toggle" title="부저 소리 (브라우저 정책상 클릭으로 켜야 합니다)">
+          <input
+            type="checkbox"
+            checked={sound}
+            onChange={(e) => {
+              if (e.target.checked) unlockAudio();
+              setSound(e.target.checked);
+            }}
+          />{" "}
+          🔊 소리
+        </label>
         <span className="version" title="시뮬레이터 코어 버전">
           {simError ? `WASM 로드 실패: ${simError}` : sim ? `core v${sim.version}` : "WASM 로딩 중…"}
         </span>
@@ -156,6 +276,7 @@ export function App() {
           }
           visuals={visuals}
           onPartAction={onPartAction}
+          fitKey={fitKey}
           onAddWire={(a, b) =>
             setProject((p) => {
               // Both ends must exist when the wire is made (#2).
@@ -170,11 +291,23 @@ export function App() {
             <b>펌웨어가 멈췄습니다.</b> {runner.frame.stopped}
           </div>
         )}
-        {runner.frame?.warnings.map((w) => (
-          <div key={w} className="warning">
-            ⚠ {w}
+        {notice && (
+          <div className="notice" role="status">
+            {notice} <button onClick={() => setNotice(null)} aria-label="닫기">×</button>
           </div>
-        ))}
+        )}
+        <div className="warnings">
+          {runner.frame?.circuitWarnings.map((w) => (
+            <div key={w} className="warning circuit" data-testid="circuit-warning">
+              ⚡ 전기 규칙: {w}
+            </div>
+          ))}
+          {runner.frame?.warnings.map((w) => (
+            <div key={w} className="warning">
+              ⚠ {w}
+            </div>
+          ))}
+        </div>
       </main>
 
       <BottomPanel runner={runner} />
@@ -184,20 +317,29 @@ export function App() {
         {selectedPart && selectedDef ? (
           <>
             <p><b>{selectedPart.id}</b> · {selectedDef.name}</p>
-            {Object.entries(selectedPart.props).map(([k, v]) => (
-              <label key={k} className="prop">
-                {k}
-                <input
-                  value={String(v)}
-                  onChange={(e) =>
-                    setProject((p) => ({
-                      ...p,
-                      parts: p.parts.map((q) => (q.id === selectedPart.id ? { ...q, props: { ...q.props, [k]: e.target.value } } : q)),
-                    }))
-                  }
-                />
-              </label>
-            ))}
+            {selectedDef.description && <p className="hint">{selectedDef.description}</p>}
+            {Object.entries(selectedPart.props).map(([k, v]) => {
+              const set = (value: string) =>
+                setProject((p) => ({
+                  ...p,
+                  parts: p.parts.map((q) => (q.id === selectedPart.id ? { ...q, props: { ...q.props, [k]: value } } : q)),
+                }));
+              const options = selectedDef.propOptions?.[k];
+              return (
+                <label key={k} className="prop">
+                  {k}
+                  {options ? (
+                    <select value={String(v)} onChange={(e) => set(e.target.value)} aria-label={k}>
+                      {[...new Set([...options, String(v)])].map((o) => (
+                        <option key={o}>{o}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input value={String(v)} onChange={(e) => set(e.target.value)} aria-label={k} />
+                  )}
+                </label>
+              );
+            })}
             <button onClick={deleteSelected}>삭제</button>
           </>
         ) : (

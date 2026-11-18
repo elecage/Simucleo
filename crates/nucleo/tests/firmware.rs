@@ -360,3 +360,79 @@ fn buzzer_plays_notes_on_tim1() {
     assert!(text.contains("C4 D4 E4 F4 G4 A4 B4 C5 - G4"), "{text:?}");
     assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
 }
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-button-exti"]
+fn wired_switch_and_led_through_the_circuit_model() {
+    use simucleo_nucleo::{BusCatalog, Circuit};
+    use std::collections::HashMap;
+    // Switch between D2 and GND; D7 → 330 Ω → LED → GND, on a breadboard
+    // row each (the breadboard's buses join the leads).
+    let circuit: Circuit = serde_json::from_value(serde_json::json!({
+        "parts": [
+            {"id": "nucleo", "kind": "nucleo-f401re"},
+            {"id": "bb", "kind": "bb"},
+            {"id": "sw1", "kind": "tact-switch"},
+            {"id": "r1", "kind": "resistor", "props": {"ohms": "330"}},
+            {"id": "led1", "kind": "led-5mm", "props": {"color": "red"}}
+        ],
+        "wires": [
+            {"a": {"part": "nucleo", "pin": "D2"}, "b": {"part": "sw1", "pin": "1a"}},
+            {"a": {"part": "sw1", "pin": "2b"}, "b": {"part": "nucleo", "pin": "GND_D"}},
+            {"a": {"part": "nucleo", "pin": "D7"}, "b": {"part": "bb", "pin": "a1"}},
+            {"a": {"part": "r1", "pin": "1"}, "b": {"part": "bb", "pin": "e1"}},
+            {"a": {"part": "r1", "pin": "2"}, "b": {"part": "led1", "pin": "A"}},
+            {"a": {"part": "led1", "pin": "K"}, "b": {"part": "nucleo", "pin": "GND_D"}}
+        ]
+    }))
+    .unwrap();
+    let catalog: BusCatalog = serde_json::from_value(serde_json::json!({
+        "bb": [["a1", "b1", "c1", "d1", "e1"]],
+        "tact-switch": [["1a", "1b"], ["2a", "2b"]]
+    }))
+    .unwrap();
+    let signals: HashMap<String, String> = [("D2", "PA10"), ("D7", "PA8"), ("GND_D", "GND")]
+        .into_iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-button-exti", "hal-button-exti"))
+        .unwrap();
+    board.set_circuit(&circuit, &catalog, &signals);
+    board.run_for_ns(50e6);
+    board.circuit_frame(0.05);
+    for (i, lit) in [(1, true), (2, false)] {
+        board.press("sw1", true);
+        board.run_for_ns(20e6);
+        board.press("sw1", false);
+        board.run_for_ns(20e6);
+        let v = board.circuit_frame(0.04);
+        let led = v.iter().find(|p| p.id == "led1").unwrap();
+        // (3.3 − 1.9) / (40 + 330 + 15) ≈ 3.6 mA → brightness ≈ 0.6
+        assert_eq!(led.brightness[0] > 0.5, lit, "press {i}: {led:?}");
+        assert!(console_text(&mut board).contains(&format!("D2 pressed ({i})")));
+    }
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+    // Hot-plug: remove the resistor → the LED is driven straight from PA8.
+    let mut c2 = circuit.clone();
+    c2.wires.retain(|w| w.a.part != "r1");
+    c2.wires.push(
+        serde_json::from_value(serde_json::json!(
+            {"a": {"part": "bb", "pin": "b1"}, "b": {"part": "led1", "pin": "A"}}
+        ))
+        .unwrap(),
+    );
+    board.set_circuit(&c2, &catalog, &signals);
+    board.press("sw1", true);
+    board.run_for_ns(20e6);
+    board.press("sw1", false);
+    board.run_for_ns(20e6);
+    let w = board.circuit_warnings();
+    assert!(w.iter().any(|w| w.starts_with("led1:")), "{w:?}");
+}

@@ -13,6 +13,16 @@ pub struct PinEvent {
     pub level: Option<bool>,
 }
 
+/// How the chip drives a pin, as an external circuit sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PinDrive {
+    High,
+    Low,
+    PullUp,
+    PullDown,
+    Float,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PinMode {
     Input,
@@ -92,6 +102,21 @@ impl Gpio {
             return None;
         }
         Some(high)
+    }
+
+    /// Electrical drive of `pin`: the output driver if it drives, else the
+    /// pull resistor (analog pins have none).
+    pub fn drive(&self, pin: u8) -> PinDrive {
+        match self.driven(pin) {
+            Some(true) => PinDrive::High,
+            Some(false) => PinDrive::Low,
+            None if self.mode(pin) == PinMode::Analog => PinDrive::Float,
+            None => match (self.pupdr >> (2 * pin)) & 3 {
+                1 => PinDrive::PullUp,
+                2 => PinDrive::PullDown,
+                _ => PinDrive::Float,
+            },
+        }
     }
 
     /// Level seen on the pin (IDR).

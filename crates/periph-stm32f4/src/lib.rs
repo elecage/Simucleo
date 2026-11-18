@@ -22,7 +22,7 @@ pub mod usart;
 use std::collections::BTreeSet;
 
 use exti::Exti;
-use gpio::{Gpio, PinEvent};
+use gpio::{Gpio, PinDrive, PinEvent};
 use rcc::{Clocks, Rcc, ResetCause};
 use regmap::RegisterFile;
 use simucleo_core::bus::{AccessSize, Bus, BusError, Memory};
@@ -77,6 +77,20 @@ impl std::fmt::Display for Warning {
             ),
         }
     }
+}
+
+/// A model of what is wired to the chip's pins (see `simucleo-circuit`).
+/// The bus calls [`ExternalCircuit::update`] whenever the drive of a pin
+/// may have changed, and applies the returned input levels at once, so
+/// firmware reading a pin (or an EXTI edge) sees the circuit's response to
+/// its own outputs immediately.
+pub trait ExternalCircuit {
+    /// Pins the circuit observes (port 0 = A, pin).
+    fn pins(&self) -> Vec<(u8, u8)>;
+    /// Drives of [`ExternalCircuit::pins`] at `time`. Returns the level
+    /// each of those pins sees from outside (`None`: nothing drives it) if
+    /// that may have changed.
+    fn update(&mut self, time: Cycles, drives: &[PinDrive]) -> Option<Vec<Option<bool>>>;
 }
 
 /// USART instances: (name, base, IRQ, on APB2, ENR offset, enable bit).
@@ -143,6 +157,10 @@ pub struct Stm32f401Bus {
     time_read: bool,
     /// Pin levels last reported to EXTI, per port.
     levels: [u16; 8],
+    /// The external circuit, if one is attached.
+    circuit: Option<Box<dyn ExternalCircuit>>,
+    /// Pins the circuit currently drives from outside.
+    circuit_pins: Vec<(u8, u8)>,
     /// Unmodelled peripherals.
     pub regs: RegisterFile,
     pub warnings: BTreeSet<Warning>,
@@ -178,6 +196,8 @@ impl Stm32f401Bus {
             timers: TIMERS.map(Timer::new),
             time_read: false,
             levels: [0; 8],
+            circuit: None,
+            circuit_pins: Vec::new(),
             regs: RegisterFile::default(),
             warnings: BTreeSet::new(),
             sched: Scheduler::new(),
@@ -257,6 +277,7 @@ impl Stm32f401Bus {
             }
             self.refresh_port(port);
         }
+        self.circuit_update(time);
     }
 
     /// Take the current pin levels as the reference for edge detection.
@@ -282,6 +303,51 @@ impl Stm32f401Bus {
         for line in (0..16u8).filter(|l| changed & (1 << l) != 0) {
             if self.exti_source(line) == port {
                 self.exti.edge(line, new & (1 << line) != 0);
+            }
+        }
+    }
+
+    /// Attach (or with `None` detach) the external circuit and let it see
+    /// the present pin drives.
+    pub fn set_circuit(&mut self, circuit: Option<Box<dyn ExternalCircuit>>) {
+        self.circuit = circuit;
+        self.circuit_changed();
+    }
+
+    /// The circuit's topology changed (or a switch moved): re-read its pin
+    /// list, release pins it no longer watches, and update it.
+    pub fn circuit_changed(&mut self) {
+        let pins = self.circuit.as_ref().map(|c| c.pins()).unwrap_or_default();
+        for (port, pin) in std::mem::take(&mut self.circuit_pins) {
+            if !pins.contains(&(port, pin)) {
+                self.set_external(port as usize, pin, None);
+            }
+        }
+        self.circuit_pins = pins;
+        self.circuit_update_forced(self.now);
+    }
+
+    fn circuit_update(&mut self, time: Cycles) {
+        if self.circuit.is_some() {
+            self.circuit_update_forced(time);
+        }
+    }
+
+    fn circuit_update_forced(&mut self, time: Cycles) {
+        let Some(mut c) = self.circuit.take() else {
+            return;
+        };
+        let drives: Vec<PinDrive> = self
+            .circuit_pins
+            .iter()
+            .map(|&(port, pin)| self.gpio[port as usize].drive(pin))
+            .collect();
+        let levels = c.update(time, &drives);
+        self.circuit = Some(c);
+        if let Some(levels) = levels {
+            let pins = self.circuit_pins.clone();
+            for (&(port, pin), level) in pins.iter().zip(levels) {
+                self.set_external(port as usize, pin, level);
             }
         }
     }
@@ -328,6 +394,7 @@ impl Stm32f401Bus {
         }
         self.regs.clear();
         self.sync_levels();
+        self.circuit_update(now);
         let now = self.sched.now();
         self.sched = Scheduler::new();
         self.sched.advance_to(now);
@@ -445,6 +512,7 @@ impl Stm32f401Bus {
                     }
                 }
                 self.refresh_port(port);
+                self.circuit_update(self.now);
             } else if let Some(i) = USARTS.iter().position(|u| u.0 == name) {
                 self.usart[i].reset(); // also drops its scheduled events
             } else if let Some(i) = TIMERS.iter().position(|t| t.name == name) {
@@ -606,6 +674,7 @@ impl Stm32f401Bus {
                 self.apply_af(self.now);
             }
             self.refresh_port(port);
+            self.circuit_update(self.now);
             return;
         }
         match a & !0x3FF {

@@ -363,6 +363,8 @@ dependencies = [
 name = "simucleo-nucleo"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
+ "simucleo-circuit",
  "simucleo-core",
  "simucleo-cpu-armv7m",
  "simucleo-elf",

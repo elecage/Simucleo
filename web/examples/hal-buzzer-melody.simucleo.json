@@ -1,0 +1,70 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "부저 멜로디",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "bb1",
+      "kind": "breadboard-half",
+      "x": 42,
+      "y": 4,
+      "props": {}
+    },
+    {
+      "id": "bz1",
+      "kind": "buzzer-passive",
+      "x": 51,
+      "y": 9,
+      "props": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "D8"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "a8"
+      },
+      "color": "#fdd835"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "bb1",
+        "pin": "a10"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "tn10"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "tn2"
+      },
+      "color": "#212121"
+    }
+  ],
+  "firmware": {
+    "name": "hal-buzzer-melody",
+    "example": "hal-buzzer-melody.elf"
+  }
+}

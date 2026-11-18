@@ -40,10 +40,10 @@
 |---|---|
 | `simucleo-core` | `Bus`, `Memory`, `CpuBackend` trait, `Registers`, 사이클 기반 `Scheduler`, **`cortexm`**(NVIC/SCB/SysTick/예외 모델, 모든 백엔드 공용) |
 | `simucleo-cpu-armv7m` | 자체 Thumb/Thumb-2 + DSP + FPv4-SP 인터프리터 (기본 백엔드, WASM 지원) |
-| `simucleo-periph-stm32f4` | F401RE 버스 라우팅, 비트밴딩, RCC(클럭 트리)/PWR/FLASH/GPIO/USART 모델, SVD에서 생성한 레지스터 맵과 범용 레지스터 파일, 이벤트 스케줄러 |
+| `simucleo-periph-stm32f4` | F401RE 버스 라우팅, 비트밴딩, RCC(클럭 트리)/PWR/FLASH/SYSCFG/GPIO/EXTI/USART/TIM 모델, SVD에서 생성한 레지스터 맵과 범용 레지스터 파일, 이벤트 스케줄러, 외부 회로 연결(`ExternalCircuit`) |
 | `simucleo-nucleo` | 보드 단위 머신: CPU + 버스 + 시스템, ELF 로드, 리셋(원인별), 이벤트 기반 시간 진행과 ns 타임라인, B1 버튼, 가상 콘솔, 정지 원인 진단 |
 | `simucleo-difftest` | Unicorn과 lock-step 비교 (테스트 전용, `unicorn` feature, GPLv2 의존성 격리) |
-| `simucleo-circuit` | 배선 → 넷리스트(Union-Find), 부품 모델(`DutyIntegrator`, LED 등) |
+| `simucleo-circuit` | 배선 → 넷리스트(Union-Find), 회로 DC 해석(`CircuitSim`), 부품 표시값 적분, 전기 규칙 검사 |
 | `simucleo-elf` | ELF 로더: LMA 기준 세그먼트, 심볼 테이블 |
 | `simucleo-cli` | 헤드리스 실행기 (`simucleo info|run fw.elf`). 회귀 테스트에 사용 |
 | `simucleo-wasm` | `wasm-bindgen` 바인딩 |
@@ -80,10 +80,17 @@
 - 미구현 레지스터 접근은 0을 읽고 기록하며, GUI에 "어떤 Peripheral을 기다리는지" 보여 준다.
 - `Error_Handler`, `HardFault_Handler` 진입은 ELF 심볼로 감지해 콜스택과 함께 보고한다.
 
-### 4. 외부 회로: 넷 단위, 단계적 정밀도
-- 편집기가 보내는 `Circuit`(부품 + 와이어)을 `build_netlist`가 넷으로 묶는다. 이때 브레드보드 행,
+### 4. 외부 회로: 넷 단위 DC 해석 (M3)
+- 편집기가 보내는 `Circuit`(부품 + 속성 + 와이어)을 `build_netlist`가 넷으로 묶는다. 이때 브레드보드 행,
   전원 레일, 스위치 내부 연결 같은 **부품 내부 버스**와 **같은 그리드 점에 놓인 핀**도 연결로 친다.
-- 넷 값은 디지털(H/L/Z), PWM 통계, 아날로그 전압(M5, MNA 솔버) 순서로 정밀도를 높인다.
+  보드 핀은 신호 이름으로 바꿔(D13, CN10-11 → PA5) 같은 신호끼리 한 넷이 된다.
+- `CircuitSim`은 넷마다 노드 하나를 두고 저항, LED(Vf + 15 Ω, 켜짐/꺼짐을 일관될 때까지 반복), 부저 부하,
+  전원(3V3/5V), 핀 드라이버(출력 = 3.3 V/0 V와 40 Ω, 풀업/풀다운 = 40 kΩ)를 노드 해석으로 푼다.
+  눌린 스위치는 넷을 합친다. 보드의 LD2와 B1도 같은 방식으로 들어 있다.
+- 결과는 **핀 구동 조합**에만 의존하므로 캐시한다. 버스는 GPIO 쓰기·AF 출력 변화마다 구동 조합을 넘기고,
+  돌아온 입력 레벨을 바로 GPIO에 반영한다(`ExternalCircuit`). 그래서 출력 → 회로 → 입력 → EXTI가 같은 시각에 일어난다.
+- 표시값(LED 밝기, 부저 켜짐·주파수)은 사이클 단위로 적분해 프레임마다 내보낸다. 위반(과전류, 단락)은 경고가 된다.
+- 다음 단계는 아날로그 전압을 ADC로 읽는 것(M5)과 버스 장치(M6)다.
 - I2C/SPI 장치는 MCU Peripheral과 트랜잭션 단위로 연결하고, 비트뱅잉은 핀 레벨 디코더를 거친다.
 - 넷리스트는 결정적(정렬된) 출력이라 hot-plug 시 이전 넷리스트와 비교해 바뀐 부분만 반영할 수 있다.
 
@@ -97,7 +104,9 @@ AudioWorklet으로 보내 실제 소리를 만든다.
 - React는 패널 UI에만 쓴다. 캔버스는 SVG이고, 실행 중 애니메이션은 React 재렌더링 대신
   DOM 속성을 직접 갱신한다(M3).
 - 0.1인치 그리드 스냅. 핀은 와이어보다 위 레이어에 있어 이미 연결된 핀도 다시 선택할 수 있다.
-- 프로젝트 저장: JSON(부품, 와이어, 속성, ELF 참조). 자동 저장은 IndexedDB.
+- 프로젝트 저장(M3): `.simucleo.json`(형식·버전, 부품, 와이어, 속성, 펌웨어는 예제 이름 또는 base64 ELF).
+  열 때 버전 마이그레이션과 검증(없는 부품·핀 제거)을 거친다. 자동 저장은 IndexedDB. 배선도는 SVG/PNG로 내보낸다.
+- 파형 뷰: 워커가 고른 핀의 레벨 변화(입력 포함)를 프레임마다 보내고, UI가 최근 구간을 그려 주파수와 듀티를 잰다.
 
 ## 검증 전략
 - **명령어 단위 테스트**: 디코더/실행기 단위 테스트

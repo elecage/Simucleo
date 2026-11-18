@@ -25,6 +25,9 @@ pub struct PartInstance {
     pub id: String,
     /// Part definition id, e.g. `"led-5mm"` or `"breadboard-half"`.
     pub kind: String,
+    /// Part properties from the editor (`{"ohms": "220"}`, `{"color": "red"}`).
+    #[serde(default)]
+    pub props: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -190,14 +193,17 @@ mod tests {
                 PartInstance {
                     id: "mcu".into(),
                     kind: "nucleo-f401re".into(),
+                    props: Default::default(),
                 },
                 PartInstance {
                     id: "bb".into(),
                     kind: "breadboard".into(),
+                    props: Default::default(),
                 },
                 PartInstance {
                     id: "led1".into(),
                     kind: "led-5mm".into(),
+                    props: Default::default(),
                 },
             ],
             wires: vec![

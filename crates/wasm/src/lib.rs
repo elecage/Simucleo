@@ -1,12 +1,13 @@
 //! WebAssembly entry points. The simulator runs inside a Web Worker; the UI
 //! thread receives visual-state snapshots (see `docs/architecture.md`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde_json::json;
 use wasm_bindgen::prelude::*;
 
 use simucleo_circuit::netlist::{build_netlist, BusCatalog, Circuit};
+use simucleo_circuit::sim::parse_mcu_pin;
 
 use simucleo_core::cortexm::exc;
 use simucleo_nucleo::Nucleo;
@@ -33,7 +34,12 @@ pub struct Simulator {
     stopped: Option<String>,
     pins: BTreeMap<(u8, u8), PinTrace>,
     frame_start_ns: f64,
+    /// Probed pins with their level at the start of the frame.
+    probes: Vec<((u8, u8), bool)>,
 }
+
+/// Most edges reported per probe and frame; faster signals are marked dense.
+const PROBE_EDGES_MAX: usize = 4000;
 
 impl Default for Simulator {
     fn default() -> Self {
@@ -51,6 +57,7 @@ impl Simulator {
             stopped: None,
             pins: BTreeMap::new(),
             frame_start_ns: 0.0,
+            probes: Vec::new(),
         }
     }
 
@@ -73,7 +80,19 @@ impl Simulator {
         self.stopped = None;
         self.pins.clear();
         self.board.take_pin_events();
+        self.board.bus.level_events.clear();
+        // Loading firmware builds a new bus: keep probing the same pins.
+        let mut mask = [0u16; 8];
+        for ((port, pin), _) in &self.probes {
+            mask[*port as usize] |= 1 << pin;
+        }
+        self.board.bus.probe_mask = mask;
         self.frame_start_ns = self.board.time_ns();
+        for (pin, level) in &mut self.probes {
+            *level = self.board.pin((b'A' + pin.0) as char, pin.1);
+        }
+        // Start a fresh display frame for the parts as well.
+        self.board.circuit_frame(0.0);
     }
 
     /// Whether the firmware has stopped (see [`Simulator::run_for_ms`]).
@@ -124,6 +143,31 @@ impl Simulator {
             p.driven = e.level.is_some();
             p.since_ns = t;
         }
+        // Probes: level changes of the probed pins within the frame.
+        let level_events = std::mem::take(&mut self.board.bus.level_events);
+        let mut probes = Vec::new();
+        for (pin, level0) in &mut self.probes {
+            let mut edges = Vec::new();
+            let mut dense = false;
+            for e in level_events.iter().filter(|e| (e.port, e.pin) == *pin) {
+                if edges.len() >= PROBE_EDGES_MAX {
+                    dense = true;
+                    continue;
+                }
+                edges.push(json!([
+                    self.board.ns_at(e.time) / 1e6,
+                    e.level == Some(true)
+                ]));
+            }
+            probes.push(json!({
+                "name": format!("P{}{}", (b'A' + pin.0) as char, pin.1),
+                "level0": *level0,
+                "edges": edges,
+                "dense": dense,
+            }));
+            *level0 = self.board.pin((b'A' + pin.0) as char, pin.1);
+        }
+
         let span = (now - self.frame_start_ns).max(1e-9);
         let mut pins = Vec::new();
         for (&(port, pin), p) in self.pins.iter_mut() {
@@ -135,6 +179,7 @@ impl Simulator {
             p.high_ns = 0.0;
             pins.push(json!({ "port": (b'A' + port) as char, "pin": pin, "level": p.level, "driven": p.driven, "duty": duty }));
         }
+        let parts = self.board.circuit_frame(span / 1e9);
         self.frame_start_ns = now;
 
         let regs = self.board.cpu.registers();
@@ -158,6 +203,9 @@ impl Simulator {
             "exception": if regs.ipsr() != 0 { Some(exc::name(regs.ipsr())) } else { None },
             "stopped": self.stopped,
             "warnings": warnings,
+            "parts": parts,
+            "circuitWarnings": self.board.circuit_warnings(),
+            "probes": probes,
         })
         .to_string()
     }
@@ -226,6 +274,45 @@ impl Simulator {
     #[wasm_bindgen(js_name = setPartCatalog)]
     pub fn set_part_catalog(&mut self, catalog_json: &str) -> Result<(), JsError> {
         self.catalog = serde_json::from_str(catalog_json)?;
+        Ok(())
+    }
+
+    /// Wire the simulated board to a circuit (hot-plug allowed while
+    /// running): the circuit as for [`Simulator::set_circuit`], the part
+    /// catalog (`{ kind: [[pin, ...], ...] }`) and the board's pin → signal
+    /// map (`{ "D13": "PA5", ... }`).
+    #[wasm_bindgen(js_name = setWiring)]
+    pub fn set_wiring(
+        &mut self,
+        circuit_json: &str,
+        catalog_json: &str,
+        signals_json: &str,
+    ) -> Result<(), JsError> {
+        let circuit: Circuit = serde_json::from_str(circuit_json)?;
+        let catalog: BusCatalog = serde_json::from_str(catalog_json)?;
+        let signals: HashMap<String, String> = serde_json::from_str(signals_json)?;
+        self.board.set_circuit(&circuit, &catalog, &signals);
+        Ok(())
+    }
+
+    /// Press or release a switch: a `tact-switch` part id or `"B1"`.
+    pub fn press(&mut self, part: &str, pressed: bool) {
+        self.board.press(part, pressed);
+    }
+
+    /// Choose the pins whose level changes each frame reports, as JSON
+    /// (`["PA5", "PC13"]`).
+    #[wasm_bindgen(js_name = setProbes)]
+    pub fn set_probes(&mut self, pins_json: &str) -> Result<(), JsError> {
+        let names: Vec<String> = serde_json::from_str(pins_json)?;
+        let mut mask = [0u16; 8];
+        self.probes.clear();
+        for (port, pin) in names.iter().filter_map(|n| parse_mcu_pin(n)) {
+            mask[port as usize] |= 1 << pin;
+            let level = self.board.pin((b'A' + port) as char, pin);
+            self.probes.push(((port, pin), level));
+        }
+        self.board.bus.probe_mask = mask;
         Ok(())
     }
 

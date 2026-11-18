@@ -1,13 +1,21 @@
 import { breadboardHalf } from "./breadboard";
-import { led5mm, resistor, tactSwitch } from "./basic";
-import { nucleoF401re } from "./nucleo";
+import { buzzerActive, buzzerPassive, led5mm, resistor, rgbLed, tactSwitch } from "./basic";
+import { nucleoF401re, nucleoSignal } from "./nucleo";
 import type { PartDef } from "./types";
 
-export const PARTS: PartDef[] = [nucleoF401re, breadboardHalf, led5mm, resistor, tactSwitch];
+export const PARTS: PartDef[] = [nucleoF401re, breadboardHalf, led5mm, rgbLed, resistor, tactSwitch, buzzerActive, buzzerPassive];
 
 export const PART_BY_KIND: Record<string, PartDef> = Object.fromEntries(PARTS.map((p) => [p.kind, p]));
 
 /** Internal buses of every part kind, in the shape the Rust core expects. */
 export function busCatalog(): Record<string, string[][]> {
   return Object.fromEntries(PARTS.filter((p) => p.buses).map((p) => [p.kind, p.buses!]));
+}
+
+/** Board pin id → MCU/board signal (`D13` → `PA5`), for the simulator. */
+export function boardSignals(): Record<string, string> {
+  // NC pins stay separate (each keeps its own id).
+  return Object.fromEntries(
+    nucleoF401re.pins.map((p) => [p.id, nucleoSignal(p.id)!] as const).filter(([, s]) => s !== "NC"),
+  );
 }

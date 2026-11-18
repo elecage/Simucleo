@@ -95,8 +95,20 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     case "speed":
       speed = m.value;
       break;
-    case "button":
-      sim.setUserButton(m.pressed);
+    case "press":
+      sim.press(m.part, m.pressed);
+      if (!running) sendFrame();
+      break;
+    case "wiring":
+      try {
+        sim.setWiring(m.circuit, m.catalog, m.signals);
+      } catch (err) {
+        console.error("setWiring", err);
+      }
+      if (!running) sendFrame();
+      break;
+    case "probes":
+      sim.setProbes(JSON.stringify(m.pins));
       break;
     case "console":
       sim.consoleSend(m.text);

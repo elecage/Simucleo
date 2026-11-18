@@ -7,16 +7,24 @@
 
 mod diagnose;
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use simucleo_core::bus::Bus;
 use simucleo_core::cortexm::CortexM;
 use simucleo_core::cpu::{CpuBackend, RunResult, StopReason};
 use simucleo_core::Cycles;
 use simucleo_cpu_armv7m::ArmV7M;
 use simucleo_elf::{ElfError, FirmwareImage};
+use simucleo_periph_stm32f4::gpio::PinDrive;
 use simucleo_periph_stm32f4::rcc::ResetCause;
-use simucleo_periph_stm32f4::Stm32f401Bus;
+use simucleo_periph_stm32f4::{ExternalCircuit, Stm32f401Bus};
 use thiserror::Error;
 
 pub use diagnose::{Diagnosis, FaultInfo};
+pub use simucleo_circuit::netlist::{BusCatalog, Circuit};
+pub use simucleo_circuit::sim::{CircuitSim, Drive, PartVisual};
 pub use simucleo_periph_stm32f4::gpio::PinEvent;
 pub use simucleo_periph_stm32f4::usart::TerminalByte;
 pub use simucleo_periph_stm32f4::Warning;
@@ -42,6 +50,29 @@ struct Segment {
     hz: u32,
 }
 
+/// Connects the circuit simulation to the bus.
+struct CircuitLink(Rc<RefCell<CircuitSim>>);
+
+impl ExternalCircuit for CircuitLink {
+    fn pins(&self) -> Vec<(u8, u8)> {
+        self.0.borrow().mcu_pins()
+    }
+
+    fn update(&mut self, time: Cycles, drives: &[PinDrive]) -> Option<Vec<Option<bool>>> {
+        let d: Vec<Drive> = drives
+            .iter()
+            .map(|d| match d {
+                PinDrive::High => Drive::High,
+                PinDrive::Low => Drive::Low,
+                PinDrive::PullUp => Drive::PullUp,
+                PinDrive::PullDown => Drive::PullDown,
+                PinDrive::Float => Drive::Float,
+            })
+            .collect();
+        self.0.borrow_mut().update(time, &d)
+    }
+}
+
 pub struct Nucleo {
     pub cpu: Box<dyn CpuBackend>,
     pub bus: Stm32f401Bus,
@@ -49,6 +80,8 @@ pub struct Nucleo {
     pub firmware: Option<FirmwareImage>,
     resets: u32,
     timeline: Vec<Segment>,
+    /// Everything wired to the board, plus LD2 and B1.
+    circuit: Rc<RefCell<CircuitSim>>,
 }
 
 impl Default for Nucleo {
@@ -71,6 +104,12 @@ impl Nucleo {
             firmware: None,
             resets: 0,
             timeline: Vec::new(),
+            circuit: Rc::new(RefCell::new(CircuitSim::new(
+                &Circuit::default(),
+                &BusCatalog::default(),
+                &HashMap::new(),
+                0,
+            ))),
         };
         board.power_on();
         board
@@ -79,8 +118,12 @@ impl Nucleo {
     /// Fresh chip state plus the board wiring around it.
     fn power_on(&mut self) {
         self.bus = Stm32f401Bus::new();
-        // B1 (PC13) has an external pull-up and reads high when released.
-        self.set_user_button(false);
+        // The circuit (LD2, B1 with its pull-up, and anything wired to the
+        // headers) sees the chip's reset pin states.
+        self.circuit.borrow_mut().reset_time(self.sys.cycles);
+        self.bus.set_time(self.sys.cycles);
+        self.bus
+            .set_circuit(Some(Box::new(CircuitLink(self.circuit.clone()))));
         self.timeline = vec![Segment {
             cycle: self.sys.cycles,
             ns: self.time_ns(),
@@ -246,7 +289,6 @@ impl Nucleo {
     /// Process due peripheral events and forward interrupt lines.
     fn after_step(&mut self) {
         self.bus.run_events(self.sys.cycles);
-        use simucleo_core::bus::Bus;
         self.bus.poll(&mut self.sys);
         self.note_clock();
     }
@@ -259,13 +301,69 @@ impl Nucleo {
 
     /// Press (`true`) or release the blue user button B1 (PC13, active low).
     pub fn set_user_button(&mut self, pressed: bool) {
-        let c = &mut self.bus.gpio[2];
-        c.external_driven |= 1 << 13;
-        if pressed {
-            c.external &= !(1 << 13);
-        } else {
-            c.external |= 1 << 13;
+        self.press("B1", pressed);
+    }
+
+    /// Press or release a switch: a `tact-switch` part of the circuit, or
+    /// `"B1"`. A resulting interrupt is pending at once.
+    pub fn press(&mut self, part: &str, pressed: bool) {
+        let now = self.sys.cycles;
+        if self.circuit.borrow_mut().set_pressed(part, pressed, now) {
+            self.circuit_changed();
         }
+    }
+
+    fn circuit_changed(&mut self) {
+        self.bus.set_time(self.sys.cycles);
+        self.bus.circuit_changed();
+        self.bus.poll(&mut self.sys);
+    }
+
+    /// Wire up an external circuit (hot-plug allowed while running).
+    /// `catalog` holds the internal buses of each part kind and `signals`
+    /// maps the board's pin ids (`"D13"`) to MCU signals (`"PA5"`).
+    pub fn set_circuit(
+        &mut self,
+        circuit: &Circuit,
+        catalog: &BusCatalog,
+        signals: &HashMap<String, String>,
+    ) {
+        let now = self.sys.cycles;
+        {
+            let mut c = self.circuit.borrow_mut();
+            c.set_catalog(catalog, signals);
+            c.set_circuit(circuit, now);
+        }
+        self.circuit_changed();
+    }
+
+    /// What each part shows over the display frame that ends now;
+    /// `seconds` is the frame's simulated length.
+    pub fn circuit_frame(&mut self, seconds: f64) -> Vec<PartVisual> {
+        self.circuit
+            .borrow_mut()
+            .end_frame(self.sys.cycles, seconds)
+    }
+
+    /// Electrical-rule violations found so far (LED without resistor, …).
+    pub fn circuit_warnings(&self) -> Vec<String> {
+        self.circuit.borrow().warnings.iter().cloned().collect()
+    }
+
+    /// Voltage on the net of a pin (`part`, `pin`), for probes.
+    pub fn voltage(&self, part: &str, pin: &str) -> Option<f64> {
+        self.circuit
+            .borrow()
+            .voltage(&simucleo_circuit::netlist::PinRef::new(part, pin))
+    }
+
+    /// Drive a pin from outside (`port` 0 = A): `Some(level)`, or `None` to
+    /// let it float. An interrupt this causes (EXTI) is pending at once, so
+    /// a sleeping core wakes up.
+    pub fn drive_pin(&mut self, port: usize, pin: u8, level: Option<bool>) {
+        self.bus.set_time(self.sys.cycles);
+        self.bus.set_external(port, pin, level);
+        self.bus.poll(&mut self.sys);
     }
 
     /// Take the pin level changes recorded since the last call.

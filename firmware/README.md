@@ -14,11 +14,13 @@ CI builds every project here and runs it through `simucleo` as a regression test
 | `hal-pwm-led` | CubeMX HAL | TIM2/TIM3 PWM at 1 kHz: LD2 breathes, RGB LED on D3/D5/D6 | M3 ✅ |
 | `hal-buzzer-melody` | CubeMX HAL | TIM1 (advanced, MOE) PWM melody on a passive buzzer on D8 | M3 ✅ |
 | `hal-adc-servo` | CubeMX HAL | ADC1 (pot, LDR divider, TMP36, internal temperature, VREFINT) → servo on TIM3 50 Hz, DC motor PWM | M5 ✅ |
+| `hal-i2c-oled` | CubeMX HAL | I2C1 at 100 kHz: bus scan (`IsDeviceReady`), SSD1306 OLED frame buffer, DS3231 RTC read/write (`Mem_Read/Write`), AHT20 measurement | M6 ✅ |
+| `hal-spi-sd-logger` | CubeMX HAL + FatFs | SPI1 SD card driver (SPI-mode init, block read/write), `f_mkfs` on a blank card, CSV log with RTC time stamps, SPI OLED sharing the bus, I2C sensors | M6 ✅ |
 | `freertos-two-tasks` | CubeMX + FreeRTOS (CMSIS-RTOS v2) | Blink/Count/Button/Flags threads, mutex, B1 EXTI → semaphore → thread flags; SVC/PendSV/SysTick, PSP, BASEPRI, HAL tick on TIM11 | M4 ✅ |
 | `freertos-queue-uart` | CubeMX + FreeRTOS (CMSIS-RTOS v2) | UART RX ISR → message queue → echo task; producer/consumer queue; heap and stack statistics | M4 ✅ |
 
 ```sh
-for d in bare-blinky exceptions difftest hal-uart-printf hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo freertos-two-tasks freertos-queue-uart; do make -C firmware/$d; done
+for d in bare-blinky exceptions difftest hal-uart-printf hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger freertos-two-tasks freertos-queue-uart; do make -C firmware/$d; done
 make -C firmware/hal-blinky variants
 cargo run --release -p simucleo-cli -- run firmware/bare-blinky/build/bare-blinky.elf --ms 2000
 cargo test --release -p simucleo-nucleo --test firmware -- --include-ignored

@@ -32,6 +32,9 @@ export interface Runner {
   sendConsole(text: string): void;
   clearConsole(): void;
   readMemory(addr: number, len: number): void;
+  /** The SD card in part `part` as a disk image (empty: no card). */
+  sdImage(part: string): Promise<Uint8Array>;
+  sdLoad(part: string, bytes: ArrayBuffer): void;
 }
 
 export function useRunner(): Runner {
@@ -46,6 +49,7 @@ export function useRunner(): Runner {
   const [frame, setFrame] = useState<SimFrame | null>(null);
   const [consoleText, setConsole] = useState("");
   const [memory, setMemory] = useState<{ addr: number; bytes: Uint8Array } | null>(null);
+  const sdWaiters = useRef(new Map<string, (b: Uint8Array) => void>());
 
   useEffect(() => {
     const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
@@ -69,6 +73,10 @@ export function useRunner(): Runner {
           break;
         case "memory":
           setMemory({ addr: m.addr, bytes: m.bytes });
+          break;
+        case "sdImage":
+          sdWaiters.current.get(m.part)?.(m.bytes);
+          sdWaiters.current.delete(m.part);
           break;
       }
     };
@@ -96,6 +104,12 @@ export function useRunner(): Runner {
       sendConsole: (text: string) => send({ type: "console", text }),
       clearConsole: () => setConsole(""),
       readMemory: (addr: number, len: number) => send({ type: "readMemory", addr, len }),
+      sdImage: (part: string) =>
+        new Promise<Uint8Array>((resolve) => {
+          sdWaiters.current.set(part, resolve);
+          send({ type: "sdImage", part });
+        }),
+      sdLoad: (part: string, bytes: ArrayBuffer) => send({ type: "sdLoad", part, bytes }, [bytes]),
     }),
     [send],
   );

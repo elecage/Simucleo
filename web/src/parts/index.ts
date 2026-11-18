@@ -2,10 +2,11 @@ import { breadboardHalf } from "./breadboard";
 import { buzzerActive, buzzerPassive, led5mm, resistor, rgbLed, tactSwitch } from "./basic";
 import { nucleoF401re, nucleoSignal } from "./nucleo";
 import { dcMotor, ldr, potentiometer, servo, tempSensor } from "./analog";
+import { aht20, oledI2c, oledSpi, rtc, sdCard } from "./bus";
 import type { PartDef } from "./types";
 
 export const PARTS: PartDef[] = [nucleoF401re, breadboardHalf, led5mm, rgbLed, resistor, tactSwitch, buzzerActive, buzzerPassive,
-  potentiometer, ldr, tempSensor, servo, dcMotor];
+  potentiometer, ldr, tempSensor, servo, dcMotor, oledI2c, oledSpi, rtc, aht20, sdCard];
 
 export const PART_BY_KIND: Record<string, PartDef> = Object.fromEntries(PARTS.map((p) => [p.kind, p]));
 

@@ -20,6 +20,10 @@ export interface PartFrame {
   angle?: number;
   rpm?: number;
   unpowered?: boolean;
+  /** Display: 64 rows × 128 pixels, MSB first, base64. */
+  screen?: string;
+  /** A reading shown on the part (RTC date and time). */
+  text?: string;
 }
 
 /** Level changes of a probed pin within one frame. */
@@ -92,7 +96,9 @@ export type ToWorker =
   | { type: "wiring"; circuit: string; catalog: string; signals: string } // JSON
   | { type: "probes"; pins: string[] }
   | { type: "console"; text: string }
-  | { type: "readMemory"; addr: number; len: number };
+  | { type: "readMemory"; addr: number; len: number }
+  | { type: "sdImage"; part: string }
+  | { type: "sdLoad"; part: string; bytes: ArrayBuffer };
 
 export type FromWorker =
   | { type: "ready"; version: string }
@@ -106,4 +112,5 @@ export type FromWorker =
       /** Achieved simulated-time / wall-time ratio. */
       speed: number;
     }
-  | { type: "memory"; addr: number; bytes: Uint8Array };
+  | { type: "memory"; addr: number; bytes: Uint8Array }
+  | { type: "sdImage"; part: string; bytes: Uint8Array };

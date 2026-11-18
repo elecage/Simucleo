@@ -1,0 +1,307 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "SD 카드 데이터 로거 (SPI + I2C)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "sd",
+      "kind": "sd-card",
+      "x": 46,
+      "y": 26,
+      "props": {
+        "size": 32
+      }
+    },
+    {
+      "id": "oled",
+      "kind": "oled-ssd1306-spi",
+      "x": 46,
+      "y": 4,
+      "props": {}
+    },
+    {
+      "id": "rtc",
+      "kind": "rtc-ds3231",
+      "x": 62,
+      "y": 20,
+      "props": {
+        "temp": 25
+      }
+    },
+    {
+      "id": "aht",
+      "kind": "aht20",
+      "x": 71,
+      "y": 21,
+      "props": {
+        "temp": 21,
+        "humidity": 55
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "sd",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "b": {
+        "part": "sd",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D13"
+      },
+      "b": {
+        "part": "sd",
+        "pin": "SCK"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D12"
+      },
+      "b": {
+        "part": "sd",
+        "pin": "MISO"
+      },
+      "color": "#8e24aa"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "D11"
+      },
+      "b": {
+        "part": "sd",
+        "pin": "MOSI"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "nucleo",
+        "pin": "D10"
+      },
+      "b": {
+        "part": "sd",
+        "pin": "CS"
+      },
+      "color": "#00897b"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "sd",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "sd",
+        "pin": "SCK"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "D0"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "sd",
+        "pin": "MOSI"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "D1"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w11",
+      "a": {
+        "part": "nucleo",
+        "pin": "D9"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "CS"
+      },
+      "color": "#00897b"
+    },
+    {
+      "id": "w12",
+      "a": {
+        "part": "nucleo",
+        "pin": "D8"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "DC"
+      },
+      "color": "#6d4c41"
+    },
+    {
+      "id": "w13",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "RES"
+      },
+      "color": "#757575"
+    },
+    {
+      "id": "w14",
+      "a": {
+        "part": "oled",
+        "pin": "VCC"
+      },
+      "b": {
+        "part": "rtc",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w15",
+      "a": {
+        "part": "oled",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "rtc",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w16",
+      "a": {
+        "part": "nucleo",
+        "pin": "D15"
+      },
+      "b": {
+        "part": "rtc",
+        "pin": "SCL"
+      },
+      "color": "#fbc02d"
+    },
+    {
+      "id": "w17",
+      "a": {
+        "part": "nucleo",
+        "pin": "D14"
+      },
+      "b": {
+        "part": "rtc",
+        "pin": "SDA"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w18",
+      "a": {
+        "part": "rtc",
+        "pin": "VCC"
+      },
+      "b": {
+        "part": "aht",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w19",
+      "a": {
+        "part": "rtc",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "aht",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w20",
+      "a": {
+        "part": "rtc",
+        "pin": "SCL"
+      },
+      "b": {
+        "part": "aht",
+        "pin": "SCL"
+      },
+      "color": "#fbc02d"
+    },
+    {
+      "id": "w21",
+      "a": {
+        "part": "rtc",
+        "pin": "SDA"
+      },
+      "b": {
+        "part": "aht",
+        "pin": "SDA"
+      },
+      "color": "#1e88e5"
+    }
+  ],
+  "firmware": {
+    "name": "hal-spi-sd-logger",
+    "example": "hal-spi-sd-logger.elf"
+  }
+}

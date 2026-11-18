@@ -1,0 +1,192 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "I2C 시계·온습도 (OLED, RTC, AHT20)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "oled",
+      "kind": "oled-ssd1306",
+      "x": 46,
+      "y": 4,
+      "props": {
+        "address": "0x3C"
+      }
+    },
+    {
+      "id": "rtc",
+      "kind": "rtc-ds3231",
+      "x": 46,
+      "y": 20,
+      "props": {
+        "temp": 25
+      }
+    },
+    {
+      "id": "aht",
+      "kind": "aht20",
+      "x": 58,
+      "y": 21,
+      "props": {
+        "temp": 23.5,
+        "humidity": 45
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D15"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "SCL"
+      },
+      "color": "#fbc02d"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D14"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "SDA"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "oled",
+        "pin": "VCC"
+      },
+      "b": {
+        "part": "rtc",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "oled",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "rtc",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "oled",
+        "pin": "SCL"
+      },
+      "b": {
+        "part": "rtc",
+        "pin": "SCL"
+      },
+      "color": "#fbc02d"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "oled",
+        "pin": "SDA"
+      },
+      "b": {
+        "part": "rtc",
+        "pin": "SDA"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "rtc",
+        "pin": "VCC"
+      },
+      "b": {
+        "part": "aht",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "rtc",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "aht",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w11",
+      "a": {
+        "part": "rtc",
+        "pin": "SCL"
+      },
+      "b": {
+        "part": "aht",
+        "pin": "SCL"
+      },
+      "color": "#fbc02d"
+    },
+    {
+      "id": "w12",
+      "a": {
+        "part": "rtc",
+        "pin": "SDA"
+      },
+      "b": {
+        "part": "aht",
+        "pin": "SDA"
+      },
+      "color": "#1e88e5"
+    }
+  ],
+  "firmware": {
+    "name": "hal-i2c-oled",
+    "example": "hal-i2c-oled.elf"
+  }
+}

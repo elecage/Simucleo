@@ -821,3 +821,116 @@ fn spi_sd_logger_formats_the_card_and_appends_csv_lines() {
     assert!(text.contains("logging to LOG.CSV ("), "{text}");
     assert!(!text.contains("logging to LOG.CSV (0 bytes)"), "{text}");
 }
+
+// ------------------------------------------- DMA, input capture (M7)
+
+fn wire_json(a: (&str, &str), b: (&str, &str)) -> serde_json::Value {
+    serde_json::json!({"a": {"part": a.0, "pin": a.1}, "b": {"part": b.0, "pin": b.1}})
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-neopixel-dma"]
+fn neopixel_ring_is_driven_by_timer_pwm_and_dma() {
+    use simucleo_nucleo::{BusCatalog, Circuit};
+    use std::collections::HashMap;
+    let n = "nucleo";
+    let circuit: Circuit = serde_json::from_value(serde_json::json!({
+        "parts": [
+            {"id": "nucleo", "kind": "nucleo-f401re"},
+            {"id": "ring", "kind": "neopixel", "props": {"count": 12, "layout": "ring"}}
+        ],
+        "wires": [
+            wire_json((n, "5V"), ("ring", "VCC")),
+            wire_json(("ring", "GND"), (n, "GND")),
+            wire_json((n, "D5"), ("ring", "DIN"))
+        ]
+    }))
+    .unwrap();
+    let signals: HashMap<String, String> = [("D5".to_string(), "PB4".to_string())].into();
+
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-neopixel-dma", "hal-neopixel-dma"))
+        .unwrap();
+    board.set_circuit(&circuit, &BusCatalog::default(), &signals);
+    board.run_for_ns(1100e6);
+    let text = console_text(&mut board);
+    let line = text.lines().find(|l| l.starts_with("frames")).expect(&text);
+    let frames: u32 = line
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .trim_end_matches(',')
+        .parse()
+        .unwrap();
+    assert!(frames > 30, "{line}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+
+    // The ring shows the last frame the firmware computed: a rainbow at
+    // brightness 32 with LED 0 matching the printed colour.
+    let v = board.circuit_frame(1.1);
+    let leds = &v.iter().find(|p| p.id == "ring").unwrap().leds;
+    assert_eq!(leds.len(), 12);
+    assert!(leds.iter().all(|&c| c != 0), "{leds:06X?}");
+    let distinct: std::collections::BTreeSet<_> = leds.iter().collect();
+    assert!(distinct.len() >= 10, "a rainbow: {leds:06X?}");
+    assert!(leds
+        .iter()
+        .all(|&c| (c >> 16 & 0xFF) <= 32 && (c >> 8 & 0xFF) <= 32 && (c & 0xFF) <= 32));
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-dht-capture"]
+fn dht22_is_read_with_input_capture() {
+    use simucleo_nucleo::{BusCatalog, Circuit};
+    use std::collections::HashMap;
+    let n = "nucleo";
+    let circuit = |model: &str, temp: f64| -> Circuit {
+        serde_json::from_value(serde_json::json!({
+            "parts": [
+                {"id": "nucleo", "kind": "nucleo-f401re"},
+                {"id": "dht", "kind": "dht", "props": {"model": model, "temp": temp, "humidity": 48.3}}
+            ],
+            "wires": [
+                wire_json((n, "3V3"), ("dht", "VCC")),
+                wire_json(("dht", "GND"), (n, "GND")),
+                wire_json((n, "D3"), ("dht", "DATA"))
+            ]
+        }))
+        .unwrap()
+    };
+    let signals: HashMap<String, String> = [("D3".to_string(), "PB3".to_string())].into();
+
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-dht-capture", "hal-dht-capture"))
+        .unwrap();
+    board.set_circuit(&circuit("DHT22", -7.4), &BusCatalog::default(), &signals);
+    board.run_for_ns(3200e6);
+    let text = console_text(&mut board);
+    assert!(
+        text.contains("humidity 48.3 %  temperature -7.4 C"),
+        "{text}"
+    );
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+
+    board.set_circuit(&circuit("DHT11", 23.6), &BusCatalog::default(), &signals);
+    board.run_for_ns(2100e6);
+    let text = console_text(&mut board);
+    // The firmware decodes for a DHT22: a DHT11's bytes (48, 0, 23, 6)
+    // come out as nonsense, the classic wrong-model mistake.
+    assert!(
+        text.contains("humidity 1228.8 %  temperature 589.4 C"),
+        "{text}"
+    );
+}

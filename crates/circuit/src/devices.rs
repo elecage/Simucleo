@@ -892,6 +892,193 @@ impl SdCard {
     }
 }
 
+// ----------------------------------------------------------------- DHT
+
+/// DHT11/DHT22 temperature and humidity sensor on a single open-drain data
+/// line. The host pulls the line low (DHT11 ≥ 18 ms, DHT22 ≥ 1 ms) and
+/// releases it; the sensor answers 80 µs low, 80 µs high, then 40 bits,
+/// each 50 µs low followed by 26–28 µs (0) or 70 µs (1) high.
+#[derive(Debug, Clone)]
+pub struct Dht {
+    pub dht22: bool,
+    pub temp: f64,
+    pub humidity: f64,
+    /// The host has held the line low since then.
+    low_since: Option<Seconds>,
+    /// Planned line changes: (time, sensor pulls low).
+    plan: VecDeque<(Seconds, bool)>,
+    /// The sensor pulls the line low now.
+    pub pulling: bool,
+    /// The last start signal was too short to be noticed.
+    pub short_start: Option<Seconds>,
+    pub reads: u32,
+}
+
+impl Dht {
+    pub fn new(dht22: bool, temp: f64, humidity: f64) -> Self {
+        Self {
+            dht22,
+            temp,
+            humidity,
+            low_since: None,
+            plan: VecDeque::new(),
+            pulling: false,
+            short_start: None,
+            reads: 0,
+        }
+    }
+
+    /// The 5 data bytes: humidity, temperature, checksum.
+    pub fn frame(&self) -> [u8; 5] {
+        let mut d = [0u8; 5];
+        if self.dht22 {
+            let h = (self.humidity.clamp(0.0, 100.0) * 10.0).round() as u16;
+            let t = (self.temp.clamp(-40.0, 80.0).abs() * 10.0).round() as u16
+                | if self.temp < 0.0 { 0x8000 } else { 0 };
+            d[..4].copy_from_slice(&[(h >> 8) as u8, h as u8, (t >> 8) as u8, t as u8]);
+        } else {
+            let t = self.temp.clamp(0.0, 50.0);
+            d[0] = self.humidity.clamp(20.0, 90.0).round() as u8;
+            d[2] = t.trunc() as u8;
+            d[3] = ((t.fract() * 10.0).round() as u8).min(9);
+        }
+        d[4] = d[..4].iter().fold(0u8, |a, &b| a.wrapping_add(b));
+        d
+    }
+
+    /// The line's level changed (as seen while the sensor is not pulling).
+    pub fn observe(&mut self, now: Seconds, high: bool) {
+        if !self.plan.is_empty() || self.pulling {
+            return; // busy answering
+        }
+        match (high, self.low_since) {
+            (false, None) => self.low_since = Some(now),
+            (true, Some(start)) => {
+                self.low_since = None;
+                let min = if self.dht22 { 0.0008 } else { 0.018 };
+                if now - start < min {
+                    self.short_start = Some(now - start);
+                    return;
+                }
+                self.short_start = None;
+                self.reads += 1;
+                // Answer 30 µs after the release.
+                let frame = self.frame();
+                let mut t = now + 30e-6;
+                let mut push = |dt: f64, low: bool, t: &mut f64| {
+                    self.plan.push_back((*t, low));
+                    *t += dt;
+                };
+                push(80e-6, true, &mut t);
+                push(80e-6, false, &mut t);
+                for byte in frame {
+                    for bit in (0..8).rev() {
+                        push(50e-6, true, &mut t);
+                        let one = byte >> bit & 1 != 0;
+                        push(if one { 70e-6 } else { 27e-6 }, false, &mut t);
+                    }
+                }
+                push(50e-6, true, &mut t);
+                push(0.0, false, &mut t);
+            }
+            _ => {}
+        }
+    }
+
+    /// Apply planned changes up to `now`; whether the output changed.
+    pub fn advance(&mut self, now: Seconds) -> bool {
+        let before = self.pulling;
+        while let Some(&(t, low)) = self.plan.front() {
+            if t > now + 1e-12 {
+                break;
+            }
+            self.pulling = low;
+            self.plan.pop_front();
+        }
+        self.pulling != before
+    }
+
+    pub fn next(&self) -> Option<Seconds> {
+        self.plan.front().map(|&(t, _)| t)
+    }
+}
+
+// ------------------------------------------------------------ NeoPixel
+
+/// WS2812B chain decoder: bits from the width of each high pulse (0:
+/// 0.4 µs, 1: 0.8 µs, ±150 ns), 24 bits per LED in G, R, B order, the
+/// first LED keeping the first 24 bits; a low of more than 50 µs latches.
+#[derive(Debug, Clone)]
+pub struct NeoPixel {
+    /// Colour of each LED as 0xRRGGBB.
+    pub leds: Vec<u32>,
+    bits: Vec<bool>,
+    rise: Option<Seconds>,
+    last_fall: Option<Seconds>,
+    /// The last pulse that fitted neither bit (µs), for a warning.
+    pub bad_pulse: Option<f64>,
+    pub frames: u32,
+}
+
+impl NeoPixel {
+    pub fn new(count: usize) -> Self {
+        Self {
+            leds: vec![0; count],
+            bits: Vec::new(),
+            rise: None,
+            last_fall: None,
+            bad_pulse: None,
+            frames: 0,
+        }
+    }
+
+    fn latch(&mut self) {
+        if self.bits.is_empty() {
+            return;
+        }
+        for (i, led) in self.leds.iter_mut().enumerate() {
+            let chunk = self.bits.get(i * 24..i * 24 + 24);
+            let Some(chunk) = chunk else {
+                break;
+            };
+            let v = chunk.iter().fold(0u32, |a, &b| a << 1 | b as u32);
+            let (g, r, b) = (v >> 16 & 0xFF, v >> 8 & 0xFF, v & 0xFF);
+            *led = r << 16 | g << 8 | b;
+        }
+        self.bits.clear();
+        self.frames += 1;
+    }
+
+    /// Latch if the line has been low long enough by `now`.
+    pub fn settle(&mut self, now: Seconds) {
+        if self.rise.is_none() && self.last_fall.is_some_and(|f| now - f > 50e-6) {
+            self.latch();
+        }
+    }
+
+    /// DIN changed level at `now`.
+    pub fn edge(&mut self, now: Seconds, high: bool) {
+        if high {
+            if self.last_fall.is_some_and(|f| now - f > 50e-6) {
+                self.latch();
+            }
+            self.rise = Some(now);
+        } else if let Some(r) = self.rise.take() {
+            let w = (now - r) * 1e6;
+            self.last_fall = Some(now);
+            let bit = if (0.25..=0.55).contains(&w) {
+                false
+            } else if (0.65..=0.95).contains(&w) {
+                true
+            } else {
+                self.bad_pulse = Some(w);
+                w > 0.6
+            };
+            self.bits.push(bit);
+        }
+    }
+}
+
 /// A bus device part's state, kept across circuit edits.
 #[derive(Debug, Clone)]
 pub enum Device {
@@ -899,6 +1086,8 @@ pub enum Device {
     Rtc(Ds3231),
     Aht(Aht20),
     Sd(Box<SdCard>),
+    Dht(Dht),
+    Pixels(NeoPixel),
 }
 
 impl Device {
@@ -908,7 +1097,7 @@ impl Device {
             Device::Oled(d) => Some(d.as_mut()),
             Device::Rtc(d) => Some(d),
             Device::Aht(d) => Some(d),
-            Device::Sd(_) => None,
+            Device::Sd(_) | Device::Dht(_) | Device::Pixels(_) => None,
         }
     }
 
@@ -917,7 +1106,7 @@ impl Device {
             Device::Oled(d) => d.address,
             Device::Rtc(_) => 0x68,
             Device::Aht(_) => 0x38,
-            Device::Sd(_) => 0,
+            Device::Sd(_) | Device::Dht(_) | Device::Pixels(_) => 0,
         }
     }
 }
@@ -1152,5 +1341,65 @@ mod tests {
         other.load_image(&img);
         assert_eq!(other.blocks, 65536);
         assert_eq!(other.read_block(5)[2], 2);
+    }
+
+    #[test]
+    fn dht22_answers_a_long_enough_start_signal() {
+        let mut d = Dht::new(true, -3.5, 61.2);
+        d.observe(0.0, false);
+        d.observe(0.0005, true);
+        assert!(d.next().is_none(), "0.5 ms is too short");
+        assert!(d.short_start.is_some());
+        d.observe(1.0, false);
+        d.observe(1.002, true);
+        // Replay the plan and decode it like firmware would.
+        let mut edges = Vec::new();
+        while let Some(t) = d.next() {
+            d.advance(t);
+            edges.push((t, d.pulling));
+        }
+        assert!(!d.pulling);
+        // Bits: the high time after each 50 µs low (skip the 80/80 header).
+        let highs: Vec<f64> = edges
+            .windows(2)
+            .skip(2)
+            .filter(|w| !w[0].1)
+            .map(|w| w[1].0 - w[0].0)
+            .collect();
+        let bits: Vec<bool> = highs.iter().take(40).map(|&h| h > 50e-6).collect();
+        let bytes: Vec<u8> = bits
+            .chunks(8)
+            .map(|c| c.iter().fold(0, |a, &b| a << 1 | b as u8))
+            .collect();
+        assert_eq!(bytes[..2], [0x02, 0x64]); // 612
+        assert_eq!(bytes[2..4], [0x80, 0x23]); // −35
+        assert_eq!(
+            bytes[4],
+            bytes[..4].iter().fold(0u8, |a, &b| a.wrapping_add(b))
+        );
+    }
+
+    #[test]
+    fn neopixel_decodes_grb_and_latches() {
+        let mut n = NeoPixel::new(2);
+        let mut t = 0.0;
+        let send = |n: &mut NeoPixel, byte: u8, t: &mut f64| {
+            for bit in (0..8).rev() {
+                let h = if byte >> bit & 1 != 0 { 0.8e-6 } else { 0.4e-6 };
+                n.edge(*t, true);
+                n.edge(*t + h, false);
+                *t += 1.25e-6;
+            }
+        };
+        for b in [0x10, 0xFF, 0x00, 0x00, 0x00, 0x80] {
+            send(&mut n, b, &mut t);
+        }
+        assert_eq!(n.leds, [0, 0], "not latched yet");
+        n.settle(t + 60e-6);
+        assert_eq!(n.leds, [0xFF1000, 0x000080]);
+        assert!(n.bad_pulse.is_none());
+        n.edge(t + 100e-6, true);
+        n.edge(t + 100.6e-6, false);
+        assert!(n.bad_pulse.is_some_and(|w| (w - 0.6).abs() < 0.01));
     }
 }

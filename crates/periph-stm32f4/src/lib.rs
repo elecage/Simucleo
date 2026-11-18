@@ -65,6 +65,11 @@ pub enum Event {
         idx: u8,
         gen: u32,
     },
+    /// Something in the external circuit changes on its own (a sensor's
+    /// reply on a data line).
+    Circuit {
+        gen: u32,
+    },
 }
 
 /// Something the firmware did that would misbehave on real hardware.
@@ -111,6 +116,11 @@ pub trait ExternalCircuit {
     /// each of those pins sees from outside (`None`: nothing drives it) if
     /// that may have changed.
     fn update(&mut self, time: Cycles, drives: &[PinDrive]) -> Option<Vec<Option<bool>>>;
+    /// When the circuit next changes by itself (a device driving a line on
+    /// its own schedule); the bus calls [`ExternalCircuit::update`] then.
+    fn next_event(&self) -> Option<Cycles> {
+        None
+    }
     /// Voltage the circuit puts on a pin (for the ADC), if it is connected.
     fn voltage(&self, _port: u8, _pin: u8) -> Option<f64> {
         None
@@ -367,6 +377,8 @@ pub struct Stm32f401Bus {
     circuit: Option<Box<dyn ExternalCircuit>>,
     /// Pins the circuit currently drives from outside.
     circuit_pins: Vec<(u8, u8)>,
+    /// Generation of the circuit's own scheduled event.
+    circuit_gen: u32,
     /// Unmodelled peripherals.
     pub regs: RegisterFile,
     pub warnings: BTreeSet<Warning>,
@@ -413,6 +425,7 @@ impl Stm32f401Bus {
             levels: [0; 8],
             circuit: None,
             circuit_pins: Vec::new(),
+            circuit_gen: 0,
             regs: RegisterFile::default(),
             warnings: BTreeSet::new(),
             sched: Scheduler::new(),
@@ -564,6 +577,21 @@ impl Stm32f401Bus {
                 self.exti.edge(line, new & (1 << line) != 0);
             }
         }
+        // Timer inputs (input capture, slave reset) on alternate-function pins.
+        for &(p, pin, af, ti, ch) in timer::PIN_MAP {
+            if p as usize != port || changed & (1 << pin) == 0 {
+                continue;
+            }
+            let g = &self.gpio[port];
+            if g.mode(pin) != gpio::PinMode::Alternate || g.af(pin) != af {
+                continue;
+            }
+            let t = &mut self.timers[ti as usize];
+            if (0..t.info.channels as usize).any(|c| t.is_input(c)) {
+                t.input_edge(ch as usize, new & (1 << pin) != 0, time);
+                self.reschedule_timer(ti as usize);
+            }
+        }
     }
 
     /// Attach (or with `None` detach) the external circuit and let it see
@@ -602,6 +630,12 @@ impl Stm32f401Bus {
             .map(|&(port, pin)| self.gpio[port as usize].drive(pin))
             .collect();
         let levels = c.update(time, &drives);
+        // The circuit's own next change.
+        self.circuit_gen = self.circuit_gen.wrapping_add(1);
+        if let Some(at) = c.next_event() {
+            let gen = self.circuit_gen;
+            self.sched.schedule_at(at.max(time), Event::Circuit { gen });
+        }
         self.circuit = Some(c);
         if let Some(levels) = levels {
             let pins = self.circuit_pins.clone();
@@ -804,6 +838,11 @@ impl Stm32f401Bus {
                             time: at,
                         };
                         self.spi[i].event(at, cycles, &mut self.sched, idx, &mut bus);
+                    }
+                }
+                Event::Circuit { gen } => {
+                    if self.circuit_gen == gen {
+                        self.circuit_update_forced(at);
                     }
                 }
                 Event::Adc { gen } => {
@@ -1205,7 +1244,9 @@ impl Stm32f401Bus {
             if t.running() && matches!(off, 0x10 | 0x24) {
                 self.time_read = true;
             }
-            return t.read(off);
+            let v = t.read(off);
+            t.after_read(off);
+            return v;
         }
         self.regs.read(a)
     }

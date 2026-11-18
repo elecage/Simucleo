@@ -642,3 +642,78 @@ fn adc_reads_the_circuit_and_drives_servo_and_motor() {
         board.circuit_warnings()
     );
 }
+
+// --------------------------------------------------------- I2C (M6)
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-i2c-oled"]
+fn i2c_clock_reads_rtc_and_sensor_and_draws_on_the_oled() {
+    use simucleo_nucleo::{BusCatalog, Circuit};
+    use std::collections::HashMap;
+    let module = |id: &str| {
+        serde_json::json!([
+            {"a": {"part": "nucleo", "pin": "3V3"}, "b": {"part": id, "pin": "VCC"}},
+            {"a": {"part": id, "pin": "GND"}, "b": {"part": "nucleo", "pin": "GND"}},
+            {"a": {"part": "nucleo", "pin": "D15"}, "b": {"part": id, "pin": "SCL"}},
+            {"a": {"part": "nucleo", "pin": "D14"}, "b": {"part": id, "pin": "SDA"}}
+        ])
+    };
+    let mut wires = Vec::new();
+    for id in ["oled", "rtc", "aht"] {
+        wires.extend(module(id).as_array().unwrap().iter().cloned());
+    }
+    let circuit: Circuit = serde_json::from_value(serde_json::json!({
+        "parts": [
+            {"id": "nucleo", "kind": "nucleo-f401re"},
+            {"id": "oled", "kind": "oled-ssd1306"},
+            {"id": "rtc", "kind": "rtc-ds3231"},
+            {"id": "aht", "kind": "aht20", "props": {"temp": 21.5, "humidity": 40}}
+        ],
+        "wires": wires
+    }))
+    .unwrap();
+    let signals: HashMap<String, String> = [("D15", "PB8"), ("D14", "PB9")]
+        .into_iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-i2c-oled", "hal-i2c-oled"))
+        .unwrap();
+    // 2030-06-15 08:59:58 UTC
+    board.set_wall_clock(1_907_744_398.0);
+    board.set_circuit(&circuit, &BusCatalog::default(), &signals);
+    board.run_for_ns(3500e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("scan: 0x38 0x3C 0x68"), "{text}");
+    assert!(
+        text.contains("2030-06-15 08:59:59 | 21.5 C 40.0 %RH"),
+        "{text}"
+    );
+    assert!(text.contains("2030-06-15 09:00:01"), "{text}");
+
+    let v = board.circuit_frame(3.5);
+    let oled = v.iter().find(|p| p.id == "oled").unwrap();
+    let screen = oled.screen.as_ref().expect("display on");
+    assert!(screen.chars().any(|c| c != 'A'), "something drawn");
+    assert_eq!(
+        v.iter().find(|p| p.id == "rtc").unwrap().text.as_deref(),
+        Some("2030-06-15 09:00:01")
+    );
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+
+    // B1 sets the seconds to 00.
+    board.set_user_button(true);
+    board.run_for_ns(200e6);
+    board.set_user_button(false);
+    board.run_for_ns(300e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("seconds set to 00"), "{text}");
+    assert!(text.contains("09:00:00"), "{text}");
+}

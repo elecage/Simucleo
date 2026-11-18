@@ -6,6 +6,7 @@
 //! [`sim::CircuitSim`] solves the circuit electrically against the MCU's
 //! pin drives.
 
+pub mod devices;
 pub mod models;
 pub mod netlist;
 pub mod sim;

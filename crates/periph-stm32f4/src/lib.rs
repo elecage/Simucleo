@@ -106,9 +106,9 @@ pub trait ExternalCircuit {
     fn voltage(&self, _port: u8, _pin: u8) -> Option<f64> {
         None
     }
-    /// One I2C bus operation for the devices on the nets of `scl` and
-    /// `sda` (port, pin). Default: nobody answers.
-    fn i2c(&mut self, _scl: (u8, u8), _sda: (u8, u8), op: I2cOp) -> I2cReply {
+    /// One I2C bus operation at `time` for the devices on the nets of
+    /// `scl` and `sda` (port, pin). Default: nobody answers.
+    fn i2c(&mut self, _time: Cycles, _scl: (u8, u8), _sda: (u8, u8), op: I2cOp) -> I2cReply {
         i2c::NoDevices.transfer(op)
     }
 }
@@ -166,12 +166,13 @@ const I2CS: [I2cInfo; 3] = [
 struct CircuitI2c<'a> {
     circuit: Option<&'a mut Box<dyn ExternalCircuit>>,
     pins: Option<((u8, u8), (u8, u8))>,
+    time: Cycles,
 }
 
 impl I2cBus for CircuitI2c<'_> {
     fn transfer(&mut self, op: I2cOp) -> I2cReply {
         match (&mut self.circuit, self.pins) {
-            (Some(c), Some((scl, sda))) => c.i2c(scl, sda, op),
+            (Some(c), Some((scl, sda))) => c.i2c(self.time, scl, sda, op),
             _ => i2c::NoDevices.transfer(op),
         }
     }
@@ -639,6 +640,7 @@ impl Stm32f401Bus {
                         let mut bus = CircuitI2c {
                             circuit: self.circuit.as_mut(),
                             pins,
+                            time: at,
                         };
                         self.i2c[i].event(at, &clocks, &mut self.sched, idx, &mut bus);
                     }
@@ -903,6 +905,7 @@ impl Stm32f401Bus {
             let mut bus = CircuitI2c {
                 circuit: self.circuit.as_mut(),
                 pins,
+                time: now,
             };
             self.i2c[i].after_read(off, now, &clocks, &mut self.sched, i as u8, &mut bus);
             return v;
@@ -996,6 +999,7 @@ impl Stm32f401Bus {
                 let mut bus = CircuitI2c {
                     circuit: self.circuit.as_mut(),
                     pins,
+                    time: now,
                 };
                 self.i2c[i].write(
                     off,

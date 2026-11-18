@@ -19,6 +19,7 @@ use simucleo_core::Cycles;
 use simucleo_cpu_armv7m::ArmV7M;
 use simucleo_elf::{ElfError, FirmwareImage};
 use simucleo_periph_stm32f4::gpio::PinDrive;
+use simucleo_periph_stm32f4::i2c::{I2cOp, I2cReply};
 use simucleo_periph_stm32f4::rcc::ResetCause;
 use simucleo_periph_stm32f4::{ExternalCircuit, Stm32f401Bus};
 use thiserror::Error;
@@ -76,6 +77,19 @@ impl ExternalCircuit for CircuitLink {
 
     fn voltage(&self, port: u8, pin: u8) -> Option<f64> {
         self.0.borrow().mcu_voltage(port, pin)
+    }
+
+    fn i2c(&mut self, time: Cycles, scl: (u8, u8), sda: (u8, u8), op: I2cOp) -> I2cReply {
+        let mut c = self.0.borrow_mut();
+        match op {
+            I2cOp::Start { addr, read } => I2cReply::Ack(c.i2c_start(time, scl, sda, addr, read)),
+            I2cOp::Write(b) => I2cReply::Ack(c.i2c_write(time, scl, b)),
+            I2cOp::Read { .. } => I2cReply::Byte(c.i2c_read(time, scl)),
+            I2cOp::Stop => {
+                c.i2c_stop(time, scl);
+                I2cReply::Ack(true)
+            }
+        }
     }
 }
 
@@ -140,6 +154,7 @@ impl Nucleo {
             ns: self.time_ns(),
             hz: self.bus.clocks().hclk,
         }];
+        self.sync_circuit_clock();
     }
 
     /// Program an ELF image into flash and power the board up.
@@ -215,7 +230,23 @@ impl Nucleo {
                 ns,
                 hz,
             });
+            self.sync_circuit_clock();
         }
+    }
+
+    /// Give the circuit (clock chips, sensor timing) the current time base.
+    fn sync_circuit_clock(&mut self) {
+        if let Some(s) = self.timeline.last() {
+            self.circuit
+                .borrow_mut()
+                .set_clock(s.cycle, s.ns / 1e9, s.hz as f64);
+        }
+    }
+
+    /// The real date and time (Unix seconds) that clock chips placed from
+    /// now on start at.
+    pub fn set_wall_clock(&mut self, unix: f64) {
+        self.circuit.borrow_mut().set_wall_clock(unix);
     }
 
     /// Run for up to `cycles` core cycles. Peripheral events happen on time

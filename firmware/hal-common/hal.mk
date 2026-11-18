@@ -10,7 +10,7 @@ CC      := arm-none-eabi-gcc
 
 HAL_SRCS := $(addprefix $(VENDOR)/stm32f4xx_hal_driver/Src/stm32f4xx_hal, \
             .c _cortex.c _rcc.c _rcc_ex.c _gpio.c _pwr.c _pwr_ex.c _flash.c _flash_ex.c \
-            _uart.c _dma.c _dma_ex.c _exti.c _tim.c _tim_ex.c)
+            _uart.c _dma.c _dma_ex.c _exti.c _tim.c _tim_ex.c _adc.c _adc_ex.c)
 COMMON_SRCS := $(COMMON)/Src/stm32f4xx_it.c $(COMMON)/Src/stm32f4xx_hal_msp.c \
                $(COMMON)/Src/clock_config.c $(COMMON)/Src/syscalls.c \
                $(VENDOR)/cmsis_device_f4/Source/system_stm32f4xx.c

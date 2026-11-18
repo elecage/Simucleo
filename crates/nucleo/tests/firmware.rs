@@ -517,3 +517,112 @@ fn freertos_queues_carry_uart_input_and_samples() {
     assert!(text.contains("heap free "), "{text:?}");
     assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
 }
+
+// ------------------------------------------------------- analog (M5)
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-adc-servo"]
+fn adc_reads_the_circuit_and_drives_servo_and_motor() {
+    use simucleo_nucleo::{BusCatalog, Circuit};
+    use std::collections::HashMap;
+    let circuit = |pot: f64, lux: f64| -> Circuit {
+        serde_json::from_value(serde_json::json!({
+            "parts": [
+                {"id": "nucleo", "kind": "nucleo-f401re"},
+                {"id": "pot", "kind": "potentiometer", "props": {"ohms": "10k", "position": pot}},
+                {"id": "r1", "kind": "resistor", "props": {"ohms": "10k"}},
+                {"id": "ldr", "kind": "ldr", "props": {"lux": lux}},
+                {"id": "tmp", "kind": "temp-sensor", "props": {"temp": 30, "model": "TMP36"}},
+                {"id": "sv", "kind": "servo"},
+                {"id": "m", "kind": "dc-motor"}
+            ],
+            "wires": [
+                {"a": {"part": "nucleo", "pin": "3V3"}, "b": {"part": "pot", "pin": "2"}},
+                {"a": {"part": "pot", "pin": "1"}, "b": {"part": "nucleo", "pin": "GND"}},
+                {"a": {"part": "pot", "pin": "W"}, "b": {"part": "nucleo", "pin": "A0"}},
+                {"a": {"part": "nucleo", "pin": "3V3"}, "b": {"part": "r1", "pin": "1"}},
+                {"a": {"part": "r1", "pin": "2"}, "b": {"part": "nucleo", "pin": "A1"}},
+                {"a": {"part": "ldr", "pin": "1"}, "b": {"part": "nucleo", "pin": "A1"}},
+                {"a": {"part": "ldr", "pin": "2"}, "b": {"part": "nucleo", "pin": "GND"}},
+                {"a": {"part": "nucleo", "pin": "3V3"}, "b": {"part": "tmp", "pin": "VS"}},
+                {"a": {"part": "tmp", "pin": "GND"}, "b": {"part": "nucleo", "pin": "GND"}},
+                {"a": {"part": "tmp", "pin": "OUT"}, "b": {"part": "nucleo", "pin": "A2"}},
+                {"a": {"part": "nucleo", "pin": "5V"}, "b": {"part": "sv", "pin": "V+"}},
+                {"a": {"part": "sv", "pin": "GND"}, "b": {"part": "nucleo", "pin": "GND"}},
+                {"a": {"part": "nucleo", "pin": "D9"}, "b": {"part": "sv", "pin": "SIG"}},
+                {"a": {"part": "nucleo", "pin": "5V"}, "b": {"part": "m", "pin": "VCC"}},
+                {"a": {"part": "m", "pin": "GND"}, "b": {"part": "nucleo", "pin": "GND"}},
+                {"a": {"part": "nucleo", "pin": "D5"}, "b": {"part": "m", "pin": "IA"}},
+                {"a": {"part": "nucleo", "pin": "D4"}, "b": {"part": "m", "pin": "IB"}}
+            ]
+        }))
+        .unwrap()
+    };
+    let signals: HashMap<String, String> = [
+        ("A0", "PA0"),
+        ("A1", "PA1"),
+        ("A2", "PA4"),
+        ("D9", "PC7"),
+        ("D5", "PB4"),
+        ("D4", "PB5"),
+    ]
+    .into_iter()
+    .map(|(a, b)| (a.to_string(), b.to_string()))
+    .collect();
+    let catalog = BusCatalog::default();
+
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-adc-servo", "hal-adc-servo"))
+        .unwrap();
+    board.set_circuit(&circuit(0.75, 1000.0), &catalog, &signals);
+    board.run_for_ns(100e6);
+    board.circuit_frame(0.1);
+    // Let the servo travel (0.1 s per 60°) frame by frame.
+    for _ in 0..60 {
+        board.run_for_ns(16e6);
+        board.circuit_frame(0.016);
+    }
+    let text = console_text(&mut board);
+    let last = text.lines().rev().find(|l| l.starts_with("pot")).unwrap();
+    // pot 0.75 × 4096 ≈ 3071; TMP36 at 30 °C; bright light pulls A1 low.
+    let pot: u32 = last.split_whitespace().nth(1).unwrap().parse().unwrap();
+    assert!((3060..3080).contains(&pot), "{last}");
+    assert!(
+        last.contains("TMP36 30.0 C") || last.contains("TMP36 29.9 C"),
+        "{last}"
+    );
+    assert!(last.contains("chip 25.0 C"), "{last}");
+    let light: u32 = last
+        .split('|')
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(light < 200, "{last}");
+    let v = board.circuit_frame(0.016);
+    let sv = v.iter().find(|p| p.id == "sv").unwrap();
+    // 500 + 3071·2000/4095 ≈ 2000 µs → 135°.
+    assert!((sv.angle.unwrap() - 135.0).abs() < 2.0, "{sv:?}");
+    let m = v.iter().find(|p| p.id == "m").unwrap();
+    assert!(m.rpm.unwrap() > 100.0, "bright: fast — {m:?}");
+
+    // Turn the pot to the start: the servo swings back.
+    board.set_circuit(&circuit(0.0, 1000.0), &catalog, &signals);
+    for _ in 0..60 {
+        board.run_for_ns(16e6);
+        board.circuit_frame(0.016);
+    }
+    let v = board.circuit_frame(0.016);
+    let sv = v.iter().find(|p| p.id == "sv").unwrap();
+    assert!(sv.angle.unwrap() < 2.0, "{sv:?}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}

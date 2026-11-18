@@ -7,6 +7,7 @@
 //! GUI can show which peripheral the firmware relies on that is not
 //! simulated yet.
 
+pub mod adc;
 pub mod exti;
 pub mod gpio;
 pub mod map;
@@ -21,6 +22,7 @@ pub mod usart;
 
 use std::collections::BTreeSet;
 
+use adc::{Adc, AdcAction};
 use exti::Exti;
 use gpio::{Gpio, PinDrive, PinEvent};
 use rcc::{Clocks, Rcc, ResetCause};
@@ -43,6 +45,9 @@ pub enum Event {
     },
     Timer {
         idx: u8,
+        gen: u32,
+    },
+    Adc {
         gen: u32,
     },
 }
@@ -91,6 +96,10 @@ pub trait ExternalCircuit {
     /// each of those pins sees from outside (`None`: nothing drives it) if
     /// that may have changed.
     fn update(&mut self, time: Cycles, drives: &[PinDrive]) -> Option<Vec<Option<bool>>>;
+    /// Voltage the circuit puts on a pin (for the ADC), if it is connected.
+    fn voltage(&self, _port: u8, _pin: u8) -> Option<f64> {
+        None
+    }
 }
 
 /// USART instances: (name, base, IRQ, on APB2, ENR offset, enable bit).
@@ -160,6 +169,7 @@ pub struct Stm32f401Bus {
     pub usart: [Usart; 3],
     pub exti: Exti,
     pub syscfg: Syscfg,
+    pub adc: Adc,
     /// TIM1, TIM2, TIM3, TIM4, TIM5, TIM9, TIM10, TIM11.
     pub timers: [Timer; 8],
     /// Firmware read a register whose value changes with time alone (a
@@ -207,6 +217,7 @@ impl Stm32f401Bus {
             usart: USARTS.map(|(name, _, irq, apb2, ..)| Usart::new(name, irq, apb2)),
             exti: Exti::default(),
             syscfg: Syscfg::default(),
+            adc: Adc::default(),
             timers: TIMERS.map(Timer::new),
             time_read: false,
             levels: [0; 8],
@@ -393,6 +404,34 @@ impl Stm32f401Bus {
         }
     }
 
+    /// Voltage at an ADC channel: the internal sources, or the pin as the
+    /// external circuit (or, without one, the pin's own drive) sets it.
+    fn channel_voltage(&self, ch: u8) -> f64 {
+        if let Some(v) = self.adc.internal_voltage(ch) {
+            return v;
+        }
+        let Some(&(port, pin)) = adc::CHANNEL_PINS.get(ch as usize) else {
+            return 0.0;
+        };
+        self.pin_voltage(port, pin)
+    }
+
+    /// Voltage on a pin (V).
+    pub fn pin_voltage(&self, port: u8, pin: u8) -> f64 {
+        if let Some(v) = self.circuit.as_ref().and_then(|c| c.voltage(port, pin)) {
+            return v;
+        }
+        let level = match self.gpio[port as usize].drive(pin) {
+            PinDrive::High | PinDrive::PullUp => true,
+            PinDrive::Low | PinDrive::PullDown | PinDrive::Float => false,
+        };
+        if level {
+            adc::VREF
+        } else {
+            0.0
+        }
+    }
+
     /// Drive a pin from outside the chip (`Some(level)`), or release it
     /// (`None`: it floats and follows its pull resistor).
     pub fn set_external(&mut self, port: usize, pin: u8, level: Option<bool>) {
@@ -433,6 +472,7 @@ impl Stm32f401Bus {
         }
         self.exti = Exti::default();
         self.syscfg = Syscfg::default();
+        self.adc.reset();
         let now = self.sched.now().max(self.now);
         for t in &mut self.timers {
             t.reset(now);
@@ -478,6 +518,16 @@ impl Stm32f401Bus {
             match ev {
                 Event::Usart { idx, kind, gen } => {
                     self.usart[idx as usize].event(idx, kind, gen, at, &clocks, &mut self.sched)
+                }
+                Event::Adc { gen } => {
+                    if self.adc.gen == gen {
+                        if let Some(ch) = self.adc.converting {
+                            let v = self.channel_voltage(ch);
+                            if self.adc.complete(v) {
+                                self.adc.begin(at, &clocks, &mut self.sched);
+                            }
+                        }
+                    }
                 }
                 Event::Timer { idx, gen } => {
                     let i = idx as usize;
@@ -568,6 +618,8 @@ impl Stm32f401Bus {
                 self.pwr = Pwr::default();
             } else if name == "SYSCFG" {
                 self.syscfg = Syscfg::default();
+            } else if name == "ADC1" {
+                self.adc.reset();
             } else if let Some(p) = regmap::peripheral_by_name(name) {
                 self.regs.reset_block(p.base);
             }
@@ -621,6 +673,13 @@ impl Stm32f401Bus {
                 map::RCC_BASE => self.rcc.read(off),
                 map::FLASH_IF_BASE => self.flash_if.read(off),
                 map::EXTI_BASE => self.exti.read(off),
+                map::ADC1_BASE => {
+                    if enabled(0x44, 8) {
+                        self.adc.peek(off)
+                    } else {
+                        0
+                    }
+                }
                 map::SYSCFG_BASE => {
                     if enabled(0x44, 14) {
                         self.syscfg.read(off)
@@ -673,6 +732,12 @@ impl Stm32f401Bus {
             map::RCC_BASE => return self.rcc.read(off),
             map::FLASH_IF_BASE => return self.flash_if.read(off),
             map::EXTI_BASE => return self.exti.read(off),
+            map::ADC1_BASE => {
+                if self.gated(0x44, 8, "ADC1", "RCC.APB2ENR.ADC1EN") {
+                    return 0;
+                }
+                return self.adc.read(off);
+            }
             map::SYSCFG_BASE => {
                 if self.gated(0x44, 14, "SYSCFG", "RCC.APB2ENR.SYSCFGEN") {
                     return 0;
@@ -742,6 +807,15 @@ impl Stm32f401Bus {
             }
             map::EXTI_BASE => {
                 self.exti.write(off, value, lanes);
+                return;
+            }
+            map::ADC1_BASE => {
+                if !self.gated(0x44, 8, "ADC1", "RCC.APB2ENR.ADC1EN") {
+                    if self.adc.write(off, value, lanes) == AdcAction::Start {
+                        let (now, clocks) = (self.now, self.clocks);
+                        self.adc.begin(now, &clocks, &mut self.sched);
+                    }
+                }
                 return;
             }
             map::SYSCFG_BASE => {
@@ -894,6 +968,9 @@ impl Bus for Stm32f401Bus {
             if u.irq_line() {
                 sys.set_irq_pending(u.irq);
             }
+        }
+        if self.adc.irq_line() {
+            sys.set_irq_pending(18);
         }
         for irq in self.exti.irqs() {
             sys.set_irq_pending(irq);

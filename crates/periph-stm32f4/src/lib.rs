@@ -10,6 +10,7 @@
 pub mod adc;
 pub mod exti;
 pub mod gpio;
+pub mod i2c;
 pub mod map;
 pub mod rcc;
 pub mod regmap;
@@ -25,6 +26,7 @@ use std::collections::BTreeSet;
 use adc::{Adc, AdcAction};
 use exti::Exti;
 use gpio::{Gpio, PinDrive, PinEvent};
+use i2c::{I2c, I2cBus, I2cOp, I2cReply};
 use rcc::{Clocks, Rcc, ResetCause};
 use regmap::RegisterFile;
 use simucleo_core::bus::{AccessSize, Bus, BusError, Memory};
@@ -48,6 +50,10 @@ pub enum Event {
         gen: u32,
     },
     Adc {
+        gen: u32,
+    },
+    I2c {
+        idx: u8,
         gen: u32,
     },
 }
@@ -99,6 +105,75 @@ pub trait ExternalCircuit {
     /// Voltage the circuit puts on a pin (for the ADC), if it is connected.
     fn voltage(&self, _port: u8, _pin: u8) -> Option<f64> {
         None
+    }
+    /// One I2C bus operation for the devices on the nets of `scl` and
+    /// `sda` (port, pin). Default: nobody answers.
+    fn i2c(&mut self, _scl: (u8, u8), _sda: (u8, u8), op: I2cOp) -> I2cReply {
+        i2c::NoDevices.transfer(op)
+    }
+}
+
+/// Pins as (port, pin, alternate function).
+type I2cPins = &'static [(u8, u8, u8)];
+
+/// An I2C instance and where its signals can go.
+struct I2cInfo {
+    name: &'static str,
+    base: u32,
+    irq_ev: u16,
+    irq_er: u16,
+    /// Bit in RCC.APB1ENR.
+    enable_bit: u32,
+    enable_name: &'static str,
+    scl: I2cPins,
+    sda: I2cPins,
+}
+
+const I2CS: [I2cInfo; 3] = [
+    I2cInfo {
+        name: "I2C1",
+        base: 0x4000_5400,
+        irq_ev: 31,
+        irq_er: 32,
+        enable_bit: 21,
+        enable_name: "RCC.APB1ENR.I2C1EN",
+        scl: &[(1, 6, 4), (1, 8, 4)],
+        sda: &[(1, 7, 4), (1, 9, 4)],
+    },
+    I2cInfo {
+        name: "I2C2",
+        base: 0x4000_5800,
+        irq_ev: 33,
+        irq_er: 34,
+        enable_bit: 22,
+        enable_name: "RCC.APB1ENR.I2C2EN",
+        scl: &[(1, 10, 4)],
+        sda: &[(1, 3, 9), (1, 11, 4)],
+    },
+    I2cInfo {
+        name: "I2C3",
+        base: 0x4000_5C00,
+        irq_ev: 72,
+        irq_er: 73,
+        enable_bit: 23,
+        enable_name: "RCC.APB1ENR.I2C3EN",
+        scl: &[(0, 8, 4)],
+        sda: &[(2, 9, 4), (1, 4, 9)],
+    },
+];
+
+/// The devices an I2C controller reaches through the external circuit.
+struct CircuitI2c<'a> {
+    circuit: Option<&'a mut Box<dyn ExternalCircuit>>,
+    pins: Option<((u8, u8), (u8, u8))>,
+}
+
+impl I2cBus for CircuitI2c<'_> {
+    fn transfer(&mut self, op: I2cOp) -> I2cReply {
+        match (&mut self.circuit, self.pins) {
+            (Some(c), Some((scl, sda))) => c.i2c(scl, sda, op),
+            _ => i2c::NoDevices.transfer(op),
+        }
     }
 }
 
@@ -170,6 +245,8 @@ pub struct Stm32f401Bus {
     pub exti: Exti,
     pub syscfg: Syscfg,
     pub adc: Adc,
+    /// I2C1, I2C2, I2C3.
+    pub i2c: [I2c; 3],
     /// TIM1, TIM2, TIM3, TIM4, TIM5, TIM9, TIM10, TIM11.
     pub timers: [Timer; 8],
     /// Firmware read a register whose value changes with time alone (a
@@ -218,6 +295,7 @@ impl Stm32f401Bus {
             exti: Exti::default(),
             syscfg: Syscfg::default(),
             adc: Adc::default(),
+            i2c: I2CS.map(|c| I2c::new(c.name, c.irq_ev, c.irq_er)),
             timers: TIMERS.map(Timer::new),
             time_read: false,
             levels: [0; 8],
@@ -421,6 +499,20 @@ impl Stm32f401Bus {
         }
     }
 
+    /// The SCL and SDA pins an I2C controller is routed to (GPIO in
+    /// alternate-function mode with the right AF), if both are.
+    fn i2c_pins(&self, i: usize) -> Option<((u8, u8), (u8, u8))> {
+        let routed = |pins: I2cPins| {
+            pins.iter()
+                .find(|&&(port, pin, af)| {
+                    let g = &self.gpio[port as usize];
+                    g.mode(pin) == gpio::PinMode::Alternate && g.af(pin) == af
+                })
+                .map(|&(port, pin, _)| (port, pin))
+        };
+        Some((routed(I2CS[i].scl)?, routed(I2CS[i].sda)?))
+    }
+
     /// Voltage at an ADC channel: the internal sources, or the pin as the
     /// external circuit (or, without one, the pin's own drive) sets it.
     fn channel_voltage(&self, ch: u8) -> f64 {
@@ -490,6 +582,9 @@ impl Stm32f401Bus {
         self.exti = Exti::default();
         self.syscfg = Syscfg::default();
         self.adc.reset();
+        for i in &mut self.i2c {
+            i.reset();
+        }
         let now = self.sched.now().max(self.now);
         for t in &mut self.timers {
             t.reset(now);
@@ -536,6 +631,17 @@ impl Stm32f401Bus {
             match ev {
                 Event::Usart { idx, kind, gen } => {
                     self.usart[idx as usize].event(idx, kind, gen, at, &clocks, &mut self.sched)
+                }
+                Event::I2c { idx, gen } => {
+                    let i = idx as usize;
+                    if self.i2c[i].gen == gen {
+                        let pins = self.i2c_pins(i);
+                        let mut bus = CircuitI2c {
+                            circuit: self.circuit.as_mut(),
+                            pins,
+                        };
+                        self.i2c[i].event(at, &clocks, &mut self.sched, idx, &mut bus);
+                    }
                 }
                 Event::Adc { gen } => {
                     if self.adc.gen == gen {
@@ -636,6 +742,8 @@ impl Stm32f401Bus {
                 self.pwr = Pwr::default();
             } else if name == "SYSCFG" {
                 self.syscfg = Syscfg::default();
+            } else if let Some(i) = I2CS.iter().position(|c| c.name == name) {
+                self.i2c[i].reset();
             } else if name == "ADC1" {
                 self.adc.reset();
             } else if let Some(p) = regmap::peripheral_by_name(name) {
@@ -712,6 +820,14 @@ impl Stm32f401Bus {
                         0
                     }
                 }
+                base if I2CS.iter().any(|c| c.base == base) => {
+                    let i = I2CS.iter().position(|c| c.base == base).unwrap();
+                    if enabled(0x40, I2CS[i].enable_bit) {
+                        self.i2c[i].peek(off)
+                    } else {
+                        0
+                    }
+                }
                 base if timer_index(base).is_some() => {
                     let i = timer_index(base).unwrap();
                     if enabled(timer_enr(i), TIMERS[i].enable_bit) {
@@ -776,6 +892,20 @@ impl Stm32f401Bus {
                 return 0;
             }
             return self.usart[i].read(off);
+        }
+        if let Some(i) = I2CS.iter().position(|c| c.base == a & !0x3FF) {
+            let c = &I2CS[i];
+            if self.gated(0x40, c.enable_bit, c.name, c.enable_name) {
+                return 0;
+            }
+            let v = self.i2c[i].read(off);
+            let (now, clocks, pins) = (self.now, self.clocks, self.i2c_pins(i));
+            let mut bus = CircuitI2c {
+                circuit: self.circuit.as_mut(),
+                pins,
+            };
+            self.i2c[i].after_read(off, now, &clocks, &mut self.sched, i as u8, &mut bus);
+            return v;
         }
         if let Some(i) = timer_index(a & !0x3FF) {
             let info = TIMERS[i];
@@ -856,6 +986,27 @@ impl Stm32f401Bus {
             if !self.gated(enr, bit, name, en) {
                 let (now, clocks) = (self.now, self.clocks);
                 self.usart[i].write(i as u8, off, value, lanes, now, &clocks, &mut self.sched);
+            }
+            return;
+        }
+        if let Some(i) = I2CS.iter().position(|c| c.base == a & !0x3FF) {
+            let c = &I2CS[i];
+            if !self.gated(0x40, c.enable_bit, c.name, c.enable_name) {
+                let (now, clocks, pins) = (self.now, self.clocks, self.i2c_pins(i));
+                let mut bus = CircuitI2c {
+                    circuit: self.circuit.as_mut(),
+                    pins,
+                };
+                self.i2c[i].write(
+                    off,
+                    value,
+                    lanes,
+                    now,
+                    &clocks,
+                    &mut self.sched,
+                    i as u8,
+                    &mut bus,
+                );
             }
             return;
         }
@@ -991,6 +1142,15 @@ impl Bus for Stm32f401Bus {
         if self.adc.irq_line() {
             sys.set_irq_pending(18);
         }
+        for i in &self.i2c {
+            let (ev, er) = i.irq_lines();
+            if ev {
+                sys.set_irq_pending(i.irq_ev);
+            }
+            if er {
+                sys.set_irq_pending(i.irq_er);
+            }
+        }
         for irq in self.exti.irqs() {
             sys.set_irq_pending(irq);
         }
@@ -1041,13 +1201,13 @@ mod tests {
     #[test]
     fn unmodelled_peripherals_keep_values_and_are_counted() {
         let mut bus = Stm32f401Bus::new();
-        let i2c1_oar1 = map::I2C1_BASE + 0x08;
-        let reset = regmap::register_at(i2c1_oar1).unwrap().1.reset;
-        assert_eq!(bus.read_u32(i2c1_oar1).unwrap(), reset, "SVD reset value");
-        bus.write(i2c1_oar1, AccessSize::Word, 0x4033).unwrap();
-        assert_eq!(bus.read_u32(i2c1_oar1).unwrap(), 0x4033);
+        let wwdg_cfr = 0x4000_2C04;
+        let reset = regmap::register_at(wwdg_cfr).unwrap().1.reset;
+        assert_eq!(bus.read_u32(wwdg_cfr).unwrap(), reset, "SVD reset value");
+        bus.write(wwdg_cfr, AccessSize::Word, 0x1C0).unwrap();
+        assert_eq!(bus.read_u32(wwdg_cfr).unwrap(), 0x1C0);
         assert_eq!(bus.regs.accesses.len(), 2);
-        assert_eq!(regmap::describe(i2c1_oar1), "I2C1.OAR1");
+        assert_eq!(regmap::describe(wwdg_cfr), "WWDG.CFR");
     }
 
     #[test]
@@ -1283,7 +1443,7 @@ mod tests {
             "RXNE still set"
         );
         let accesses = bus.regs.accesses.len();
-        bus.peek(map::I2C1_BASE + 0x08, AccessSize::Word);
+        bus.peek(0x4000_2C04, AccessSize::Word);
         assert_eq!(bus.regs.accesses.len(), accesses, "peeks are not recorded");
         assert_eq!(bus.peek(0x6000_0000, AccessSize::Byte), None);
     }

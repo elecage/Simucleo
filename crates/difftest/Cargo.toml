@@ -1,0 +1,17 @@
+[package]
+name = "simucleo-difftest"
+description = "Lock-step differential testing of the Rust CPU core against Unicorn (native only, GPLv2 dependency behind a feature)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+unicorn = ["dep:unicorn-engine", "dep:simucleo-core", "dep:simucleo-elf", "dep:simucleo-nucleo"]
+
+[dependencies]
+# Everything is optional: without the `unicorn` feature this crate is empty.
+simucleo-core = { workspace = true, optional = true }
+simucleo-elf = { workspace = true, optional = true }
+simucleo-nucleo = { workspace = true, optional = true }
+unicorn-engine = { version = "2.1", optional = true }

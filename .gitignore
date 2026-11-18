@@ -1,0 +1,10 @@
+/target
+node_modules/
+web/dist/
+web/src/wasm/pkg/
+*.elf.bak
+.DS_Store
+firmware/**/build/
+*.tsbuildinfo
+web/test-results/
+web/playwright-report/

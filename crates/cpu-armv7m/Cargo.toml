@@ -1,0 +1,9 @@
+[package]
+name = "simucleo-cpu-armv7m"
+description = "Simucleo's own ARMv7E-M (Cortex-M4F) interpreter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+simucleo-core.workspace = true

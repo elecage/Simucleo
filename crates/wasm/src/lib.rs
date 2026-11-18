@@ -7,7 +7,7 @@ use serde_json::json;
 use wasm_bindgen::prelude::*;
 
 use simucleo_circuit::netlist::{build_netlist, BusCatalog, Circuit};
-use simucleo_core::bus::{AccessSize, Bus};
+
 use simucleo_core::cortexm::exc;
 use simucleo_nucleo::Nucleo;
 
@@ -162,16 +162,12 @@ impl Simulator {
         .to_string()
     }
 
-    /// Read `len` bytes for the memory viewer; unmapped bytes read as 0.
+    /// Read `len` bytes for the memory viewer, without side effects on the
+    /// simulated peripherals; unmapped bytes read as 0.
     #[wasm_bindgen(js_name = readMemory)]
-    pub fn read_memory(&mut self, addr: u32, len: u32) -> Vec<u8> {
+    pub fn read_memory(&self, addr: u32, len: u32) -> Vec<u8> {
         (0..len)
-            .map(|i| {
-                self.board
-                    .bus
-                    .read(addr.wrapping_add(i), AccessSize::Byte)
-                    .unwrap_or(0) as u8
-            })
+            .map(|i| self.board.peek_byte(addr.wrapping_add(i)).unwrap_or(0))
             .collect()
     }
 
@@ -217,10 +213,12 @@ impl Simulator {
         port.chars().next().is_some_and(|p| self.board.pin(p, pin))
     }
 
-    /// Read a 32-bit word for the memory viewer.
+    /// Read a 32-bit word without side effects (unmapped bytes read as 0).
     #[wasm_bindgen(js_name = readWord)]
-    pub fn read_word(&mut self, addr: u32) -> Result<u32, JsError> {
-        Ok(self.board.bus.read_u32(addr)?)
+    pub fn read_word(&self, addr: u32) -> u32 {
+        (0..4).fold(0, |acc, i| {
+            acc | (self.board.peek_byte(addr.wrapping_add(i)).unwrap_or(0) as u32) << (8 * i)
+        })
     }
 
     /// Register the internal buses of every part kind, as JSON

@@ -316,6 +316,58 @@ impl Stm32f401Bus {
         true
     }
 
+    /// Read for a debugger view (memory viewer): the same value firmware
+    /// would read, but without side effects — no flags cleared, no warnings,
+    /// no access recorded. Returns `None` for unmapped addresses.
+    pub fn peek(&self, addr: u32, size: AccessSize) -> Option<u32> {
+        if let Some((word, bit)) = bit_band(addr) {
+            return self.peek(word, AccessSize::Word).map(|w| (w >> bit) & 1);
+        }
+        let a = map::resolve_alias(addr);
+        if self.flash.contains(a, size) {
+            return self.flash.read(a, size).ok();
+        }
+        if self.sram.contains(a, size) {
+            return self.sram.read(a, size).ok();
+        }
+        if !map::is_peripheral_space(a) {
+            return None;
+        }
+        let off = a & 0x3FC;
+        let enabled = |enr: u32, bit: u32| self.rcc.clock_enabled(enr, bit);
+        let word = if let Some(port) = gpio_port(a) {
+            if enabled(0x30, port as u32) {
+                self.gpio[port].read(off)
+            } else {
+                0
+            }
+        } else {
+            match a & !0x3FF {
+                map::RCC_BASE => self.rcc.read(off),
+                map::FLASH_IF_BASE => self.flash_if.read(off),
+                map::PWR_BASE => {
+                    if enabled(0x40, 28) {
+                        self.pwr.read(off)
+                    } else {
+                        0
+                    }
+                }
+                base => match USARTS.iter().position(|u| u.1 == base) {
+                    Some(i) => {
+                        let (_, _, _, _, enr, bit, _) = USARTS[i];
+                        if enabled(enr, bit) {
+                            self.usart[i].peek(off)
+                        } else {
+                            0
+                        }
+                    }
+                    None => self.regs.peek(a),
+                },
+            }
+        };
+        Some((word >> ((a & 3) * 8)) & size_mask(size))
+    }
+
     fn periph_read(&mut self, a: u32) -> u32 {
         let off = a & 0x3FC;
         if let Some(port) = gpio_port(a) {
@@ -599,6 +651,32 @@ mod tests {
         bus.write(map::RCC_BASE + 0x10, AccessSize::Word, 1)
             .unwrap(); // GPIOARST
         assert_eq!(bus.read_u32(map::GPIOA_BASE).unwrap(), 0xA800_0000);
+    }
+
+    #[test]
+    fn peek_has_no_side_effects() {
+        let mut bus = Stm32f401Bus::new();
+        bus.write(map::RCC_BASE + 0x40, AccessSize::Word, 1 << 17)
+            .unwrap();
+        bus.write(map::USART2_BASE + 0x08, AccessSize::Word, 0x8B) // 115200 at 16 MHz PCLK1
+            .unwrap();
+        bus.write(map::USART2_BASE + 0x0C, AccessSize::Word, 0x200C)
+            .unwrap();
+        bus.terminal_send(1, b"x");
+        bus.run_events(1_000_000);
+        let sr = map::USART2_BASE;
+        assert_ne!(bus.peek(sr, AccessSize::Word).unwrap() & usart::RXNE, 0);
+        // Viewing SR and DR (as the memory viewer does) changes nothing.
+        assert_eq!(bus.peek(sr + 4, AccessSize::Word), Some(b'x' as u32));
+        assert_ne!(
+            bus.peek(sr, AccessSize::Word).unwrap() & usart::RXNE,
+            0,
+            "RXNE still set"
+        );
+        let accesses = bus.regs.accesses.len();
+        bus.peek(0x4000_042C, AccessSize::Word);
+        assert_eq!(bus.regs.accesses.len(), accesses, "peeks are not recorded");
+        assert_eq!(bus.peek(0x6000_0000, AccessSize::Byte), None);
     }
 
     #[test]

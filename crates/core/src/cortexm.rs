@@ -235,6 +235,10 @@ pub struct CortexM {
     pub cycles: Cycles,
     /// Set by AIRCR.SYSRESETREQ; the machine performs the reset.
     pub reset_requested: bool,
+    /// Number of reads of registers that change every cycle (SysTick CVR,
+    /// DWT CYCCNT). A loop that reads them is never treated as idle, even
+    /// if it masks the value so the registers look unchanged.
+    pub time_reads: u64,
     /// Bumped whenever state visible to software changes on its own (SysTick
     /// reaching zero, an exception becoming pending). Busy-wait detection
     /// only trusts loop iterations within one epoch.
@@ -295,6 +299,7 @@ impl CortexM {
             dbgmcu_cr: 0,
             cycles: 0,
             reset_requested: false,
+            time_reads: 0,
             epoch: 0,
             event: false,
             unimplemented: Vec::new(),
@@ -751,6 +756,13 @@ impl CortexM {
         Ok((word >> shift) & mask)
     }
 
+    /// Read for a debugger view: like [`CortexM::read`] but without side
+    /// effects (COUNTFLAG is not cleared, nothing is counted).
+    pub fn peek(&self, addr: u32, size: AccessSize) -> u32 {
+        let mut copy = self.clone();
+        copy.read(addr, size).unwrap_or(0)
+    }
+
     pub fn write(&mut self, addr: u32, size: AccessSize, value: u32) -> Result<(), BusError> {
         let shift = (addr & 3) * 8;
         let lanes = if size == AccessSize::Word {
@@ -811,7 +823,10 @@ impl CortexM {
                 v
             }
             0xE000_E014 => self.systick.rvr,
-            0xE000_E018 => self.systick.cvr,
+            0xE000_E018 => {
+                self.time_reads += 1;
+                self.systick.cvr
+            }
             0xE000_E01C => 0x4000_0000 | 10_499, // NOREF=0, SKEW=1, TENMS for 84 MHz/8
             0xE000_E100..=0xE000_E108 => self.nvic_enabled[((addr - 0xE000_E100) / 4) as usize],
             0xE000_E180..=0xE000_E188 => self.nvic_enabled[((addr - 0xE000_E180) / 4) as usize],
@@ -889,7 +904,10 @@ impl CortexM {
             0xE000_EF40 => 0x1011_0021,
             0xE000_EF44 => 0x1100_0011,
             0xE000_1000 => self.dwt_ctrl,
-            0xE000_1004 => self.dwt_cyccnt,
+            0xE000_1004 => {
+                self.time_reads += 1;
+                self.dwt_cyccnt
+            }
             // ITM: report ports as disabled so ITM_SendChar returns at once.
             0xE000_0000..=0xE000_0FFC => 0,
             0xE004_2000 => 0x1000_6433, // DBGMCU IDCODE: STM32F401xD/E rev Z

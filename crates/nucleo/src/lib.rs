@@ -288,6 +288,17 @@ impl Nucleo {
         self.resets
     }
 
+    /// Read memory for a debugger view without disturbing the simulation
+    /// (no peripheral read side effects). Unmapped bytes read as `None`.
+    pub fn peek_byte(&self, addr: u32) -> Option<u8> {
+        if addr >= 0xE000_0000 {
+            return Some(self.sys.peek(addr, simucleo_core::bus::AccessSize::Byte) as u8);
+        }
+        self.bus
+            .peek(addr, simucleo_core::bus::AccessSize::Byte)
+            .map(|v| v as u8)
+    }
+
     /// Name of the function containing `addr` (nearest symbol at or below).
     pub fn symbol_at(&self, addr: u32) -> Option<&str> {
         let fw = self.firmware.as_ref()?;
@@ -396,6 +407,29 @@ mod tests {
             }
             assert_eq!(results[0], results[1], "horizon {horizon}");
         }
+    }
+
+    /// Enable DWT CYCCNT, then poll it with `lsrs r1, r1, #8; beq` (exits
+    /// once CYCCNT >= 256) and write a mark to SRAM[0].
+    const CYCCNT_PROGRAM: [u8; 36] = [
+        0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0x05, 0x48, 0x01, 0x21, 0x01, 0x60, 0x04,
+        0x30, 0x01, 0x68, 0x09, 0x0a, 0xfc, 0xd0, 0x4f, 0xf0, 0x00, 0x52, 0x10, 0x60, 0xfe, 0xe7,
+        0x00, 0x00, 0x00, 0x10, 0x00, 0xe0,
+    ];
+
+    #[test]
+    fn loops_reading_a_cycle_counter_are_not_skipped() {
+        // The registers look the same each iteration because the counter is
+        // shifted away, but it keeps changing: the loop must exit on time.
+        let mut board = Nucleo::new();
+        board.bus.load(0x0800_0000, &CYCCNT_PROGRAM).unwrap();
+        board.reset().unwrap();
+        board.run(1_000);
+        assert_eq!(
+            board.bus.read_u32(0x2000_0000).unwrap(),
+            0xE000_1004,
+            "loop exited"
+        );
     }
 
     #[test]

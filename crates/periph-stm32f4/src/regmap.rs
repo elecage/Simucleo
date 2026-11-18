@@ -91,6 +91,23 @@ impl RegisterFile {
             .unwrap_or(0)
     }
 
+    /// Value without counting the access (for debugger views).
+    pub fn peek(&self, addr: u32) -> u32 {
+        let word = addr & !3;
+        if let Some(v) = self.values.get(&word) {
+            return *v;
+        }
+        register_at(word)
+            .map(|(_, r)| {
+                if r.access == Access::WriteOnly {
+                    0
+                } else {
+                    r.reset
+                }
+            })
+            .unwrap_or(0)
+    }
+
     pub fn write(&mut self, addr: u32, value: u32, lanes: u32) {
         let word = addr & !3;
         *self

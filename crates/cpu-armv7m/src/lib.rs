@@ -120,6 +120,7 @@ struct LoopWatch {
     stores: u64,
     fp_ops: u64,
     epoch: u64,
+    time_reads: u64,
 }
 
 impl ArmV7M {
@@ -432,7 +433,8 @@ impl ArmV7M {
             let steady = w.state == state
                 && w.stores == self.stores
                 && w.fp_ops == self.fp_ops
-                && w.epoch == ctx.sys.epoch;
+                && w.epoch == ctx.sys.epoch
+                && w.time_reads == ctx.sys.time_reads;
             let period = now - w.cycle;
             if steady && period > 0 && !Self::has_pending(ctx.sys) {
                 let mut limit = end;
@@ -453,6 +455,7 @@ impl ArmV7M {
             stores: self.stores,
             fp_ops: self.fp_ops,
             epoch: ctx.sys.epoch,
+            time_reads: ctx.sys.time_reads,
         };
         let i = slot.unwrap_or_else(|| {
             let i = self.loop_watch_next;

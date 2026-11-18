@@ -174,3 +174,6 @@ main { position: relative; }
 .project-name { width: 130px; font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--text); }
 .notice { position: absolute; top: 12px; left: 12px; right: 90px; padding: 8px 12px; border-radius: 8px; font-size: 13px; white-space: pre-wrap; background: #e8f1fd; color: #1c3d8a; border: 1px solid #b4cbf3; }
 @media (prefers-color-scheme: dark) { .notice { background: #15233b; color: #b4cbff; border-color: #2a3f7a; } }
+.wire-end { fill: var(--accent); stroke: #fff; stroke-width: 1.2; cursor: grab; }
+.wire-end:active { cursor: grabbing; }
+.wire-hit { fill: none; stroke: transparent; stroke-width: 6; stroke-linecap: round; cursor: pointer; }

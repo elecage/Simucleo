@@ -161,3 +161,31 @@ test("resistor colour bands follow the value", async ({ page }) => {
   await expect(page.getByTestId("ohms-parsed")).toContainText("알 수 없는 값");
   await expect(page.getByTestId("circuit-warning")).toContainText("unknown resistance");
 });
+
+test("a wire end can be dragged to another pin", async ({ page }) => {
+  await page.getByRole("button", { name: "LED 5mm" }).click();
+  const led = await partId(page, "led");
+  const d13 = await pin(page, "nucleo", "D13");
+  const a = await pin(page, led, "A");
+  await page.mouse.click(d13.x, d13.y);
+  await page.mouse.click(a.x, a.y);
+  await expect(page.locator(".nets li")).toHaveText([`${led}.A — nucleo.PA5`]);
+
+  // Select the wire, then drag its LED end from A to K.
+  const mid = await page.locator("path.wire").evaluate((el) => {
+    const path = el as SVGPathElement;
+    const p = path.getPointAtLength(path.getTotalLength() / 2).matrixTransform(path.getScreenCTM()!);
+    return { x: p.x, y: p.y };
+  });
+  await page.mouse.click(mid.x, mid.y);
+  const end = page.locator(`[data-wire-end="b"]`);
+  await expect(end).toBeVisible();
+  const box = (await end.boundingBox())!;
+  const k = await pin(page, led, "K");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(k.x + 2, k.y - 2, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.locator(".nets li")).toHaveText([`${led}.K — nucleo.PA5`]);
+  await expect(page.locator("path.wire")).toHaveCount(1);
+});

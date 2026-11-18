@@ -288,6 +288,9 @@ export function App() {
               return { ...p, wires: [...p.wires, wire] };
             })
           }
+          onMoveWireEnd={(id, end, pin) =>
+            setProject((p) => ({ ...p, wires: p.wires.map((w) => (w.id === id ? { ...w, [end]: pin } : w)) }))
+          }
           onUpdateWire={(id, points) =>
             setProject((p) => ({ ...p, wires: p.wires.map((w) => (w.id === id ? { ...w, points } : w)) }))
           }
@@ -382,7 +385,7 @@ export function App() {
                 />
               ))}
             </div>
-            <p className="hint">꺾는 점은 끌어서 옮기고, 더블클릭하면 지웁니다.</p>
+            <p className="hint">양 끝의 네모를 끌어 다른 핀에 놓으면 끝점이 옮겨집니다. 꺾는 점은 끌어서 옮기고, 더블클릭하면 지웁니다.</p>
             {(selectedWire.points?.length ?? 0) > 0 && (
               <button
                 onClick={() =>

@@ -14,6 +14,8 @@ interface Props {
   onAddWire: (a: PinRef, b: PinRef, points: Point[]) => void;
   /** The bend points of a wire were edited. */
   onUpdateWire?: (id: string, points: Point[]) => void;
+  /** An end of a wire was dragged onto another pin. */
+  onMoveWireEnd?: (id: string, end: "a" | "b", pin: PinRef) => void;
   /** Live state from the simulator, by part id (LED brightness, …). */
   visuals?: Record<string, VisualState>;
   /** A pressable element (`data-action`) on a part went down or up. */
@@ -26,7 +28,8 @@ type Drag =
   | { kind: "part"; id: string; dx: number; dy: number }
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
   | { kind: "wire"; sx: number; sy: number; moved: boolean }
-  | { kind: "point"; wire: string; index: number };
+  | { kind: "point"; wire: string; index: number }
+  | { kind: "end"; wire: string; end: "a" | "b" };
 
 interface Pending {
   start: PinRef;
@@ -65,6 +68,7 @@ export function Canvas({
   onMovePart,
   onAddWire,
   onUpdateWire,
+  onMoveWireEnd,
   visuals,
   onPartAction,
   fitKey,
@@ -236,6 +240,13 @@ export function Canvas({
   };
   const endDrag = (e: RPointerEvent) => {
     if (svgRef.current?.hasPointerCapture(e.pointerId)) svgRef.current.releasePointerCapture(e.pointerId);
+    if (drag?.kind === "end") {
+      // Re-plug the wire end into the pin it was dropped on (or near).
+      const w = project.wires.find((x) => x.id === drag.wire);
+      const target = nearestPin(toCanvas(e));
+      const other = w && (drag.end === "a" ? w.b : w.a);
+      if (w && target && other && pinKey(target) !== pinKey(other)) onMoveWireEnd?.(w.id, drag.end, target);
+    }
     if (drag?.kind === "wire" && drag.moved && pending) {
       // Drag-to-wire: released over (or near) a pin.
       const target = nearestPin(toCanvas(e));
@@ -272,7 +283,7 @@ export function Canvas({
   const base = project.parts.filter((p) => isBase(p.kind));
   const placed = project.parts.filter((p) => !isBase(p.kind));
   const pendingStart = pending ? absPin(pending.start) : undefined;
-  const snapTarget = pending ? nearestPin(mouse) : null;
+  const snapTarget = pending || drag?.kind === "end" ? nearestPin(mouse) : null;
   const snapKey = snapTarget && pinKey(snapTarget);
   const previewEnd = (snapTarget && absPin(snapTarget)) ?? mouse;
   const selectedWire = project.wires.find((w) => w.id === selected);
@@ -395,26 +406,37 @@ export function Canvas({
         {renderBodies(placed)}
 
         {project.wires.map((w) => {
-          const a = absPin(w.a);
-          const b = absPin(w.b);
+          let a = absPin(w.a);
+          let b = absPin(w.b);
           if (!a || !b) return null;
+          // An end being dragged follows the pointer (snapping to pins).
+          if (drag?.kind === "end" && drag.wire === w.id) {
+            const p = (snapTarget && absPin(snapTarget)) ?? mouse;
+            if (drag.end === "a") a = p;
+            else b = p;
+          }
           const pts = (w.points ?? []).map((q) => ({ x: q.x * PITCH, y: q.y * PITCH }));
+          const onDown = (e: RPointerEvent) => {
+            e.stopPropagation();
+            if (pending) {
+              wiringClick(toCanvas(e));
+              return;
+            }
+            onSelect(w.id);
+          };
+          const d = wirePath(a, b, pts);
           return (
-            <path
-              key={w.id}
-              data-wire={w.id}
-              d={wirePath(a, b, pts)}
-              stroke={w.color}
-              className={selected === w.id ? "wire selected" : "wire"}
-              onPointerDown={(e) => {
-                e.stopPropagation();
-                if (pending) {
-                  wiringClick(toCanvas(e));
-                  return;
-                }
-                onSelect(w.id);
-              }}
-            />
+            <g key={w.id}>
+              {/* Wide invisible stroke: easy to click a thin wire. */}
+              <path d={d} className="wire-hit" onPointerDown={onDown} />
+              <path
+                data-wire={w.id}
+                d={d}
+                stroke={w.color}
+                className={selected === w.id ? "wire selected" : "wire"}
+                onPointerDown={onDown}
+              />
+            </g>
           );
         })}
         {/* Bend points of the selected wire: drag to move, double-click to remove. */}
@@ -448,6 +470,34 @@ export function Canvas({
         )}
         {/* Pins of placed parts sit above wires so a wired pin can still be hovered or wired again. */}
         {renderPins(placed)}
+        {/* Ends of the selected wire, above the pins: drag one to another pin. */}
+        {selectedWire &&
+          (["a", "b"] as const).map((end) => {
+            const at =
+              drag?.kind === "end" && drag.end === end
+                ? ((snapTarget && absPin(snapTarget)) ?? mouse)
+                : absPin(selectedWire[end]);
+            if (!at) return null;
+            return (
+              <rect
+                key={end}
+                data-wire-end={end}
+                x={at.x - 3.5}
+                y={at.y - 3.5}
+                width={7}
+                height={7}
+                rx={1.5}
+                className="wire-end"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  setMouse(toCanvas(e));
+                  startDrag(e, { kind: "end", wire: selectedWire.id, end });
+                }}
+              >
+                <title>끌어서 다른 핀으로 옮기기</title>
+              </rect>
+            );
+          })}
       </svg>
       {hover && <div className="tooltip">{hover.label}</div>}
       {pending && (

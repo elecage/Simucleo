@@ -61,6 +61,20 @@ main { grid-area: main; min-width: 0; min-height: 0; }
 .morpho { fill: #1c1c1c; }
 .arduino { fill: #111; }
 .header-pin { fill: #d4af37; }
+.lbl { font: 600 5px ui-monospace, "SF Mono", Menlo, monospace; pointer-events: none; }
+.lbl.io { fill: #1f2937; }
+.lbl.onboard { fill: #0f7b3f; }
+.lbl.busy { fill: #c2410c; }
+.lbl.pwr { fill: #c81e1e; }
+.lbl.gnd { fill: #1d4ed8; }
+.lbl.ctl { fill: #7c3aed; }
+.lbl.nc { fill: #9ca3af; }
+.swatch-io { fill: #1f2937; } .swatch-onboard { fill: #0f7b3f; } .swatch-busy { fill: #c2410c; }
+.swatch-pwr { fill: #c81e1e; } .swatch-gnd { fill: #1d4ed8; } .swatch-nc { fill: #9ca3af; }
+.pin-index text { font: 600 4.5px ui-monospace, monospace; fill: #555; }
+.pin-index .silk { font: 600 7px sans-serif; fill: #333; }
+.bb-label { font: 600 5px ui-monospace, monospace; fill: #8a8370; pointer-events: none; }
+.bb-rail { font: 700 7px sans-serif; pointer-events: none; }
 .socket { fill: #000; stroke: #444; stroke-width: 0.5; }
 .smd-led { fill: #7a5; }
 .smd-led-glow { fill: #3f3; }

@@ -69,37 +69,57 @@ const ARDUINO_BOTTOM: [string, string, string, number][] = [
 ];
 
 const W = 34;
-const H = 27;
+const H = 32;
 const X0 = 11; // grid x of header column 1
-const Y = { cn10Outer: 1, cn10Inner: 2, arduinoTop: 4, arduinoBottom: H - 4, cn7Inner: H - 2, cn7Outer: H - 1 };
+// Rows in grid steps. Gaps between rows hold the silkscreen labels.
+const Y = {
+  cn10Outer: 2, cn10Inner: 3, arduinoTop: 6,
+  arduinoBottom: H - 6, cn7Inner: H - 3, cn7Outer: H - 2,
+};
 
 const sig = (s: string) => SIGNAL_ALIAS[s] ?? s;
 const describe = (signal: string) => (NOTES[signal] ? `${signal} · ${NOTES[signal]}` : signal);
 
-function morpho(name: "CN7" | "CN10", rows: [string, string][], oddY: number, evenY: number): PinDef[] {
-  return rows.flatMap(([odd, even], i) => [
-    { id: `${name}_${2 * i + 1}`, x: X0 + i, y: oddY, signal: odd, label: `${name}-${2 * i + 1} · ${describe(odd)}` },
-    { id: `${name}_${2 * i + 2}`, x: X0 + i, y: evenY, signal: even, label: `${name}-${2 * i + 2} · ${describe(even)}` },
-  ]);
+type Side = "above" | "below";
+/** Silkscreen text printed next to each pin, and on which side of the pin. */
+const silk = new Map<string, { text: string; side: Side; signal: string }>();
+
+function morpho(
+  name: "CN7" | "CN10",
+  rows: [string, string][],
+  odd: { y: number; side: Side },
+  even: { y: number; side: Side },
+): PinDef[] {
+  return rows.flatMap(([o, e], i) =>
+    ([[2 * i + 1, o, odd], [2 * i + 2, e, even]] as const).map(([n, signal, row]) => {
+      const id = `${name}_${n}`;
+      silk.set(id, { text: signal, side: row.side, signal });
+      return { id, x: X0 + i, y: row.y, signal, label: `${name}-${n} · ${describe(signal)}` };
+    }),
+  );
 }
 
-function arduino(rows: [string, string, string, number][], y: number): PinDef[] {
-  return rows.map(([id, signal, extra, col]) => ({
-    id,
-    x: X0 + col - 1,
-    y,
-    signal,
-    label: [id.replace(/_.*/, ""), signal === id ? "" : describe(signal), extra].filter(Boolean).join(" · "),
-  }));
+function arduino(rows: [string, string, string, number][], y: number, side: Side): PinDef[] {
+  return rows.map(([id, signal, extra, col]) => {
+    const name = id.replace(/_.*/, "");
+    silk.set(id, { text: name, side, signal });
+    return {
+      id,
+      x: X0 + col - 1,
+      y,
+      signal,
+      label: [name, signal === id ? "" : describe(signal), extra].filter(Boolean).join(" · "),
+    };
+  });
 }
 
 const pins: PinDef[] = [
   // On the real board CN7's even column and CN10's odd column face the
   // Arduino headers; those are the columns that duplicate Arduino signals.
-  ...morpho("CN10", CN10, Y.cn10Inner, Y.cn10Outer),
-  ...morpho("CN7", CN7, Y.cn7Outer, Y.cn7Inner),
-  ...arduino(ARDUINO_TOP, Y.arduinoTop),
-  ...arduino(ARDUINO_BOTTOM, Y.arduinoBottom),
+  ...morpho("CN10", CN10, { y: Y.cn10Inner, side: "below" }, { y: Y.cn10Outer, side: "above" }),
+  ...morpho("CN7", CN7, { y: Y.cn7Outer, side: "below" }, { y: Y.cn7Inner, side: "above" }),
+  ...arduino(ARDUINO_TOP, Y.arduinoTop, "below"),
+  ...arduino(ARDUINO_BOTTOM, Y.arduinoBottom, "above"),
 ];
 
 // Bus every pin that shares a (normalised) signal; NC pins stay isolated.
@@ -117,6 +137,23 @@ export function nucleoSignal(pinId: string): string | undefined {
   return p && sig(p.signal!);
 }
 
+const POWER = new Set(["3V3", "5V", "VDD", "AVDD", "U5V", "E5V", "VIN", "IOREF", "VBAT"]);
+/** Pins already used by on-board circuitry (ST-LINK, crystals). */
+const BUSY = new Set(["PA2", "PA3", "PA13", "PA14", "PH0", "PH1", "PC14", "PC15"]);
+const ONBOARD = new Set(["PA5", "PC13"]);
+
+/** Colour class of a label, so students can tell power, ground and I/O apart. */
+function labelClass(signal: string): string {
+  const s = sig(signal);
+  if (s === "GND") return "lbl gnd";
+  if (POWER.has(s)) return "lbl pwr";
+  if (s === "NC") return "lbl nc";
+  if (s === "RESET" || s === "BOOT0") return "lbl ctl";
+  if (BUSY.has(s)) return "lbl busy";
+  if (ONBOARD.has(s)) return "lbl onboard";
+  return "lbl io";
+}
+
 const px = (g: number) => g * PITCH;
 const headerSpan = (cols: [number, number], y0: number, rows: number) => ({
   x: px(X0 + cols[0] - 1) - 5,
@@ -124,6 +161,39 @@ const headerSpan = (cols: [number, number], y0: number, rows: number) => ({
   width: px(cols[1] - cols[0]) + 10,
   height: px(rows - 1) + 10,
 });
+
+/** Vertical label: reads bottom-to-top, starting 0.6 grid away from the pin. */
+function PinLabel({ pin }: { pin: PinDef }) {
+  const s = silk.get(pin.id);
+  if (!s) return null;
+  const x = px(pin.x);
+  const y = px(pin.y) + (s.side === "above" ? -5 : 5);
+  return (
+    <text
+      transform={`translate(${x} ${y}) rotate(-90)`}
+      textAnchor={s.side === "above" ? "start" : "end"}
+      dominantBaseline="central"
+      className={labelClass(s.signal)}
+    >
+      {s.text}
+    </text>
+  );
+}
+
+/** Pin numbers at both ends of a Morpho header, like the real silkscreen. */
+function MorphoIndex({ name, oddY, evenY }: { name: string; oddY: number; evenY: number }) {
+  const left = px(X0 - 1) + 3;
+  const right = px(X0 + 19) - 3;
+  return (
+    <g className="pin-index">
+      <text x={left} y={px(oddY)} textAnchor="end" dominantBaseline="central">1</text>
+      <text x={left} y={px(evenY)} textAnchor="end" dominantBaseline="central">2</text>
+      <text x={right} y={px(oddY)} dominantBaseline="central">37</text>
+      <text x={right} y={px(evenY)} dominantBaseline="central">38</text>
+      <text x={px(X0 + 20.5)} y={px((oddY + evenY) / 2)} dominantBaseline="central" className="silk">{name}</text>
+    </g>
+  );
+}
 
 export const nucleoF401re: PartDef = {
   kind: "nucleo-f401re",
@@ -138,51 +208,64 @@ export const nucleoF401re: PartDef = {
       <rect width={px(W)} height={px(H)} rx={6} className="pcb" />
       {/* ST-LINK section */}
       <rect x={px(0.3)} y={px(0.3)} width={px(8.4)} height={px(H - 0.6)} rx={4} className="stlink-area" />
-      <rect x={px(-0.6)} y={px(10.5)} width={px(4)} height={px(5)} rx={1.5} className="usb" />
-      <text x={px(1)} y={px(19)} className="silk">ST-LINK V2-1</text>
-      <rect x={px(4)} y={px(4)} width={px(3)} height={px(3)} className="chip" />
+      <rect x={px(-0.6)} y={px(12.5)} width={px(4)} height={px(5)} rx={1.5} className="usb" />
+      <text x={px(1)} y={px(21)} className="silk">ST-LINK V2-1</text>
+      <rect x={px(4)} y={px(6)} width={px(3)} height={px(3)} className="chip" />
+      {/* Label colour legend */}
+      <g transform={`translate(${px(1)} ${px(23.5)})`} className="legend">
+        {[["io", "GPIO"], ["onboard", "보드 내장 (LD2/B1)"], ["busy", "ST-LINK·크리스털 사용"], ["pwr", "전원"], ["gnd", "GND"], ["nc", "NC"]].map(
+          ([cls, text], i) => (
+            <g key={cls} transform={`translate(0 ${i * 7})`}>
+              <rect width={5} height={5} y={-4} className={`swatch-${cls}`} />
+              <text x={8} className="silk small">{text}</text>
+            </g>
+          ),
+        )}
+      </g>
 
       {/* Morpho (male, 2×19) */}
       <rect {...headerSpan([1, 19], Y.cn10Outer, 2)} className="morpho" />
       <rect {...headerSpan([1, 19], Y.cn7Inner, 2)} className="morpho" />
-      <text x={px(X0 + 19)} y={px(1.8)} className="silk">CN10</text>
-      <text x={px(X0 + 19)} y={px(H - 1.2)} className="silk">CN7</text>
+      <MorphoIndex name="CN10" oddY={Y.cn10Inner} evenY={Y.cn10Outer} />
+      <MorphoIndex name="CN7" oddY={Y.cn7Outer} evenY={Y.cn7Inner} />
 
       {/* Arduino (female) */}
       <rect {...headerSpan([2, 11], Y.arduinoTop, 1)} className="arduino" />
       <rect {...headerSpan([12, 19], Y.arduinoTop, 1)} className="arduino" />
       <rect {...headerSpan([5, 12], Y.arduinoBottom, 1)} className="arduino" />
       <rect {...headerSpan([14, 19], Y.arduinoBottom, 1)} className="arduino" />
-      <text x={px(X0 + 1)} y={px(5.6)} className="silk small">CN5</text>
-      <text x={px(X0 + 11)} y={px(5.6)} className="silk small">CN9</text>
-      <text x={px(X0 + 4)} y={px(H - 5.3)} className="silk small">CN6</text>
-      <text x={px(X0 + 13)} y={px(H - 5.3)} className="silk small">CN8</text>
+      <text x={px(X0 - 1.5)} y={px(Y.arduinoTop)} dominantBaseline="central" textAnchor="end" className="silk small">CN5</text>
+      <text x={px(X0 + 19.5)} y={px(Y.arduinoTop)} dominantBaseline="central" className="silk small">CN9</text>
+      <text x={px(X0 + 2.5)} y={px(Y.arduinoBottom)} dominantBaseline="central" textAnchor="end" className="silk small">CN6</text>
+      <text x={px(X0 + 19.5)} y={px(Y.arduinoBottom)} dominantBaseline="central" className="silk small">CN8</text>
 
       {/* MCU and user I/O */}
-      <rect x={px(18)} y={px(10)} width={px(7)} height={px(7)} className="chip" />
-      <text x={px(21.5)} y={px(13.7)} className="silk chip-label">STM32F401RE</text>
-      <text x={px(15)} y={px(20.5)} className="silk">NUCLEO-F401RE</text>
-      <rect x={px(15.5)} y={px(7)} width={px(1)} height={px(0.6)} className="smd-led" />
+      <rect x={px(19)} y={px(11.5)} width={px(7)} height={px(7)} className="chip" />
+      <text x={px(22.5)} y={px(15.2)} className="silk chip-label">STM32F401RE</text>
+      <text x={px(17)} y={px(21.5)} className="silk">NUCLEO-F401RE</text>
+      <rect x={px(15.5)} y={px(10)} width={px(1)} height={px(0.6)} className="smd-led" />
       <rect
-        x={px(15.5)} y={px(7)} width={px(1)} height={px(0.6)}
+        x={px(15.5)} y={px(10)} width={px(1)} height={px(0.6)}
         className="smd-led-glow" style={{ opacity: visual.brightness ?? 0 }}
       />
-      <text x={px(15.3)} y={px(8.8)} className="silk small">LD2</text>
-      <rect x={px(11)} y={px(14)} width={px(2.4)} height={px(2.4)} className="btn-body" />
-      <circle cx={px(12.2)} cy={px(15.2)} r={px(0.8)} className="btn-cap blue" />
-      <text x={px(11.3)} y={px(17.6)} className="silk small">B1</text>
-      <rect x={px(11)} y={px(9)} width={px(2.4)} height={px(2.4)} className="btn-body" />
-      <circle cx={px(12.2)} cy={px(10.2)} r={px(0.8)} className="btn-cap" />
-      <text x={px(11.3)} y={px(12.6)} className="silk small">B2 RESET</text>
+      <text x={px(15.3)} y={px(11.8)} className="silk small">LD2</text>
+      <rect x={px(11)} y={px(16)} width={px(2.4)} height={px(2.4)} className="btn-body" />
+      <circle cx={px(12.2)} cy={px(17.2)} r={px(0.8)} className="btn-cap blue" />
+      <text x={px(11.3)} y={px(19.6)} className="silk small">B1 USER</text>
+      <rect x={px(11)} y={px(11)} width={px(2.4)} height={px(2.4)} className="btn-body" />
+      <circle cx={px(12.2)} cy={px(12.2)} r={px(0.8)} className="btn-cap" />
+      <text x={px(11.3)} y={px(14.6)} className="silk small">B2 RESET</text>
 
-      {pins.map((p) => {
-        const female = !p.id.startsWith("CN");
-        return female ? (
-          <rect key={p.id} x={px(p.x) - 2} y={px(p.y) - 2} width={4} height={4} className="socket" />
-        ) : (
+      {pins.map((p) =>
+        p.id.startsWith("CN") ? (
           <rect key={p.id} x={px(p.x) - 1.6} y={px(p.y) - 1.6} width={3.2} height={3.2} className="header-pin" />
-        );
-      })}
+        ) : (
+          <rect key={p.id} x={px(p.x) - 2} y={px(p.y) - 2} width={4} height={4} className="socket" />
+        ),
+      )}
+      {pins.map((p) => (
+        <PinLabel key={p.id} pin={p} />
+      ))}
     </g>
   ),
 };

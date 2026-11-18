@@ -50,6 +50,30 @@ export const breadboardHalf: PartDef = {
       {pins.map((p) => (
         <rect key={p.id} x={p.x * PITCH - 2.5} y={p.y * PITCH - 2.5} width={5} height={5} className="hole" />
       ))}
+      {/* Column numbers above row a and below row j */}
+      {Array.from({ length: COLS }, (_, i) => i + 1).map((c) => (
+        <g key={c} className="bb-label">
+          <text x={(c + 1) * PITCH} y={3 * PITCH} textAnchor="middle" dominantBaseline="central">{c}</text>
+          <text x={(c + 1) * PITCH} y={16.4 * PITCH} textAnchor="middle" dominantBaseline="central">{c}</text>
+        </g>
+      ))}
+      {/* Row letters on both sides */}
+      {Object.entries(ROW_Y).map(([r, y]) => (
+        <g key={r} className="bb-label">
+          <text x={0.8 * PITCH} y={y * PITCH} textAnchor="middle" dominantBaseline="central">{r}</text>
+          <text x={(W - 0.8) * PITCH} y={y * PITCH} textAnchor="middle" dominantBaseline="central">{r}</text>
+        </g>
+      ))}
+      {/* Rail polarity */}
+      {Object.entries(RAIL_Y).map(([rail, y]) => {
+        const pos = rail.endsWith("p");
+        return (
+          <g key={rail} className="bb-rail" fill={pos ? "#d33" : "#36c"}>
+            <text x={0.8 * PITCH} y={y * PITCH} textAnchor="middle" dominantBaseline="central">{pos ? "+" : "−"}</text>
+            <text x={(W - 0.8) * PITCH} y={y * PITCH} textAnchor="middle" dominantBaseline="central">{pos ? "+" : "−"}</text>
+          </g>
+        );
+      })}
     </g>
   ),
 };

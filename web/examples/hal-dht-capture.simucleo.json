@@ -1,0 +1,67 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "DHT22 온습도 (입력 캡처)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "dht",
+      "kind": "dht",
+      "x": 48,
+      "y": 14,
+      "props": {
+        "model": "DHT22",
+        "temp": 22.5,
+        "humidity": 48.3
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "dht",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "D3"
+      },
+      "b": {
+        "part": "dht",
+        "pin": "DATA"
+      },
+      "color": "#fbc02d"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "b": {
+        "part": "dht",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    }
+  ],
+  "firmware": {
+    "name": "hal-dht-capture",
+    "example": "hal-dht-capture.elf"
+  }
+}

@@ -19,6 +19,8 @@ const EXAMPLES = [
   ["hal-adc-servo", "hal-adc-servo.elf", "HAL: ADC reads a potentiometer, LDR and TMP36; the pot steers a servo (TIM3 50 Hz), light sets a DC motor's speed"],
   ["hal-i2c-oled", "hal-i2c-oled.elf", "HAL: I2C bus with an SSD1306 OLED, DS3231 RTC and AHT20 — a clock and thermometer; B1 zeroes the seconds"],
   ["hal-spi-sd-logger", "hal-spi-sd-logger.elf", "HAL: SD card (SPI, FatFs) logs time-stamped temperature/humidity to LOG.CSV; SPI OLED; B1 prints the file"],
+  ["hal-neopixel-dma", "hal-neopixel-dma.elf", "HAL: a rainbow on a 12-LED NeoPixel ring — TIM3 PWM at 800 kHz with DMA feeding the duty values; B1 changes brightness"],
+  ["hal-dht-capture", "hal-dht-capture.elf", "HAL: DHT22 read with TIM2 input capture on both edges; B1 prints the pulse widths"],
   ["freertos-two-tasks", "freertos-two-tasks.elf", "FreeRTOS (CMSIS-RTOS v2): Blink, Count and Button threads; B1 releases a semaphore — see the RTOS tab"],
   ["freertos-queue-uart", "freertos-queue-uart.elf", "FreeRTOS: UART RX ISR → queue → echo task; sensor → queue → logger with heap/stack stats"],
   ["bare-blinky", "bare-blinky.elf", "Bare metal: toggle PA5 with register writes"],

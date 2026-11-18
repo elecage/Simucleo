@@ -224,3 +224,11 @@ main { position: relative; }
 .coin-cell { fill: #cbd5e1; stroke: #64748b; }
 .chip { fill: #222; stroke: #000; }
 .sd-slot { fill: #9ca3af; stroke: #4b5563; }
+
+/* Single-wire parts (M7) */
+.pixel-pcb { fill: #111827; stroke: #000; }
+.pixel-hole { fill: var(--canvas); stroke: #000; stroke-width: 0.5; }
+.ws2812 { fill: #fafafa; stroke: #9ca3af; stroke-width: 0.4; }
+.dht22-body { fill: #f3f4f6; stroke: #9ca3af; }
+.dht11-body { fill: #3b82f6; stroke: #1e40af; }
+.dht-grille { fill: #6b7280; }

@@ -857,7 +857,7 @@ impl CircuitSim {
                         }
                     }
                 }
-                "neopixel" => {
+                "neopixel" | "neopixel-ring" | "neopixel-strip" | "neopixel-matrix" => {
                     let vis = add_visual(&p.id, VisualKind::Sensor, 1);
                     let pin = |n: &str| PinRef::new(&p.id, n);
                     let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));

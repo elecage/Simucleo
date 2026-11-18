@@ -460,7 +460,7 @@ impl CircuitSim {
                 Device::Sd(sd) => sd.power_cycle(),
                 Device::Dht(d) => *d = Dht::new(d.dht22, d.temp, d.humidity),
                 Device::Pixels(n) => *n = NeoPixel::new(n.leds.len()),
-                Device::Encoder(_) => {}
+                Device::Encoder(e) => e.rebase(elapsed),
                 Device::Lcd(l) => **l = CharLcd::new(l.address),
                 Device::Sonar(x) => *x = Sonar::new(x.distance_cm),
                 Device::Thermo(x) => {

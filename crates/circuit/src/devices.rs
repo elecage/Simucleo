@@ -1117,6 +1117,14 @@ impl Encoder {
         }
     }
 
+    /// The time base restarted `elapsed` seconds earlier: keep pending
+    /// contact changes the same distance ahead.
+    pub fn rebase(&mut self, elapsed: Seconds) {
+        for (t, _, _) in &mut self.plan {
+            *t = (*t - elapsed).max(0.0);
+        }
+    }
+
     pub fn advance(&mut self, now: Seconds) {
         while let Some(&(t, a, b)) = self.plan.front() {
             if t > now + 1e-12 {
@@ -1257,6 +1265,8 @@ pub struct Ds18b20 {
     rx_bytes: Vec<u8>,
     tx: VecDeque<bool>,
     conv_done: Seconds,
+    /// The reading being converted; it reaches the scratchpad at `conv_done`.
+    pending: Option<[u8; 2]>,
     plan: VecDeque<(Seconds, bool)>,
     pub pulling: bool,
     pub conversions: u32,
@@ -1279,6 +1289,7 @@ impl Ds18b20 {
             rx_bytes: Vec::new(),
             tx: VecDeque::new(),
             conv_done: 0.0,
+            pending: None,
             plan: VecDeque::new(),
             pulling: false,
             conversions: 0,
@@ -1332,8 +1343,7 @@ impl Ds18b20 {
                     let res = (self.pad[4] >> 5) & 3;
                     let raw = (self.temp.clamp(-55.0, 125.0) * 16.0).round() as i16;
                     let raw = raw & !((1i16 << (3 - res)) - 1);
-                    self.pad[0] = raw as u8;
-                    self.pad[1] = (raw >> 8) as u8;
+                    self.pending = Some([raw as u8, (raw >> 8) as u8]);
                     self.phase = OwPhase::Converting;
                 }
                 0xBE => {
@@ -1364,6 +1374,13 @@ impl Ds18b20 {
 
     /// The line changed level (seen while the device is not pulling it).
     pub fn observe(&mut self, now: Seconds, high: bool) {
+        // A finished conversion updates the scratchpad.
+        if now >= self.conv_done {
+            if let Some([lo, hi]) = self.pending.take() {
+                self.pad[0] = lo;
+                self.pad[1] = hi;
+            }
+        }
         if !high {
             self.fall = Some(now);
             // A read slot: the device answers a 0 by holding the line low.
@@ -1518,7 +1535,9 @@ impl CharLcd {
             // Cursor or display shift.
             let right = c & 0x04 != 0;
             if c & 0x08 != 0 {
-                self.shift += if right { 1 } else { -1 };
+                // Shifting the display right moves the text right: the
+                // window's start column goes down.
+                self.shift += if right { -1 } else { 1 };
             } else {
                 self.addr = if right {
                     self.addr + 1
@@ -2019,6 +2038,10 @@ mod tests {
             ]
         );
         assert_eq!(e.position, 0);
+        // A turn pending when the time base restarts stays just as close.
+        e.rotate(100.0, 1);
+        e.rebase(100.0);
+        assert!((e.next().unwrap() - Encoder::STEP).abs() < 1e-9);
     }
 
     /// A host bit-banging 1-Wire against the device model.
@@ -2109,6 +2132,20 @@ mod tests {
         let pad: Vec<u8> = (0..9).map(|_| h.read()).collect();
         let raw = i16::from_le_bytes([pad[0], pad[1]]);
         assert_eq!(raw, -162); // −10.125 × 16
+                               // Reading too early gives the previous result.
+        h.d.temp = 30.0;
+        assert!(h.reset());
+        h.write(0xCC);
+        h.write(0x44);
+        assert!(h.reset());
+        h.write(0xCC);
+        h.write(0xBE);
+        let pad: Vec<u8> = (0..9).map(|_| h.read()).collect();
+        assert_eq!(
+            i16::from_le_bytes([pad[0], pad[1]]),
+            -162,
+            "conversion not finished"
+        );
     }
 
     #[test]
@@ -2163,5 +2200,10 @@ mod tests {
         assert_eq!(l.cgram[1], 0x1F);
         assert!(l.backlight() && l.display_on && l.two_lines);
         assert_eq!(l.cursor_at(), None);
+        // Display shift right: the text moves one column right.
+        send(&mut l, 0x1C, false);
+        assert_eq!(&l.rows()[0][..6], b" Hello");
+        send(&mut l, 0x18, false);
+        assert_eq!(&l.rows()[0][..5], b"Hello");
     }
 }

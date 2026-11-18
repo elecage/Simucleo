@@ -174,6 +174,20 @@ impl Usart {
                 || (cr1 & PEIE != 0 && sr & PE != 0))
     }
 
+    /// Register value without read side effects (for debugger views).
+    pub fn peek(&self, offset: u32) -> u32 {
+        match offset {
+            0x00 => self.sr,
+            0x04 => self.rdr as u32,
+            0x08 => self.brr,
+            0x0C => self.cr1,
+            0x10 => self.cr2,
+            0x14 => self.cr3,
+            0x18 => self.gtpr,
+            _ => 0,
+        }
+    }
+
     pub fn read(&mut self, offset: u32) -> u32 {
         match offset {
             0x00 => {

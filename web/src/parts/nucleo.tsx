@@ -246,14 +246,23 @@ export const nucleoF401re: PartDef = {
       <rect x={px(15.5)} y={px(10)} width={px(1)} height={px(0.6)} className="smd-led" />
       <rect
         x={px(15.5)} y={px(10)} width={px(1)} height={px(0.6)}
-        className="smd-led-glow" style={{ opacity: visual.brightness ?? 0 }}
+        className="smd-led-glow" data-led="LD2" style={{ opacity: visual.brightness ?? 0 }}
       />
+      {(visual.brightness ?? 0) > 0 && (
+        <circle cx={px(16)} cy={px(10.3)} r={px(1.4)} className="smd-led-halo" style={{ opacity: 0.5 * (visual.brightness ?? 0) }} />
+      )}
       <text x={px(15.3)} y={px(11.8)} className="silk small">LD2</text>
-      <rect x={px(11)} y={px(16)} width={px(2.4)} height={px(2.4)} className="btn-body" />
-      <circle cx={px(12.2)} cy={px(17.2)} r={px(0.8)} className="btn-cap blue" />
+      {/* Pressable: the canvas turns pointer presses on data-action into
+          button events for the simulator. */}
+      <g data-action="b1" className="board-button">
+        <rect x={px(11)} y={px(16)} width={px(2.4)} height={px(2.4)} className="btn-body" />
+        <circle cx={px(12.2)} cy={px(17.2)} r={px(visual.pressed ? 0.7 : 0.8)} className="btn-cap blue" />
+      </g>
       <text x={px(11.3)} y={px(19.6)} className="silk small">B1 USER</text>
-      <rect x={px(11)} y={px(11)} width={px(2.4)} height={px(2.4)} className="btn-body" />
-      <circle cx={px(12.2)} cy={px(12.2)} r={px(0.8)} className="btn-cap" />
+      <g data-action="reset" className="board-button">
+        <rect x={px(11)} y={px(11)} width={px(2.4)} height={px(2.4)} className="btn-body" />
+        <circle cx={px(12.2)} cy={px(12.2)} r={px(0.8)} className="btn-cap" />
+      </g>
       <text x={px(11.3)} y={px(14.6)} className="silk small">B2 RESET</text>
 
       {pins.map((p) =>

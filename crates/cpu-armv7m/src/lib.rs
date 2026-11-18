@@ -91,6 +91,36 @@ pub struct ArmV7M {
     periph_touched: bool,
     /// The instruction branched to itself.
     self_loop: bool,
+    /// The instruction was a taken backward branch.
+    back_branch: bool,
+    /// Number of stores so far (busy-wait detection).
+    stores: u64,
+    /// Number of FP instructions so far (busy-wait detection).
+    fp_ops: u64,
+    /// Busy-wait detection: state at the last visit of recent loop heads
+    /// (a loop that calls a function has several backward branches).
+    loop_watch: [Option<LoopWatch>; 4],
+    loop_watch_next: usize,
+}
+
+/// Architectural state at a loop head, for busy-wait detection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LoopState {
+    head: u32,
+    r: [u32; 15],
+    psr: u32,
+    masks: [u32; 4],
+    fpscr: u32,
+}
+
+#[derive(Debug, Clone)]
+struct LoopWatch {
+    state: LoopState,
+    cycle: Cycles,
+    stores: u64,
+    fp_ops: u64,
+    epoch: u64,
+    time_reads: u64,
 }
 
 impl ArmV7M {
@@ -131,6 +161,7 @@ impl ArmV7M {
     pub(crate) fn branch_write_pc(&mut self, addr: u32) {
         self.next_pc = addr & !1;
         self.self_loop = self.next_pc == self.pc;
+        self.back_branch = self.next_pc < self.pc;
         self.cyc += 2;
     }
 
@@ -144,6 +175,7 @@ impl ArmV7M {
         }
         self.t = addr & 1 != 0;
         self.next_pc = addr & !1;
+        self.back_branch = self.next_pc < self.pc;
         self.cyc += 2;
     }
 
@@ -287,6 +319,7 @@ impl ArmV7M {
     #[inline]
     pub(crate) fn write(&mut self, ctx: &mut Ctx, addr: u32, size: AccessSize, value: u32) -> Exec {
         self.cyc += 1;
+        self.stores += 1;
         if addr >= 0xE000_0000 {
             return ctx
                 .sys
@@ -369,12 +402,76 @@ impl ArmV7M {
         Ok(())
     }
 
+    /// Busy-wait elision. At a taken backward branch, compare the state with
+    /// the previous visit of the same loop head. If nothing changed — same
+    /// registers, flags and masks, no store and no FP instruction in
+    /// between — the next iteration is identical, and so is every one after
+    /// it until something outside the loop changes: an interrupt, a
+    /// peripheral event (the machine's deadline, `end`) or the SysTick
+    /// counter. Skip whole iterations up to that point. This is what makes
+    /// `HAL_Delay()` and flag-polling loops cheap; their observable
+    /// behaviour (including when they exit) is unchanged.
+    fn watch_loop(&mut self, ctx: &mut Ctx, end: Cycles) {
+        let mut r = [0u32; 15];
+        r.copy_from_slice(&self.r[..15]);
+        let state = LoopState {
+            head: self.pc,
+            r,
+            psr: self.apsr() | self.it as u32,
+            masks: [self.primask, self.basepri, self.faultmask, self.control],
+            fpscr: self.fpscr,
+        };
+        let now = ctx.sys.cycles;
+        let slot = self
+            .loop_watch
+            .iter()
+            .position(|w| w.as_ref().is_some_and(|w| w.state.head == state.head));
+        if let Some(w) = slot.and_then(|i| self.loop_watch[i].as_ref()) {
+            // `epoch` changes whenever something outside the CPU changed
+            // (SysTick wrapped, an interrupt became pending): an iteration
+            // that straddles such a change may still be about to see it.
+            let steady = w.state == state
+                && w.stores == self.stores
+                && w.fp_ops == self.fp_ops
+                && w.epoch == ctx.sys.epoch
+                && w.time_reads == ctx.sys.time_reads;
+            let period = now - w.cycle;
+            if steady && period > 0 && !Self::has_pending(ctx.sys) {
+                let mut limit = end;
+                if let Some(dt) = ctx.sys.next_change_in() {
+                    limit = limit.min(now + dt);
+                }
+                if limit > now {
+                    let n = (limit - now) / period;
+                    if n > 0 {
+                        ctx.sys.advance(n * period);
+                    }
+                }
+            }
+        }
+        let watch = LoopWatch {
+            state,
+            cycle: ctx.sys.cycles,
+            stores: self.stores,
+            fp_ops: self.fp_ops,
+            epoch: ctx.sys.epoch,
+            time_reads: ctx.sys.time_reads,
+        };
+        let i = slot.unwrap_or_else(|| {
+            let i = self.loop_watch_next;
+            self.loop_watch_next = (i + 1) % self.loop_watch.len();
+            i
+        });
+        self.loop_watch[i] = Some(watch);
+    }
+
     /// Take exception `number`, resuming later at `self.pc`.
     fn take_exception(&mut self, ctx: &mut Ctx, number: u16) -> Result<(), Lockup> {
         let mut regs = self.registers();
         let ret = self.pc;
         ctx.sys.exception_entry(&mut regs, ctx.bus, number, ret)?;
         self.set_registers(&regs);
+        self.loop_watch = Default::default();
         self.exclusive = None;
         self.event = true;
         self.sleeping = false;
@@ -385,6 +482,7 @@ impl ArmV7M {
         let mut regs = self.registers();
         ctx.sys.exception_return(&mut regs, ctx.bus, value)?;
         self.set_registers(&regs);
+        self.loop_watch = Default::default();
         self.exclusive = None;
         self.event = true;
         // SLEEPONEXIT: go back to sleep when returning to Thread mode.
@@ -430,6 +528,8 @@ impl CpuBackend for ArmV7M {
         let start = sys.cycles;
         let end = start.saturating_add(max_cycles);
         let mut ctx = Ctx { bus, sys };
+        // Peripheral events may have happened since the last call.
+        self.loop_watch = Default::default();
         let result = |ctx: &Ctx, stop| RunResult {
             cycles: ctx.sys.cycles - start,
             stop,
@@ -484,6 +584,7 @@ impl CpuBackend for ArmV7M {
             self.exc_return = None;
             self.periph_touched = false;
             self.self_loop = false;
+            self.back_branch = false;
             let step = self.step(&mut ctx);
             // Peripheral state may have changed: forward IRQ lines at once so
             // an interrupt the instruction enabled is taken before the next.
@@ -509,6 +610,8 @@ impl CpuBackend for ArmV7M {
                         // fast-forwards instead of spinning.
                         self.sleeping = true;
                         self.sleep_wfe = false;
+                    } else if self.back_branch && !self.in_it_block() {
+                        self.watch_loop(&mut ctx, end);
                     }
                     if self.svc {
                         let regs = self.registers();

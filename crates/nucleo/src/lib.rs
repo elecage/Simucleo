@@ -288,6 +288,17 @@ impl Nucleo {
         self.resets
     }
 
+    /// Read memory for a debugger view without disturbing the simulation
+    /// (no peripheral read side effects). Unmapped bytes read as `None`.
+    pub fn peek_byte(&self, addr: u32) -> Option<u8> {
+        if addr >= 0xE000_0000 {
+            return Some(self.sys.peek(addr, simucleo_core::bus::AccessSize::Byte) as u8);
+        }
+        self.bus
+            .peek(addr, simucleo_core::bus::AccessSize::Byte)
+            .map(|v| v as u8)
+    }
+
     /// Name of the function containing `addr` (nearest symbol at or below).
     pub fn symbol_at(&self, addr: u32) -> Option<&str> {
         let fw = self.firmware.as_ref()?;
@@ -363,6 +374,62 @@ mod tests {
         assert_eq!(board.clock_hz(), 2_000_000);
         let ms = board.time_ns() / 1e6;
         assert!((10.0..10.01).contains(&ms), "ran {ms} ms instead of 10");
+    }
+
+    /// SysTick 1000-cycle period without interrupt; poll COUNTFLAG and
+    /// count wraps in SRAM[0].
+    const COUNTFLAG_PROGRAM: [u8; 48] = [
+        0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0x08, 0x48, 0x40, 0xf2, 0xe7, 0x31, 0x41,
+        0x60, 0x00, 0x21, 0x81, 0x60, 0x05, 0x21, 0x01, 0x60, 0x4f, 0xf0, 0x00, 0x52, 0x01, 0x68,
+        0x11, 0xf4, 0x80, 0x3f, 0xfb, 0xd0, 0x13, 0x68, 0x01, 0x33, 0x13, 0x60, 0xf7, 0xe7, 0x10,
+        0xe0, 0x00, 0xe0,
+    ];
+
+    #[test]
+    fn busy_wait_skipping_keeps_polling_loops_exact() {
+        // The polling loop is a steady state the CPU skips through, but the
+        // result must match running one cycle at a time (no skipping
+        // possible), including a SysTick wrap that lands mid-iteration.
+        for horizon in [1_500u64, 3_500, 100_000] {
+            let mut results = Vec::new();
+            for step in [1, horizon] {
+                let mut board = Nucleo::new();
+                board.bus.load(0x0800_0000, &COUNTFLAG_PROGRAM).unwrap();
+                board.reset().unwrap();
+                while board.now() < horizon {
+                    board.run(step.min(horizon - board.now()));
+                }
+                results.push((
+                    board.bus.read_u32(0x2000_0000).unwrap(),
+                    board.cpu.registers().pc(),
+                    board.now(),
+                ));
+            }
+            assert_eq!(results[0], results[1], "horizon {horizon}");
+        }
+    }
+
+    /// Enable DWT CYCCNT, then poll it with `lsrs r1, r1, #8; beq` (exits
+    /// once CYCCNT >= 256) and write a mark to SRAM[0].
+    const CYCCNT_PROGRAM: [u8; 36] = [
+        0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0x05, 0x48, 0x01, 0x21, 0x01, 0x60, 0x04,
+        0x30, 0x01, 0x68, 0x09, 0x0a, 0xfc, 0xd0, 0x4f, 0xf0, 0x00, 0x52, 0x10, 0x60, 0xfe, 0xe7,
+        0x00, 0x00, 0x00, 0x10, 0x00, 0xe0,
+    ];
+
+    #[test]
+    fn loops_reading_a_cycle_counter_are_not_skipped() {
+        // The registers look the same each iteration because the counter is
+        // shifted away, but it keeps changing: the loop must exit on time.
+        let mut board = Nucleo::new();
+        board.bus.load(0x0800_0000, &CYCCNT_PROGRAM).unwrap();
+        board.reset().unwrap();
+        board.run(1_000);
+        assert_eq!(
+            board.bus.read_u32(0x2000_0000).unwrap(),
+            0xE000_1004,
+            "loop exited"
+        );
     }
 
     #[test]

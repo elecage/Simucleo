@@ -4,6 +4,8 @@
 기계어를 실행하고, 내부 Peripheral과 브레드보드 위 외부 부품(LED, 버저, 모터, 센서, OLED 등)을 함께
 시뮬레이션해 준실시간으로 보여 준다.
 
+**웹에서 바로 써 보기: https://elecage.github.io/Simucleo/** (`main`에 병합될 때마다 자동 배포)
+
 ![배선 편집기 v0](docs/images/wiring-editor-v0.png)
 
 > **상태: M0 완료.** Cortex-M4F CPU 코어(Thumb-2, DSP, FPU, 예외 모델)가 동작하고 Unicorn과 명령어 단위로

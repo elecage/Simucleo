@@ -11,13 +11,68 @@ import { createSimulator, type Netlist, type SimHandle } from "./sim/simulator";
 import { useRunner } from "./sim/useRunner";
 import { unlockAudio, useBuzzerAudio } from "./sim/audio";
 import type { VisualState } from "./parts/types";
-import { formatOhms, parseOhms, resistorBands } from "./parts/ohms";
+import { colorCode, eSeries, formatOhms, parseOhms, type BandCount } from "./parts/ohms";
 
 const WIRE_COLORS = ["#e53935", "#1e88e5", "#43a047", "#fdd835", "#fb8c00", "#8e24aa", "#212121"];
 const CATEGORY_LABEL: Record<string, string> = {
   board: "보드", basic: "기본", input: "입력", output: "출력",
   actuator: "구동", display: "디스플레이", sensor: "센서", module: "모듈",
 };
+
+const PROP_LABEL: Record<string, string> = {
+  bands: "색띠 수",
+  tolerance: "오차",
+  tempco: "온도계수 (ppm/K, 6띠)",
+  color: "색",
+  common: "공통 단자",
+};
+
+const BAND_KO: Record<string, string> = {
+  black: "검정", brown: "갈색", red: "빨강", orange: "주황", yellow: "노랑", green: "초록", blue: "파랑",
+  violet: "보라", grey: "회색", white: "흰색", gold: "금색", silver: "은색", pink: "분홍",
+};
+
+/** Parsed resistance, its colour code in words and its E series. */
+function OhmsInfo({ r, props }: { r: number | null; props: Record<string, string | number> }) {
+  if (!r) {
+    return (
+      <span className="error" data-testid="ohms-parsed">
+        알 수 없는 값 (예: 220, 4.7k, 4k7, 1M)
+      </span>
+    );
+  }
+  const n = Number(props.bands);
+  const bands = (n === 3 || n === 5 || n === 6 ? n : 4) as BandCount;
+  const code = colorCode(r, bands, String(props.tolerance), String(props.tempco));
+  const series = eSeries(r);
+  return (
+    <span className="dim" data-testid="ohms-parsed">
+      {formatOhms(r)} · {code.colors.map((c) => BAND_KO[c] ?? c).join("-")}
+      <br />
+      {series ? `표준값 ${series}` : "E 계열 표준값이 아닙니다"}
+      {code.rounded && (
+        <>
+          <br />
+          <span className="error">
+            {bands}띠로는 {formatOhms(code.coded)}로 표시됩니다 (유효숫자 {bands >= 5 ? 3 : 2}자리)
+          </span>
+        </>
+      )}
+      {code.outOfRange && (
+        <>
+          <br />
+          <span className="error">색띠로 나타낼 수 있는 범위를 벗어났습니다</span>
+        </>
+      )}
+      {bands === 3 && (
+        <>
+          <br />
+          3띠는 오차 띠가 없습니다 (±20%)
+        </>
+      )}
+    </span>
+  );
+}
 
 export function App() {
   const [sim, setSim] = useState<SimHandle | null>(null);
@@ -186,7 +241,9 @@ export function App() {
     const id = newId(kind.split("-")[0], taken());
     // Drop new parts below the default board/breadboard, staggered so they never stack.
     const n = project.parts.length;
-    const x = 42 + ((n * 4) % 28);
+    // 6 steps apart: wider than any small part, so new parts never touch
+    // pin-to-pin (touching pins are connected).
+    const x = 42 + ((n * 6) % 30);
     const y = 27 + 3 * Math.floor(n / 7);
     setProject((p) => ({ ...p, parts: [...p.parts, { id, kind, x, y, props: { ...def.props } }] }));
     setSelected(id);
@@ -328,6 +385,10 @@ export function App() {
             <p><b>{selectedPart.id}</b> · {selectedDef.name}</p>
             {selectedDef.description && <p className="hint">{selectedDef.description}</p>}
             {Object.entries(selectedPart.props).map(([k, v]) => {
+              // Resistor: tolerance has no band on 3-band parts, the
+              // temperature coefficient only on 6-band parts.
+              const nb = String(selectedPart.props.bands ?? "");
+              if ((k === "tolerance" && nb === "3") || (k === "tempco" && nb !== "6")) return null;
               const set = (value: string) =>
                 setProject((p) => ({
                   ...p,
@@ -344,15 +405,13 @@ export function App() {
                     <datalist id="ohms-list">
                       {options?.map((o) => <option key={o} value={o} />)}
                     </datalist>
-                    <span className={r ? "dim" : "error"} data-testid="ohms-parsed">
-                      {r ? `${formatOhms(r)} · ${resistorBands(r).join("-")}` : "알 수 없는 값 (예: 220, 4.7k, 4k7, 1M)"}
-                    </span>
+                    <OhmsInfo r={r} props={selectedPart.props} />
                   </label>
                 );
               }
               return (
                 <label key={k} className="prop">
-                  {k}
+                  {PROP_LABEL[k] ?? k}
                   {options ? (
                     <select value={String(v)} onChange={(e) => set(e.target.value)} aria-label={k}>
                       {[...new Set([...options, String(v)])].map((o) => (

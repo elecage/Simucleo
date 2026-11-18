@@ -1,4 +1,4 @@
-import { formatOhms, parseOhms, resistorBands } from "./ohms";
+import { colorCode, formatOhms, parseOhms, TEMPCOS, TOLERANCES, type BandCount } from "./ohms";
 import { PITCH, type PartDef } from "./types";
 
 const LED_COLORS: Record<string, string> = {
@@ -63,7 +63,7 @@ export const led5mm: PartDef = {
 const BAND_HEX: Record<string, string> = {
   black: "#111", brown: "#7a3e12", red: "#d22", orange: "#f80", yellow: "#ee0",
   green: "#2a2", blue: "#24f", violet: "#a3f", grey: "#888", white: "#fff",
-  gold: "#c9a227", silver: "#c0c0c0",
+  gold: "#c9a227", silver: "#c0c0c0", pink: "#ff69b4",
 };
 
 export const resistor: PartDef = {
@@ -76,25 +76,43 @@ export const resistor: PartDef = {
     { id: "1", x: 0, y: 0 },
     { id: "2", x: 4, y: 0 },
   ],
-  props: { ohms: "220" },
-  propOptions: { ohms: ["100", "220", "330", "470", "1k", "2.2k", "4.7k", "10k", "100k"] },
+  description:
+    "색띠는 IEC 60062 규격: 3띠(유효숫자 2 + 승수, ±20%), 4띠(+ 오차), 5띠(유효숫자 3 + 승수 + 오차), 6띠(+ 온도계수). 왼쪽부터 읽고, 떨어져 있는 띠가 오차입니다.",
+  props: { ohms: "220", bands: "4", tolerance: "5%", tempco: "100" },
+  propOptions: {
+    ohms: ["100", "220", "330", "470", "1k", "2.2k", "4.7k", "10k", "100k", "1M"],
+    bands: ["3", "4", "5", "6"],
+    tolerance: TOLERANCES,
+    tempco: TEMPCOS,
+  },
   render: (props) => {
     const r = parseOhms(props.ohms);
-    const bands = r ? resistorBands(r) : null;
+    const n = Number(props.bands) as BandCount;
+    const bands: BandCount = n === 3 || n === 5 || n === 6 ? n : 4;
+    const code = r ? colorCode(r, bands, String(props.tolerance), String(props.tempco)) : null;
+    // Spread the bands over the body; the tolerance band stands apart.
+    const k = code?.colors.length ?? 0;
+    const gap = code && code.gapBefore >= 0 ? 0.5 : 0;
+    const w = 0.2;
+    const step = Math.min(0.45, (1.7 - w) / Math.max(1, k - 1 + gap));
+    const precision = bands >= 5; // metal film: blue body
     return (
-      <g data-bands={bands?.join(",") ?? "invalid"}>
+      <g data-bands={code?.colors.join(",") ?? "invalid"}>
         <line x1={0} y1={0} x2={4 * PITCH} y2={0} className="lead" />
-        <rect x={0.9 * PITCH} y={-0.45 * PITCH} width={2.2 * PITCH} height={0.9 * PITCH} rx={4} className="resistor-body" />
-        {bands?.map((c, i) => (
+        <rect
+          x={0.9 * PITCH} y={-0.45 * PITCH} width={2.2 * PITCH} height={0.9 * PITCH} rx={4}
+          className={precision ? "resistor-body film" : "resistor-body"}
+        />
+        {code?.colors.map((c, i) => (
           <rect
             key={i}
-            // Tolerance band set apart at the right end, as on real parts.
-            x={(1.15 + i * 0.42 + (i === 3 ? 0.3 : 0)) * PITCH} y={-0.45 * PITCH} width={0.22 * PITCH} height={0.9 * PITCH}
+            x={(1.1 + i * step + (code.gapBefore >= 0 && i >= code.gapBefore ? gap * step : 0)) * PITCH}
+            y={-0.45 * PITCH} width={w * PITCH} height={0.9 * PITCH}
             fill={BAND_HEX[c]}
           />
         ))}
         <text x={2 * PITCH} y={-0.75 * PITCH} textAnchor="middle" className={r ? "silk small value" : "silk small value bad"}>
-          {r ? formatOhms(r) : `? ${String(props.ohms)}`}
+          {r ? `${formatOhms(r)}${bands === 3 ? " ±20%" : ` ±${props.tolerance}`}` : `? ${String(props.ohms)}`}
         </text>
       </g>
     );

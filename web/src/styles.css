@@ -90,6 +90,7 @@ main { grid-area: main; min-width: 0; min-height: 0; }
 .led-body { stroke: #0003; }
 .led-body.burnt { fill: #3a2a20; }
 .resistor-body { fill: #e8d2a6; stroke: #b9a27a; }
+.resistor-body.film { fill: #8fb8de; stroke: #5d88b3; }
 .value { font-size: 5.5px; fill: var(--text); pointer-events: none; }
 .value.bad { fill: #dc2626; font-weight: 700; }
 .polarity { font: 700 7px system-ui, sans-serif; pointer-events: none; }

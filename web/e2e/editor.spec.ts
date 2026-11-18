@@ -189,3 +189,41 @@ test("a wire end can be dragged to another pin", async ({ page }) => {
   await expect(page.locator(".nets li")).toHaveText([`${led}.K — nucleo.PA5`]);
   await expect(page.locator("path.wire")).toHaveCount(1);
 });
+
+test("3-, 4-, 5- and 6-band colour codes with tolerance and tempco (IEC 60062)", async ({ page }) => {
+  await page.getByRole("button", { name: "저항" }).click();
+  const res = await partId(page, "resistor");
+  const bands = page.locator(`[data-id="${res}"] [data-bands]`);
+  const info = page.getByTestId("ohms-parsed");
+  const ohms = page.getByLabel("ohms");
+  const count = page.getByLabel("bands");
+
+  await ohms.fill("470");
+  await count.selectOption("3");
+  await expect(bands).toHaveAttribute("data-bands", "yellow,violet,brown");
+  await expect(page.getByLabel("tolerance")).toHaveCount(0); // no tolerance band
+  await expect(info).toContainText("±20%");
+
+  await count.selectOption("4");
+  await ohms.fill("0.47");
+  await expect(bands).toHaveAttribute("data-bands", "yellow,violet,silver,gold");
+  await page.getByLabel("tolerance").selectOption("10%");
+  await expect(bands).toHaveAttribute("data-bands", "yellow,violet,silver,silver");
+
+  // 4.75 kΩ needs three digits: rounded on 4 bands, exact on 5.
+  await ohms.fill("4.75k");
+  await expect(info).toContainText("4.8 kΩ로 표시됩니다");
+  await count.selectOption("5");
+  await page.getByLabel("tolerance").selectOption("1%");
+  await expect(bands).toHaveAttribute("data-bands", "yellow,violet,green,brown,brown");
+  await expect(info).toContainText("표준값 E96");
+  await expect(info).not.toContainText("표시됩니다");
+
+  await count.selectOption("6");
+  await ohms.fill("10k");
+  await page.getByLabel("tempco").selectOption("50");
+  await expect(bands).toHaveAttribute("data-bands", "brown,black,black,red,brown,red");
+  await expect(info).toContainText("표준값 E6");
+  await ohms.fill("123");
+  await expect(info).toContainText("E 계열 표준값이 아닙니다");
+});

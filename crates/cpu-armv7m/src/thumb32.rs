@@ -39,7 +39,7 @@ impl ArmV7M {
                         self.t32_dp_plain_imm(hw1, hw2, opcode)
                     }
                 } else {
-                    self.t32_branch_misc(hw1, hw2, opcode)
+                    self.t32_branch_misc(ctx, hw1, hw2, opcode)
                 }
             }
             _ => {
@@ -474,7 +474,7 @@ impl ArmV7M {
 
     // ------------------------------------------------- branches, misc control
 
-    fn t32_branch_misc(&mut self, hw1: u32, hw2: u32, opcode: u32) -> Exec {
+    fn t32_branch_misc(&mut self, ctx: &mut Ctx, hw1: u32, hw2: u32, opcode: u32) -> Exec {
         let op1 = bits(hw2, 14, 12);
         let op = bits(hw1, 10, 4);
         let s = bits(hw1, 10, 10);
@@ -503,7 +503,7 @@ impl ArmV7M {
                     0b011_1000 | 0b011_1001 => self.msr(hw1 & 0xF, bits(hw2, 11, 10), hw2 & 0xFF),
                     0b011_1010 => {
                         if hw2 & 0x700 == 0 && hw2 & 0xF0 == 0 {
-                            self.hint(hw2 & 0xF);
+                            self.hint(ctx, hw2 & 0xF);
                         }
                         Ok(())
                     }

@@ -14,6 +14,8 @@ use crate::Cycles;
 pub const NUM_IRQS: usize = 96;
 /// Implemented priority bits (STM32: 4, so priorities read back as `0xN0`).
 pub const PRIO_BITS: u32 = 4;
+/// SCR.SEVONPEND
+const SCR_SEVONPEND: u32 = 1 << 4;
 const PRIO_MASK: u8 = (0xFF << (8 - PRIO_BITS)) as u8;
 
 pub mod exc {
@@ -233,6 +235,9 @@ pub struct CortexM {
     pub cycles: Cycles,
     /// Set by AIRCR.SYSRESETREQ; the machine performs the reset.
     pub reset_requested: bool,
+    /// Event latched for WFE by the system (SEVONPEND); the CPU consumes it
+    /// with [`CortexM::take_event`].
+    pub event: bool,
     /// System-space addresses accessed that are not modelled.
     pub unimplemented: Vec<u32>,
 }
@@ -286,6 +291,7 @@ impl CortexM {
             dbgmcu_cr: 0,
             cycles: 0,
             reset_requested: false,
+            event: false,
             unimplemented: Vec::new(),
         }
     }
@@ -441,12 +447,32 @@ impl CortexM {
     }
 
     pub fn set_pending(&mut self, n: u16) {
-        if n < 16 {
+        let newly = if n < 16 {
+            let was = self.sys_pending & (1 << n) != 0;
             self.sys_pending |= 1 << n;
+            !was
         } else {
             let i = (n - 16) as usize;
+            let was = self.nvic_pending[i / 32] & (1 << (i % 32)) != 0;
             self.nvic_pending[i / 32] |= 1 << (i % 32);
+            !was
+        };
+        if newly {
+            self.on_new_pending();
         }
+    }
+
+    /// SCR.SEVONPEND: an interrupt entering the pending state is a WFE
+    /// wake-up event, even when it is disabled or masked (PM0214 §4.4.6).
+    fn on_new_pending(&mut self) {
+        if self.scr & SCR_SEVONPEND != 0 {
+            self.event = true;
+        }
+    }
+
+    /// Consume a pending wake-up event (see [`CortexM::event`]).
+    pub fn take_event(&mut self) -> bool {
+        std::mem::take(&mut self.event)
     }
 
     /// Pend an external interrupt line (peripheral IRQ number).
@@ -883,7 +909,12 @@ impl CortexM {
                 self.nvic_enabled[((addr - 0xE000_E180) / 4) as usize] &= !v
             }
             0xE000_E200..=0xE000_E208 => {
-                self.nvic_pending[((addr - 0xE000_E200) / 4) as usize] |= v
+                let w = &mut self.nvic_pending[((addr - 0xE000_E200) / 4) as usize];
+                let newly = v & !*w;
+                *w |= v;
+                if newly != 0 {
+                    self.on_new_pending();
+                }
             }
             0xE000_E280..=0xE000_E288 => {
                 self.nvic_pending[((addr - 0xE000_E280) / 4) as usize] &= !v

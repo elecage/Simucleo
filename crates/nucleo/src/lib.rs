@@ -175,6 +175,38 @@ mod tests {
         0x00, 0xfa, 0x05,
     ];
 
+    /// SCR.SEVONPEND = 1; SEV; WFE (consumes the event); WFE (sleeps);
+    /// SRAM[0] = 1; pend disabled IRQ4 via ISPR; WFE (returns at once);
+    /// SRAM[0] = 2; loop.
+    const SEVONPEND_PROGRAM: [u8; 52] = [
+        0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0x08, 0x48, 0x10, 0x21, 0x01, 0x60, 0x4f,
+        0xf0, 0x00, 0x52, 0x40, 0xbf, 0x20, 0xbf, 0x20, 0xbf, 0x01, 0x23, 0x13, 0x60, 0x04, 0x48,
+        0x10, 0x21, 0x01, 0x60, 0x20, 0xbf, 0x02, 0x23, 0x13, 0x60, 0xfe, 0xe7, 0x00, 0x00, 0x10,
+        0xed, 0x00, 0xe0, 0x00, 0xe2, 0x00, 0xe0,
+    ];
+
+    #[test]
+    fn sevonpend_wakes_wfe_for_disabled_interrupts() {
+        let mut board = Nucleo::new();
+        board.bus.load(0x0800_0000, &SEVONPEND_PROGRAM).unwrap();
+        board.reset().unwrap();
+        let r = board.run(1_000);
+        assert_eq!(r.stop, StopReason::Sleeping);
+        assert_eq!(
+            board.bus.read_u32(0x2000_0000).unwrap(),
+            0,
+            "still asleep in WFE"
+        );
+        // A disabled interrupt becomes pending (e.g. a peripheral flag).
+        board.sys.set_irq_pending(3);
+        board.run(1_000);
+        assert_eq!(
+            board.bus.read_u32(0x2000_0000).unwrap(),
+            2,
+            "woke, and the ISPR write woke the next WFE"
+        );
+    }
+
     #[test]
     fn sysresetreq_resets_at_the_next_instruction_boundary() {
         // https://github.com/elecage/Simucleo/issues/5

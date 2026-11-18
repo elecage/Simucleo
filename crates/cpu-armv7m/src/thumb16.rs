@@ -412,7 +412,7 @@ impl ArmV7M {
                     self.it_written = true;
                     return Ok(());
                 }
-                self.hint((hw >> 4) & 0xF);
+                self.hint(ctx, (hw >> 4) & 0xF);
                 Ok(())
             }
             _ => {
@@ -433,16 +433,22 @@ impl ArmV7M {
     }
 
     /// NOP, YIELD, WFE, WFI, SEV.
-    pub(crate) fn hint(&mut self, op: u32) {
+    pub(crate) fn hint(&mut self, ctx: &mut Ctx, op: u32) {
         match op {
             2 => {
-                if self.event {
+                // WFE: return at once if an event is latched (SEV, exception
+                // entry/return, or SEVONPEND), otherwise sleep until one.
+                if self.event || ctx.sys.take_event() {
                     self.event = false;
                 } else {
                     self.sleeping = true;
+                    self.sleep_wfe = true;
                 }
             }
-            3 => self.sleeping = true,
+            3 => {
+                self.sleeping = true;
+                self.sleep_wfe = false;
+            }
             4 => self.event = true,
             _ => {}
         }

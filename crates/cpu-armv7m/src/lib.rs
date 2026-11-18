@@ -74,6 +74,8 @@ pub struct ArmV7M {
     exclusive: Option<u32>,
     event: bool,
     sleeping: bool,
+    /// The core sleeps in WFE (woken by events) rather than WFI.
+    sleep_wfe: bool,
 
     breakpoints: BTreeSet<u32>,
     /// Breakpoint address we stopped at; it is skipped once on resume.
@@ -440,6 +442,14 @@ impl CpuBackend for ArmV7M {
                 if self.sleeping && ctx.sys.wakeup_pending(&regs) {
                     self.sleeping = false;
                 }
+            }
+
+            if self.sleeping && ctx.sys.take_event() {
+                if self.sleep_wfe {
+                    self.sleeping = false;
+                    continue;
+                }
+                self.event = true; // WFI ignores it; a later WFE will not
             }
 
             if self.sleeping {

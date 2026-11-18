@@ -64,31 +64,67 @@ fn next_toward(x: f32, up: bool) -> f32 {
     f32::from_bits(if away_from_zero { b + 1 } else { b - 1 })
 }
 
-/// Round an `f64` to `f32` in the given mode → (value, inexact).
-fn round_f32(x: f64, mode: Round) -> (f32, bool) {
-    let rn = x as f32;
-    if rn as f64 == x || x.is_nan() {
+/// Exact sum of two `f64` values as `hi + lo` (Knuth's TwoSum).
+fn two_sum(a: f64, b: f64) -> (f64, f64) {
+    let s = a + b;
+    let bb = s - a;
+    (s, (a - (s - bb)) + (b - bb))
+}
+
+/// Sign of `(hi + lo) - c`, where `hi` is the `f64` rounding of `hi + lo`.
+fn cmp_exact(hi: f64, lo: f64, c: f64) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    if hi != c {
+        hi.partial_cmp(&c).unwrap_or(Ordering::Equal)
+    } else {
+        lo.partial_cmp(&0.0).unwrap_or(Ordering::Equal)
+    }
+}
+
+/// Round the exact value `hi + lo` to `f32` in the given mode → (value,
+/// inexact). `lo` carries what the `f64` rounding of `hi` discarded, so
+/// directed rounding and the inexact flag stay correct even when an operand
+/// is far below the other's precision.
+fn round_f32(hi: f64, lo: f64, mode: Round) -> (f32, bool) {
+    use std::cmp::Ordering::{Greater, Less};
+    let rn = hi as f32;
+    if hi.is_nan() || (lo == 0.0 && rn as f64 == hi) {
         return (rn, false);
     }
+    let c = rn as f64;
     let r = match mode {
-        Round::Nearest => rn,
+        Round::Nearest => {
+            if c != hi && lo != 0.0 {
+                // `hi` exactly halfway between two floats: `lo` breaks the tie.
+                let other = next_toward(rn, hi > c);
+                let mid = (c + other as f64) / 2.0;
+                if hi == mid && (lo > 0.0) == (other as f64 > c) {
+                    other
+                } else {
+                    rn
+                }
+            } else {
+                rn
+            }
+        }
         Round::PlusInf => {
-            if (rn as f64) < x {
+            if cmp_exact(hi, lo, c) == Greater {
                 next_toward(rn, true)
             } else {
                 rn
             }
         }
         Round::MinusInf => {
-            if (rn as f64) > x {
+            if cmp_exact(hi, lo, c) == Less {
                 next_toward(rn, false)
             } else {
                 rn
             }
         }
         Round::Zero => {
-            if (rn as f64).abs() > x.abs() {
-                next_toward(rn, x < 0.0)
+            let ord = cmp_exact(hi, lo, c);
+            if (c > 0.0 && ord == Less) || (c < 0.0 && ord == Greater) {
+                next_toward(rn, c < 0.0)
             } else {
                 rn
             }
@@ -99,20 +135,24 @@ fn round_f32(x: f64, mode: Round) -> (f32, bool) {
 
 /// IEEE 754 overflow: the result rounded as if the exponent range were
 /// unbounded is larger in magnitude than `f32::MAX`.
-fn overflows(x: f64, mode: Round) -> bool {
+fn overflows(hi: f64, lo: f64, mode: Round) -> bool {
+    use std::cmp::Ordering::{Greater, Less};
     let max = f32::MAX as f64;
     let ulp = 2f64.powi(104); // spacing of f32 values at the top binade
-    let a = x.abs();
+                              // |hi + lo| compared with a positive threshold.
+    let (h, l) = if hi < 0.0 { (-hi, -lo) } else { (hi, lo) };
+    let ge = |t: f64| cmp_exact(h, l, t) != Less;
+    let gt = |t: f64| cmp_exact(h, l, t) == Greater;
     let toward_inf = match mode {
-        Round::Nearest => return a >= max + ulp / 2.0,
+        Round::Nearest => return ge(max + ulp / 2.0),
         Round::Zero => false,
-        Round::PlusInf => x > 0.0,
-        Round::MinusInf => x < 0.0,
+        Round::PlusInf => hi > 0.0,
+        Round::MinusInf => hi < 0.0,
     };
     if toward_inf {
-        a > max
+        gt(max)
     } else {
-        a >= max + ulp
+        ge(max + ulp)
     }
 }
 
@@ -233,15 +273,20 @@ impl ArmV7M {
         })
     }
 
-    /// Round an exact (or correctly-rounded-to-f64) result and set flags.
+    /// Round an exactly representable result and set flags.
     fn fp_result(&mut self, exact: f64) -> u32 {
+        self.fp_result_parts(exact, 0.0)
+    }
+
+    /// Round the exact value `exact + lo` (see [`round_f32`]) and set flags.
+    fn fp_result_parts(&mut self, exact: f64, lo: f64) -> u32 {
         if exact.is_nan() {
             self.fpscr |= IOC;
             return DEFAULT_NAN;
         }
         let mode = self.rmode();
-        let (mut r, inexact) = round_f32(exact, mode);
-        if exact.is_finite() && overflows(exact, mode) {
+        let (mut r, inexact) = round_f32(exact, lo, mode);
+        if exact.is_finite() && overflows(exact, lo, mode) {
             // The result is ±∞ or ±MAX depending on the rounding mode, but
             // overflow is signalled either way (#4).
             self.fpscr |= OFC | IXC;
@@ -277,21 +322,28 @@ impl ArmV7M {
                 return if neg { 0xFF80_0000 } else { 0x7F80_0000 };
             }
         }
-        let exact = match op {
-            Op::Add => fa + fb,
-            Op::Sub => fa - fb,
-            Op::Mul => fa * fb,
-            Op::Div => fa / fb,
+        // (hi, lo): the f64 result and what its rounding discarded, so the
+        // final rounding to f32 sees the exact value.
+        let (exact, lo) = match op {
+            Op::Add => two_sum(fa, fb),
+            Op::Sub => two_sum(fa, -fb),
+            Op::Mul => (fa * fb, 0.0), // exact: 24 × 24 bits fit in 53
+            Op::Div => {
+                let q = fa / fb;
+                // Sign of the remainder tells which side of q the quotient is.
+                let rem = (-q).mul_add(fb, fa);
+                (q, if q.is_finite() { rem / fb } else { 0.0 })
+            }
         };
         // Exact zero sums are +0 except in round-toward-minus mode.
-        if exact == 0.0 && matches!(op, Op::Add | Op::Sub) && fa != 0.0 {
+        if exact == 0.0 && lo == 0.0 && matches!(op, Op::Add | Op::Sub) && fa != 0.0 {
             return if self.rmode() == Round::MinusInf {
                 0x8000_0000
             } else {
                 0
             };
         }
-        self.fp_result(exact)
+        self.fp_result_parts(exact, lo)
     }
 
     /// Fused multiply-add `addend + n*m` with optional negations.
@@ -305,10 +357,20 @@ impl ArmV7M {
             f32::from_bits(n) as f64,
             f32::from_bits(m) as f64,
         );
-        // The product is exact in f64; one more rounding to f64 for the sum
-        // may differ from true fusion only in rare double-rounding cases.
-        let exact = fn_.mul_add(fm, a);
-        self.fp_result(exact)
+        // The product is exact in f64 and TwoSum keeps the sum exact, so the
+        // single rounding to f32 is a true fused operation.
+        let (hi, lo) = two_sum(fn_ * fm, a);
+        if hi == 0.0 && lo == 0.0 {
+            // Exact zero: sign by IEEE rules for x + y.
+            let p = fn_ * fm;
+            let neg = if p == 0.0 && a == 0.0 {
+                p.is_sign_negative() && a.is_sign_negative()
+            } else {
+                self.rmode() == Round::MinusInf
+            };
+            return if neg { 0x8000_0000 } else { 0 };
+        }
+        self.fp_result_parts(hi, lo)
     }
 
     fn fp_neg(x: u32) -> u32 {
@@ -622,7 +684,10 @@ impl ArmV7M {
                         self.fpscr |= IOC;
                         DEFAULT_NAN
                     } else {
-                        self.fp_result((f32::from_bits(x) as f64).sqrt())
+                        let v = f32::from_bits(x) as f64;
+                        let q = v.sqrt();
+                        let rem = (-q).mul_add(q, v);
+                        self.fp_result_parts(q, if q > 0.0 { rem / (2.0 * q) } else { 0.0 })
                     }
                 } else {
                     Self::fp_neg(m)
@@ -736,10 +801,10 @@ mod tests {
     #[test]
     fn directed_rounding() {
         let x = 1.0f64 + 2f64.powi(-30);
-        assert_eq!(round_f32(x, Round::Nearest), (1.0, true));
-        assert_eq!(round_f32(x, Round::PlusInf).0, next_toward(1.0, true));
-        assert_eq!(round_f32(-x, Round::Zero).0, -1.0);
-        assert_eq!(round_f32(1e300, Round::Zero).0, f32::MAX);
+        assert_eq!(round_f32(x, 0.0, Round::Nearest), (1.0, true));
+        assert_eq!(round_f32(x, 0.0, Round::PlusInf).0, next_toward(1.0, true));
+        assert_eq!(round_f32(-x, 0.0, Round::Zero).0, -1.0);
+        assert_eq!(round_f32(1e300, 0.0, Round::Zero).0, f32::MAX);
     }
 
     fn mul_with_mode(a: f32, b: f32, rmode: u32) -> (f32, u32) {
@@ -773,6 +838,37 @@ mod tests {
         let r = cpu.fp_binop(f32::MAX.to_bits(), 2f32.powi(103).to_bits(), Op::Add);
         assert_eq!((f32::from_bits(r), cpu.fpscr & 0x9F), (f32::MAX, IXC));
         assert_eq!(mul_with_mode(f32::MAX, 1.0, 0b11), (f32::MAX, 0));
+    }
+
+    #[test]
+    fn tiny_addend_keeps_sticky_bits() {
+        let add = |a: f32, b: f32, rmode: u32| {
+            let mut cpu = ArmV7M::new();
+            cpu.fpscr = rmode << 22;
+            let r = cpu.fp_binop(a.to_bits(), b.to_bits(), Op::Add);
+            (r, cpu.fpscr & 0x9F)
+        };
+        let tiny = 2f32.powi(-100);
+        assert_eq!(add(1.0, tiny, 0b01), (0x3F80_0001, IXC)); // toward +inf
+        assert_eq!(add(1.0, tiny, 0b00), (0x3F80_0000, IXC)); // nearest
+        assert_eq!(add(1.0, -tiny, 0b10), (0x3F7F_FFFF, IXC)); // toward -inf
+        assert_eq!(add(1.0, -tiny, 0b11), (0x3F7F_FFFF, IXC)); // toward zero
+        assert_eq!(add(-1.0, tiny, 0b11), (0xBF7F_FFFF, IXC));
+        // Halfway between 1 and 1+ulp, nudged up by the tiny term: round up.
+        let half_ulp = f32::EPSILON / 2.0;
+        assert_eq!(
+            add(1.0, half_ulp, 0b00),
+            (0x3F80_0000, IXC),
+            "exact tie rounds to even"
+        );
+        let mut cpu = ArmV7M::new();
+        let r = cpu.fp_fma(
+            (1.0 + 0.0f32).to_bits(),
+            half_ulp.to_bits(),
+            (1.0 + 2f32.powi(-20)).to_bits(),
+        );
+        assert_eq!(r, 0x3F80_0001, "1 + half ulp·(1+2^-20) rounds up");
+        assert_eq!(cpu.fpscr & IXC, IXC);
     }
 
     #[test]

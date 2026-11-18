@@ -10,10 +10,13 @@ CI builds every project here and runs it through `simucleo` as a regression test
 | `difftest` | lock-step vs Unicorn (5 optimisation levels) | integer, 64-bit, division, bit ops, TBB/TBH, block copies, DSP, single/half precision FP, exclusives, IT blocks | M0 ✅ |
 | `hal-blinky` | CubeMX HAL (`make variants`) | PLL to 84 MHz from HSI or HSE bypass, `HAL_Delay`, GPIO, B1 button; `hse-crystal` variant ends in `Error_Handler` (no crystal on the Nucleo) | M1 ✅ |
 | `hal-uart-printf` | CubeMX HAL | `printf` over USART2 (virtual COM port), interrupt-driven echo | M1 ✅ |
+| `hal-button-exti` | CubeMX HAL | B1 and a button on D2 → EXTI interrupts (WFI between presses), LD2 and an LED on D7 | M3 ✅ |
+| `hal-pwm-led` | CubeMX HAL | TIM2/TIM3 PWM at 1 kHz: LD2 breathes, RGB LED on D3/D5/D6 | M3 ✅ |
+| `hal-buzzer-melody` | CubeMX HAL | TIM1 (advanced, MOE) PWM melody on a passive buzzer on D8 | M3 ✅ |
 | `freertos-two-tasks` | CubeMX + FreeRTOS (CMSIS-RTOS v2) | SVC/PendSV/SysTick, PSP, BASEPRI, FP context | M4 (planned) |
 
 ```sh
-for d in bare-blinky exceptions difftest hal-uart-printf; do make -C firmware/$d; done
+for d in bare-blinky exceptions difftest hal-uart-printf hal-button-exti hal-pwm-led hal-buzzer-melody; do make -C firmware/$d; done
 make -C firmware/hal-blinky variants
 cargo run --release -p simucleo-cli -- run firmware/bare-blinky/build/bare-blinky.elf --ms 2000
 cargo test --release -p simucleo-nucleo --test firmware -- --include-ignored

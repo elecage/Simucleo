@@ -6,12 +6,13 @@
 
 **웹에서 바로 써 보기: https://elecage.github.io/Simucleo/** (`main`에 병합될 때마다 자동 배포)
 
-![웹에서 HAL 예제 실행](docs/images/web-run.png)
+![PWM으로 RGB LED와 LD2 밝기 제어](docs/images/m3-pwm-rgb.png)
 
-> **상태: M2 완료.** 브라우저에서 ELF를 올리거나 내장 예제를 골라 실행하면 LD2가 실시간으로 깜빡이고,
-> `printf`가 가상 콘솔에 나오며, B1 버튼을 누를 수 있다. CPU 코어는 Unicorn과 명령어 단위로 검증했고,
-> RCC/PWR/FLASH/GPIO/USART가 동작해 STM32CubeMX HAL 펌웨어가 84 MHz로 실행된다. 다음은 외부 부품 연결(M3)이다.
-> 진행 상황은 [로드맵](docs/roadmap.md)을 참고.
+> **상태: M3 완료.** 브레드보드에 꽂은 LED, RGB LED, 택트 스위치, 부저가 실행 중인 펌웨어와 연결된다.
+> 배선된 회로를 DC 해석해 PWM 밝기, 부저 음, 버튼 인터럽트(EXTI)를 보여 주고, 저항 없는 LED 같은
+> 전기 규칙 위반을 알려 준다. 파형(로직 프로브) 뷰, 프로젝트 파일 저장·열기·자동 저장, 배선도 그림 내보내기,
+> 배선이 포함된 예제가 있다. CPU 코어는 Unicorn과 명령어 단위로 검증했고, STM32CubeMX HAL 펌웨어가
+> 84 MHz로 실시간 실행된다. 다음은 FreeRTOS(M4)다. 진행 상황은 [로드맵](docs/roadmap.md)을 참고.
 
 ## 특징 (목표)
 - 수정하지 않은 **베어메탈 / CubeMX HAL / CubeMX FreeRTOS** 펌웨어 실행
@@ -31,10 +32,10 @@
 crates/
   core/            Bus, CpuBackend trait, 사이클 스케줄러, Cortex-M 시스템(NVIC/SCB/SysTick)
   cpu-armv7m/      자체 Cortex-M4F 인터프리터 (Thumb-2, DSP, FPv4-SP)
-  periph-stm32f4/  F401RE Peripheral: RCC/PWR/FLASH/GPIO/USART, SVD 레지스터 맵, 비트밴딩
+  periph-stm32f4/  F401RE Peripheral: RCC/PWR/FLASH/GPIO/EXTI/SYSCFG/USART/TIM, SVD 레지스터 맵, 비트밴딩
   nucleo/          보드 단위 머신 (ELF 로드, 리셋, 실행)
   difftest/        Unicorn과 lock-step 비교 (테스트 전용)
-  circuit/         넷리스트 추출, 부품 모델
+  circuit/         넷리스트 추출, 회로 DC 해석(LED·스위치·부저), 전기 규칙 검사
   elf/             ELF 로더
   cli/             헤드리스 실행기 (simucleo)
   wasm/            웹용 WASM 바인딩

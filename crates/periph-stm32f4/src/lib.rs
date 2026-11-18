@@ -1817,6 +1817,43 @@ mod tests {
     }
 
     #[test]
+    fn input_capture_sees_external_edges_on_its_pin() {
+        // TIM2 CH1 on PA0 (AF1), rising-edge capture; the pin is driven
+        // from outside, not by the timer.
+        let mut bus = Stm32f401Bus::new();
+        let w = |bus: &mut Stm32f401Bus, a: u32, v: u32| {
+            bus.write(a, AccessSize::Word, v).unwrap();
+        };
+        w(&mut bus, map::RCC_BASE + 0x30, 1); // GPIOAEN
+        w(&mut bus, map::RCC_BASE + 0x40, 1); // TIM2EN
+        w(&mut bus, map::GPIOA_BASE, 0xA800_0000 | 2); // PA0 AF
+        w(&mut bus, map::GPIOA_BASE + 0x20, 1); // AF1 = TIM2_CH1
+        let tim2 = map::TIM2_BASE;
+        w(&mut bus, tim2 + 0x18, 1); // CC1S = TI1
+        w(&mut bus, tim2 + 0x20, 1); // CC1E, rising
+        w(&mut bus, tim2, 1); // CEN
+        assert_eq!(
+            bus.gpio[0].driven(0),
+            None,
+            "an input channel drives nothing"
+        );
+        bus.set_time(500);
+        bus.set_external(0, 0, Some(true));
+        assert!(bus.gpio[0].level(0));
+        bus.set_time(600);
+        assert_eq!(
+            bus.read_u32(tim2 + 0x34).unwrap(),
+            500,
+            "captured at the edge"
+        );
+        assert_eq!(
+            bus.read_u32(tim2 + 0x10).unwrap() & 2,
+            0,
+            "reading CCR1 cleared CC1IF"
+        );
+    }
+
+    #[test]
     fn dma_sends_a_string_through_usart2() {
         let mut bus = Stm32f401Bus::new();
         let w = |bus: &mut Stm32f401Bus, a: u32, v: u32| {

@@ -581,7 +581,8 @@ impl Timer {
     /// Level driven on a channel's output pin, or `None` if the output is
     /// disabled.
     pub fn output(&self, ch: usize) -> Option<bool> {
-        if ch >= self.info.channels as usize || !self.output_enabled(ch) {
+        // An input-capture channel drives nothing (CCxE enables capture).
+        if ch >= self.info.channels as usize || !self.output_enabled(ch) || self.is_input(ch) {
             return None;
         }
         let polarity = self.ccer & (2 << (4 * ch)) != 0;

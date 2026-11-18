@@ -30,6 +30,7 @@ const PROP_LABEL: Record<string, string> = {
   model: "모델",
   layout: "모양",
   count: "LED 수",
+  beta: "B 상수",
 };
 
 const BAND_KO: Record<string, string> = {
@@ -183,6 +184,7 @@ export function App() {
         screen: v.screen,
         text: v.text,
         leds: v.leds,
+        lcd: v.lcd,
       };
       if (v.id === "LD2") {
         if (boardId) out[boardId] = { ...out[boardId], brightness: state.brightness, overcurrent: state.overcurrent };
@@ -195,15 +197,17 @@ export function App() {
   const [sound, setSound] = useState(false);
   useBuzzerAudio(visuals, project.parts, sound && runner.running);
 
-  const { press, reset, setWiring, ready } = runner;
+  const { press, reset, setWiring, ready, rotate } = runner;
   const onPartAction = useCallback(
     (part: string, action: string, down: boolean) => {
       if (action === "b1") press("B1", down);
       else if (action === "reset") {
         if (down) reset();
       } else if (action === "press") press(part, down);
+      else if (action.startsWith("key:")) press(`${part}:${action.slice(4)}`, down);
+      else if ((action === "cw" || action === "ccw") && down) rotate(part, action === "cw" ? 1 : -1);
     },
-    [press, reset],
+    [press, reset, rotate],
   );
 
   // Hot-plug into the running simulation: every edit re-sends the wiring.

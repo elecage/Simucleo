@@ -116,6 +116,10 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     case "readMemory":
       post({ type: "memory", addr: m.addr, bytes: sim.readMemory(m.addr, m.len) });
       break;
+    case "rotate":
+      sim.rotate(m.part, m.detents);
+      if (!running) sendFrame();
+      break;
     case "sdImage":
       post({ type: "sdImage", part: m.part, bytes: sim.sdImage(m.part) });
       break;

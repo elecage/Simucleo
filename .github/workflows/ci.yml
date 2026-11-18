@@ -35,13 +35,13 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi cmake
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi cmake
       - run: make -C firmware/bare-blinky
       - run: make -C firmware/exceptions
       - run: make -C firmware/difftest
       - run: make -C firmware/hal-blinky variants
       - run: make -C firmware/hal-uart-printf
-      - run: for d in hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture freertos-two-tasks freertos-queue-uart; do make -C firmware/$d; done
+      - run: for d in hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture hal-7seg-keypad hal-encoder-stepper-lcd hal-sonar-onewire freertos-two-tasks freertos-queue-uart; do make -C firmware/$d; done
       - name: Run firmware on the simulator
         run: cargo test --release -p simucleo-nucleo --test firmware -- --include-ignored
       - name: CLI smoke test
@@ -74,11 +74,11 @@ jobs:
         working-directory: web
       - name: Build the example firmware bundled with the site
         run: |
-          sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi
           make -C firmware/bare-blinky
           make -C firmware/hal-blinky variants
           make -C firmware/hal-uart-printf
-          for d in hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture freertos-two-tasks freertos-queue-uart; do make -C firmware/$d; done
+          for d in hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture hal-7seg-keypad hal-encoder-stepper-lcd hal-sonar-onewire freertos-two-tasks freertos-queue-uart; do make -C firmware/$d; done
       - run: npm run examples
         working-directory: web
       - run: npm run wasm

@@ -381,6 +381,7 @@ export function Canvas({
             {def.render({ ...def.props, ...part.props }, {
               ...(visuals?.[part.id] ?? {}),
               pressed: pressed?.part === part.id && pressed.action !== "reset",
+              action: pressed?.part === part.id ? pressed.action : undefined,
             })}
           </g>
         </g>

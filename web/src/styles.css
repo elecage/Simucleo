@@ -232,3 +232,29 @@ main { position: relative; }
 .dht22-body { fill: #f3f4f6; stroke: #9ca3af; }
 .dht11-body { fill: #3b82f6; stroke: #1e40af; }
 .dht-grille { fill: #6b7280; }
+
+/* More parts (M8) */
+.seg-body { fill: #1a1a1a; stroke: #000; }
+.keypad-body { fill: #1f2937; stroke: #111; }
+.key-cap { fill: #e5e7eb; stroke: #9ca3af; cursor: pointer; }
+.key-cap.down { fill: #93c5fd; }
+.key-label { font: 600 8px sans-serif; fill: #111; pointer-events: none; }
+.ribbon { fill: #d1d5db; }
+.enc-knob { fill: #374151; stroke: #111; cursor: pointer; }
+.enc-mark { stroke: #e5e7eb; stroke-width: 1.4; pointer-events: none; }
+.enc-turn { cursor: pointer; }
+.enc-turn circle { fill: #f3f4f6; stroke: #6b7280; stroke-width: 0.5; }
+.enc-turn text { font: 700 8px sans-serif; fill: #111; pointer-events: none; }
+.ntc-body { fill: #1e3a8a; stroke: #0f172a; }
+.sonar-can { fill: #d1d5db; stroke: #6b7280; }
+.sonar-mesh { fill: #4b5563; }
+.lcd-pcb { fill: #166534; stroke: #052e16; }
+.backpack { fill: #1e3a8a; }
+.lcd-glass { fill: #1e3a8a; stroke: #0b1020; }
+.lcd-glass.lit { fill: #3b82f6; }
+.lcd-char { font: 600 19px monospace; fill: #e5f0ff; }
+.lcd-px { fill: #e5f0ff; }
+.stepper-can { fill: #9ca3af; stroke: #4b5563; }
+.stepper-hub { fill: #d1d5db; stroke: #6b7280; }
+.stepper-shaft { fill: #facc15; stroke: #a16207; stroke-width: 0.4; }
+.uln-pcb { fill: #166534; stroke: #052e16; }

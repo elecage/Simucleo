@@ -1,0 +1,122 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "초음파 거리 + DS18B20 (1-Wire)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "us",
+      "kind": "hc-sr04",
+      "x": 50,
+      "y": 8,
+      "props": {
+        "distance": 50
+      }
+    },
+    {
+      "id": "ds",
+      "kind": "ds18b20",
+      "x": 66,
+      "y": 10,
+      "props": {
+        "temp": 24.5
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "us",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "b": {
+        "part": "us",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "us",
+        "pin": "TRIG"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D3"
+      },
+      "b": {
+        "part": "us",
+        "pin": "ECHO"
+      },
+      "color": "#8e24aa"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "ds",
+        "pin": "VDD"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "b": {
+        "part": "ds",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "nucleo",
+        "pin": "D2"
+      },
+      "b": {
+        "part": "ds",
+        "pin": "DQ"
+      },
+      "color": "#1e88e5"
+    }
+  ],
+  "firmware": {
+    "name": "hal-sonar-onewire",
+    "example": "hal-sonar-onewire.elf"
+  }
+}

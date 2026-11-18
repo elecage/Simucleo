@@ -1079,6 +1079,575 @@ impl NeoPixel {
     }
 }
 
+// ------------------------------------------------------------- Encoder
+
+/// Rotary encoder module (KY-040 class): contacts A (CLK) and B (DT) close
+/// to the common pin as the shaft turns, one full quadrature cycle per
+/// detent, A leading clockwise. Turning is scheduled in time.
+#[derive(Debug, Clone, Default)]
+pub struct Encoder {
+    /// Planned contact states: (time, A closed, B closed).
+    plan: VecDeque<(Seconds, bool, bool)>,
+    /// Contacts closed now (A, B).
+    pub closed: [bool; 2],
+    /// Detents turned so far (clockwise positive).
+    pub position: i64,
+}
+
+impl Encoder {
+    /// Time between the four contact changes of one detent.
+    pub const STEP: Seconds = 0.0015;
+
+    /// Turn by `detents` (negative: counter-clockwise), starting at `now`
+    /// or after a turn already under way.
+    pub fn rotate(&mut self, now: Seconds, detents: i32) {
+        let mut t = self.plan.back().map_or(now, |&(t, _, _)| t.max(now)) + Self::STEP;
+        let cw = detents > 0;
+        for _ in 0..detents.unsigned_abs() {
+            let seq: [(bool, bool); 4] = if cw {
+                [(true, false), (true, true), (false, true), (false, false)]
+            } else {
+                [(false, true), (true, true), (true, false), (false, false)]
+            };
+            for (a, b) in seq {
+                self.plan.push_back((t, a, b));
+                t += Self::STEP;
+            }
+            self.position += if cw { 1 } else { -1 };
+        }
+    }
+
+    /// The time base restarted `elapsed` seconds earlier: keep pending
+    /// contact changes the same distance ahead.
+    pub fn rebase(&mut self, elapsed: Seconds) {
+        for (t, _, _) in &mut self.plan {
+            *t = (*t - elapsed).max(0.0);
+        }
+    }
+
+    pub fn advance(&mut self, now: Seconds) {
+        while let Some(&(t, a, b)) = self.plan.front() {
+            if t > now + 1e-12 {
+                break;
+            }
+            self.closed = [a, b];
+            self.plan.pop_front();
+        }
+    }
+
+    pub fn next(&self) -> Option<Seconds> {
+        self.plan.front().map(|&(t, _, _)| t)
+    }
+}
+
+// ------------------------------------------------------------- HC-SR04
+
+/// Ultrasonic distance sensor (HC-SR04P, 3.3–5 V): a TRIG pulse of at
+/// least 10 µs sends a burst; ECHO then goes high for the sound's round
+/// trip, 58 µs per cm (38 ms when nothing is in range).
+#[derive(Debug, Clone)]
+pub struct Sonar {
+    pub distance_cm: f64,
+    trig_rise: Option<Seconds>,
+    plan: VecDeque<(Seconds, bool)>,
+    pub echo: bool,
+    /// A trigger pulse too short to start a measurement (s).
+    pub short_trigger: Option<Seconds>,
+}
+
+impl Sonar {
+    pub fn new(distance_cm: f64) -> Self {
+        Self {
+            distance_cm,
+            trig_rise: None,
+            plan: VecDeque::new(),
+            echo: false,
+            short_trigger: None,
+        }
+    }
+
+    /// TRIG changed level.
+    pub fn trig(&mut self, now: Seconds, high: bool) {
+        if high {
+            self.trig_rise = Some(now);
+            return;
+        }
+        let Some(rise) = self.trig_rise.take() else {
+            return;
+        };
+        if now - rise < 10e-6 {
+            self.short_trigger = Some(now - rise);
+            return;
+        }
+        if !self.plan.is_empty() || self.echo {
+            return; // still measuring
+        }
+        let d = self.distance_cm;
+        let width = if (2.0..=400.0).contains(&d) {
+            d * 58e-6
+        } else {
+            38e-3
+        };
+        // Eight 40 kHz cycles go out first.
+        let start = now + 250e-6;
+        self.plan.push_back((start, true));
+        self.plan.push_back((start + width, false));
+    }
+
+    pub fn advance(&mut self, now: Seconds) {
+        while let Some(&(t, high)) = self.plan.front() {
+            if t > now + 1e-12 {
+                break;
+            }
+            self.echo = high;
+            self.plan.pop_front();
+        }
+    }
+
+    pub fn next(&self) -> Option<Seconds> {
+        self.plan.front().map(|&(t, _)| t)
+    }
+}
+
+// ------------------------------------------------------------- DS18B20
+
+/// Dallas/Maxim CRC-8 (x⁸ + x⁵ + x⁴ + 1, LSB first).
+pub fn crc8_maxim(data: &[u8]) -> u8 {
+    let mut crc = 0u8;
+    for &b in data {
+        let mut x = b;
+        for _ in 0..8 {
+            let mix = (crc ^ x) & 1;
+            crc >>= 1;
+            if mix != 0 {
+                crc ^= 0x8C;
+            }
+            x >>= 1;
+        }
+    }
+    crc
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OwPhase {
+    /// Waiting for a reset pulse.
+    Idle,
+    /// After presence: a ROM command.
+    Rom,
+    /// MATCH ROM: receiving 8 bytes.
+    Match,
+    /// A function command.
+    Function,
+    /// WRITE SCRATCHPAD: receiving TH, TL, configuration.
+    WriteScratch,
+    /// Answering read slots from `tx`.
+    Send,
+    /// CONVERT T: read slots answer 0 while busy, then 1.
+    Converting,
+    /// Not addressed: ignore everything until the next reset.
+    Deselected,
+}
+
+/// DS18B20 1-Wire digital thermometer (one device per line). The host
+/// times the slots: reset ≥ 480 µs low (the device answers with a
+/// presence pulse), write slots (low < 15 µs = 1, ≥ 60 µs = 0), read slots
+/// (the device holds the line low ~30 µs to send a 0).
+#[derive(Debug, Clone)]
+pub struct Ds18b20 {
+    pub temp: f64,
+    pub rom: [u8; 8],
+    /// Scratchpad: temperature LSB, MSB, TH, TL, configuration, 3 reserved.
+    pad: [u8; 8],
+    phase: OwPhase,
+    fall: Option<Seconds>,
+    rx: u16,
+    rx_bits: u32,
+    rx_bytes: Vec<u8>,
+    tx: VecDeque<bool>,
+    conv_done: Seconds,
+    /// The reading being converted; it reaches the scratchpad at `conv_done`.
+    pending: Option<[u8; 2]>,
+    plan: VecDeque<(Seconds, bool)>,
+    pub pulling: bool,
+    pub conversions: u32,
+}
+
+impl Ds18b20 {
+    pub fn new(temp: f64, serial: u64) -> Self {
+        let mut rom = [0x28, 0, 0, 0, 0, 0, 0, 0];
+        rom[1..7].copy_from_slice(&serial.to_le_bytes()[..6]);
+        rom[7] = crc8_maxim(&rom[..7]);
+        Self {
+            temp,
+            rom,
+            // Power-up value: 85 °C, alarm limits, 12-bit resolution.
+            pad: [0x50, 0x05, 0x4B, 0x46, 0x7F, 0xFF, 0x0C, 0x10],
+            phase: OwPhase::Idle,
+            fall: None,
+            rx: 0,
+            rx_bits: 0,
+            rx_bytes: Vec::new(),
+            tx: VecDeque::new(),
+            conv_done: 0.0,
+            pending: None,
+            plan: VecDeque::new(),
+            pulling: false,
+            conversions: 0,
+        }
+    }
+
+    /// Conversion time for the configured resolution.
+    fn conversion_time(&self) -> Seconds {
+        0.09375 * (1 << ((self.pad[4] >> 5) & 3)) as f64
+    }
+
+    fn send_bytes(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            for i in 0..8 {
+                self.tx.push_back(b >> i & 1 != 0);
+            }
+        }
+        self.phase = OwPhase::Send;
+    }
+
+    fn byte(&mut self, b: u8, now: Seconds) {
+        match self.phase {
+            OwPhase::Rom => match b {
+                0x33 => {
+                    let rom = self.rom;
+                    self.send_bytes(&rom);
+                }
+                0xCC => self.phase = OwPhase::Function,
+                0x55 => {
+                    self.rx_bytes.clear();
+                    self.phase = OwPhase::Match;
+                }
+                _ => self.phase = OwPhase::Deselected,
+            },
+            OwPhase::Match => {
+                self.rx_bytes.push(b);
+                if self.rx_bytes.len() == 8 {
+                    self.phase = if self.rx_bytes[..] == self.rom {
+                        OwPhase::Function
+                    } else {
+                        OwPhase::Deselected
+                    };
+                }
+            }
+            OwPhase::Function => match b {
+                0x44 => {
+                    // The reading is ready when the conversion ends; bits
+                    // below the resolution read as zero.
+                    self.conversions += 1;
+                    self.conv_done = now + self.conversion_time();
+                    let res = (self.pad[4] >> 5) & 3;
+                    let raw = (self.temp.clamp(-55.0, 125.0) * 16.0).round() as i16;
+                    let raw = raw & !((1i16 << (3 - res)) - 1);
+                    self.pending = Some([raw as u8, (raw >> 8) as u8]);
+                    self.phase = OwPhase::Converting;
+                }
+                0xBE => {
+                    let mut out = [0u8; 9];
+                    out[..8].copy_from_slice(&self.pad);
+                    out[8] = crc8_maxim(&self.pad);
+                    self.send_bytes(&out);
+                }
+                0x4E => {
+                    self.rx_bytes.clear();
+                    self.phase = OwPhase::WriteScratch;
+                }
+                0xB4 => self.send_bytes(&[0xFF]), // externally powered
+                _ => self.phase = OwPhase::Deselected,
+            },
+            OwPhase::WriteScratch => {
+                self.rx_bytes.push(b);
+                if self.rx_bytes.len() == 3 {
+                    self.pad[2] = self.rx_bytes[0];
+                    self.pad[3] = self.rx_bytes[1];
+                    self.pad[4] = (self.rx_bytes[2] & 0x60) | 0x1F;
+                    self.phase = OwPhase::Deselected;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The line changed level (seen while the device is not pulling it).
+    pub fn observe(&mut self, now: Seconds, high: bool) {
+        // A finished conversion updates the scratchpad.
+        if now >= self.conv_done {
+            if let Some([lo, hi]) = self.pending.take() {
+                self.pad[0] = lo;
+                self.pad[1] = hi;
+            }
+        }
+        if !high {
+            self.fall = Some(now);
+            // A read slot: the device answers a 0 by holding the line low.
+            let zero = match self.phase {
+                OwPhase::Send => self.tx.front().is_some_and(|b| !b),
+                OwPhase::Converting => now < self.conv_done,
+                _ => false,
+            };
+            if zero {
+                self.plan.push_back((now, true));
+                self.plan.push_back((now + 30e-6, false));
+            }
+            if self.phase == OwPhase::Send {
+                self.tx.pop_front();
+                if self.tx.is_empty() {
+                    self.phase = OwPhase::Deselected;
+                }
+            }
+            return;
+        }
+        let Some(fall) = self.fall.take() else {
+            return;
+        };
+        let w = now - fall;
+        if w >= 480e-6 {
+            // Reset: presence pulse after 30 µs, 120 µs long.
+            self.plan.clear();
+            self.plan.push_back((now + 30e-6, true));
+            self.plan.push_back((now + 150e-6, false));
+            self.phase = OwPhase::Rom;
+            self.rx = 0;
+            self.rx_bits = 0;
+            self.tx.clear();
+            return;
+        }
+        if matches!(
+            self.phase,
+            OwPhase::Rom | OwPhase::Match | OwPhase::Function | OwPhase::WriteScratch
+        ) {
+            // Write slot: sampled 30 µs after the falling edge.
+            let bit = w < 30e-6;
+            self.rx |= (bit as u16) << self.rx_bits;
+            self.rx_bits += 1;
+            if self.rx_bits == 8 {
+                let b = self.rx as u8;
+                self.rx = 0;
+                self.rx_bits = 0;
+                self.byte(b, now);
+            }
+        }
+    }
+
+    pub fn advance(&mut self, now: Seconds) {
+        while let Some(&(t, low)) = self.plan.front() {
+            if t > now + 1e-12 {
+                break;
+            }
+            self.pulling = low;
+            self.plan.pop_front();
+        }
+    }
+
+    pub fn next(&self) -> Option<Seconds> {
+        self.plan.front().map(|&(t, _)| t)
+    }
+}
+
+// ---------------------------------------------------- HD44780 via PCF8574
+
+/// HD44780 character LCD controller (16×2) behind a PCF8574 I2C port
+/// expander, wired as on the common backpack: P0 RS, P1 RW, P2 E,
+/// P3 backlight, P4–P7 D4–D7. The controller latches on the falling edge
+/// of E; after power-up it is in 8-bit mode until a function set with
+/// DL = 0 switches it to 4-bit transfers.
+#[derive(Debug, Clone)]
+pub struct CharLcd {
+    pub address: u8,
+    /// Last byte written to the expander.
+    pub port: u8,
+    pub ddram: [u8; 128],
+    pub cgram: [u8; 64],
+    addr: u8,
+    /// The address counter points into CGRAM.
+    cg: bool,
+    increment: bool,
+    shift_display: bool,
+    pub display_on: bool,
+    pub cursor: bool,
+    pub blink: bool,
+    pub two_lines: bool,
+    eight_bit: bool,
+    /// First nibble of a 4-bit transfer.
+    high: Option<u8>,
+    pub shift: i32,
+}
+
+impl CharLcd {
+    pub fn new(address: u8) -> Self {
+        Self {
+            address,
+            port: 0xFF,
+            ddram: [b' '; 128],
+            cgram: [0; 64],
+            addr: 0,
+            cg: false,
+            increment: true,
+            shift_display: false,
+            display_on: false,
+            cursor: false,
+            blink: false,
+            two_lines: false,
+            eight_bit: true,
+            high: None,
+            shift: 0,
+        }
+    }
+
+    pub fn backlight(&self) -> bool {
+        self.port & 0x08 != 0
+    }
+
+    fn step_addr(&mut self) {
+        if self.cg {
+            self.addr = if self.increment {
+                self.addr + 1
+            } else {
+                self.addr.wrapping_sub(1)
+            } & 0x3F;
+        } else {
+            self.addr = if self.increment {
+                self.addr + 1
+            } else {
+                self.addr.wrapping_sub(1)
+            } & 0x7F;
+            if self.shift_display {
+                self.shift += if self.increment { 1 } else { -1 };
+            }
+        }
+    }
+
+    fn instruction(&mut self, c: u8) {
+        if c & 0x80 != 0 {
+            self.addr = c & 0x7F;
+            self.cg = false;
+        } else if c & 0x40 != 0 {
+            self.addr = c & 0x3F;
+            self.cg = true;
+        } else if c & 0x20 != 0 {
+            self.eight_bit = c & 0x10 != 0;
+            self.two_lines = c & 0x08 != 0;
+        } else if c & 0x10 != 0 {
+            // Cursor or display shift.
+            let right = c & 0x04 != 0;
+            if c & 0x08 != 0 {
+                // Shifting the display right moves the text right: the
+                // window's start column goes down.
+                self.shift += if right { -1 } else { 1 };
+            } else {
+                self.addr = if right {
+                    self.addr + 1
+                } else {
+                    self.addr.wrapping_sub(1)
+                } & 0x7F;
+            }
+        } else if c & 0x08 != 0 {
+            self.display_on = c & 0x04 != 0;
+            self.cursor = c & 0x02 != 0;
+            self.blink = c & 0x01 != 0;
+        } else if c & 0x04 != 0 {
+            self.increment = c & 0x02 != 0;
+            self.shift_display = c & 0x01 != 0;
+        } else if c & 0x02 != 0 {
+            self.addr = 0;
+            self.cg = false;
+            self.shift = 0;
+        } else if c & 0x01 != 0 {
+            self.ddram = [b' '; 128];
+            self.addr = 0;
+            self.cg = false;
+            self.shift = 0;
+            self.increment = true;
+        }
+    }
+
+    fn data(&mut self, d: u8) {
+        if self.cg {
+            self.cgram[self.addr as usize & 0x3F] = d & 0x1F;
+        } else {
+            // DDRAM: line 1 at 0x00–0x27, line 2 at 0x40–0x67.
+            self.ddram[self.addr as usize & 0x7F] = d;
+        }
+        self.step_addr();
+    }
+
+    /// The expander's outputs changed to `v`.
+    pub fn write_port(&mut self, v: u8) {
+        let old = self.port;
+        self.port = v;
+        // E falling edge: latch.
+        if old & 0x04 != 0 && v & 0x04 == 0 && v & 0x02 == 0 {
+            let rs = v & 0x01 != 0;
+            let nibble = v >> 4;
+            let byte = if self.eight_bit {
+                // D0–D3 are not wired: they read as 0.
+                Some(nibble << 4)
+            } else if let Some(hi) = self.high.take() {
+                Some(hi << 4 | nibble)
+            } else {
+                self.high = Some(nibble);
+                None
+            };
+            if let Some(b) = byte {
+                if rs {
+                    self.data(b);
+                } else {
+                    self.instruction(b);
+                }
+            }
+        }
+    }
+
+    /// The visible characters, one string of 16 codes per line.
+    pub fn rows(&self) -> Vec<Vec<u8>> {
+        let lines = if self.two_lines { 2 } else { 1 };
+        (0..2)
+            .map(|r| {
+                (0..16)
+                    .map(|c| {
+                        if r >= lines || !self.display_on {
+                            return b' ';
+                        }
+                        let col = (c + self.shift).rem_euclid(40) as usize;
+                        self.ddram[r as usize * 0x40 + col]
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Cursor position (row, column) if it is on screen.
+    pub fn cursor_at(&self) -> Option<(u8, u8)> {
+        if !(self.cursor || self.blink) || !self.display_on || self.cg {
+            return None;
+        }
+        let row = (self.addr >= 0x40) as u8;
+        let col = (self.addr as i32 & 0x3F) - self.shift;
+        (0..16).contains(&col).then_some((row, col as u8))
+    }
+}
+
+impl I2cDevice for CharLcd {
+    fn address(&self) -> u8 {
+        self.address
+    }
+    fn start(&mut self, _read: bool, _now: Seconds) {}
+    fn write(&mut self, b: u8, _now: Seconds) -> bool {
+        self.write_port(b);
+        true
+    }
+    fn read(&mut self, _now: Seconds) -> u8 {
+        // Quasi-bidirectional pins read their level: the busy flag (D7)
+        // is never set here.
+        self.port & 0x7F
+    }
+    fn stop(&mut self, _now: Seconds) {}
+}
+
 /// A bus device part's state, kept across circuit edits.
 #[derive(Debug, Clone)]
 pub enum Device {
@@ -1088,6 +1657,10 @@ pub enum Device {
     Sd(Box<SdCard>),
     Dht(Dht),
     Pixels(NeoPixel),
+    Encoder(Encoder),
+    Sonar(Sonar),
+    Thermo(Ds18b20),
+    Lcd(Box<CharLcd>),
 }
 
 impl Device {
@@ -1097,7 +1670,44 @@ impl Device {
             Device::Oled(d) => Some(d.as_mut()),
             Device::Rtc(d) => Some(d),
             Device::Aht(d) => Some(d),
-            Device::Sd(_) | Device::Dht(_) | Device::Pixels(_) => None,
+            Device::Lcd(d) => Some(d.as_mut()),
+            _ => None,
+        }
+    }
+
+    /// Bring scheduled output changes up to `now`.
+    pub fn advance(&mut self, now: Seconds) {
+        match self {
+            Device::Dht(d) => {
+                d.advance(now);
+            }
+            Device::Encoder(e) => e.advance(now),
+            Device::Sonar(s) => s.advance(now),
+            Device::Thermo(d) => d.advance(now),
+            _ => {}
+        }
+    }
+
+    /// What the device drives on its output `index`: `Some(false)` low,
+    /// `Some(true)` high, `None` nothing.
+    pub fn drive(&self, index: usize) -> Option<bool> {
+        match self {
+            Device::Dht(d) => d.pulling.then_some(false),
+            Device::Thermo(d) => d.pulling.then_some(false),
+            Device::Encoder(e) => e.closed[index.min(1)].then_some(false),
+            Device::Sonar(s) => Some(s.echo),
+            _ => None,
+        }
+    }
+
+    /// When the device next changes an output by itself.
+    pub fn next_change(&self) -> Option<Seconds> {
+        match self {
+            Device::Dht(d) => d.next(),
+            Device::Encoder(e) => e.next(),
+            Device::Sonar(s) => s.next(),
+            Device::Thermo(d) => d.next(),
+            _ => None,
         }
     }
 
@@ -1106,7 +1716,8 @@ impl Device {
             Device::Oled(d) => d.address,
             Device::Rtc(_) => 0x68,
             Device::Aht(_) => 0x38,
-            Device::Sd(_) | Device::Dht(_) | Device::Pixels(_) => 0,
+            Device::Lcd(d) => d.address,
+            _ => 0,
         }
     }
 }
@@ -1401,5 +2012,198 @@ mod tests {
         n.edge(t + 100e-6, true);
         n.edge(t + 100.6e-6, false);
         assert!(n.bad_pulse.is_some_and(|w| (w - 0.6).abs() < 0.01));
+    }
+
+    #[test]
+    fn encoder_turns_a_full_quadrature_cycle_per_detent() {
+        let mut e = Encoder::default();
+        e.rotate(0.0, 1);
+        e.rotate(0.0, -1);
+        let mut states = Vec::new();
+        while let Some(t) = e.next() {
+            e.advance(t);
+            states.push(e.closed);
+        }
+        assert_eq!(
+            states,
+            [
+                [true, false],
+                [true, true],
+                [false, true],
+                [false, false],
+                [false, true],
+                [true, true],
+                [true, false],
+                [false, false]
+            ]
+        );
+        assert_eq!(e.position, 0);
+        // A turn pending when the time base restarts stays just as close.
+        e.rotate(100.0, 1);
+        e.rebase(100.0);
+        assert!((e.next().unwrap() - Encoder::STEP).abs() < 1e-9);
+    }
+
+    /// A host bit-banging 1-Wire against the device model.
+    struct Host<'a> {
+        d: &'a mut Ds18b20,
+        t: f64,
+    }
+
+    impl Host<'_> {
+        fn low(&mut self, w: f64) {
+            self.d.observe(self.t, false);
+            self.d.advance(self.t);
+            self.t += w;
+            self.d.advance(self.t);
+            if !self.d.pulling {
+                self.d.observe(self.t, true);
+            }
+        }
+        fn reset(&mut self) -> bool {
+            self.low(500e-6);
+            // Sample for presence 70 µs after the release.
+            self.t += 70e-6;
+            self.d.advance(self.t);
+            let present = self.d.pulling;
+            self.t += 430e-6;
+            self.d.advance(self.t);
+            present
+        }
+        fn write(&mut self, b: u8) {
+            for i in 0..8 {
+                let one = b >> i & 1 != 0;
+                self.low(if one { 6e-6 } else { 60e-6 });
+                self.t += if one { 64e-6 } else { 10e-6 };
+            }
+        }
+        fn read(&mut self) -> u8 {
+            let mut b = 0;
+            for i in 0..8 {
+                self.d.observe(self.t, false);
+                self.d.advance(self.t);
+                self.t += 6e-6;
+                self.d.advance(self.t);
+                if !self.d.pulling {
+                    self.d.observe(self.t, true);
+                }
+                // Sample 9 µs after the release.
+                self.t += 9e-6;
+                self.d.advance(self.t);
+                if !self.d.pulling {
+                    b |= 1 << i;
+                }
+                self.t += 55e-6;
+                self.d.advance(self.t);
+                if !self.d.pulling && self.d.fall.is_some() {
+                    self.d.observe(self.t, true);
+                }
+            }
+            b
+        }
+    }
+
+    #[test]
+    fn ds18b20_converts_and_reads_its_scratchpad() {
+        let mut d = Ds18b20::new(-10.125, 0x0123_4567_89AB);
+        let mut h = Host { d: &mut d, t: 0.0 };
+        assert!(h.reset(), "presence");
+        h.write(0x33);
+        let rom: Vec<u8> = (0..8).map(|_| h.read()).collect();
+        assert_eq!(rom[0], 0x28);
+        assert_eq!(crc8_maxim(&rom), 0, "a valid ROM code");
+        // Before any conversion the scratchpad holds 85 °C.
+        assert!(h.reset());
+        h.write(0xCC);
+        h.write(0xBE);
+        let pad: Vec<u8> = (0..9).map(|_| h.read()).collect();
+        assert_eq!(pad[..2], [0x50, 0x05]);
+        assert_eq!(crc8_maxim(&pad), 0);
+        // Convert: busy (0) until 750 ms later.
+        assert!(h.reset());
+        h.write(0xCC);
+        h.write(0x44);
+        assert_eq!(h.read(), 0);
+        h.t += 0.8;
+        assert_eq!(h.read(), 0xFF);
+        assert!(h.reset());
+        h.write(0xCC);
+        h.write(0xBE);
+        let pad: Vec<u8> = (0..9).map(|_| h.read()).collect();
+        let raw = i16::from_le_bytes([pad[0], pad[1]]);
+        assert_eq!(raw, -162); // −10.125 × 16
+                               // Reading too early gives the previous result.
+        h.d.temp = 30.0;
+        assert!(h.reset());
+        h.write(0xCC);
+        h.write(0x44);
+        assert!(h.reset());
+        h.write(0xCC);
+        h.write(0xBE);
+        let pad: Vec<u8> = (0..9).map(|_| h.read()).collect();
+        assert_eq!(
+            i16::from_le_bytes([pad[0], pad[1]]),
+            -162,
+            "conversion not finished"
+        );
+    }
+
+    #[test]
+    fn sonar_echo_width_is_58_us_per_cm() {
+        let mut s = Sonar::new(25.0);
+        s.trig(0.0, true);
+        s.trig(5e-6, false);
+        assert!(s.next().is_none() && s.short_trigger.is_some());
+        s.trig(1.0, true);
+        s.trig(1.0 + 12e-6, false);
+        let rise = s.next().unwrap();
+        s.advance(rise);
+        assert!(s.echo);
+        let fall = s.next().unwrap();
+        assert!(((fall - rise) - 25.0 * 58e-6).abs() < 1e-9);
+    }
+
+    #[test]
+    fn lcd_backpack_4bit_init_and_text() {
+        let mut l = CharLcd::new(0x27);
+        // Send a byte as two nibbles with the backlight on, like the
+        // usual LiquidCrystal_I2C driver.
+        let nibble = |l: &mut CharLcd, n: u8, rs: bool| {
+            let v = n << 4 | 0x08 | rs as u8;
+            l.write_port(v | 0x04);
+            l.write_port(v);
+        };
+        let send = |l: &mut CharLcd, b: u8, rs: bool| {
+            nibble(l, b >> 4, rs);
+            nibble(l, b & 0xF, rs);
+        };
+        for n in [3, 3, 3, 2] {
+            nibble(&mut l, n, false);
+        }
+        for c in [0x28, 0x0C, 0x06, 0x01] {
+            send(&mut l, c, false);
+        }
+        for b in b"Hello" {
+            send(&mut l, *b, true);
+        }
+        send(&mut l, 0xC0 | 3, false);
+        // A custom character at CGRAM 0, shown on line 2.
+        send(&mut l, 0x40, false);
+        for row in [0x0A, 0x1F, 0x1F, 0x0E, 0x04, 0, 0, 0] {
+            send(&mut l, row, true);
+        }
+        send(&mut l, 0xC3, false);
+        send(&mut l, 0x00, true);
+        let rows = l.rows();
+        assert_eq!(&rows[0][..6], b"Hello ");
+        assert_eq!(rows[1][3], 0);
+        assert_eq!(l.cgram[1], 0x1F);
+        assert!(l.backlight() && l.display_on && l.two_lines);
+        assert_eq!(l.cursor_at(), None);
+        // Display shift right: the text moves one column right.
+        send(&mut l, 0x1C, false);
+        assert_eq!(&l.rows()[0][..6], b" Hello");
+        send(&mut l, 0x18, false);
+        assert_eq!(&l.rows()[0][..5], b"Hello");
     }
 }

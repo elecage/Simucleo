@@ -13,7 +13,8 @@
 //! (frozen, active/inactive/toggle on match, force) and PWM modes 1/2 with
 //! polarity, BDTR.MOE on TIM1, and DMA requests on update and compare events
 //! (CCDS). Not yet: center-aligned counting (counts up), the repetition
-//! counter, slave modes other than reset, and complementary outputs.
+//! counter, slave modes other than reset and encoder, and complementary
+//! outputs.
 //! Input capture (direct/indirect TI mapping, edge polarity, prescaler,
 //! overcapture) and the reset slave mode take pin edges from the bus.
 
@@ -424,11 +425,41 @@ impl Timer {
     /// An edge on the timer input pin of channel `ti` (TI1 = 0, …) at
     /// `now`: input capture on the channels listening to it, and the slave
     /// controller's reset mode on TI1FP1/TI2FP2.
-    pub fn input_edge(&mut self, ti: usize, rising: bool, now: Cycles) {
+    /// `other` is the level of the other input of the TI1/TI2 pair, for
+    /// encoder mode.
+    pub fn input_edge(&mut self, ti: usize, rising: bool, now: Cycles, other: Option<bool>) {
         if self.gated {
             return;
         }
         self.sync(now);
+        // Encoder modes (SMS = 001 TI1 edges, 010 TI2 edges, 011 both):
+        // count up or down by the other input's level (RM0368 table 54).
+        let sms = self.smcr & 7;
+        if (1..=3).contains(&sms) && ti < 2 && self.running() && sms & (1 << ti) != 0 {
+            let pol = |ch: usize| self.ccer & (2 << (4 * ch)) != 0;
+            let me = rising ^ pol(ti);
+            if let Some(o) = other {
+                let o = o ^ pol(ti ^ 1);
+                let up = if ti == 0 { me != o } else { me == o };
+                if up {
+                    self.cr1 &= !DIR;
+                    if self.cnt >= self.arr_act {
+                        self.cnt = 0;
+                        self.update_event(self.cr1 & UDIS == 0);
+                    } else {
+                        self.cnt += 1;
+                    }
+                } else {
+                    self.cr1 |= DIR;
+                    if self.cnt == 0 {
+                        self.cnt = self.arr_act;
+                        self.update_event(self.cr1 & UDIS == 0);
+                    } else {
+                        self.cnt -= 1;
+                    }
+                }
+            }
+        }
         // Edge selection of a channel: CCxP/CCxNP = 00 rising, 01 falling,
         // 11 both.
         let wants =
@@ -490,9 +521,14 @@ impl Timer {
         }
     }
 
+    /// The counter is clocked by encoder edges, not by time.
+    fn encoder_mode(&self) -> bool {
+        (1..=3).contains(&(self.smcr & 7))
+    }
+
     /// Bring the counter and flags up to `now`.
     pub fn sync(&mut self, now: Cycles) {
-        if !self.running() || self.gated {
+        if !self.running() || self.gated || self.encoder_mode() {
             self.ref_cycle = now;
             return;
         }
@@ -591,7 +627,7 @@ impl Timer {
 
     /// Core cycle of the next event worth scheduling, if any.
     pub fn next_event(&self) -> Option<Cycles> {
-        if !self.running() || self.gated {
+        if !self.running() || self.gated || self.encoder_mode() {
             return None;
         }
         let mut ticks: Option<u64> = None;
@@ -875,9 +911,9 @@ mod tests {
         t.write(0x20, 1 | (1 << 4) | (1 << 5), 0xFFFF, 0);
         t.write(0x08, 4 | 5 << 4, 0xFFFF, 0);
         t.write(0x00, 1, 0xFFFF, 0); // CEN, 1 tick per cycle
-        t.input_edge(0, true, 100); // period start: counter reset
-        t.input_edge(0, false, 130); // 30 high
-        t.input_edge(0, true, 200); // period 100
+        t.input_edge(0, true, 100, None); // period start: counter reset
+        t.input_edge(0, false, 130, None); // 30 high
+        t.input_edge(0, true, 200, None); // period 100
         assert_eq!(t.read(0x34), 100, "period");
         assert_eq!(t.read(0x38), 30, "high time");
         assert_ne!(t.sr & (CC_IF[0] | CC_IF[1]), 0);
@@ -888,5 +924,37 @@ mod tests {
             0,
             "CC1 captured twice before the flag was cleared"
         );
+    }
+
+    #[test]
+    fn encoder_mode_counts_quadrature_both_ways() {
+        let mut t = tim3();
+        t.write(0x18, 1 | 1 << 8, 0xFFFF, 0); // CC1S = CC2S = TI
+        t.write(0x08, 3, 0xFFFF, 0); // encoder mode 3
+        t.write(0x2C, 99, 0xFFFF, 0);
+        t.write(0x00, 1, 0xFFFF, 0);
+        // Clockwise, A leads: (A, B) 11 → 01 → 00 → 10 → 11.
+        let (mut a, mut b) = (true, true);
+        let mut step = |t: &mut Timer, ti: usize| {
+            if ti == 0 {
+                a = !a;
+                t.input_edge(0, a, 0, Some(b));
+            } else {
+                b = !b;
+                t.input_edge(1, b, 0, Some(a));
+            }
+        };
+        for ti in [0, 1, 0, 1] {
+            step(&mut t, ti);
+        }
+        assert_eq!(t.read(0x24), 4);
+        assert_eq!(t.read(0x00) & DIR, 0);
+        // Counter-clockwise: B leads; three detents back past zero.
+        for ti in [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0] {
+            step(&mut t, ti);
+        }
+        assert_eq!(t.read(0x24), 92); // 4 − 12, wrapped at ARR 99
+        assert_ne!(t.read(0x00) & DIR, 0);
+        assert_ne!(t.sr & UIF, 0, "underflow is an update event");
     }
 }

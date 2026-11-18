@@ -1,0 +1,445 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "7세그먼트 4자리 + 키패드",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "disp",
+      "kind": "seven-segment-4",
+      "x": 48,
+      "y": 3,
+      "props": {
+        "common": "cathode",
+        "color": "red"
+      }
+    },
+    {
+      "id": "kp",
+      "kind": "keypad-4x4",
+      "x": 72,
+      "y": 20,
+      "props": {}
+    },
+    {
+      "id": "r0",
+      "kind": "resistor",
+      "x": 46,
+      "y": 16,
+      "props": {
+        "ohms": "470"
+      }
+    },
+    {
+      "id": "r1",
+      "kind": "resistor",
+      "x": 49,
+      "y": 16,
+      "props": {
+        "ohms": "470"
+      }
+    },
+    {
+      "id": "r2",
+      "kind": "resistor",
+      "x": 52,
+      "y": 16,
+      "props": {
+        "ohms": "470"
+      }
+    },
+    {
+      "id": "r3",
+      "kind": "resistor",
+      "x": 55,
+      "y": 16,
+      "props": {
+        "ohms": "470"
+      }
+    },
+    {
+      "id": "r4",
+      "kind": "resistor",
+      "x": 58,
+      "y": 16,
+      "props": {
+        "ohms": "470"
+      }
+    },
+    {
+      "id": "r5",
+      "kind": "resistor",
+      "x": 61,
+      "y": 16,
+      "props": {
+        "ohms": "470"
+      }
+    },
+    {
+      "id": "r6",
+      "kind": "resistor",
+      "x": 64,
+      "y": 16,
+      "props": {
+        "ohms": "470"
+      }
+    },
+    {
+      "id": "r7",
+      "kind": "resistor",
+      "x": 67,
+      "y": 16,
+      "props": {
+        "ohms": "470"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "A5"
+      },
+      "b": {
+        "part": "r0",
+        "pin": "1"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "r0",
+        "pin": "2"
+      },
+      "b": {
+        "part": "disp",
+        "pin": "a"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "A4"
+      },
+      "b": {
+        "part": "r1",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "r1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "disp",
+        "pin": "b"
+      },
+      "color": "#8e24aa"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN7_35"
+      },
+      "b": {
+        "part": "r2",
+        "pin": "1"
+      },
+      "color": "#00897b"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "r2",
+        "pin": "2"
+      },
+      "b": {
+        "part": "disp",
+        "pin": "c"
+      },
+      "color": "#fbc02d"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN7_37"
+      },
+      "b": {
+        "part": "r3",
+        "pin": "1"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "r3",
+        "pin": "2"
+      },
+      "b": {
+        "part": "disp",
+        "pin": "d"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN10_34"
+      },
+      "b": {
+        "part": "r4",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "r4",
+        "pin": "2"
+      },
+      "b": {
+        "part": "disp",
+        "pin": "e"
+      },
+      "color": "#8e24aa"
+    },
+    {
+      "id": "w11",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN10_6"
+      },
+      "b": {
+        "part": "r5",
+        "pin": "1"
+      },
+      "color": "#00897b"
+    },
+    {
+      "id": "w12",
+      "a": {
+        "part": "r5",
+        "pin": "2"
+      },
+      "b": {
+        "part": "disp",
+        "pin": "f"
+      },
+      "color": "#fbc02d"
+    },
+    {
+      "id": "w13",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN10_4"
+      },
+      "b": {
+        "part": "r6",
+        "pin": "1"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w14",
+      "a": {
+        "part": "r6",
+        "pin": "2"
+      },
+      "b": {
+        "part": "disp",
+        "pin": "g"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w15",
+      "a": {
+        "part": "nucleo",
+        "pin": "D9"
+      },
+      "b": {
+        "part": "r7",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w16",
+      "a": {
+        "part": "r7",
+        "pin": "2"
+      },
+      "b": {
+        "part": "disp",
+        "pin": "dp"
+      },
+      "color": "#8e24aa"
+    },
+    {
+      "id": "w17",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN10_16"
+      },
+      "b": {
+        "part": "disp",
+        "pin": "D1"
+      },
+      "color": "#00897b"
+    },
+    {
+      "id": "w18",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN10_30"
+      },
+      "b": {
+        "part": "disp",
+        "pin": "D2"
+      },
+      "color": "#fbc02d"
+    },
+    {
+      "id": "w19",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN10_28"
+      },
+      "b": {
+        "part": "disp",
+        "pin": "D3"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w20",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN10_26"
+      },
+      "b": {
+        "part": "disp",
+        "pin": "D4"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w21",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN10_2"
+      },
+      "b": {
+        "part": "kp",
+        "pin": "R1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w22",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN10_1"
+      },
+      "b": {
+        "part": "kp",
+        "pin": "R2"
+      },
+      "color": "#8e24aa"
+    },
+    {
+      "id": "w23",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN7_1"
+      },
+      "b": {
+        "part": "kp",
+        "pin": "R3"
+      },
+      "color": "#00897b"
+    },
+    {
+      "id": "w24",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN7_2"
+      },
+      "b": {
+        "part": "kp",
+        "pin": "R4"
+      },
+      "color": "#fbc02d"
+    },
+    {
+      "id": "w25",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN7_3"
+      },
+      "b": {
+        "part": "kp",
+        "pin": "C1"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w26",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN7_4"
+      },
+      "b": {
+        "part": "kp",
+        "pin": "C2"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w27",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN10_24"
+      },
+      "b": {
+        "part": "kp",
+        "pin": "C3"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w28",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN10_22"
+      },
+      "b": {
+        "part": "kp",
+        "pin": "C4"
+      },
+      "color": "#8e24aa"
+    }
+  ],
+  "firmware": {
+    "name": "hal-7seg-keypad",
+    "example": "hal-7seg-keypad.elf"
+  }
+}

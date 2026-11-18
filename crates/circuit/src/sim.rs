@@ -20,7 +20,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
-use crate::devices::{Aht20, Device, Dht, Ds3231, NeoPixel, SdCard, Ssd1306};
+use crate::devices::{
+    Aht20, CharLcd, Device, Dht, Ds18b20, Ds3231, Encoder, NeoPixel, SdCard, Sonar, Ssd1306,
+};
 
 use crate::netlist::{build_netlist, BusCatalog, Circuit, PartCatalog, PartInstance, PinRef, Wire};
 
@@ -210,6 +212,23 @@ pub struct PartVisual {
     /// NeoPixel colours, 0xRRGGBB per LED.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub leds: Vec<u32>,
+    /// Character LCD contents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lcd: Option<LcdView>,
+}
+
+/// What a character LCD shows.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct LcdView {
+    /// Character codes per row (0–7 are the custom characters).
+    pub rows: Vec<Vec<u8>>,
+    /// The 8 custom characters, 8 rows of 5 pixels each.
+    pub cgram: Vec<u8>,
+    pub backlight: bool,
+    /// Cursor (row, column), shown as an underline/blinking block.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<(u8, u8)>,
+    pub blink: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,6 +243,8 @@ enum VisualKind {
     Motor,
     /// Channel 0 = supply present.
     Sensor,
+    /// Channels 0–3 = IN1–IN4 (coil driven), 4 = supply present.
+    Stepper,
 }
 
 #[derive(Debug, Clone)]
@@ -245,6 +266,18 @@ struct VisualSlot {
     angle: f64,
     target: f64,
     rpm: f64,
+    /// Stepper: coil pattern, electrical phase (half steps), last step (s).
+    pattern: u8,
+    phase: i32,
+    last_step: f64,
+    /// Before the last change (a change within 50 µs replaces it: pins
+    /// written one after the other are one step).
+    prev_phase: i32,
+    prev_angle: f64,
+    prev_step: f64,
+    last_change: f64,
+    /// The last change came too fast to follow (reported once it stands).
+    stalled: bool,
 }
 
 /// The DC operating point for one combination of pin drives.
@@ -292,7 +325,7 @@ pub struct CircuitSim {
     /// Single-wire parts (DHT, NeoPixel) and their data line.
     wire_parts: Vec<WirePart>,
     /// Lines devices pull low on their own: (part id, node).
-    dev_outputs: Vec<(String, usize)>,
+    dev_outputs: Vec<(String, usize, usize)>,
     /// Last level each single-wire part saw on its line.
     line_levels: HashMap<String, bool>,
     /// The device addressed on each I2C bus (by SCL pin).
@@ -338,6 +371,17 @@ struct BusPart {
     scl: usize,
     sda: usize,
 }
+
+/// Key labels of the 4×4 keypad by row and column.
+pub const KEYPAD: [[&str; 4]; 4] = [
+    ["1", "2", "3", "A"],
+    ["4", "5", "6", "B"],
+    ["7", "8", "9", "C"],
+    ["*", "0", "#", "D"],
+];
+
+/// Segment pins of a 7-segment display, in channel order.
+const SEGMENTS: [&str; 8] = ["a", "b", "c", "d", "e", "f", "g", "dp"];
 
 /// High level on the I2C lines (0.7 · VDD).
 const I2C_HIGH: f64 = 0.7 * VDD;
@@ -416,6 +460,14 @@ impl CircuitSim {
                 Device::Sd(sd) => sd.power_cycle(),
                 Device::Dht(d) => *d = Dht::new(d.dht22, d.temp, d.humidity),
                 Device::Pixels(n) => *n = NeoPixel::new(n.leds.len()),
+                Device::Encoder(e) => e.rebase(elapsed),
+                Device::Lcd(l) => **l = CharLcd::new(l.address),
+                Device::Sonar(x) => *x = Sonar::new(x.distance_cm),
+                Device::Thermo(x) => {
+                    let rom = x.rom;
+                    *x = Ds18b20::new(x.temp, 0);
+                    x.rom = rom;
+                }
             }
         }
         self.i2c_active.clear();
@@ -445,7 +497,7 @@ impl CircuitSim {
         self.circuit = circuit.clone();
         let ids: BTreeSet<&str> = circuit.parts.iter().map(|p| p.id.as_str()).collect();
         self.pressed
-            .retain(|p| p == "B1" || ids.contains(p.as_str()));
+            .retain(|p| p == "B1" || ids.contains(p.split(':').next().unwrap_or(p)));
         // The frame keeps its start: parts that survive the edit keep what
         // they accumulated since then (see `rebuild`).
         self.rebuild();
@@ -549,6 +601,26 @@ impl CircuitSim {
                     b: PinRef::new(&p.id, "2a"),
                 });
             }
+            // Rotary encoder push button: SW to GND.
+            if p.kind == "rotary-encoder" && self.pressed.contains(&p.id) {
+                wires.push(Wire {
+                    a: PinRef::new(&p.id, "SW"),
+                    b: PinRef::new(&p.id, "GND"),
+                });
+            }
+            // Keypad: a pressed key joins its row and column ("kp:5").
+            if p.kind == "keypad-4x4" {
+                for (r, row) in KEYPAD.iter().enumerate() {
+                    for (c, key) in row.iter().enumerate() {
+                        if self.pressed.contains(&format!("{}:{key}", p.id)) {
+                            wires.push(Wire {
+                                a: PinRef::new(&p.id, format!("R{}", r + 1)),
+                                b: PinRef::new(&p.id, format!("C{}", c + 1)),
+                            });
+                        }
+                    }
+                }
+            }
         }
         // Every supply and ground pin exists even if nothing is wired.
         for s in ["GND", "3V3", "5V", "IOREF"] {
@@ -605,9 +677,21 @@ impl CircuitSim {
                 last_rise: 0,
                 pulse_start: None,
                 pulse: None,
-                angle: 90.0,
+                angle: if kind == VisualKind::Stepper {
+                    0.0
+                } else {
+                    90.0
+                },
                 target: 90.0,
                 rpm: 0.0,
+                pattern: 0,
+                phase: 0,
+                last_step: f64::NEG_INFINITY,
+                prev_phase: 0,
+                prev_angle: 0.0,
+                prev_step: f64::NEG_INFINITY,
+                last_change: f64::NEG_INFINITY,
+                stalled: false,
             });
             visuals.len() - 1
         };
@@ -698,6 +782,108 @@ impl CircuitSim {
                             visual: vis,
                             channel: ch,
                         });
+                    }
+                }
+                "seven-segment" | "seven-segment-4" => {
+                    // Segment LEDs between the segment pins and the digit
+                    // commons (cathodes or anodes).
+                    let anode = prop_str(p, "common", "cathode") == "anode";
+                    let vf = led_vf(&prop_str(p, "color", "red"));
+                    let digits = if p.kind == "seven-segment-4" { 4 } else { 1 };
+                    let vis = add_visual(&p.id, VisualKind::Led, 8 * digits);
+                    for d in 0..digits {
+                        let com_pin = if digits == 1 {
+                            "COM".to_string()
+                        } else {
+                            format!("D{}", d + 1)
+                        };
+                        let com = node(PinRef::new(&p.id, com_pin.as_str()), &mut map);
+                        for (s, seg) in SEGMENTS.iter().enumerate() {
+                            let n = node(PinRef::new(&p.id, *seg), &mut map);
+                            let (a, k) = if anode { (com, n) } else { (n, com) };
+                            elements.push(Element::Led {
+                                a,
+                                k,
+                                vf,
+                                imax: 0.02,
+                                visual: vis,
+                                channel: d * 8 + s,
+                            });
+                        }
+                    }
+                }
+                "stepper-28byj48" => {
+                    // 28BYJ-48 (5 V) on a ULN2003 driver board: an IN pin
+                    // high energises its coil.
+                    let vis = add_visual(&p.id, VisualKind::Stepper, 5);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let gnd = node(pin("GND"), &mut map);
+                    for i in 0..4 {
+                        elements.push(Element::Sense {
+                            a: node(pin(&format!("IN{}", i + 1)), &mut map),
+                            b: gnd,
+                            threshold: 1.6,
+                            visual: vis,
+                            channel: i,
+                        });
+                    }
+                    elements.push(Element::Sense {
+                        a: node(pin("VCC"), &mut map),
+                        b: gnd,
+                        threshold: 4.0,
+                        visual: vis,
+                        channel: 4,
+                    });
+                }
+                "thermistor" => {
+                    // NTC: R = R25 · exp(B (1/T − 1/298.15 K)).
+                    let r25 = prop(p, "ohms")
+                        .as_ref()
+                        .and_then(parse_ohms)
+                        .unwrap_or(10_000.0);
+                    let beta = prop_f64(p, "beta", 3950.0);
+                    let t = prop_f64(p, "temp", 25.0) + 273.15;
+                    let r = (r25 * (beta * (1.0 / t - 1.0 / 298.15)).exp()).clamp(10.0, 1e8);
+                    elements.push(Element::Resistor {
+                        a: node(PinRef::new(&p.id, "1"), &mut map),
+                        b: node(PinRef::new(&p.id, "2"), &mut map),
+                        r,
+                    });
+                }
+                "keypad-4x4" => {
+                    // Rows and columns exist as nets even with nothing pressed.
+                    for i in 1..=4 {
+                        node(PinRef::new(&p.id, format!("R{i}")), &mut map);
+                        node(PinRef::new(&p.id, format!("C{i}")), &mut map);
+                    }
+                }
+                "rotary-encoder" => {
+                    // KY-040: 10 kΩ pull-ups from + to CLK, DT and SW; the
+                    // contacts close CLK and DT to GND.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("+"), &mut map), node(pin("GND"), &mut map));
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: 2.0,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    for (i, name) in ["CLK", "DT", "SW"].into_iter().enumerate() {
+                        let n = node(pin(name), &mut map);
+                        elements.push(Element::Resistor {
+                            a: vcc,
+                            b: n,
+                            r: 10_000.0,
+                        });
+                        if i < 2 {
+                            dev_outputs.push((p.id.clone(), n, i));
+                        }
+                    }
+                    if !matches!(self.devices.get(&p.id), Some(Device::Encoder(_))) {
+                        self.devices
+                            .insert(p.id.clone(), Device::Encoder(Encoder::default()));
                     }
                 }
                 "resistor" => {
@@ -843,7 +1029,7 @@ impl CircuitSim {
                         data,
                         vmin: 3.0,
                     });
-                    dev_outputs.push((p.id.clone(), data));
+                    dev_outputs.push((p.id.clone(), data, 0));
                     let dht22 = prop_str(p, "model", "DHT22") != "DHT11";
                     let (t, h) = (prop_f64(p, "temp", 25.0), prop_f64(p, "humidity", 50.0));
                     match self.devices.get_mut(&p.id) {
@@ -854,6 +1040,74 @@ impl CircuitSim {
                         _ => {
                             self.devices
                                 .insert(p.id.clone(), Device::Dht(Dht::new(dht22, t, h)));
+                        }
+                    }
+                }
+                "hc-sr04" => {
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    let (trig, echo) = (node(pin("TRIG"), &mut map), node(pin("ECHO"), &mut map));
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: 3.0,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    wire_parts.push(WirePart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        data: trig,
+                        vmin: 3.0,
+                    });
+                    dev_outputs.push((p.id.clone(), echo, 0));
+                    let d = prop_f64(p, "distance", 50.0);
+                    match self.devices.get_mut(&p.id) {
+                        Some(Device::Sonar(x)) => x.distance_cm = d,
+                        _ => {
+                            self.devices
+                                .insert(p.id.clone(), Device::Sonar(Sonar::new(d)));
+                        }
+                    }
+                }
+                "ds18b20" => {
+                    // TO-92 sensor on a module with a 4.7 kΩ pull-up on DQ.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("VDD"), &mut map), node(pin("GND"), &mut map));
+                    let dq = node(pin("DQ"), &mut map);
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: 3.0,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    elements.push(Element::Resistor {
+                        a: vcc,
+                        b: dq,
+                        r: 4_700.0,
+                    });
+                    wire_parts.push(WirePart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        data: dq,
+                        vmin: 3.0,
+                    });
+                    dev_outputs.push((p.id.clone(), dq, 0));
+                    let t = prop_f64(p, "temp", 25.0);
+                    match self.devices.get_mut(&p.id) {
+                        Some(Device::Thermo(x)) => x.temp = t,
+                        _ => {
+                            // A serial number from the part id, stable across sessions.
+                            let serial = p.id.bytes().fold(0x5EED_u64, |a, b| {
+                                a.wrapping_mul(131).wrapping_add(b as u64)
+                            });
+                            self.devices
+                                .insert(p.id.clone(), Device::Thermo(Ds18b20::new(t, serial)));
                         }
                     }
                 }
@@ -925,7 +1179,7 @@ impl CircuitSim {
                         self.devices.insert(p.id.clone(), fresh);
                     }
                 }
-                "oled-ssd1306" | "rtc-ds3231" | "aht20" => {
+                "oled-ssd1306" | "rtc-ds3231" | "aht20" | "lcd-i2c" => {
                     // Breakout module: the chip plus 4.7 kΩ pull-ups from
                     // its VCC to SCL and SDA.
                     let vis = add_visual(&p.id, VisualKind::Sensor, 1);
@@ -964,6 +1218,14 @@ impl CircuitSim {
                             Device::Oled(Box::new(Ssd1306::new(addr)))
                         }
                         "rtc-ds3231" => Device::Rtc(Ds3231::new(self.wall_clock - now_s)),
+                        "lcd-i2c" => {
+                            let addr = u8::from_str_radix(
+                                prop_str(p, "address", "0x27").trim_start_matches("0x"),
+                                16,
+                            )
+                            .unwrap_or(0x27);
+                            Device::Lcd(Box::new(CharLcd::new(addr)))
+                        }
                         _ => Device::Aht(Aht20::new(temp, prop_f64(p, "humidity", 50.0))),
                     };
                     let keep = self.devices.get(&p.id).is_some_and(|d| {
@@ -1014,6 +1276,13 @@ impl CircuitSim {
                 slot.angle = old.angle;
                 slot.target = old.target;
                 slot.rpm = old.rpm;
+                slot.pattern = old.pattern;
+                slot.phase = old.phase;
+                slot.last_step = old.last_step;
+                slot.prev_phase = old.prev_phase;
+                slot.prev_angle = old.prev_angle;
+                slot.prev_step = old.prev_step;
+                slot.last_change = old.last_change;
             }
         }
         // Value problems describe the circuit as it is now.
@@ -1024,11 +1293,17 @@ impl CircuitSim {
         self.value_warnings = bad_values;
         self.pin_nodes = map;
         // Parts that were removed take their state with them.
+        let encoders: Vec<&str> = parts
+            .iter()
+            .filter(|p| p.kind == "rotary-encoder")
+            .map(|p| p.id.as_str())
+            .collect();
         let ids: BTreeSet<&str> = bus_parts
             .iter()
             .map(|b: &BusPart| b.id.as_str())
             .chain(spi_parts.iter().map(|b: &SpiPart| b.id.as_str()))
             .chain(wire_parts.iter().map(|b: &WirePart| b.id.as_str()))
+            .chain(encoders)
             .collect();
         self.devices.retain(|id, _| ids.contains(id.as_str()));
         // A transfer in progress continues if its device is still on the
@@ -1176,11 +1451,22 @@ impl CircuitSim {
                     }
                 }
             }
-            if v[node] > 4.0 && node != 0 {
-                warnings.push(format!(
-                    "{name}: {:.1} V applied — the pin's maximum is VDD + 0.3 V for analog pins",
-                    v[node]
-                ));
+            // Five-volt tolerant (FT) pins take up to 5.5 V; the analog-capable
+            // and oscillator pins only VDD + 0.3 V (STM32F401 datasheet).
+            let tolerant = !matches!(
+                (port, pin),
+                (0, 0..=7) | (1, 0..=1) | (2, 0..=5) | (2, 14..=15) | (7, _)
+            );
+            let max = if tolerant { 5.5 } else { 4.0 };
+            if v[node] > max && node != 0 {
+                warnings.push(if tolerant {
+                    format!("{name}: {:.1} V applied — more than the 5.5 V a 5 V-tolerant pin takes", v[node])
+                } else {
+                    format!(
+                        "{name}: {:.1} V applied — this pin is not 5 V tolerant (maximum VDD + 0.3 V)",
+                        v[node]
+                    )
+                });
             }
             inputs.push(comp[node].then_some(v[node] > VDD / 2.0));
         }
@@ -1235,7 +1521,7 @@ impl CircuitSim {
                 sourced[r] = true;
             }
         }
-        for (j, (_, node)) in self.dev_outputs.iter().enumerate() {
+        for (j, (_, node, _)) in self.dev_outputs.iter().enumerate() {
             if drives
                 .get(self.mcu.len() + j)
                 .is_some_and(|&d| drive_source(d).is_some())
@@ -1309,7 +1595,7 @@ impl CircuitSim {
                 source(&mut g, &mut rhs, node, v, r);
             }
         }
-        for (j, (_, node)) in self.dev_outputs.iter().enumerate() {
+        for (j, (_, node, _)) in self.dev_outputs.iter().enumerate() {
             if let Some((v, r)) = drives
                 .get(self.mcu.len() + j)
                 .and_then(|&d| drive_source(d))
@@ -1344,15 +1630,16 @@ impl CircuitSim {
         // the MCU's pins in the drive list, so they are part of the cache key.
         let now_s = self.seconds_at(time);
         let mut key = drives.to_vec();
-        for (id, _) in &self.dev_outputs {
-            let low = match self.devices.get_mut(id) {
-                Some(Device::Dht(d)) => {
-                    d.advance(now_s);
-                    d.pulling
-                }
-                _ => false,
-            };
-            key.push(if low { Drive::Low } else { Drive::Float });
+        for (id, _, idx) in &self.dev_outputs {
+            let out = self.devices.get_mut(id).and_then(|d| {
+                d.advance(now_s);
+                d.drive(*idx)
+            });
+            key.push(match out {
+                Some(false) => Drive::Low,
+                Some(true) => Drive::High,
+                None => Drive::Float,
+            });
         }
         let drives = &key[..];
         if self.drives.as_deref() == Some(drives) {
@@ -1387,6 +1674,53 @@ impl CircuitSim {
                 }
                 slot.last_rise = time;
                 slot.rises += 1;
+            }
+            // Stepper: follow the coil pattern half step by half step.
+            if slot.kind == VisualKind::Stepper {
+                let lv = &sol.level[i];
+                let pattern = (0..4).fold(0u8, |a, c| a | ((lv[c] > 0.5) as u8) << c);
+                let powered = lv[4] > 0.5;
+                if pattern != slot.pattern {
+                    slot.pattern = pattern;
+                    let now_s = self.clock.1 + (time as f64 - self.clock.0 as f64) / self.clock.2;
+                    // Pins written one after the other: the intermediate
+                    // pattern lasted microseconds and moved nothing.
+                    if now_s - slot.last_change < 50e-6 {
+                        slot.stalled = false;
+                        slot.phase = slot.prev_phase;
+                        slot.angle = slot.prev_angle;
+                        slot.last_step = slot.prev_step;
+                    }
+                    if std::mem::take(&mut slot.stalled) {
+                        self.warnings.insert(format!(
+                            "{}: steps faster than the motor can follow (< 0.8 ms per half step) — it stalls",
+                            slot.id
+                        ));
+                    }
+                    slot.prev_phase = slot.phase;
+                    slot.prev_angle = slot.angle;
+                    slot.prev_step = slot.last_step;
+                    slot.last_change = now_s;
+                    // Half-step sequence A, AB, B, BC, C, CD, D, DA.
+                    const SEQ: [u8; 8] = [
+                        0b0001, 0b0011, 0b0010, 0b0110, 0b0100, 0b1100, 0b1000, 0b1001,
+                    ];
+                    if let (Some(ph), true) = (SEQ.iter().position(|&p| p == pattern), powered) {
+                        let delta = (ph as i32 - slot.phase).rem_euclid(8);
+                        let delta = if delta > 4 { delta - 8 } else { delta };
+                        if (1..=2).contains(&delta.abs()) {
+                            // About 1 ms per half step is as fast as the rotor follows.
+                            if now_s - slot.last_step < 0.0008 * delta.abs() as f64 {
+                                slot.stalled = true;
+                            } else {
+                                slot.angle =
+                                    (slot.angle + delta as f64 * 360.0 / 4096.0).rem_euclid(360.0);
+                            }
+                            slot.last_step = now_s;
+                        }
+                        slot.phase = ph as i32;
+                    }
+                }
             }
             // Servo: measure the width of each signal pulse.
             if slot.kind == VisualKind::Servo {
@@ -1480,6 +1814,17 @@ impl CircuitSim {
                     v.angle = Some(slot.angle);
                     v.unpowered = !powered;
                 }
+                VisualKind::Stepper => {
+                    if std::mem::take(&mut slot.stalled) {
+                        self.warnings.insert(format!(
+                            "{}: steps faster than the motor can follow (< 0.8 ms per half step) — it stalls",
+                            slot.id
+                        ));
+                    }
+                    v.unpowered = avg.get(4).copied().unwrap_or(0.0) < 0.5;
+                    v.brightness = avg[..4].to_vec();
+                    v.angle = Some(slot.angle);
+                }
                 VisualKind::Sensor => {
                     v.unpowered = avg.first().copied().unwrap_or(0.0) < 0.5;
                     let powered_now = cur
@@ -1501,6 +1846,21 @@ impl CircuitSim {
                             v.text = Some(r.display(t));
                         }
                         Some(Device::Aht(a)) if !powered_now => *a = Aht20::new(a.temp, a.humidity),
+                        Some(Device::Lcd(l)) => {
+                            if !powered_now {
+                                **l = CharLcd::new(l.address);
+                            }
+                            v.lcd = Some(LcdView {
+                                rows: l.rows(),
+                                cgram: l.cgram.to_vec(),
+                                backlight: powered_now && l.backlight(),
+                                cursor: l.cursor_at(),
+                                blink: l.blink,
+                            });
+                        }
+                        Some(Device::Encoder(e)) => {
+                            v.angle = Some((e.position.rem_euclid(20) * 18) as f64)
+                        }
                         Some(Device::Pixels(n)) => {
                             if powered_now {
                                 n.settle(
@@ -1563,6 +1923,22 @@ impl CircuitSim {
                         ));
                     }
                 }
+                Some(Device::Sonar(x)) => {
+                    x.trig(now, high);
+                    if let Some(w) = x.short_trigger.take() {
+                        self.warnings.insert(format!(
+                            "{}: TRIG pulse of {:.1} µs is shorter than the 10 µs the sensor needs",
+                            part.id,
+                            w * 1e6
+                        ));
+                    }
+                }
+                Some(Device::Thermo(d)) => {
+                    // Its own pulls are not the host's slots.
+                    if !d.pulling {
+                        d.observe(now, high);
+                    }
+                }
                 Some(Device::Pixels(n)) => {
                     n.edge(now, high);
                     if let Some(w) = n.bad_pulse.take() {
@@ -1583,12 +1959,22 @@ impl CircuitSim {
         let (c, s, hz) = self.clock;
         self.dev_outputs
             .iter()
-            .filter_map(|(id, _)| match self.devices.get(id) {
-                Some(Device::Dht(d)) => d.next(),
-                _ => None,
-            })
+            .filter_map(|(id, _, _)| self.devices.get(id).and_then(|d| d.next_change()))
             .map(|t| c + ((t - s) * hz).ceil().max(0.0) as Cycles)
             .min()
+    }
+
+    /// Turn a rotary encoder by `detents` (negative: counter-clockwise),
+    /// from `time` on. Returns whether the part exists.
+    pub fn rotate(&mut self, part: &str, detents: i32, time: Cycles) -> bool {
+        let now = self.seconds_at(time);
+        match self.devices.get_mut(part) {
+            Some(Device::Encoder(e)) => {
+                e.rotate(now, detents);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The time base: `cycle` is `seconds` of simulated time and the core

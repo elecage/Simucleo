@@ -352,6 +352,11 @@ impl Simulator {
         self.board.sd_load(id, image)
     }
 
+    /// Turn a rotary encoder part by `detents` (negative: counter-clockwise).
+    pub fn rotate(&mut self, part: &str, detents: i32) {
+        self.board.rotate(part, detents);
+    }
+
     /// Press or release a switch: a `tact-switch` part id or `"B1"`.
     pub fn press(&mut self, part: &str, pressed: bool) {
         self.board.press(part, pressed);

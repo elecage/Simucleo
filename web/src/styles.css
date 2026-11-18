@@ -1,0 +1,85 @@
+:root {
+  --bg: #f4f5f7;
+  --panel: #ffffff;
+  --border: #d9dce1;
+  --text: #1d2125;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --canvas: #eceff3;
+  --grid: #c3c8d0;
+  font-family: system-ui, "Noto Sans KR", sans-serif;
+  color: var(--text);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15171a; --panel: #1e2125; --border: #33373d; --text: #e6e8eb;
+    --muted: #9aa1ab; --accent: #60a5fa; --canvas: #1a1d21; --grid: #3a3f46;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); }
+button, .file-btn {
+  font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+}
+button:disabled { opacity: 0.5; cursor: default; }
+
+.app {
+  display: grid; height: 100vh;
+  grid-template: "bar bar bar" auto "lib main insp" 1fr / 180px 1fr 260px;
+}
+.toolbar { grid-area: bar; display: flex; gap: 10px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--border); }
+.status { color: var(--muted); font-size: 13px; }
+.library, .inspector { background: var(--panel); padding: 8px 12px; overflow: auto; font-size: 13px; }
+.library { grid-area: lib; border-right: 1px solid var(--border); }
+.library button { display: block; width: 100%; text-align: left; margin-bottom: 4px; }
+.inspector { grid-area: insp; border-left: 1px solid var(--border); }
+h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin: 14px 0 6px; }
+.hint { color: var(--muted); line-height: 1.5; }
+.prop { display: grid; gap: 2px; margin-bottom: 8px; }
+.prop input { font: inherit; padding: 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); }
+.nets { padding-left: 16px; margin: 0; font-family: ui-monospace, monospace; font-size: 12px; }
+.swatches { display: flex; gap: 4px; flex-wrap: wrap; }
+.library .swatch { display: inline-block; width: 22px; height: 22px; padding: 0; margin: 0; border-radius: 50%; }
+.swatch.on { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+main { grid-area: main; min-width: 0; min-height: 0; }
+.canvas-wrap { position: relative; width: 100%; height: 100%; }
+.canvas { width: 100%; height: 100%; display: block; background: var(--canvas); touch-action: none; user-select: none; }
+.grid-dot { fill: var(--grid); }
+.tooltip { position: absolute; left: 8px; bottom: 8px; padding: 4px 8px; background: #000c; color: #fff; border-radius: 4px; font-size: 12px; pointer-events: none; }
+
+/* Parts */
+.part.selected > g:first-child { filter: drop-shadow(0 0 3px var(--accent)); }
+.pcb { fill: #f2f2f0; stroke: #9aa; }
+.usb { fill: #b8bcc2; stroke: #777; }
+.chip { fill: #222; }
+.silk { fill: #333; font-size: 7px; font-family: sans-serif; }
+.silk.small { font-size: 5px; }
+.silk.chip-label { fill: #ccc; font-size: 4.5px; text-anchor: middle; }
+.stlink-area { fill: #e8e8e4; stroke: #c9cbc6; stroke-dasharray: 3 2; }
+.morpho { fill: #1c1c1c; }
+.arduino { fill: #111; }
+.header-pin { fill: #d4af37; }
+.socket { fill: #000; stroke: #444; stroke-width: 0.5; }
+.smd-led { fill: #7a5; }
+.smd-led-glow { fill: #3f3; }
+.btn-body { fill: #333; }
+.btn-cap { fill: #111; stroke: #555; }
+.btn-cap.blue { fill: #1e50c8; }
+.breadboard { fill: #f6f3ea; stroke: #cfc8b4; }
+.bb-channel { fill: #e3ddcb; }
+.rail-pos { stroke: #d33; stroke-width: 0.8; }
+.rail-neg { stroke: #36c; stroke-width: 0.8; }
+.hole { fill: #555; }
+.lead { stroke: #9aa0a6; stroke-width: 1.4; }
+.led-body { stroke: #0003; }
+.led-body.burnt { fill: #3a2a20; }
+.resistor-body { fill: #e8d2a6; stroke: #b9a27a; }
+
+.pin { fill: transparent; stroke: transparent; cursor: crosshair; }
+.pin:hover, .pin.pending { stroke: var(--accent); stroke-width: 1.5; }
+.pin.hot { fill: #22c55e88; stroke: #16a34a; }
+.wire { fill: none; stroke-width: 2.4; stroke-linecap: round; cursor: pointer; }
+.wire.selected { stroke-width: 3.6; filter: drop-shadow(0 0 2px var(--accent)); }
+.wire-preview { stroke: var(--accent); stroke-dasharray: 4 3; stroke-width: 1.5; pointer-events: none; }

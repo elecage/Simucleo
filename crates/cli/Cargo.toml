@@ -1,0 +1,16 @@
+[package]
+name = "simucleo-cli"
+description = "Headless Simucleo runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "simucleo"
+path = "src/main.rs"
+
+[dependencies]
+simucleo-core.workspace = true
+simucleo-cpu-armv7m.workspace = true
+simucleo-periph-stm32f4.workspace = true
+simucleo-elf.workspace = true

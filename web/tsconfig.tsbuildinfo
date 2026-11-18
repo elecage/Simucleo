@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/editor/Canvas.tsx","./src/editor/model.ts","./src/parts/basic.tsx","./src/parts/breadboard.tsx","./src/parts/index.ts","./src/parts/nucleo.tsx","./src/parts/types.ts","./src/sim/simulator.ts","./src/wasm/pkg/simucleo_wasm.d.ts","./src/wasm/pkg/simucleo_wasm_bg.wasm.d.ts","./vite.config.ts"],"version":"5.8.3"}

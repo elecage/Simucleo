@@ -1,0 +1,10 @@
+[package]
+name = "simucleo-elf"
+description = "ELF firmware loader for Simucleo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+object.workspace = true
+thiserror.workspace = true

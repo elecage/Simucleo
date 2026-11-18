@@ -1,0 +1,9 @@
+[package]
+name = "simucleo-periph-stm32f4"
+description = "STM32F401RE memory map and peripheral models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+simucleo-core.workspace = true

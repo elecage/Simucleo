@@ -1,0 +1,9 @@
+[package]
+name = "simucleo-core"
+description = "Core abstractions for the Simucleo simulator: bus, CPU backend trait, event scheduler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true

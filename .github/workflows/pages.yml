@@ -42,6 +42,7 @@ jobs:
           make -C firmware/bare-blinky
           make -C firmware/hal-blinky variants
           make -C firmware/hal-uart-printf
+          for d in hal-button-exti hal-pwm-led hal-buzzer-melody; do make -C firmware/$d; done
       - run: npm run examples
         working-directory: web
       - run: npm run wasm

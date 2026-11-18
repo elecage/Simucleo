@@ -236,3 +236,127 @@ fn hal_uart_printf_and_interrupt_echo() {
     );
     assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
 }
+
+// --------------------------------------------- EXTI and timers (M3)
+
+fn console_text(board: &mut Nucleo) -> String {
+    let out: Vec<u8> = board.take_console().iter().map(|b| b.byte).collect();
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// (time in cycles, level) of a pin's changes.
+fn edges(board: &mut Nucleo, port: u8, pin: u8) -> Vec<(u64, Option<bool>)> {
+    board
+        .take_pin_events()
+        .into_iter()
+        .filter(|e| e.port == port && e.pin == pin)
+        .map(|e| (e.time, e.level))
+        .collect()
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-button-exti"]
+fn buttons_raise_exti_interrupts() {
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-button-exti", "hal-button-exti"))
+        .unwrap();
+    board.run_for_ns(50e6);
+    assert!(!board.pin('A', 5));
+    for (i, ld2) in [(1, true), (2, false)] {
+        board.set_user_button(true);
+        board.run_for_ns(20e6);
+        board.set_user_button(false);
+        board.run_for_ns(20e6);
+        assert_eq!(board.pin('A', 5), ld2, "press {i}");
+        assert!(
+            console_text(&mut board).contains(&format!("B1 pressed ({i})")),
+            "press {i}"
+        );
+    }
+    // Button on D2 (PA10, internal pull-up) to GND toggles PA8.
+    assert!(board.pin('A', 10), "pull-up holds D2 high");
+    board.drive_pin(0, 10, Some(false));
+    board.run_for_ns(20e6);
+    board.drive_pin(0, 10, None);
+    let r = board.run_for_ns(20e6);
+    assert!(board.pin('A', 8));
+    assert!(console_text(&mut board).contains("D2 pressed (1)"));
+    assert!(board.diagnose(&r).is_none(), "{:?}", board.diagnose(&r));
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.bus.regs.accesses.is_empty(),
+        "unmodelled: {:?}",
+        board.bus.regs.accesses
+    );
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-pwm-led"]
+fn pwm_led_runs_at_1khz_with_changing_duty() {
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-pwm-led", "hal-pwm-led"))
+        .unwrap();
+    board.run_for_ns(500e6);
+    board.take_pin_events();
+    board.run_for_ns(20e6);
+    let e = edges(&mut board, 0, 5);
+    let rises: Vec<u64> = e
+        .iter()
+        .filter(|x| x.1 == Some(true))
+        .map(|x| x.0)
+        .collect();
+    assert!(rises.len() >= 18, "{e:?}");
+    // 1 kHz at 84 MHz, exactly.
+    assert!(rises.windows(2).all(|w| w[1] - w[0] == 84_000), "{rises:?}");
+    // High time is a whole number of 1 µs timer ticks and below 100 %.
+    for w in e.windows(2) {
+        if w[0].1 == Some(true) {
+            let high = w[1].0 - w[0].0;
+            assert!(high % 84 == 0 && high < 84_000, "{high}");
+        }
+    }
+    // The duty ramps: around 0.5 s it is about 50 %.
+    let highs: Vec<u64> = e
+        .windows(2)
+        .filter(|w| w[0].1 == Some(true))
+        .map(|w| w[1].0 - w[0].0)
+        .collect();
+    let duty = highs[0] as f64 / 84_000.0;
+    assert!((0.4..0.6).contains(&duty), "duty {duty}");
+    assert!(console_text(&mut board).contains("PWM: LD2 breathing"));
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.bus.regs.accesses.is_empty(),
+        "unmodelled: {:?}",
+        board.bus.regs.accesses
+    );
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-buzzer-melody"]
+fn buzzer_plays_notes_on_tim1() {
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-buzzer-melody", "hal-buzzer-melody"))
+        .unwrap();
+    board.run_for_ns(100e6); // inside C4 (262 Hz)
+    board.take_pin_events();
+    board.run_for_ns(50e6);
+    let rises: Vec<u64> = edges(&mut board, 0, 9)
+        .iter()
+        .filter(|x| x.1 == Some(true))
+        .map(|x| x.0)
+        .collect();
+    // Period 1e6 / 262 = 3816 timer ticks of 1 µs.
+    assert!(rises.len() >= 10, "{rises:?}");
+    assert!(
+        rises.windows(2).all(|w| w[1] - w[0] == 3816 * 84),
+        "{rises:?}"
+    );
+    board.run_for_ns(2e9);
+    let text = console_text(&mut board);
+    assert!(text.contains("C4 D4 E4 F4 G4 A4 B4 C5 - G4"), "{text:?}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+}

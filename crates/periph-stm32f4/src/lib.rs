@@ -1,7 +1,7 @@
 //! STM32F401RE memory map and peripherals.
 //!
 //! Modelled: flash, SRAM, boot alias, bit-banding, GPIO, EXTI, RCC (clock
-//! tree), PWR, FLASH interface, USART1/2/6, TIM1–5 and TIM9–11. Every other peripheral is backed by a
+//! tree), PWR, FLASH interface, SYSCFG, USART1/2/6, TIM1–5 and TIM9–11. Every other peripheral is backed by a
 //! register file initialised from ST's SVD, so firmware reads back what it
 //! wrote and sees correct reset values; those accesses are counted so the
 //! GUI can show which peripheral the firmware relies on that is not
@@ -29,7 +29,7 @@ use simucleo_core::bus::{AccessSize, Bus, BusError, Memory};
 use simucleo_core::cortexm::CortexM;
 use simucleo_core::sched::Scheduler;
 use simucleo_core::Cycles;
-use sysctl::{FlashIf, Pwr};
+use sysctl::{FlashIf, Pwr, Syscfg};
 use timer::{Timer, TIMERS};
 use usart::{TerminalByte, Usart, UsartEventKind};
 
@@ -135,6 +135,7 @@ pub struct Stm32f401Bus {
     /// USART1, USART2 (ST-LINK virtual COM port), USART6.
     pub usart: [Usart; 3],
     pub exti: Exti,
+    pub syscfg: Syscfg,
     /// TIM1, TIM2, TIM3, TIM4, TIM5, TIM9, TIM10, TIM11.
     pub timers: [Timer; 8],
     /// Firmware read a register whose value changes with time alone (a
@@ -173,6 +174,7 @@ impl Stm32f401Bus {
             flash_if: FlashIf::default(),
             usart: USARTS.map(|(name, _, irq, apb2, ..)| Usart::new(name, irq, apb2)),
             exti: Exti::default(),
+            syscfg: Syscfg::default(),
             timers: TIMERS.map(Timer::new),
             time_read: false,
             levels: [0; 8],
@@ -266,10 +268,7 @@ impl Stm32f401Bus {
 
     /// Port selected for EXTI line `line` in SYSCFG_EXTICRx (0 = A).
     fn exti_source(&self, line: u8) -> usize {
-        let cr = self
-            .regs
-            .peek(map::SYSCFG_BASE + 0x08 + 4 * (line as u32 / 4));
-        ((cr >> (4 * (line as u32 % 4))) & 0xF) as usize
+        self.syscfg.exti_port(line)
     }
 
     /// Re-read the levels of a port's pins and report edges to EXTI.
@@ -322,6 +321,7 @@ impl Stm32f401Bus {
             u.reset();
         }
         self.exti = Exti::default();
+        self.syscfg = Syscfg::default();
         let now = self.sched.now().max(self.now);
         for t in &mut self.timers {
             t.reset(now);
@@ -452,6 +452,8 @@ impl Stm32f401Bus {
                 self.timer_changed(i, self.now);
             } else if name == "PWR" {
                 self.pwr = Pwr::default();
+            } else if name == "SYSCFG" {
+                self.syscfg = Syscfg::default();
             } else if let Some(p) = regmap::peripheral_by_name(name) {
                 self.regs.reset_block(p.base);
             }
@@ -505,6 +507,13 @@ impl Stm32f401Bus {
                 map::RCC_BASE => self.rcc.read(off),
                 map::FLASH_IF_BASE => self.flash_if.read(off),
                 map::EXTI_BASE => self.exti.read(off),
+                map::SYSCFG_BASE => {
+                    if enabled(0x44, 14) {
+                        self.syscfg.read(off)
+                    } else {
+                        0
+                    }
+                }
                 map::PWR_BASE => {
                     if enabled(0x40, 28) {
                         self.pwr.read(off)
@@ -550,6 +559,12 @@ impl Stm32f401Bus {
             map::RCC_BASE => return self.rcc.read(off),
             map::FLASH_IF_BASE => return self.flash_if.read(off),
             map::EXTI_BASE => return self.exti.read(off),
+            map::SYSCFG_BASE => {
+                if self.gated(0x44, 14, "SYSCFG", "RCC.APB2ENR.SYSCFGEN") {
+                    return 0;
+                }
+                return self.syscfg.read(off);
+            }
             map::PWR_BASE => {
                 if self.gated(0x40, 28, "PWR", "RCC.APB1ENR.PWREN") {
                     return 0;
@@ -609,6 +624,12 @@ impl Stm32f401Bus {
             }
             map::EXTI_BASE => {
                 self.exti.write(off, value, lanes);
+                return;
+            }
+            map::SYSCFG_BASE => {
+                if !self.gated(0x44, 14, "SYSCFG", "RCC.APB2ENR.SYSCFGEN") {
+                    self.syscfg.write(off, value, lanes);
+                }
                 return;
             }
             map::PWR_BASE => {
@@ -896,6 +917,8 @@ mod tests {
         // GPIOC clock, PC13 input; EXTI13 ← port C, falling edge, unmasked.
         bus.write(map::RCC_BASE + 0x30, AccessSize::Word, 1 << 2)
             .unwrap();
+        bus.write(map::RCC_BASE + 0x44, AccessSize::Word, 1 << 14)
+            .unwrap(); // SYSCFGEN
         bus.set_external(2, 13, Some(true));
         bus.write(map::SYSCFG_BASE + 0x14, AccessSize::Word, 2 << 4)
             .unwrap();

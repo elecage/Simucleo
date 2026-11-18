@@ -259,9 +259,15 @@ impl Nucleo {
 
     /// Press (`true`) or release the blue user button B1 (PC13, active low).
     pub fn set_user_button(&mut self, pressed: bool) {
+        self.drive_pin(2, 13, Some(!pressed));
+    }
+
+    /// Drive a pin from outside (`port` 0 = A): `Some(level)`, or `None` to
+    /// let it float. An interrupt this causes (EXTI) is pending at once, so
+    /// a sleeping core wakes up.
+    pub fn drive_pin(&mut self, port: usize, pin: u8, level: Option<bool>) {
         self.bus.set_time(self.sys.cycles);
-        self.bus.set_external(2, 13, Some(!pressed));
-        // Forward an EXTI interrupt at once, so a sleeping core wakes up.
+        self.bus.set_external(port, pin, level);
         self.bus.poll(&mut self.sys);
     }
 

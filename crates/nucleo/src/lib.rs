@@ -141,7 +141,7 @@ impl Nucleo {
     /// Program an ELF image into flash and power the board up.
     pub fn load_elf(&mut self, bytes: &[u8]) -> Result<(), LoadError> {
         let fw = FirmwareImage::parse(bytes)?;
-        self.rtos = rtos::FreeRtos::detect(&fw);
+        self.rtos = rtos::FreeRtos::detect(&fw, bytes);
         self.sys = CortexM::new();
         self.timeline.clear();
         self.power_on();

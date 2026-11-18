@@ -4,7 +4,10 @@
  *   Blink   (Normal)       toggles LD2 every 500 ms with osDelay()
  *   Count   (BelowNormal)  prints a counter every second
  *   Button  (AboveNormal)  waits on a semaphore that the B1 interrupt
- *                          (EXTI15_10) releases, then prints
+ *                          (EXTI15_10) releases, prints, and sets a
+ *                          thread flag for
+ *   Flags   (Normal)       which waits for that flag (osThreadFlagsWait,
+ *                          a FreeRTOS task notification underneath)
  *
  * printf() goes to USART2 (virtual COM port); a mutex keeps lines whole.
  * The HAL tick runs on TIM11, SysTick belongs to FreeRTOS.
@@ -26,10 +29,13 @@ static void MX_USART2_UART_Init(void);
 static void BlinkTask(void *argument);
 static void CountTask(void *argument);
 static void ButtonTask(void *argument);
+static void FlagsTask(void *argument);
+static osThreadId_t flagsHandle;
 
 static const osThreadAttr_t blinkAttr = {.name = "Blink", .stack_size = 128 * 4, .priority = osPriorityNormal};
 static const osThreadAttr_t countAttr = {.name = "Count", .stack_size = 256 * 4, .priority = osPriorityBelowNormal};
 static const osThreadAttr_t buttonAttr = {.name = "Button", .stack_size = 256 * 4, .priority = osPriorityAboveNormal};
+static const osThreadAttr_t flagsAttr = {.name = "Flags", .stack_size = 256 * 4, .priority = osPriorityNormal};
 
 static void log_line(const char *fmt, ...)
 {
@@ -55,7 +61,8 @@ int main(void)
   osThreadNew(BlinkTask, NULL, &blinkAttr);
   osThreadNew(CountTask, NULL, &countAttr);
   osThreadNew(ButtonTask, NULL, &buttonAttr);
-  printf("FreeRTOS %s: Blink, Count, Button\r\n", tskKERNEL_VERSION_NUMBER);
+  flagsHandle = osThreadNew(FlagsTask, NULL, &flagsAttr);
+  printf("FreeRTOS %s: Blink, Count, Button, Flags\r\n", tskKERNEL_VERSION_NUMBER);
   osKernelStart();
 
   /* Not reached: the scheduler owns the CPU now. */
@@ -93,6 +100,17 @@ static void ButtonTask(void *argument)
   {
     osSemaphoreAcquire(buttonSem, osWaitForever);
     log_line("B1 pressed (%lu)\r\n", (unsigned long)++n);
+    osThreadFlagsSet(flagsHandle, 0x1);
+  }
+}
+
+static void FlagsTask(void *argument)
+{
+  (void)argument;
+  for (;;)
+  {
+    osThreadFlagsWait(0x1, osFlagsWaitAny, osWaitForever);
+    log_line("flag received\r\n");
   }
 }
 

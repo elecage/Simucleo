@@ -105,6 +105,95 @@ impl FirmwareImage {
     }
 }
 
+/// Byte offsets of the members of a C `struct` (by its tag name, e.g.
+/// `"tskTaskControlBlock"`) from the ELF's DWARF debug information. `None`
+/// when the file has no debug information or no complete definition of it.
+pub fn struct_layout(bytes: &[u8], tag: &str) -> Option<HashMap<String, u32>> {
+    use object::{Object as _, ObjectSection as _};
+    let file = object::File::parse(bytes).ok()?;
+    let load = |id: gimli::SectionId| -> Result<std::borrow::Cow<'_, [u8]>, gimli::Error> {
+        Ok(file
+            .section_by_name(id.name())
+            .and_then(|s| s.uncompressed_data().ok())
+            .unwrap_or(std::borrow::Cow::Borrowed(&[])))
+    };
+    let owned = gimli::DwarfSections::load(load).ok()?;
+    let dwarf = owned.borrow(|s| gimli::EndianSlice::new(s, gimli::LittleEndian));
+    let mut units = dwarf.units();
+    while let Ok(Some(header)) = units.next() {
+        let Ok(unit) = dwarf.unit(header) else {
+            continue;
+        };
+        let mut tree = unit.entries_tree(None).ok()?;
+        let root = tree.root().ok()?;
+        let mut found = None;
+        find_struct(&dwarf, &unit, root, tag, &mut found);
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+type Reader<'a> = gimli::EndianSlice<'a, gimli::LittleEndian>;
+
+fn find_struct(
+    dwarf: &gimli::Dwarf<Reader<'_>>,
+    unit: &gimli::Unit<Reader<'_>>,
+    node: gimli::EntriesTreeNode<'_, '_, '_, Reader<'_>>,
+    tag: &str,
+    found: &mut Option<HashMap<String, u32>>,
+) {
+    let name_of = |e: &gimli::DebuggingInformationEntry<'_, '_, Reader<'_>>| -> Option<String> {
+        let attr = e.attr_value(gimli::DW_AT_name).ok()??;
+        let s = dwarf.attr_string(unit, attr).ok()?;
+        Some(s.to_string_lossy().into_owned())
+    };
+    let entry = node.entry().clone();
+    let is_def = entry.tag() == gimli::DW_TAG_structure_type
+        && entry
+            .attr(gimli::DW_AT_declaration)
+            .ok()
+            .flatten()
+            .is_none()
+        && name_of(&entry).as_deref() == Some(tag);
+    let mut children = node.children();
+    if is_def {
+        let mut members = HashMap::new();
+        while let Ok(Some(child)) = children.next() {
+            let e = child.entry();
+            if e.tag() != gimli::DW_TAG_member {
+                continue;
+            }
+            let off = match e
+                .attr_value(gimli::DW_AT_data_member_location)
+                .ok()
+                .flatten()
+            {
+                Some(gimli::AttributeValue::Udata(v)) => v as u32,
+                Some(gimli::AttributeValue::Data1(v)) => v as u32,
+                Some(gimli::AttributeValue::Data2(v)) => v as u32,
+                Some(gimli::AttributeValue::Data4(v)) => v,
+                Some(gimli::AttributeValue::Sdata(v)) => v as u32,
+                _ => continue,
+            };
+            if let Some(n) = name_of(e) {
+                members.insert(n, off);
+            }
+        }
+        if !members.is_empty() {
+            *found = Some(members);
+        }
+        return;
+    }
+    while let Ok(Some(child)) = children.next() {
+        find_struct(dwarf, unit, child, tag, found);
+        if found.is_some() {
+            return;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

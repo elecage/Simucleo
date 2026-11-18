@@ -464,12 +464,13 @@ fn freertos_tasks_run_and_are_visible() {
     board.run_for_ns(20e6);
     board.set_user_button(false);
     board.run_for_ns(20e6);
-    assert!(console_text(&mut board).contains("B1 pressed (1)"));
+    let text = console_text(&mut board);
+    assert!(text.contains("B1 pressed (1)\r\nflag received"), "{text:?}");
 
     let snap = board.rtos_snapshot().expect("FreeRTOS detected");
     assert!(snap.scheduler_running);
     let names: Vec<&str> = snap.tasks.iter().map(|t| t.name.as_str()).collect();
-    for n in ["Blink", "Count", "Button", "IDLE", "Tmr Svc"] {
+    for n in ["Blink", "Count", "Button", "Flags", "IDLE", "Tmr Svc"] {
         assert!(names.contains(&n), "{names:?}");
     }
     let task = |n: &str| snap.tasks.iter().find(|t| t.name == n).unwrap();
@@ -480,6 +481,11 @@ fn freertos_tasks_run_and_are_visible() {
         task("Button").state,
         TaskState::Blocked,
         "waits forever on the semaphore"
+    );
+    assert_eq!(
+        task("Flags").state,
+        TaskState::Blocked,
+        "waits forever for a notification (thread flags)"
     );
     // ST's CMSIS-RTOS2 wrapper creates tasks at osPriority − 1.
     assert_eq!(task("Button").priority, 31); // osPriorityAboveNormal (32)

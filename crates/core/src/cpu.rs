@@ -56,6 +56,9 @@ pub enum StopReason {
     Lockup { pc: u32 },
     /// An instruction the backend does not implement yet.
     Unimplemented { pc: u32, opcode: u32 },
+    /// Software requested a system reset (AIRCR.SYSRESETREQ); the caller
+    /// resets the machine before anything else executes.
+    ResetRequested,
     /// The bus rejected an access in a way the core could not report.
     BusError(BusError),
 }

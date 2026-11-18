@@ -97,6 +97,25 @@ fn round_f32(x: f64, mode: Round) -> (f32, bool) {
     (r, true)
 }
 
+/// IEEE 754 overflow: the result rounded as if the exponent range were
+/// unbounded is larger in magnitude than `f32::MAX`.
+fn overflows(x: f64, mode: Round) -> bool {
+    let max = f32::MAX as f64;
+    let ulp = 2f64.powi(104); // spacing of f32 values at the top binade
+    let a = x.abs();
+    let toward_inf = match mode {
+        Round::Nearest => return a >= max + ulp / 2.0,
+        Round::Zero => false,
+        Round::PlusInf => x > 0.0,
+        Round::MinusInf => x < 0.0,
+    };
+    if toward_inf {
+        a > max
+    } else {
+        a >= max + ulp
+    }
+}
+
 /// Round to an integer in the given mode.
 fn round_int(x: f64, mode: Round) -> f64 {
     match mode {
@@ -222,7 +241,9 @@ impl ArmV7M {
         }
         let mode = self.rmode();
         let (mut r, inexact) = round_f32(exact, mode);
-        if r.is_infinite() && exact.is_finite() {
+        if exact.is_finite() && overflows(exact, mode) {
+            // The result is ±∞ or ±MAX depending on the rounding mode, but
+            // overflow is signalled either way (#4).
             self.fpscr |= OFC | IXC;
             return r.to_bits();
         }
@@ -719,6 +740,39 @@ mod tests {
         assert_eq!(round_f32(x, Round::PlusInf).0, next_toward(1.0, true));
         assert_eq!(round_f32(-x, Round::Zero).0, -1.0);
         assert_eq!(round_f32(1e300, Round::Zero).0, f32::MAX);
+    }
+
+    fn mul_with_mode(a: f32, b: f32, rmode: u32) -> (f32, u32) {
+        let mut cpu = ArmV7M::new();
+        cpu.fpscr = rmode << 22;
+        let r = cpu.fp_binop(a.to_bits(), b.to_bits(), Op::Mul);
+        (f32::from_bits(r), cpu.fpscr & 0x9F)
+    }
+
+    #[test]
+    fn overflow_is_flagged_in_every_rounding_mode() {
+        // https://github.com/elecage/Simucleo/issues/4
+        assert_eq!(mul_with_mode(f32::MAX, 2.0, 0b11), (f32::MAX, OFC | IXC)); // RZ saturates
+        assert_eq!(
+            mul_with_mode(f32::MAX, 2.0, 0b00),
+            (f32::INFINITY, OFC | IXC)
+        );
+        assert_eq!(mul_with_mode(f32::MAX, 2.0, 0b10), (f32::MAX, OFC | IXC)); // RM, positive
+        assert_eq!(mul_with_mode(-f32::MAX, 2.0, 0b01), (-f32::MAX, OFC | IXC)); // RP, negative
+        assert_eq!(
+            mul_with_mode(-f32::MAX, 2.0, 0b10),
+            (f32::NEG_INFINITY, OFC | IXC)
+        );
+        // Above MAX by less than half an ulp (2^103): rounds back to MAX,
+        // inexact but no overflow; in RZ the same holds below a full ulp.
+        let mut cpu = ArmV7M::new();
+        let r = cpu.fp_binop(f32::MAX.to_bits(), 2f32.powi(100).to_bits(), Op::Add);
+        assert_eq!((f32::from_bits(r), cpu.fpscr & 0x9F), (f32::MAX, IXC));
+        let mut cpu = ArmV7M::new();
+        cpu.fpscr = 0b11 << 22;
+        let r = cpu.fp_binop(f32::MAX.to_bits(), 2f32.powi(103).to_bits(), Op::Add);
+        assert_eq!((f32::from_bits(r), cpu.fpscr & 0x9F), (f32::MAX, IXC));
+        assert_eq!(mul_with_mode(f32::MAX, 1.0, 0b11), (f32::MAX, 0));
     }
 
     #[test]

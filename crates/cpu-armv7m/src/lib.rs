@@ -464,6 +464,9 @@ impl CpuBackend for ArmV7M {
             match self.step(&mut ctx) {
                 Ok(()) => {
                     ctx.sys.advance(self.cyc);
+                    if ctx.sys.reset_requested {
+                        return result(&ctx, StopReason::ResetRequested);
+                    }
                     if self.svc {
                         let regs = self.registers();
                         let taken = ctx

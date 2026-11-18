@@ -31,6 +31,7 @@ pub struct Nucleo {
     pub bus: Stm32f401Bus,
     pub sys: CortexM,
     pub firmware: Option<FirmwareImage>,
+    resets: u32,
 }
 
 impl Default for Nucleo {
@@ -51,6 +52,7 @@ impl Nucleo {
             bus: Stm32f401Bus::new(),
             sys: CortexM::new(),
             firmware: None,
+            resets: 0,
         }
     }
 
@@ -98,8 +100,9 @@ impl Nucleo {
         loop {
             let budget = end.saturating_sub(self.sys.cycles);
             let r = self.cpu.run(&mut self.bus, &mut self.sys, budget);
-            if self.sys.reset_requested {
+            if self.sys.reset_requested || r.stop == StopReason::ResetRequested {
                 self.sys.reset_requested = false;
+                self.resets += 1;
                 if self.reset().is_err() {
                     return RunResult {
                         cycles: self.sys.cycles - start,
@@ -139,6 +142,11 @@ impl Nucleo {
         std::mem::take(&mut self.bus.pin_events)
     }
 
+    /// Number of software resets (SYSRESETREQ) performed so far.
+    pub fn software_resets(&self) -> u32 {
+        self.resets
+    }
+
     /// Name of the function containing `addr` (nearest symbol at or below).
     pub fn symbol_at(&self, addr: u32) -> Option<&str> {
         let fw = self.firmware.as_ref()?;
@@ -146,5 +154,47 @@ impl Nucleo {
             .range(..=addr & !1)
             .next_back()
             .map(|(_, n)| n.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use simucleo_core::bus::Bus;
+
+    /// Reset handler: count boots in SRAM[0]; on the first boot request a
+    /// reset (AIRCR = 0x05FA0004; DSB) and then write 0xAA to SRAM[4], which
+    /// must never execute. Assembled from:
+    ///   ldr r2,=0x20000000; ldr r3,[r2]; adds r3,#1; str r3,[r2]; cmp r3,#1
+    ///   bne done; ldr r0,=0xE000ED0C; ldr r1,=0x05FA0004; str r1,[r0]; dsb
+    ///   movs r3,#0xAA; str r3,[r2,#4]; done: b done
+    const RESET_PROGRAM: [u8; 48] = [
+        0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0x4f, 0xf0, 0x00, 0x52, 0x13, 0x68, 0x01,
+        0x33, 0x13, 0x60, 0x01, 0x2b, 0x06, 0xd1, 0x04, 0x48, 0x04, 0x49, 0x01, 0x60, 0xbf, 0xf3,
+        0x4f, 0x8f, 0xaa, 0x23, 0x53, 0x60, 0xfe, 0xe7, 0x00, 0x00, 0x0c, 0xed, 0x00, 0xe0, 0x04,
+        0x00, 0xfa, 0x05,
+    ];
+
+    #[test]
+    fn sysresetreq_resets_at_the_next_instruction_boundary() {
+        // https://github.com/elecage/Simucleo/issues/5
+        for budget in [20, 100, 10_000] {
+            let mut board = Nucleo::new();
+            board.bus.load(0x0800_0000, &RESET_PROGRAM).unwrap();
+            board.reset().unwrap();
+            let r = board.run(budget);
+            assert_eq!(r.stop, StopReason::BudgetExhausted, "budget {budget}");
+            assert_eq!(board.software_resets(), 1, "budget {budget}");
+            assert_eq!(
+                board.bus.read_u32(0x2000_0000).unwrap(),
+                2,
+                "booted twice (budget {budget})"
+            );
+            assert_eq!(
+                board.bus.read_u32(0x2000_0004).unwrap(),
+                0,
+                "code after the request ran (budget {budget})"
+            );
+        }
     }
 }

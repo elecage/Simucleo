@@ -1,0 +1,113 @@
+/// <reference lib="webworker" />
+// Runs the simulator off the UI thread and keeps it in step with wall time.
+import init, { Simulator, version } from "../wasm/pkg/simucleo_wasm.js";
+import type { FromWorker, SimFrame, ToWorker } from "./protocol";
+
+const FRAME_MS = 16; // ~60 Hz display updates
+const WORK_BUDGET_MS = 12; // wall time we allow ourselves per frame
+
+let sim: Simulator | null = null;
+let loaded = false;
+let running = false;
+let speed = 1;
+let lastWall = 0;
+let achieved = 0;
+let timer: ReturnType<typeof setTimeout> | null = null;
+
+const post = (m: FromWorker) => (self as unknown as Worker).postMessage(m);
+
+function sendFrame() {
+  if (!sim) return;
+  const frame = JSON.parse(sim.frame()) as SimFrame;
+  post({ type: "frame", frame, console: sim.takeConsole(), running, speed: achieved });
+}
+
+function tick() {
+  timer = null;
+  if (!sim || !running) return;
+  const now = performance.now();
+  // Clamp: after the tab was in the background, do not try to catch up.
+  const wallDt = Math.min(now - lastWall, 100);
+  lastWall = now;
+  const startSim = sim.timeMs();
+  let target = Number.isFinite(speed) ? wallDt * speed : Infinity;
+  while (target > 0 && performance.now() - now < WORK_BUDGET_MS) {
+    const step = Math.min(target, 10);
+    const stopped = sim.runForMs(step);
+    target -= step;
+    if (stopped) {
+      running = false;
+      break;
+    }
+  }
+  const simDt = sim.timeMs() - startSim;
+  const ratio = wallDt > 0 ? simDt / wallDt : 0;
+  achieved = achieved === 0 ? ratio : achieved * 0.8 + ratio * 0.2;
+  sendFrame();
+  if (running) timer = setTimeout(tick, FRAME_MS);
+}
+
+function start() {
+  if (!loaded || running || !sim || sim.stopped()) return;
+  running = true;
+  achieved = 0;
+  lastWall = performance.now();
+  timer = setTimeout(tick, 0);
+}
+
+function stop() {
+  running = false;
+  if (timer) clearTimeout(timer);
+  timer = null;
+  sendFrame();
+}
+
+self.onmessage = (e: MessageEvent<ToWorker>) => {
+  const m = e.data;
+  if (!sim) return;
+  switch (m.type) {
+    case "load":
+      stop();
+      try {
+        sim.loadElf(new Uint8Array(m.bytes));
+        loaded = true;
+        post({ type: "loaded", name: m.name });
+      } catch (err) {
+        loaded = false;
+        post({ type: "loaded", name: m.name, error: String(err) });
+      }
+      sendFrame();
+      break;
+    case "run":
+      start();
+      break;
+    case "pause":
+      stop();
+      break;
+    case "reset": {
+      const was = running;
+      stop();
+      if (loaded) sim.reset();
+      sendFrame();
+      if (was) start();
+      break;
+    }
+    case "speed":
+      speed = m.value;
+      break;
+    case "button":
+      sim.setUserButton(m.pressed);
+      break;
+    case "console":
+      sim.consoleSend(m.text);
+      break;
+    case "readMemory":
+      post({ type: "memory", addr: m.addr, bytes: sim.readMemory(m.addr, m.len) });
+      break;
+  }
+};
+
+init().then(() => {
+  sim = new Simulator();
+  post({ type: "ready", version: version() });
+});

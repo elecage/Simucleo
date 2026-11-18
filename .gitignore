@@ -8,3 +8,4 @@ firmware/**/build/
 *.tsbuildinfo
 web/test-results/
 web/playwright-report/
+web/public/examples/

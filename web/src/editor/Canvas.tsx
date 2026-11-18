@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import { PART_BY_KIND } from "../parts";
-import { PITCH } from "../parts/types";
+import { PITCH, type VisualState } from "../parts/types";
 import { pinKey, pinPosition, type PinRef, type Project } from "./model";
 
 interface Props {
@@ -11,6 +11,10 @@ interface Props {
   onSelect: (id: string | null) => void;
   onMovePart: (id: string, x: number, y: number) => void;
   onAddWire: (a: PinRef, b: PinRef) => void;
+  /** Live state from the simulator, by part id (LED brightness, …). */
+  visuals?: Record<string, VisualState>;
+  /** A pressable element (`data-action`) on a part went down or up. */
+  onPartAction?: (partId: string, action: string, down: boolean) => void;
 }
 
 type Drag =
@@ -19,13 +23,29 @@ type Drag =
 
 const LAYER: Record<string, number> = { board: 0, basic: 1 };
 
-export function Canvas({ project, netOf, selected, onSelect, onMovePart, onAddWire }: Props) {
+export function Canvas({ project, netOf, selected, onSelect, onMovePart, onAddWire, visuals, onPartAction }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: 1.6 });
   const [drag, setDrag] = useState<Drag | null>(null);
   const [pendingWire, setPendingWire] = useState<PinRef | null>(null);
   const [mouse, setMouse] = useState({ x: 0, y: 0 });
   const [hover, setHover] = useState<{ pin: PinRef; label: string } | null>(null);
+  const [pressed, setPressed] = useState<{ part: string; action: string } | null>(null);
+
+  // Release a pressed board button wherever the pointer goes up.
+  useEffect(() => {
+    if (!pressed) return;
+    const up = () => {
+      onPartAction?.(pressed.part, pressed.action, false);
+      setPressed(null);
+    };
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    return () => {
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+  }, [pressed, onPartAction]);
 
   const partById = new Map(project.parts.map((p) => [p.id, p]));
   const highlighted = hover ? netOf(hover.pin) : new Set<string>();
@@ -138,12 +158,21 @@ export function Canvas({ project, netOf, selected, onSelect, onMovePart, onAddWi
               <g
                 onPointerDown={(e) => {
                   e.stopPropagation();
+                  const action = (e.target as Element).closest("[data-action]")?.getAttribute("data-action");
+                  if (action && onPartAction) {
+                    setPressed({ part: part.id, action });
+                    onPartAction(part.id, action, true);
+                    return;
+                  }
                   onSelect(part.id);
                   const p = toCanvas(e);
                   startDrag(e, { kind: "part", id: part.id, dx: p.x / PITCH - part.x, dy: p.y / PITCH - part.y });
                 }}
               >
-                {def.render({ ...def.props, ...part.props }, {})}
+                {def.render({ ...def.props, ...part.props }, {
+                  ...(visuals?.[part.id] ?? {}),
+                  pressed: pressed?.part === part.id && pressed.action === "b1",
+                })}
               </g>
             </g>
           );

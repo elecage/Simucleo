@@ -13,7 +13,7 @@ use std::process::ExitCode;
 use simucleo_core::bus::Bus;
 use simucleo_core::cortexm::exc;
 use simucleo_core::cpu::StopReason;
-use simucleo_nucleo::{Nucleo, Warning};
+use simucleo_nucleo::Nucleo;
 use simucleo_periph_stm32f4::{map, regmap};
 
 const USAGE: &str = "usage: simucleo info <firmware.elf>
@@ -179,15 +179,7 @@ fn run(path: &str, opts: RunOptions) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     for w in &board.bus.warnings {
-        match w {
-            Warning::ClockDisabled { peripheral, enable_bit } => {
-                println!("warning: {peripheral} was accessed while its clock was off (set {enable_bit} first)")
-            }
-            Warning::FlashLatency { hclk, latency, required } => println!(
-                "warning: HCLK {:.0} MHz needs {required} flash wait states but FLASH.ACR.LATENCY is {latency}",
-                *hclk as f64 / 1e6
-            ),
-        }
+        println!("warning: {w}");
     }
 
     let events = board.take_pin_events();

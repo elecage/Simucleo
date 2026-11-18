@@ -56,6 +56,21 @@ pub enum Warning {
     },
 }
 
+impl std::fmt::Display for Warning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Warning::ClockDisabled { peripheral, enable_bit } => {
+                write!(f, "{peripheral} was accessed while its clock was off (set {enable_bit} first)")
+            }
+            Warning::FlashLatency { hclk, latency, required } => write!(
+                f,
+                "HCLK {:.0} MHz needs {required} flash wait states but FLASH.ACR.LATENCY is {latency}",
+                *hclk as f64 / 1e6
+            ),
+        }
+    }
+}
+
 /// USART instances: (name, base, IRQ, on APB2, ENR offset, enable bit).
 const USARTS: [(&str, u32, u16, bool, u32, u32, &str); 3] = [
     (

@@ -3,7 +3,11 @@ import { Canvas } from "./editor/Canvas";
 import { defaultProject, newId, pinKey, toCircuit, type PinRef, type Project } from "./editor/model";
 import { PARTS, PART_BY_KIND } from "./parts";
 import { nucleoSignal } from "./parts/nucleo";
+import { BottomPanel } from "./run/BottomPanel";
+import { RunControls, useExamples } from "./run/RunControls";
 import { createSimulator, type Netlist, type SimHandle } from "./sim/simulator";
+import { useRunner } from "./sim/useRunner";
+import type { VisualState } from "./parts/types";
 
 const WIRE_COLORS = ["#e53935", "#1e88e5", "#43a047", "#fdd835", "#fb8c00", "#8e24aa", "#212121"];
 const CATEGORY_LABEL: Record<string, string> = {
@@ -17,7 +21,23 @@ export function App() {
   const [project, setProject] = useState<Project>(defaultProject);
   const [selected, setSelected] = useState<string | null>(null);
   const [wireColor, setWireColor] = useState(WIRE_COLORS[0]);
-  const [firmware, setFirmware] = useState<string | null>(null);
+  const runner = useRunner();
+  const examples = useExamples();
+
+  // Board state from the running firmware: LD2 is PA5 (lit when high).
+  const visuals = useMemo<Record<string, VisualState>>(() => {
+    const ld2 = runner.frame?.pins.find((p) => p.port === "A" && p.pin === 5 && p.driven);
+    return { nucleo: { brightness: ld2?.duty ?? 0 } };
+  }, [runner.frame]);
+  const { setButton, reset } = runner;
+  const onPartAction = useCallback(
+    (part: string, action: string, down: boolean) => {
+      if (part !== "nucleo") return;
+      if (action === "b1") setButton(down);
+      if (action === "reset" && down) reset();
+    },
+    [setButton, reset],
+  );
 
   useEffect(() => {
     createSimulator().then(setSim, (e) => setSimError(String(e)));
@@ -64,7 +84,7 @@ export function App() {
     // Drop new parts below the default board/breadboard, staggered so they never stack.
     const n = project.parts.length;
     const x = 42 + ((n * 4) % 28);
-    const y = 32 + 4 * Math.floor(n / 7);
+    const y = 27 + 3 * Math.floor(n / 7);
     setProject((p) => ({ ...p, parts: [...p.parts, { id, kind, x, y, props: { ...def.props } }] }));
     setSelected(id);
   };
@@ -86,16 +106,6 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [deleteSelected]);
 
-  const onElf = async (file: File) => {
-    if (!sim) return;
-    try {
-      sim.loadElf(new Uint8Array(await file.arrayBuffer()));
-      setFirmware(`${file.name} — reset PC = 0x${sim.pc().toString(16).padStart(8, "0")}`);
-    } catch (e) {
-      setFirmware(`로드 실패: ${e}`);
-    }
-  };
-
   const selectedPart = project.parts.find((p) => p.id === selected);
   const selectedDef = selectedPart && PART_BY_KIND[selectedPart.kind];
   const categories = [...new Set(PARTS.map((p) => p.category))];
@@ -104,14 +114,9 @@ export function App() {
     <div className="app">
       <header className="toolbar">
         <strong>Simucleo</strong>
-        <label className="file-btn">
-          ELF 업로드
-          <input type="file" accept=".elf" hidden onChange={(e) => e.target.files?.[0] && onElf(e.target.files[0])} />
-        </label>
-        <button disabled title="CPU 코어 구현 후 활성화 (M0)">▶ 실행</button>
-        <span className="status">
+        <RunControls runner={runner} examples={examples} />
+        <span className="version" title="시뮬레이터 코어 버전">
           {simError ? `WASM 로드 실패: ${simError}` : sim ? `core v${sim.version}` : "WASM 로딩 중…"}
-          {firmware && ` · ${firmware}`}
         </span>
       </header>
 
@@ -149,6 +154,8 @@ export function App() {
           onMovePart={(id, x, y) =>
             setProject((p) => ({ ...p, parts: p.parts.map((q) => (q.id === id ? { ...q, x, y } : q)) }))
           }
+          visuals={visuals}
+          onPartAction={onPartAction}
           onAddWire={(a, b) =>
             setProject((p) => {
               // Both ends must exist when the wire is made (#2).
@@ -158,7 +165,19 @@ export function App() {
             })
           }
         />
+        {runner.frame?.stopped && (
+          <div className="diagnosis" role="alert">
+            <b>펌웨어가 멈췄습니다.</b> {runner.frame.stopped}
+          </div>
+        )}
+        {runner.frame?.warnings.map((w) => (
+          <div key={w} className="warning">
+            ⚠ {w}
+          </div>
+        ))}
       </main>
+
+      <BottomPanel runner={runner} />
 
       <aside className="inspector">
         <h3>속성</h3>

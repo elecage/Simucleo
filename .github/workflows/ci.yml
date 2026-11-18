@@ -65,11 +65,19 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
         working-directory: web
+      - name: Build the example firmware bundled with the site
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+          make -C firmware/bare-blinky
+          make -C firmware/hal-blinky variants
+          make -C firmware/hal-uart-printf
+      - run: npm run examples
+        working-directory: web
       - run: npm run wasm
         working-directory: web
       - run: npm run build
         working-directory: web
-      - name: End-to-end tests (wiring editor)
+      - name: End-to-end tests (wiring editor, running firmware)
         run: |
           npx playwright install --with-deps chromium
           npm run e2e

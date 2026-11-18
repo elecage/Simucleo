@@ -6,10 +6,11 @@
 
 **웹에서 바로 써 보기: https://elecage.github.io/Simucleo/** (`main`에 병합될 때마다 자동 배포)
 
-![배선 편집기 v0](docs/images/wiring-editor-v0.png)
+![웹에서 HAL 예제 실행](docs/images/web-run.png)
 
-> **상태: M1 완료.** Cortex-M4F CPU 코어(Unicorn과 명령어 단위로 검증)와 RCC/PWR/FLASH/GPIO/USART가 동작해,
-> STM32CubeMX HAL로 만든 펌웨어가 84 MHz로 실행되고 `printf`가 가상 콘솔에 나온다. 웹 화면에서의 실행(M2)이 다음 단계다.
+> **상태: M2 완료.** 브라우저에서 ELF를 올리거나 내장 예제를 골라 실행하면 LD2가 실시간으로 깜빡이고,
+> `printf`가 가상 콘솔에 나오며, B1 버튼을 누를 수 있다. CPU 코어는 Unicorn과 명령어 단위로 검증했고,
+> RCC/PWR/FLASH/GPIO/USART가 동작해 STM32CubeMX HAL 펌웨어가 84 MHz로 실행된다. 다음은 외부 부품 연결(M3)이다.
 > 진행 상황은 [로드맵](docs/roadmap.md)을 참고.
 
 ## 특징 (목표)
@@ -57,6 +58,8 @@ cargo test --workspace
 ```bash
 cd web && npm install && npm run wasm && npm run dev
 ```
+
+내장 예제를 쓰려면 먼저 펌웨어를 빌드하고 `npm run examples`로 `web/public/examples`에 복사한다(아래 펌웨어 README 참고).
 
 ```bash
 make -C firmware/hal-uart-printf && cargo run --release -p simucleo-cli -- run firmware/hal-uart-printf/build/hal-uart-printf.elf --input "hi" --input-at 300

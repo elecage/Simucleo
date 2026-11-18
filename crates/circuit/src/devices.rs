@@ -370,6 +370,17 @@ impl Ds3231 {
         self.epoch_at_zero = unix as f64 - now.floor();
     }
 
+    /// Set the clock from time registers written in this transfer.
+    fn commit(&mut self, now: Seconds) {
+        if self.time_written {
+            // The 12/24 h bit lives in the hours register.
+            let mode = self.regs[2] & 0x40;
+            self.apply_time(now);
+            self.regs[2] = (self.regs[2] & !0x40) | mode;
+            self.time_written = false;
+        }
+    }
+
     /// Text for the part on screen: "2026-11-18 21:30:05".
     pub fn display(&self, now: Seconds) -> String {
         let t = self.unix(now).floor() as i64;
@@ -389,6 +400,8 @@ impl I2cDevice for Ds3231 {
         0x68
     }
     fn start(&mut self, _read: bool, now: Seconds) {
+        // A repeated START ends the write phase: commit it first.
+        self.commit(now);
         self.latched = self.time_regs(self.unix(now));
         // Writing some of the time registers keeps the others running.
         self.regs[..7].copy_from_slice(&self.latched);
@@ -421,13 +434,7 @@ impl I2cDevice for Ds3231 {
         v
     }
     fn stop(&mut self, now: Seconds) {
-        if self.time_written {
-            // The 12/24 h bit lives in the hours register.
-            let mode = self.regs[2] & 0x40;
-            self.apply_time(now);
-            self.regs[2] = (self.regs[2] & !0x40) | mode;
-            self.time_written = false;
-        }
+        self.commit(now);
     }
 }
 
@@ -1002,6 +1009,15 @@ mod tests {
             [0x02, 0x00, 0x00, 6, 0x01, 0x01, 0x27]
         );
         assert_eq!(r.display(102.5), "2027-01-01 00:00:02");
+        // Write the seconds, then a repeated START to read them back.
+        r.start(false, 200.0);
+        r.write(0x00, 200.0);
+        r.write(0x30, 200.0);
+        r.start(false, 200.0);
+        r.write(0x00, 200.0);
+        r.start(true, 200.0);
+        assert_eq!(r.read(200.0), 0x30);
+        r.stop(200.0);
     }
 
     #[test]

@@ -939,9 +939,12 @@ impl CircuitSim {
             .chain(spi_parts.iter().map(|b: &SpiPart| b.id.as_str()))
             .collect();
         self.devices.retain(|id, _| ids.contains(id.as_str()));
+        // A transfer in progress continues if its device is still on the
+        // bus (a switch was pressed or a sensor value changed meanwhile).
+        let on_bus = |id: &str| bus_parts.iter().any(|b: &BusPart| b.id == id);
+        self.i2c_active.retain(|_, id| on_bus(id));
         self.bus_parts = bus_parts;
         self.spi_parts = spi_parts;
-        self.i2c_active.clear();
         self.nodes = nodes;
         self.elements = elements;
         self.visuals = visuals;
@@ -2213,5 +2216,26 @@ mod tests {
             visual(&v, "rtc").text.as_deref(),
             Some("2026-01-01 00:00:07")
         );
+    }
+
+    #[test]
+    fn i2c_transfer_survives_an_unrelated_rebuild() {
+        let mut s = sim(
+            vec![part("aht", "aht20", &[]), part("sw", "tact-switch", &[])],
+            vec![
+                wire(("aht", "VCC"), ("mcu", "3V3")),
+                wire(("aht", "GND"), ("mcu", "GND")),
+                wire(("aht", "SCL"), ("mcu", "PB8")),
+                wire(("aht", "SDA"), ("mcu", "PB9")),
+            ],
+        );
+        let (scl, sda) = ((1, 8), (1, 9));
+        s.update(0, &drives(&s, |_| Drive::Float));
+        assert!(s.i2c_start(0, scl, sda, 0x38, false));
+        assert!(s.i2c_write(0, scl, 0xAC));
+        // B1 pressed mid-transfer: the circuit is rebuilt.
+        s.set_pressed("B1", true, 10);
+        s.update(10, &drives(&s, |_| Drive::Float));
+        assert!(s.i2c_write(10, scl, 0x33), "still addressed");
     }
 }

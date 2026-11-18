@@ -381,6 +381,14 @@ impl Nucleo {
         }
     }
 
+    /// Turn a rotary encoder part by `detents` (negative: counter-clockwise).
+    pub fn rotate(&mut self, part: &str, detents: i32) {
+        let now = self.sys.cycles;
+        if self.circuit.borrow_mut().rotate(part, detents, now) {
+            self.circuit_changed();
+        }
+    }
+
     fn circuit_changed(&mut self) {
         self.bus.set_time(self.sys.cycles);
         self.bus.circuit_changed();

@@ -586,9 +586,19 @@ impl Stm32f401Bus {
             if g.mode(pin) != gpio::PinMode::Alternate || g.af(pin) != af {
                 continue;
             }
+            // The other input of the TI1/TI2 pair (encoder mode).
+            let other = timer::PIN_MAP
+                .iter()
+                .find(|&&(op, opin, oaf, oti, och)| {
+                    oti == ti
+                        && och == ch ^ 1
+                        && self.gpio[op as usize].mode(opin) == gpio::PinMode::Alternate
+                        && self.gpio[op as usize].af(opin) == oaf
+                })
+                .map(|&(op, opin, ..)| self.gpio[op as usize].level(opin));
             let t = &mut self.timers[ti as usize];
             if (0..t.info.channels as usize).any(|c| t.is_input(c)) {
-                t.input_edge(ch as usize, new & (1 << pin) != 0, time);
+                t.input_edge(ch as usize, new & (1 << pin) != 0, time, other);
                 self.reschedule_timer(ti as usize);
             }
         }

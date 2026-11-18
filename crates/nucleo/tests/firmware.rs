@@ -934,3 +934,235 @@ fn dht22_is_read_with_input_capture() {
         "{text}"
     );
 }
+
+// ------------------------------------------------- more parts (M8)
+
+fn m8_circuit(parts: serde_json::Value, wires: Vec<serde_json::Value>) -> simucleo_nucleo::Circuit {
+    let mut all = vec![serde_json::json!({"id": "nucleo", "kind": "nucleo-f401re"})];
+    all.extend(parts.as_array().unwrap().iter().cloned());
+    serde_json::from_value(serde_json::json!({"parts": all, "wires": wires})).unwrap()
+}
+
+/// Arduino header names → MCU signals (board pins named by signal pass through).
+fn arduino_signals() -> std::collections::HashMap<String, String> {
+    [
+        ("D2", "PA10"),
+        ("D3", "PB3"),
+        ("D4", "PB5"),
+        ("D5", "PB4"),
+        ("D7", "PA8"),
+        ("D10", "PB6"),
+        ("D11", "PA7"),
+        ("D12", "PA6"),
+        ("D14", "PB9"),
+        ("D15", "PB8"),
+        ("A0", "PA0"),
+    ]
+    .into_iter()
+    .map(|(a, b)| (a.to_string(), b.to_string()))
+    .collect()
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-7seg-keypad"]
+fn seven_segment_multiplexing_and_keypad() {
+    use simucleo_nucleo::BusCatalog;
+    let n = "nucleo";
+    let mut wires = Vec::new();
+    let mut parts = vec![
+        serde_json::json!({"id": "disp", "kind": "seven-segment-4", "props": {"common": "cathode"}}),
+        serde_json::json!({"id": "kp", "kind": "keypad-4x4"}),
+    ];
+    for (i, seg) in ["a", "b", "c", "d", "e", "f", "g", "dp"].iter().enumerate() {
+        let r = format!("r{i}");
+        parts.push(serde_json::json!({"id": r, "kind": "resistor", "props": {"ohms": "470"}}));
+        wires.push(wire_json((n, &format!("PC{i}")), (&r, "1")));
+        wires.push(wire_json((&r, "2"), ("disp", seg)));
+    }
+    for d in 0..4 {
+        wires.push(wire_json(
+            (n, &format!("PB{}", 12 + d)),
+            ("disp", &format!("D{}", d + 1)),
+        ));
+    }
+    for (i, pin) in ["PC8", "PC9", "PC10", "PC11"].iter().enumerate() {
+        wires.push(wire_json((n, pin), ("kp", &format!("R{}", i + 1))));
+    }
+    for (i, pin) in ["PC12", "PD2", "PB1", "PB2"].iter().enumerate() {
+        wires.push(wire_json((n, pin), ("kp", &format!("C{}", i + 1))));
+    }
+    let circuit = m8_circuit(serde_json::Value::Array(parts), wires);
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-7seg-keypad", "hal-7seg-keypad"))
+        .unwrap();
+    board.set_circuit(&circuit, &BusCatalog::default(), &arduino_signals());
+    board.run_for_ns(100e6);
+    board.circuit_frame(0.1);
+    // Type 4, 2, then #.
+    for key in ["kp:4", "kp:2", "kp:#"] {
+        board.press(key, true);
+        board.run_for_ns(60e6);
+        board.press(key, false);
+        board.run_for_ns(60e6);
+    }
+    let text = console_text(&mut board);
+    assert!(
+        text.contains("key 4\r\nkey 2\r\nvalue 42\r\nkey #"),
+        "{text}"
+    );
+    board.circuit_frame(0.0);
+    board.run_for_ns(40e6);
+    let v = board.circuit_frame(0.04);
+    let b = &v.iter().find(|p| p.id == "disp").unwrap().brightness;
+    // Digits 3 and 4 show "4" (b, c, f, g) and "2" (a, b, d, e, g), each
+    // lit a quarter of the time; digits 1 and 2 are blank.
+    let lit = |d: usize| -> Vec<usize> { (0..8).filter(|&s| b[d * 8 + s] > 0.1).collect() };
+    assert_eq!(lit(0), Vec::<usize>::new(), "{b:.2?}");
+    assert_eq!(lit(2), [1, 2, 5, 6], "{b:.2?}");
+    assert_eq!(lit(3), [0, 1, 3, 4, 6], "{b:.2?}");
+    assert!(b[3 * 8] < 0.4, "multiplexed: a quarter duty, {b:.2?}");
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-encoder-stepper-lcd"]
+fn encoder_turns_the_stepper_and_the_lcd_shows_it() {
+    use simucleo_nucleo::BusCatalog;
+    let n = "nucleo";
+    let parts = serde_json::json!([
+        {"id": "enc", "kind": "rotary-encoder"},
+        {"id": "mot", "kind": "stepper-28byj48"},
+        {"id": "lcd", "kind": "lcd-i2c", "props": {"address": "0x27"}},
+        {"id": "r1", "kind": "resistor", "props": {"ohms": "10k"}},
+        {"id": "ntc", "kind": "thermistor", "props": {"ohms": "10k", "temp": 40}}
+    ]);
+    let wires = vec![
+        wire_json((n, "3V3"), ("enc", "+")),
+        wire_json(("enc", "GND"), (n, "GND")),
+        wire_json((n, "D12"), ("enc", "CLK")),
+        wire_json((n, "D11"), ("enc", "DT")),
+        wire_json((n, "D10"), ("enc", "SW")),
+        wire_json((n, "5V"), ("mot", "VCC")),
+        wire_json(("mot", "GND"), (n, "GND")),
+        wire_json((n, "D2"), ("mot", "IN1")),
+        wire_json((n, "D3"), ("mot", "IN2")),
+        wire_json((n, "D4"), ("mot", "IN3")),
+        wire_json((n, "D5"), ("mot", "IN4")),
+        wire_json((n, "5V"), ("lcd", "VCC")),
+        wire_json(("lcd", "GND"), (n, "GND")),
+        wire_json((n, "D15"), ("lcd", "SCL")),
+        wire_json((n, "D14"), ("lcd", "SDA")),
+        wire_json((n, "3V3"), ("r1", "1")),
+        wire_json(("r1", "2"), (n, "A0")),
+        wire_json((n, "A0"), ("ntc", "1")),
+        wire_json(("ntc", "2"), (n, "GND")),
+    ];
+    let circuit = m8_circuit(parts, wires);
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware(
+            "hal-encoder-stepper-lcd",
+            "hal-encoder-stepper-lcd",
+        ))
+        .unwrap();
+    board.set_circuit(&circuit, &BusCatalog::default(), &arduino_signals());
+    board.run_for_ns(300e6);
+    // The driver's inputs float high at reset (PB4 has a pull-up): measure
+    // from where the shaft is now.
+    let start = board
+        .circuit_frame(0.3)
+        .iter()
+        .find(|p| p.id == "mot")
+        .unwrap()
+        .angle
+        .unwrap();
+    // Two detents clockwise: 2/20 of a turn = 36°, 409 half steps.
+    board.rotate("enc", 2);
+    board.run_for_ns(2500e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("detents 2 target 409"), "{text}");
+    let v = board.circuit_frame(2.8);
+    let mot = v.iter().find(|p| p.id == "mot").unwrap();
+    let angle = (mot.angle.unwrap() - start).rem_euclid(360.0);
+    // The first step may be lost: at reset the rotor sat on the coil the
+    // pulled-up input energised, three half steps from where firmware starts.
+    assert!(
+        (angle - 409.0 * 360.0 / 4096.0).abs() <= 360.0 / 4096.0 + 1e-9,
+        "{angle}"
+    );
+    let lcd = v
+        .iter()
+        .find(|p| p.id == "lcd")
+        .unwrap()
+        .lcd
+        .clone()
+        .unwrap();
+    let row = |r: usize| String::from_utf8_lossy(&lcd.rows[r]).to_string();
+    assert!(row(0).starts_with("Pos   35.9"), "{:?}", row(0));
+    assert!(row(1).starts_with("NTC 40.0"), "{:?} (40 °C NTC)", row(1));
+    assert_eq!(lcd.rows[1][9], 0, "custom degree sign");
+    assert!(lcd.backlight);
+    // Back one detent.
+    board.rotate("enc", -1);
+    board.run_for_ns(1000e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("detents 1 target 204"), "{text}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-sonar-onewire"]
+fn sonar_and_ds18b20_are_timed_in_microseconds() {
+    use simucleo_nucleo::BusCatalog;
+    let n = "nucleo";
+    let circuit = |cm: f64| {
+        m8_circuit(
+            serde_json::json!([
+                {"id": "us", "kind": "hc-sr04", "props": {"distance": cm}},
+                {"id": "ds", "kind": "ds18b20", "props": {"temp": -3.25}}
+            ]),
+            vec![
+                wire_json((n, "5V"), ("us", "VCC")),
+                wire_json(("us", "GND"), (n, "GND")),
+                wire_json((n, "D7"), ("us", "TRIG")),
+                wire_json((n, "D3"), ("us", "ECHO")),
+                wire_json((n, "3V3"), ("ds", "VDD")),
+                wire_json(("ds", "GND"), (n, "GND")),
+                wire_json((n, "D2"), ("ds", "DQ")),
+            ],
+        )
+    };
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-sonar-onewire", "hal-sonar-onewire"))
+        .unwrap();
+    board.set_circuit(&circuit(123.4), &BusCatalog::default(), &arduino_signals());
+    board.run_for_ns(2200e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("DS18B20 ROM 28-"), "{text}");
+    assert!(text.contains("CRC ok"), "{text}");
+    assert!(
+        text.contains("distance 123.4 cm | temperature -3.25 C"),
+        "{text}"
+    );
+    board.set_circuit(&circuit(7.0), &BusCatalog::default(), &arduino_signals());
+    board.run_for_ns(2200e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("distance 7.0 cm"), "{text}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}

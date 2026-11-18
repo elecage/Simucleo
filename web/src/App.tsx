@@ -172,6 +172,9 @@ export function App() {
         overcurrent: v.overcurrent,
         on: v.on,
         freq: v.freq,
+        angle: v.angle,
+        rpm: v.rpm,
+        unpowered: v.unpowered,
       };
       if (v.id === "LD2") {
         if (boardId) out[boardId] = { ...out[boardId], brightness: state.brightness, overcurrent: state.overcurrent };
@@ -377,6 +380,12 @@ export function App() {
               return { ...p, wires: [...p.wires, wire] };
             })
           }
+          onPropChange={(id, key, value) =>
+            setProject((p) => ({
+              ...p,
+              parts: p.parts.map((q) => (q.id === id ? { ...q, props: { ...q.props, [key]: value } } : q)),
+            }))
+          }
           onMoveWireEnd={(id, end, pin) =>
             setProject((p) => ({ ...p, wires: p.wires.map((w) => (w.id === id ? { ...w, [end]: pin } : w)) }))
           }
@@ -426,7 +435,33 @@ export function App() {
                   ...p,
                   parts: p.parts.map((q) => (q.id === selectedPart.id ? { ...q, props: { ...q.props, [k]: value } } : q)),
                 }));
+              const setNum = (value: number) =>
+                setProject((p) => ({
+                  ...p,
+                  parts: p.parts.map((q) => (q.id === selectedPart.id ? { ...q, props: { ...q.props, [k]: value } } : q)),
+                }));
               const options = selectedDef.propOptions?.[k];
+              const range = selectedDef.ranges?.[k];
+              if (range) {
+                // Live input: a slider (log scale for light), plus the value.
+                const num = Number(v);
+                const toSlider = (x: number) => (range.log ? Math.log10(Math.max(range.min, x)) : x);
+                const fromSlider = (x: number) => (range.log ? Math.round(10 ** x) : x);
+                return (
+                  <label key={k} className="prop">
+                    {range.label}: {range.unit ? `${num} ${range.unit}` : `${Math.round(num * 100)}%`}
+                    <input
+                      type="range"
+                      aria-label={k}
+                      min={toSlider(range.min)}
+                      max={toSlider(range.max)}
+                      step={range.log ? 0.01 : range.step}
+                      value={toSlider(num)}
+                      onChange={(e) => setNum(fromSlider(Number(e.target.value)))}
+                    />
+                  </label>
+                );
+              }
               if (k === "ohms") {
                 // Any value: typed, or picked from common ones.
                 const r = parseOhms(v);

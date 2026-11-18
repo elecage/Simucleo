@@ -17,6 +17,9 @@ export interface PartFrame {
   on?: number;
   freq?: number;
   pressed?: boolean;
+  angle?: number;
+  rpm?: number;
+  unpowered?: boolean;
 }
 
 /** Level changes of a probed pin within one frame. */

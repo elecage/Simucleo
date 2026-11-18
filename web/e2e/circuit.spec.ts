@@ -142,3 +142,31 @@ test("projects save, reopen and survive a reload", async ({ page }) => {
   expect(svgText).toContain("<svg");
   expect(svgText).toContain('data-id="sw1"');
 });
+
+test("analog: the pot steers the servo through the ADC; light sets motor speed", async ({ page }) => {
+  await loadExampleProject(page, "hal-adc-servo");
+  await expect(consoleOut(page)).toContainText("pot 2047", { timeout: 5000 }); // knob at 50 %
+  const angle = () =>
+    page.locator("[data-id=sv] [data-angle]").evaluate((e) => Number((e as HTMLElement).dataset.angle));
+  await expect.poll(angle).toBeGreaterThan(85);
+  expect(await angle()).toBeLessThan(95);
+
+  // Drag the knob up to the top.
+  const k = (await page.locator("[data-id=pot] .pot-knob").boundingBox())!;
+  await page.mouse.move(k.x + k.width / 2, k.y + k.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(k.x + k.width / 2, k.y - 200, { steps: 10 });
+  await page.mouse.up();
+  await expect(consoleOut(page)).toContainText("pot 4095", { timeout: 5000 });
+  await expect.poll(angle).toBeGreaterThan(175);
+
+  // Darkness: the LDR's resistance rises, A1 goes up, the motor slows down.
+  const rpm = () => page.locator("[data-id=m] [data-rpm]").evaluate((e) => Number((e as HTMLElement).dataset.rpm));
+  await expect.poll(rpm).toBeGreaterThan(150);
+  // Select the LDR (wires cross it, so press its body directly).
+  await page.locator("[data-id=ldr] .ldr-body").dispatchEvent("pointerdown", { bubbles: true });
+  await page.locator("[data-id=ldr] .ldr-body").dispatchEvent("pointerup", { bubbles: true });
+  await expect(page.locator(".inspector")).toContainText("조도센서");
+  await page.getByLabel("lux").fill("0"); // range input: log10(lux), so 0 → 1 lux
+  await expect.poll(rpm, { timeout: 5000 }).toBeLessThan(60);
+});

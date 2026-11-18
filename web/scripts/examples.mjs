@@ -16,6 +16,7 @@ const EXAMPLES = [
   ["hal-button-exti", "hal-button-exti.elf", "HAL: B1 and a button on D2 raise EXTI interrupts; toggles LD2 and an LED on D7"],
   ["hal-pwm-led", "hal-pwm-led.elf", "HAL: TIM2/TIM3 PWM — LD2 breathes, RGB LED on D3/D5/D6 cycles colours"],
   ["hal-buzzer-melody", "hal-buzzer-melody.elf", "HAL: TIM1 PWM plays a melody on a passive buzzer on D8"],
+  ["hal-adc-servo", "hal-adc-servo.elf", "HAL: ADC reads a potentiometer, LDR and TMP36; the pot steers a servo (TIM3 50 Hz), light sets a DC motor's speed"],
   ["freertos-two-tasks", "freertos-two-tasks.elf", "FreeRTOS (CMSIS-RTOS v2): Blink, Count and Button threads; B1 releases a semaphore — see the RTOS tab"],
   ["freertos-queue-uart", "freertos-queue-uart.elf", "FreeRTOS: UART RX ISR → queue → echo task; sensor → queue → logger with heap/stack stats"],
   ["bare-blinky", "bare-blinky.elf", "Bare metal: toggle PA5 with register writes"],

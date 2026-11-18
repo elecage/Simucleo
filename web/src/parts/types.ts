@@ -30,6 +30,8 @@ export interface PartDef {
   props?: Record<string, string | number>;
   /** Choices offered in the inspector for a property (else free text). */
   propOptions?: Record<string, string[]>;
+  /** Live numeric inputs (knob, light, temperature): sliders in the inspector. */
+  ranges?: Record<string, { min: number; max: number; step: number; label: string; unit: string; log?: boolean }>;
   /** Shown in the part library and inspector. */
   description?: string;
   /** Renders the body. Pin markers are drawn by the editor. */
@@ -48,7 +50,12 @@ export interface VisualState {
   on?: number;
   /** Passive buzzer tone in Hz. */
   freq?: number;
+  /** Servo horn / motor shaft angle (degrees). */
   angle?: number;
+  /** Motor speed (rev/min). */
+  rpm?: number;
+  /** The part's supply is too low. */
+  unpowered?: boolean;
   pressed?: boolean;
   burnt?: boolean;
 }

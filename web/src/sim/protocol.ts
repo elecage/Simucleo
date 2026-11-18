@@ -30,6 +30,33 @@ export interface ProbeFrame {
   dense: boolean;
 }
 
+export interface RtosTask {
+  tcb: number;
+  name: string;
+  state: "running" | "ready" | "blocked" | "suspended" | "deleted";
+  priority: number;
+  stackBase: number;
+  stackSize: number | null;
+  stackFreeMin: number | null;
+}
+
+/** Kernel-aware RTOS view (FreeRTOS), per frame. */
+export interface RtosFrame {
+  snapshot: {
+    kernel: string;
+    api: string | null;
+    schedulerRunning: boolean;
+    tick: number;
+    current: number | null;
+    tasks: RtosTask[];
+  };
+  /** [time in ms, TCB that runs from then on] */
+  switches: [number, number][];
+  /** Share of the frame each task ran, by TCB (as a string key). */
+  cpu: Record<string, number>;
+  dense: boolean;
+}
+
 /** One display frame produced by `Simulator.frame()`. */
 export interface SimFrame {
   timeMs: number;
@@ -48,6 +75,8 @@ export interface SimFrame {
   /** Electrical-rule violations (LED without resistor, …). */
   circuitWarnings: string[];
   probes: ProbeFrame[];
+  /** Present when the firmware contains an RTOS (FreeRTOS). */
+  rtos: RtosFrame | null;
 }
 
 export type ToWorker =

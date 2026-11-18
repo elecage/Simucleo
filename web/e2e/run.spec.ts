@@ -81,3 +81,33 @@ test("uploaded ELF runs; registers and memory are visible", async ({ page }) => 
   // First word of the vector table: initial SP 0x20018000, little-endian.
   await expect(page.locator(".memory tr").first()).toContainText("00 80 01 20");
 });
+
+test("RTOS view shows FreeRTOS tasks, their states and CPU use", async ({ page }) => {
+  await loadExample(page, "freertos-two-tasks.elf");
+  await page.getByRole("button", { name: "▶ 실행" }).click();
+  await expect(consoleOut(page)).toContainText("count 1 at 1001 ms", { timeout: 5000 });
+  await page.getByRole("button", { name: "RTOS", exact: true }).click();
+  for (const name of ["Blink", "Count", "Button", "IDLE", "Tmr Svc"]) {
+    await expect(page.locator(`[data-task="${name}"]`)).toBeVisible();
+  }
+  await expect(page.locator('[data-task="Button"]')).toContainText("AboveNormal (31)");
+  await expect(page.getByTestId("task-state-Button")).toHaveText("대기");
+  // Between ticks the idle task runs nearly all the time.
+  await expect.poll(async () => parseFloat((await page.getByTestId("task-cpu-IDLE").textContent())!)).toBeGreaterThan(90);
+  await expect(page.locator('[data-task="Blink"]')).toContainText("/ 512 B");
+
+  // B1 → EXTI → semaphore wakes the Button task.
+  const b1 = (await page.locator("[data-action=b1]").boundingBox())!;
+  await page.mouse.move(b1.x + b1.width / 2, b1.y + b1.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(150);
+  await page.mouse.up();
+  await page.getByRole("button", { name: "가상 콘솔 (USART2)" }).click();
+  await expect(consoleOut(page)).toContainText("B1 pressed (1)", { timeout: 3000 });
+});
+
+test("a firmware without an RTOS says so in the RTOS view", async ({ page }) => {
+  await loadExample(page, "hal-blinky.elf");
+  await page.getByRole("button", { name: "RTOS", exact: true }).click();
+  await expect(page.locator(".tab-body")).toContainText("RTOS를 찾지 못했습니다");
+});

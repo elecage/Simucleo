@@ -13,10 +13,11 @@ CI builds every project here and runs it through `simucleo` as a regression test
 | `hal-button-exti` | CubeMX HAL | B1 and a button on D2 → EXTI interrupts (WFI between presses), LD2 and an LED on D7 | M3 ✅ |
 | `hal-pwm-led` | CubeMX HAL | TIM2/TIM3 PWM at 1 kHz: LD2 breathes, RGB LED on D3/D5/D6 | M3 ✅ |
 | `hal-buzzer-melody` | CubeMX HAL | TIM1 (advanced, MOE) PWM melody on a passive buzzer on D8 | M3 ✅ |
-| `freertos-two-tasks` | CubeMX + FreeRTOS (CMSIS-RTOS v2) | SVC/PendSV/SysTick, PSP, BASEPRI, FP context | M4 (planned) |
+| `freertos-two-tasks` | CubeMX + FreeRTOS (CMSIS-RTOS v2) | Blink/Count/Button threads, mutex, B1 EXTI → semaphore; SVC/PendSV/SysTick, PSP, BASEPRI, HAL tick on TIM11 | M4 ✅ |
+| `freertos-queue-uart` | CubeMX + FreeRTOS (CMSIS-RTOS v2) | UART RX ISR → message queue → echo task; producer/consumer queue; heap and stack statistics | M4 ✅ |
 
 ```sh
-for d in bare-blinky exceptions difftest hal-uart-printf hal-button-exti hal-pwm-led hal-buzzer-melody; do make -C firmware/$d; done
+for d in bare-blinky exceptions difftest hal-uart-printf hal-button-exti hal-pwm-led hal-buzzer-melody freertos-two-tasks freertos-queue-uart; do make -C firmware/$d; done
 make -C firmware/hal-blinky variants
 cargo run --release -p simucleo-cli -- run firmware/bare-blinky/build/bare-blinky.elf --ms 2000
 cargo test --release -p simucleo-nucleo --test firmware -- --include-ignored
@@ -26,6 +27,8 @@ cargo run --release -p simucleo-cli -- run firmware/hal-uart-printf/build/hal-ua
 
 The HAL examples are laid out like STM32CubeMX output (`hal-common/` holds
 `stm32f4xx_it.c`, `stm32f4xx_hal_msp.c`, `SystemClock_Config()`, the HAL
-configuration and the linker script). HAL, CMSIS and the device files are
-vendored under `vendor/` (see `vendor/README.md` for sources and licenses).
+configuration and the linker script). The FreeRTOS examples share
+`freertos-common/` (CubeMX's `FreeRTOSConfig.h`, interrupt handlers with
+SVC/PendSV/SysTick owned by FreeRTOS, and the HAL time base on TIM11).
+HAL, CMSIS, FreeRTOS and the device files are vendored under `vendor/` (see `vendor/README.md` for sources and licenses).
 Building them needs `libnewlib-arm-none-eabi` for `printf`.

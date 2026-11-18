@@ -37,34 +37,6 @@ pub const DMA2_BASE: u32 = 0x4002_6400;
 /// Private peripheral bus: SysTick, NVIC, SCB, FPU (CPACR/FPCCR).
 pub const PPB_BASE: u32 = 0xE000_0000;
 
-const PERIPHERALS: &[(u32, &str)] = &[
-    (TIM2_BASE, "TIM2"),
-    (TIM3_BASE, "TIM3"),
-    (TIM4_BASE, "TIM4"),
-    (TIM5_BASE, "TIM5"),
-    (USART2_BASE, "USART2"),
-    (I2C1_BASE, "I2C1"),
-    (PWR_BASE, "PWR"),
-    (TIM1_BASE, "TIM1"),
-    (USART1_BASE, "USART1"),
-    (ADC1_BASE, "ADC1"),
-    (SPI1_BASE, "SPI1"),
-    (SYSCFG_BASE, "SYSCFG"),
-    (EXTI_BASE, "EXTI"),
-    (TIM9_BASE, "TIM9"),
-    (TIM10_BASE, "TIM10"),
-    (TIM11_BASE, "TIM11"),
-    (GPIOA_BASE, "GPIOA"),
-    (GPIOB_BASE, "GPIOB"),
-    (GPIOC_BASE, "GPIOC"),
-    (GPIOD_BASE, "GPIOD"),
-    (GPIOH_BASE, "GPIOH"),
-    (RCC_BASE, "RCC"),
-    (FLASH_IF_BASE, "FLASH"),
-    (DMA1_BASE, "DMA1"),
-    (DMA2_BASE, "DMA2"),
-];
-
 /// Translate the boot alias at 0x0000_0000 to main flash.
 pub fn resolve_alias(addr: u32) -> u32 {
     if addr < BOOT_ALIAS_SIZE {
@@ -78,13 +50,10 @@ pub fn is_peripheral_space(addr: u32) -> bool {
     (0x4000_0000..0x6000_0000).contains(&addr) || addr >= PPB_BASE
 }
 
-/// Name of the peripheral whose 1 KiB register block contains `addr`.
+/// Name of the peripheral whose register block contains `addr`.
 pub fn peripheral_name(addr: u32) -> Option<&'static str> {
     if (PPB_BASE..0xE010_0000).contains(&addr) {
         return Some("PPB");
     }
-    PERIPHERALS
-        .iter()
-        .find(|(base, _)| (*base..*base + 0x400).contains(&addr))
-        .map(|(_, name)| *name)
+    crate::regmap::peripheral_at(addr).map(|p| p.name)
 }

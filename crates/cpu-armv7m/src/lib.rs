@@ -87,6 +87,10 @@ pub struct ArmV7M {
     it_written: bool,
     svc: bool,
     exc_return: Option<u32>,
+    /// The instruction accessed peripheral space (see `Bus::poll`).
+    periph_touched: bool,
+    /// The instruction branched to itself.
+    self_loop: bool,
 }
 
 impl ArmV7M {
@@ -126,6 +130,7 @@ impl ArmV7M {
 
     pub(crate) fn branch_write_pc(&mut self, addr: u32) {
         self.next_pc = addr & !1;
+        self.self_loop = self.next_pc == self.pc;
         self.cyc += 2;
     }
 
@@ -271,6 +276,9 @@ impl ArmV7M {
         if addr >= 0xE000_0000 {
             return Ok(ctx.sys.read(addr, size).unwrap_or(0));
         }
+        if addr >= 0x4000_0000 {
+            self.periph_touched = true;
+        }
         ctx.bus
             .read(addr, size)
             .map_err(|_| Trap::Fault(Fault::PreciseBus { addr }))
@@ -284,6 +292,9 @@ impl ArmV7M {
                 .sys
                 .write(addr, size, value)
                 .map_err(|_| Trap::Fault(Fault::PreciseBus { addr }));
+        }
+        if addr >= 0x4000_0000 {
+            self.periph_touched = true;
         }
         ctx.bus
             .write(addr, size, value)
@@ -471,11 +482,33 @@ impl CpuBackend for ArmV7M {
             ctx.bus.set_time(ctx.sys.cycles);
             self.svc = false;
             self.exc_return = None;
-            match self.step(&mut ctx) {
+            self.periph_touched = false;
+            self.self_loop = false;
+            let step = self.step(&mut ctx);
+            // Peripheral state may have changed: forward IRQ lines at once so
+            // an interrupt the instruction enabled is taken before the next.
+            if self.periph_touched && ctx.bus.poll(ctx.sys) {
+                if step.is_ok() {
+                    ctx.sys.advance(self.cyc);
+                }
+                return result(&ctx, StopReason::Yield);
+            }
+            match step {
                 Ok(()) => {
                     ctx.sys.advance(self.cyc);
                     if ctx.sys.reset_requested {
                         return result(&ctx, StopReason::ResetRequested);
+                    }
+                    if self.self_loop && !self.in_it_block() {
+                        // `b .`: nothing changes until an interrupt arrives.
+                        let regs = self.registers();
+                        if ctx.sys.execution_priority(&regs) <= 0 {
+                            return result(&ctx, StopReason::Halted { pc: self.pc });
+                        }
+                        // Interruptible idle loop: sleep like WFI so time
+                        // fast-forwards instead of spinning.
+                        self.sleeping = true;
+                        self.sleep_wfe = false;
                     }
                     if self.svc {
                         let regs = self.registers();

@@ -2,36 +2,31 @@
 //!
 //! ```text
 //! simucleo info <firmware.elf>                 # segments, vector table, key symbols
-//! simucleo run  <firmware.elf> [--ms <millis>]  # run and report pin changes
+//! simucleo run  <firmware.elf> [--ms <millis>] [--input <text>] [--baud <rate>]
+//!     # run; print the ST-LINK virtual COM port (USART2), pin changes,
+//!     # warnings and, if the firmware got stuck, why
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
 
 use simucleo_core::bus::Bus;
 use simucleo_core::cortexm::exc;
 use simucleo_core::cpu::StopReason;
-use simucleo_nucleo::Nucleo;
-use simucleo_periph_stm32f4::map;
+use simucleo_nucleo::{Nucleo, Warning};
+use simucleo_periph_stm32f4::{map, regmap};
 
-const USAGE: &str =
-    "usage: simucleo info <firmware.elf>\n       simucleo run <firmware.elf> [--ms <millis>]";
+const USAGE: &str = "usage: simucleo info <firmware.elf>
+       simucleo run <firmware.elf> [--ms <millis>] [--input <text>] [--input-at <millis>] [--baud <terminal baud>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("info") if args.len() == 2 => info(&args[1]),
-        Some("run") if args.len() >= 2 => {
-            let ms = match args.get(2).map(String::as_str) {
-                Some("--ms") => args.get(3).and_then(|v| v.parse().ok()),
-                None => Some(1000),
-                _ => None,
-            };
-            match ms {
-                Some(ms) => run(&args[1], ms),
-                None => Err(USAGE.into()),
-            }
-        }
+        Some("run") if args.len() >= 2 => match parse_run_options(&args[2..]) {
+            Some(opts) => run(&args[1], opts),
+            None => Err(USAGE.into()),
+        },
         _ => Err(USAGE.into()),
     };
     match result {
@@ -88,62 +83,111 @@ fn port_name(p: u8) -> char {
     (b'A' + p) as char
 }
 
-fn run(path: &str, ms: u64) -> Result<(), Box<dyn std::error::Error>> {
+struct RunOptions {
+    ms: f64,
+    input: Option<String>,
+    /// When to type the input (firmware must be listening by then).
+    input_at_ms: f64,
+    baud: Option<u32>,
+}
+
+fn parse_run_options(args: &[String]) -> Option<RunOptions> {
+    let mut o = RunOptions {
+        ms: 1000.0,
+        input: None,
+        input_at_ms: 100.0,
+        baud: None,
+    };
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--ms" => o.ms = it.next()?.parse().ok()?,
+            "--input" => o.input = Some(it.next()?.replace("\\n", "\n").replace("\\r", "\r")),
+            "--input-at" => o.input_at_ms = it.next()?.parse().ok()?,
+            "--baud" => o.baud = Some(it.next()?.parse().ok()?),
+            _ => return None,
+        }
+    }
+    Some(o)
+}
+
+fn run(path: &str, opts: RunOptions) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
     let mut board = load(path)?;
-    let hz = board.clock_hz() as u64;
+    if let Some(b) = opts.baud {
+        board.bus.usart[simucleo_nucleo::VCP].host_baud = b;
+    }
+    let mut pending_input = opts.input.clone();
     let started = std::time::Instant::now();
-    let r = board.run(ms * hz / 1000);
+    let mut garbled = 0usize;
+    let mut r = None;
+    // Run in 10 ms slices so console output appears as it is produced.
+    let slices = (opts.ms / 10.0).ceil().max(1.0) as u64;
+    for _ in 0..slices {
+        if board.time_ns() >= opts.input_at_ms * 1e6 {
+            if let Some(text) = pending_input.take() {
+                board.console_send(text.as_bytes());
+            }
+        }
+        let res = board.run_for_ns(10e6);
+        let out = board.take_console();
+        garbled += out.iter().filter(|b| b.garbled).count();
+        let bytes: Vec<u8> = out.iter().map(|b| b.byte).collect();
+        std::io::stdout().write_all(&bytes)?;
+        std::io::stdout().flush()?;
+        if !matches!(res.stop, StopReason::BudgetExhausted | StopReason::Sleeping) {
+            r = Some(res);
+            break;
+        }
+    }
     let wall = started.elapsed();
     let regs = board.cpu.registers();
-    let sim_ms = board.now() as f64 * 1000.0 / hz as f64;
-
+    println!();
+    println!("---");
     println!(
-        "backend: {}, simulated {:.3} ms ({} cycles at {} MHz) in {:.3} s ({:.1} MIPS-ish)",
+        "backend: {}, simulated {:.3} ms in {:.3} s; core clock now {:.1} MHz",
         board.cpu.name(),
-        sim_ms,
-        board.now(),
-        hz / 1_000_000,
+        board.time_ns() / 1e6,
         wall.as_secs_f64(),
-        board.now() as f64 / wall.as_secs_f64().max(1e-9) / 1e6
+        board.clock_hz() as f64 / 1e6
     );
-    let place = |pc: u32| {
-        board
-            .symbol_at(pc)
-            .map(|s| format!(" <{s}>"))
-            .unwrap_or_default()
-    };
-    match r.stop {
-        StopReason::BudgetExhausted => println!(
-            "still running at pc = {:#010x}{}",
-            regs.pc(),
-            place(regs.pc())
-        ),
-        StopReason::Sleeping => println!(
-            "sleeping (WFI) at pc = {:#010x}{}",
-            regs.pc(),
-            place(regs.pc())
-        ),
-        StopReason::Unimplemented { pc, opcode } => {
-            println!(
-                "STOP: unimplemented instruction {opcode:#06x} at {pc:#010x}{}",
-                place(pc)
-            )
+    if garbled > 0 {
+        let baud = board.bus.usart[simucleo_nucleo::VCP]
+            .baud(&board.bus.clocks())
+            .unwrap_or(0.0);
+        println!(
+            "virtual COM port: {garbled} bytes garbled — USART2 sends at {baud:.0} baud but the terminal listens at {}",
+            board.bus.usart[simucleo_nucleo::VCP].host_baud
+        );
+    }
+    match &r {
+        Some(res) => match board.diagnose(res) {
+            Some(d) => println!("STOP: {d}"),
+            None => println!("STOP: {:?}", res.stop),
+        },
+        None => {
+            let place = board
+                .symbol_at(regs.pc())
+                .map(|s| format!(" <{s}>"))
+                .unwrap_or_default();
+            println!("still running at pc = {:#010x}{place}", regs.pc());
         }
-        StopReason::Lockup { pc } => println!(
-            "STOP: core lockup at {pc:#010x}{} (fault inside HardFault?)",
-            place(pc)
-        ),
-        other => println!("STOP: {other:?}"),
     }
     let ipsr = regs.ipsr();
     if ipsr != 0 {
         println!("in exception handler: {}", exc::name(ipsr));
     }
-    if board.sys.hfsr != 0 || board.sys.cfsr != 0 {
-        println!(
-            "fault status: HFSR={:#010x} CFSR={:#010x} BFAR={:#010x}",
-            board.sys.hfsr, board.sys.cfsr, board.sys.bfar
-        );
+
+    for w in &board.bus.warnings {
+        match w {
+            Warning::ClockDisabled { peripheral, enable_bit } => {
+                println!("warning: {peripheral} was accessed while its clock was off (set {enable_bit} first)")
+            }
+            Warning::FlashLatency { hclk, latency, required } => println!(
+                "warning: HCLK {:.0} MHz needs {required} flash wait states but FLASH.ACR.LATENCY is {latency}",
+                *hclk as f64 / 1e6
+            ),
+        }
     }
 
     let events = board.take_pin_events();
@@ -152,20 +196,16 @@ fn run(path: &str, ms: u64) -> Result<(), Box<dyn std::error::Error>> {
         per_pin.entry((e.port, e.pin)).or_default().push(*e);
     }
     for ((port, pin), evs) in per_pin {
-        let to_ms = |t: u64| t as f64 * 1000.0 / hz as f64;
         let shown: Vec<String> = evs
             .iter()
             .take(6)
             .map(|e| {
-                format!(
-                    "{:.1}ms→{}",
-                    to_ms(e.time),
-                    match e.level {
-                        Some(true) => "H",
-                        Some(false) => "L",
-                        None => "Z",
-                    }
-                )
+                let level = match e.level {
+                    Some(true) => "H",
+                    Some(false) => "L",
+                    None => "Z",
+                };
+                format!("{:.1}ms→{level}", board.ns_at(e.time) / 1e6)
             })
             .collect();
         println!(
@@ -178,18 +218,21 @@ fn run(path: &str, ms: u64) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    let mut periph: BTreeMap<&str, usize> = BTreeMap::new();
-    for a in &board.bus.unimplemented {
-        *periph
-            .entry(map::peripheral_name(a.addr).unwrap_or("?"))
-            .or_default() += 1;
+    let mut periph: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for key in board.bus.regs.accesses.keys() {
+        let name = regmap::describe(key.addr);
+        let p = name.split('.').next().unwrap_or("?").to_string();
+        periph.entry(p).or_default().insert(name);
     }
     if !periph.is_empty() {
-        let list: Vec<String> = periph.iter().map(|(n, c)| format!("{n}×{c}")).collect();
-        println!(
-            "accesses to peripherals not modelled yet: {}",
-            list.join(", ")
-        );
+        println!("peripherals used but not simulated yet (registers keep values, no behaviour):");
+        for (p, regs) in periph {
+            let list: Vec<&str> = regs
+                .iter()
+                .map(|s| s.split('.').nth(1).unwrap_or(s))
+                .collect();
+            println!("  {p}: {}", list.join(", "));
+        }
     }
     Ok(())
 }

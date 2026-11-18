@@ -7,10 +7,11 @@ license.workspace = true
 publish = false
 
 [features]
-unicorn = ["dep:unicorn-engine"]
+unicorn = ["dep:unicorn-engine", "dep:simucleo-core", "dep:simucleo-elf", "dep:simucleo-nucleo"]
 
 [dependencies]
-simucleo-core.workspace = true
-simucleo-elf.workspace = true
-simucleo-nucleo.workspace = true
+# Everything is optional: without the `unicorn` feature this crate is empty.
+simucleo-core = { workspace = true, optional = true }
+simucleo-elf = { workspace = true, optional = true }
+simucleo-nucleo = { workspace = true, optional = true }
 unicorn-engine = { version = "2.1", optional = true }

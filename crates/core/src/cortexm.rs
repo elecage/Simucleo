@@ -653,8 +653,8 @@ impl CortexM {
                 })?;
         }
         if fp_frame {
-            for i in 0..16 {
-                regs.s[i] = bus
+            for (i, s) in regs.s.iter_mut().take(16).enumerate() {
+                *s = bus
                     .read(frame + 0x20 + 4 * i as u32, AccessSize::Word)
                     .unwrap_or(0);
             }

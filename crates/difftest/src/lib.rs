@@ -65,8 +65,8 @@ fn uc_regs(uc: &Unicorn<'_, State>) -> Registers {
         r.r[i] = uc.reg_read(*reg).unwrap() as u32;
     }
     r.xpsr = uc.reg_read(RegisterARM::XPSR).unwrap() as u32;
-    for i in 0..32 {
-        r.s[i] = uc.reg_read(RegisterARM::S0 as i32 + i as i32).unwrap() as u32;
+    for (i, s) in r.s.iter_mut().enumerate() {
+        *s = uc.reg_read(RegisterARM::S0 as i32 + i as i32).unwrap() as u32;
     }
     r.fpscr = uc.reg_read(RegisterARM::FPSCR).unwrap() as u32;
     r

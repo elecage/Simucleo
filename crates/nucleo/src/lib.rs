@@ -166,11 +166,33 @@ impl Nucleo {
     /// Run for up to `cycles` core cycles. Peripheral events happen on time
     /// and sleeping (WFI/WFE or an idle `b .` loop) is fast-forwarded.
     pub fn run(&mut self, cycles: Cycles) -> RunResult {
+        let end = self.sys.cycles.saturating_add(cycles);
+        self.run_until(end, None)
+    }
+
+    /// Run for a simulated duration. The deadline is kept in nanoseconds, so
+    /// it holds even when the firmware changes the core clock mid-way.
+    pub fn run_for_ns(&mut self, ns: f64) -> RunResult {
+        let target = self.time_ns() + ns;
+        self.run_until(Cycles::MAX, Some(target))
+    }
+
+    fn run_until(&mut self, end_cycles: Cycles, end_ns: Option<f64>) -> RunResult {
         let start = self.sys.cycles;
-        let end = start + cycles;
         let mut sleeping = false;
         loop {
             let now = self.sys.cycles;
+            // Re-derive the cycle deadline from the time deadline each round:
+            // the clock may have changed (clock changes always end a round).
+            let mut end = end_cycles;
+            if let Some(t) = end_ns {
+                let left = t - self.time_ns();
+                end = if left <= 0.0 {
+                    now
+                } else {
+                    end.min(now + ((left * self.clock_hz() as f64 / 1e9).ceil() as Cycles).max(1))
+                };
+            }
             if now >= end {
                 let stop = if sleeping {
                     StopReason::Sleeping
@@ -217,29 +239,6 @@ impl Nucleo {
                         stop,
                     }
                 }
-            }
-        }
-    }
-
-    /// Run for a simulated duration (follows clock changes).
-    pub fn run_for_ns(&mut self, ns: f64) -> RunResult {
-        let target = self.time_ns() + ns;
-        let start = self.sys.cycles;
-        loop {
-            let left = target - self.time_ns();
-            if left <= 0.0 {
-                return RunResult {
-                    cycles: self.sys.cycles - start,
-                    stop: StopReason::BudgetExhausted,
-                };
-            }
-            let cycles = ((left * self.clock_hz() as f64 / 1e9).ceil() as Cycles).max(1);
-            let r = self.run(cycles);
-            if !matches!(r.stop, StopReason::BudgetExhausted | StopReason::Sleeping) {
-                return RunResult {
-                    cycles: self.sys.cycles - start,
-                    stop: r.stop,
-                };
             }
         }
     }
@@ -347,6 +346,23 @@ mod tests {
             2,
             "woke, and the ISPR write woke the next WFE"
         );
+    }
+
+    /// RCC_CFGR.HPRE = /8 (HCLK 16 → 2 MHz), then a busy loop.
+    const SLOW_CLOCK_PROGRAM: [u8; 24] = [
+        0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0x02, 0x48, 0xa0, 0x21, 0x01, 0x60, 0x01,
+        0x32, 0xfd, 0xe7, 0x00, 0x00, 0x08, 0x38, 0x02, 0x40,
+    ];
+
+    #[test]
+    fn run_for_ns_holds_its_deadline_when_the_clock_slows_down() {
+        let mut board = Nucleo::new();
+        board.bus.load(0x0800_0000, &SLOW_CLOCK_PROGRAM).unwrap();
+        board.reset().unwrap();
+        board.run_for_ns(10e6);
+        assert_eq!(board.clock_hz(), 2_000_000);
+        let ms = board.time_ns() / 1e6;
+        assert!((10.0..10.01).contains(&ms), "ran {ms} ms instead of 10");
     }
 
     #[test]

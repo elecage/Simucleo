@@ -44,14 +44,46 @@ impl Simulator {
         self.board.cpu.registers().pc()
     }
 
-    /// Run for `cycles` core cycles; returns the stop reason as text.
-    pub fn run(&mut self, cycles: u32) -> String {
-        format!("{:?}", self.board.run(cycles as u64).stop)
+    /// Run for a simulated duration. Returns `""` while the firmware is
+    /// running normally, otherwise an explanation of why it stopped.
+    #[wasm_bindgen(js_name = runForMs)]
+    pub fn run_for_ms(&mut self, ms: f64) -> String {
+        let r = self.board.run_for_ns(ms * 1e6);
+        match self.board.diagnose(&r) {
+            Some(d) => d.to_string(),
+            None => String::new(),
+        }
     }
 
-    /// Simulated time in core cycles.
-    pub fn now(&self) -> f64 {
-        self.board.now() as f64
+    /// Simulated time in milliseconds.
+    #[wasm_bindgen(js_name = timeMs)]
+    pub fn time_ms(&self) -> f64 {
+        self.board.time_ns() / 1e6
+    }
+
+    /// Current core clock in Hz.
+    #[wasm_bindgen(js_name = clockHz)]
+    pub fn clock_hz(&self) -> u32 {
+        self.board.clock_hz()
+    }
+
+    /// Text received by the ST-LINK virtual COM port since the last call.
+    #[wasm_bindgen(js_name = takeConsole)]
+    pub fn take_console(&mut self) -> String {
+        let bytes: Vec<u8> = self.board.take_console().iter().map(|b| b.byte).collect();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    /// Type into the virtual COM port.
+    #[wasm_bindgen(js_name = consoleSend)]
+    pub fn console_send(&mut self, text: &str) {
+        self.board.console_send(text.as_bytes());
+    }
+
+    /// Press or release the blue user button B1.
+    #[wasm_bindgen(js_name = setUserButton)]
+    pub fn set_user_button(&mut self, pressed: bool) {
+        self.board.set_user_button(pressed);
     }
 
     /// Level of a GPIO pin, e.g. `pin("A", 5)`.

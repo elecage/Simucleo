@@ -40,8 +40,8 @@
 |---|---|
 | `simucleo-core` | `Bus`, `Memory`, `CpuBackend` trait, `Registers`, 사이클 기반 `Scheduler`, **`cortexm`**(NVIC/SCB/SysTick/예외 모델, 모든 백엔드 공용) |
 | `simucleo-cpu-armv7m` | 자체 Thumb/Thumb-2 + DSP + FPv4-SP 인터프리터 (기본 백엔드, WASM 지원) |
-| `simucleo-periph-stm32f4` | F401RE 메모리 맵, 버스 라우팅, 비트밴딩, GPIO, 미구현 접근 기록 |
-| `simucleo-nucleo` | 보드 단위 머신: CPU + 버스 + 시스템, ELF 로드, 리셋, 시간 진행, 핀 이벤트 |
+| `simucleo-periph-stm32f4` | F401RE 버스 라우팅, 비트밴딩, RCC(클럭 트리)/PWR/FLASH/GPIO/USART 모델, SVD에서 생성한 레지스터 맵과 범용 레지스터 파일, 이벤트 스케줄러 |
+| `simucleo-nucleo` | 보드 단위 머신: CPU + 버스 + 시스템, ELF 로드, 리셋(원인별), 이벤트 기반 시간 진행과 ns 타임라인, B1 버튼, 가상 콘솔, 정지 원인 진단 |
 | `simucleo-difftest` | Unicorn과 lock-step 비교 (테스트 전용, `unicorn` feature, GPLv2 의존성 격리) |
 | `simucleo-circuit` | 배선 → 넷리스트(Union-Find), 부품 모델(`DutyIntegrator`, LED 등) |
 | `simucleo-elf` | ELF 로더: LMA 기준 세그먼트, 심볼 테이블 |
@@ -65,6 +65,14 @@
   PSP 전환, FP 문맥(lazy stacking은 즉시 저장으로 단순화).
 
 ### 3. Peripheral은 "HAL이 기대하는 만큼" 정확하게
+
+**버스, 이벤트, 인터럽트 (M1 구현)**
+- Peripheral은 시간이 걸리는 일(예: UART 한 프레임)을 버스의 스케줄러에 사이클 단위로 예약한다.
+- 머신은 CPU를 다음 이벤트 시각까지만 실행하고, 이벤트를 처리한 뒤 다시 실행한다.
+- CPU는 Peripheral 공간에 접근한 명령어 직후 `Bus::poll`을 호출한다. 이 호출에서 IRQ 라인을 NVIC에 바로 반영하고, 더 이른 이벤트가 새로 생겼거나 클럭이 바뀌었으면 제어를 머신에 돌려준다(`Yield`).
+- 클럭은 `Yield` 지점에서만 바뀌므로, 사이클을 실제 시간(ns)으로 바꾸는 타임라인이 정확하다.
+- 레지스터 정의는 ST SVD에서 생성한다(`tools/svdgen.py`). 동작 모델이 없는 Peripheral은 SVD 리셋 값으로 시작하는 레지스터 파일이 받고, 접근 기록이 진단에 쓰인다.
+
 - 레지스터 맵과 리셋 값은 ST SVD에서 생성한다(M1).
 - `SystemClock_Config` 대응: 레디 플래그, `CFGR.SWS`, FLASH 레이턴시 읽기 확인, PWR VOS.
 - 미구현 레지스터 접근은 0을 읽고 기록하며, GUI에 "어떤 Peripheral을 기다리는지" 보여 준다.

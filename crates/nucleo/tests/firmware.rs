@@ -117,3 +117,122 @@ fn exception_model_self_test() {
         board.symbol_at(board.cpu.registers().pc())
     );
 }
+
+// ------------------------------------------------- CubeMX HAL examples (M1)
+
+fn hal_firmware(project: &str, name: &str) -> Vec<u8> {
+    let path: PathBuf = [
+        env!("CARGO_MANIFEST_DIR"),
+        "..",
+        "..",
+        "firmware",
+        project,
+        "build",
+        &format!("{name}.elf"),
+    ]
+    .iter()
+    .collect();
+    std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("{}: {e} (run `make -C firmware/{project}`)", path.display()))
+}
+
+/// Toggle times of LD2 (PA5) in milliseconds.
+fn ld2_toggles_ms(board: &mut Nucleo) -> Vec<f64> {
+    let events = board.take_pin_events();
+    events
+        .iter()
+        .filter(|e| e.port == 0 && e.pin == 5)
+        .map(|e| board.ns_at(e.time) / 1e6)
+        .collect()
+}
+
+fn periods(t: &[f64]) -> Vec<f64> {
+    t.windows(2).skip(1).map(|w| w[1] - w[0]).collect()
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-blinky (make variants)"]
+fn hal_blinky_runs_at_84mhz_with_500ms_period() {
+    for variant in ["hal-blinky", "hal-blinky-hse-bypass"] {
+        let mut board = Nucleo::new();
+        board
+            .load_elf(&hal_firmware("hal-blinky", variant))
+            .unwrap();
+        let r = board.run_for_ns(2.2e9);
+        assert!(
+            board.diagnose(&r).is_none(),
+            "{variant}: {:?}",
+            board.diagnose(&r)
+        );
+        assert_eq!(board.clock_hz(), 84_000_000, "{variant}");
+        let t = ld2_toggles_ms(&mut board);
+        // HAL_Delay(500) waits 501 ticks of 1 ms.
+        assert!(
+            periods(&t).iter().all(|p| (p - 501.0).abs() < 0.5),
+            "{variant}: {t:?}"
+        );
+        assert!(
+            board.bus.warnings.is_empty(),
+            "{variant}: {:?}",
+            board.bus.warnings
+        );
+
+        // Hold B1: the loop switches to 100 ms.
+        board.set_user_button(true);
+        board.run_for_ns(1.1e9);
+        let t = ld2_toggles_ms(&mut board);
+        assert!(
+            periods(&t).iter().all(|p| (p - 101.0).abs() < 0.5),
+            "{variant} with B1: {t:?}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-blinky (make variants)"]
+fn hse_without_bypass_ends_in_error_handler() {
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-blinky", "hal-blinky-hse-crystal"))
+        .unwrap();
+    let r = board.run_for_ns(1e9);
+    assert_eq!(
+        board.diagnose(&r),
+        Some(simucleo_nucleo::Diagnosis::ErrorHandler {
+            caller: Some("SystemClock_Config".into())
+        })
+    );
+    // HSE_STARTUP_TIMEOUT is 100 ms of HAL ticks at 16 MHz.
+    assert!(
+        (100.0..110.0).contains(&(board.time_ns() / 1e6)),
+        "{} ms",
+        board.time_ns() / 1e6
+    );
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-uart-printf"]
+fn hal_uart_printf_and_interrupt_echo() {
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-uart-printf", "hal-uart-printf"))
+        .unwrap();
+    board.run_for_ns(100e6);
+    board.console_send(b"abc\r\n");
+    let r = board.run_for_ns(900e6);
+    assert!(board.diagnose(&r).is_none(), "{:?}", board.diagnose(&r));
+    let out: Vec<u8> = board.take_console().iter().map(|b| b.byte).collect();
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.starts_with(
+            "Hello from Simucleo! SystemCoreClock = 84000000 Hz\r\nHCLK 84000000, PCLK1 42000000, PCLK2 84000000\r\n"
+        ),
+        "{text:?}"
+    );
+    assert!(text.contains("ABC\r\n"), "echo missing: {text:?}");
+    assert!(
+        text.contains("tick 0 at 2") && text.contains("tick 2 at "),
+        "{text:?}"
+    );
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+}

@@ -59,6 +59,13 @@ pub enum StopReason {
     /// Software requested a system reset (AIRCR.SYSRESETREQ); the caller
     /// resets the machine before anything else executes.
     ResetRequested,
+    /// A peripheral asked for the machine's attention (see `Bus::poll`);
+    /// the caller simply continues.
+    Yield,
+    /// The core is stuck in a branch-to-self loop that nothing can
+    /// interrupt (PRIMASK set or execution priority ≤ 0), e.g. CubeMX's
+    /// `Error_Handler` or an unhandled fault/IRQ handler.
+    Halted { pc: u32 },
     /// The bus rejected an access in a way the core could not report.
     BusError(BusError),
 }

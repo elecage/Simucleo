@@ -1,24 +1,102 @@
 //! STM32F401RE memory map and peripherals.
 //!
-//! Implemented: flash, SRAM, boot alias, bit-banding, GPIO. Every other
-//! peripheral address is recorded as an *unimplemented access* so the GUI can
-//! show students (and developers) which peripheral the firmware is waiting on.
+//! Modelled: flash, SRAM, boot alias, bit-banding, GPIO, RCC (clock tree),
+//! PWR, FLASH interface, USART1/2/6. Every other peripheral is backed by a
+//! register file initialised from ST's SVD, so firmware reads back what it
+//! wrote and sees correct reset values; those accesses are counted so the
+//! GUI can show which peripheral the firmware relies on that is not
+//! simulated yet.
 
 pub mod gpio;
 pub mod map;
+pub mod rcc;
+pub mod regmap;
+#[rustfmt::skip]
+pub mod svd;
+pub mod svd_types;
+pub mod sysctl;
+pub mod usart;
+
+use std::collections::BTreeSet;
 
 use gpio::{Gpio, PinEvent};
+use rcc::{Clocks, Rcc, ResetCause};
+use regmap::RegisterFile;
 use simucleo_core::bus::{AccessSize, Bus, BusError, Memory};
+use simucleo_core::cortexm::CortexM;
+use simucleo_core::sched::Scheduler;
 use simucleo_core::Cycles;
+use sysctl::{FlashIf, Pwr};
+use usart::{TerminalByte, Usart, UsartEventKind};
 
-/// One access to an address no model handles yet.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnimplementedAccess {
-    pub addr: u32,
-    pub size: AccessSize,
-    /// `Some(value)` for writes, `None` for reads.
-    pub write: Option<u32>,
+/// Peripheral events on the virtual clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Event {
+    Usart {
+        idx: u8,
+        kind: UsartEventKind,
+        gen: u32,
+    },
 }
+
+/// Something the firmware did that would misbehave on real hardware.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Warning {
+    /// Register access while the peripheral's bus clock is off: reads
+    /// return 0 and writes are lost, as on the chip.
+    ClockDisabled {
+        peripheral: &'static str,
+        enable_bit: &'static str,
+    },
+    /// HCLK too fast for the configured flash wait states.
+    FlashLatency {
+        hclk: u32,
+        latency: u32,
+        required: u32,
+    },
+}
+
+/// USART instances: (name, base, IRQ, on APB2, ENR offset, enable bit).
+const USARTS: [(&str, u32, u16, bool, u32, u32, &str); 3] = [
+    (
+        "USART1",
+        map::USART1_BASE,
+        37,
+        true,
+        0x44,
+        4,
+        "RCC.APB2ENR.USART1EN",
+    ),
+    (
+        "USART2",
+        map::USART2_BASE,
+        38,
+        false,
+        0x40,
+        17,
+        "RCC.APB1ENR.USART2EN",
+    ),
+    (
+        "USART6",
+        0x4001_1400,
+        71,
+        true,
+        0x44,
+        5,
+        "RCC.APB2ENR.USART6EN",
+    ),
+];
+
+const GPIO_ENABLE_BITS: [&str; 8] = [
+    "RCC.AHB1ENR.GPIOAEN",
+    "RCC.AHB1ENR.GPIOBEN",
+    "RCC.AHB1ENR.GPIOCEN",
+    "RCC.AHB1ENR.GPIODEN",
+    "RCC.AHB1ENR.GPIOEEN",
+    "",
+    "",
+    "RCC.AHB1ENR.GPIOHEN",
+];
 
 /// The system bus of an STM32F401RE booting from main flash.
 pub struct Stm32f401Bus {
@@ -28,9 +106,20 @@ pub struct Stm32f401Bus {
     pub gpio: [Gpio; 8],
     /// Pin level changes, oldest first. The owner drains it.
     pub pin_events: Vec<PinEvent>,
+    pub rcc: Rcc,
+    pub pwr: Pwr,
+    pub flash_if: FlashIf,
+    /// USART1, USART2 (ST-LINK virtual COM port), USART6.
+    pub usart: [Usart; 3],
+    /// Unmodelled peripherals.
+    pub regs: RegisterFile,
+    pub warnings: BTreeSet<Warning>,
+    sched: Scheduler<Event>,
     now: Cycles,
-    /// Accesses to unmodelled peripheral space (reads return 0).
-    pub unimplemented: Vec<UnimplementedAccess>,
+    clocks: Clocks,
+    clock_changed: bool,
+    /// Earliest event the machine knows about (see `Bus::poll`).
+    known_deadline: Option<Cycles>,
 }
 
 impl Default for Stm32f401Bus {
@@ -41,14 +130,48 @@ impl Default for Stm32f401Bus {
 
 impl Stm32f401Bus {
     pub fn new() -> Self {
+        let rcc = Rcc::new(ResetCause::PowerOn);
+        let clocks = rcc.clocks();
         Self {
             flash: Memory::new(map::FLASH_BASE, map::FLASH_SIZE, false),
             sram: Memory::new(map::SRAM_BASE, map::SRAM_SIZE, true),
             gpio: std::array::from_fn(|i| Gpio::new(i as u8)),
             pin_events: Vec::new(),
+            rcc,
+            pwr: Pwr::default(),
+            flash_if: FlashIf::default(),
+            usart: USARTS.map(|(name, _, irq, apb2, ..)| Usart::new(name, irq, apb2)),
+            regs: RegisterFile::default(),
+            warnings: BTreeSet::new(),
+            sched: Scheduler::new(),
             now: 0,
-            unimplemented: Vec::new(),
+            clocks,
+            clock_changed: false,
+            known_deadline: None,
         }
+    }
+
+    /// System reset: peripherals return to their reset state; memories,
+    /// the backup domain, external pin levels and terminal logs survive.
+    pub fn system_reset(&mut self, cause: ResetCause) {
+        for g in &mut self.gpio {
+            let (ext, driven) = (g.external, g.external_driven);
+            *g = Gpio::new(g.port);
+            g.external = ext;
+            g.external_driven = driven;
+        }
+        self.rcc.system_reset(cause);
+        self.pwr = Pwr::default();
+        self.flash_if = FlashIf::default();
+        for u in &mut self.usart {
+            u.reset();
+        }
+        self.regs.clear();
+        let now = self.sched.now();
+        self.sched = Scheduler::new();
+        self.sched.advance_to(now);
+        self.clocks = self.rcc.clocks();
+        self.clock_changed = true;
     }
 
     /// Program a firmware segment into flash or SRAM.
@@ -60,7 +183,229 @@ impl Stm32f401Bus {
             self.sram.load(addr, bytes)
         }
     }
+
+    pub fn clocks(&self) -> Clocks {
+        self.clocks
+    }
+
+    /// Cycle of the next peripheral event, if any. The machine runs the
+    /// CPU no further than this.
+    pub fn next_deadline(&mut self) -> Option<Cycles> {
+        self.known_deadline = self.sched.next_deadline();
+        self.known_deadline
+    }
+
+    /// Run every peripheral event due at or before `now`.
+    pub fn run_events(&mut self, now: Cycles) {
+        self.sched.advance_to(now.max(self.sched.now()));
+        let clocks = self.clocks;
+        while let Some((at, ev)) = self.sched.pop_due() {
+            match ev {
+                Event::Usart { idx, kind, gen } => {
+                    self.usart[idx as usize].event(idx, kind, gen, at, &clocks, &mut self.sched)
+                }
+            }
+        }
+    }
+
+    /// Characters typed into the terminal attached to a USART (0 = USART1,
+    /// 1 = USART2 / ST-LINK VCP, 2 = USART6).
+    pub fn terminal_send(&mut self, idx: usize, bytes: &[u8]) {
+        let (now, clocks) = (self.sched.now().max(self.now), self.clocks);
+        self.usart[idx].host_send(idx as u8, bytes, now, &clocks, &mut self.sched);
+    }
+
+    /// Take what the terminal on a USART received.
+    pub fn terminal_take(&mut self, idx: usize) -> Vec<TerminalByte> {
+        std::mem::take(&mut self.usart[idx].terminal)
+    }
+
+    fn after_clock_write(&mut self) {
+        let c = self.rcc.clocks();
+        if c != self.clocks {
+            self.clocks = c;
+            self.clock_changed = true;
+        }
+        let required = FlashIf::required_latency(c.hclk);
+        let latency = self.flash_if.latency();
+        if latency < required {
+            self.warnings.insert(Warning::FlashLatency {
+                hclk: c.hclk,
+                latency,
+                required,
+            });
+        }
+    }
+
+    /// RCC xxxRSTR: a set bit holds that peripheral in reset (HAL's
+    /// `__HAL_RCC_xxx_FORCE_RESET()` / `_RELEASE_RESET()`). Bit names come
+    /// from the SVD (`USART2RST` → `USART2`).
+    fn apply_peripheral_resets(&mut self, off: u32) {
+        let bits = self.rcc.read(off);
+        if bits == 0 {
+            return;
+        }
+        let Some((_, reg)) = regmap::register_at(map::RCC_BASE + off) else {
+            return;
+        };
+        for f in reg.fields.iter().filter(|f| bits & (1 << f.lsb) != 0) {
+            let name = f.name.strip_suffix("RST").unwrap_or(f.name);
+            // SVD field names that differ from the peripheral names.
+            let name = match name {
+                "UART2" => "USART2",
+                "ADC" => "ADC1",
+                n => n,
+            };
+            if let Some(port) = GPIO_NAMES.iter().position(|g| *g == name) {
+                let g = &mut self.gpio[port];
+                let before: Vec<_> = (0..16).map(|p| g.driven(p)).collect();
+                let (ext, driven) = (g.external, g.external_driven);
+                *g = Gpio::new(port as u8);
+                g.external = ext;
+                g.external_driven = driven;
+                for (pin, old) in before.into_iter().enumerate() {
+                    let new = self.gpio[port].driven(pin as u8);
+                    if new != old {
+                        self.pin_events.push(PinEvent {
+                            time: self.now,
+                            port: port as u8,
+                            pin: pin as u8,
+                            level: new,
+                        });
+                    }
+                }
+            } else if let Some(i) = USARTS.iter().position(|u| u.0 == name) {
+                self.usart[i].reset(); // also drops its scheduled events
+            } else if name == "PWR" {
+                self.pwr = Pwr::default();
+            } else if let Some(p) = regmap::peripheral_by_name(name) {
+                self.regs.reset_block(p.base);
+            }
+        }
+    }
+
+    fn gated(
+        &mut self,
+        enr: u32,
+        bit: u32,
+        peripheral: &'static str,
+        enable_bit: &'static str,
+    ) -> bool {
+        if self.rcc.clock_enabled(enr, bit) {
+            return false;
+        }
+        self.warnings.insert(Warning::ClockDisabled {
+            peripheral,
+            enable_bit,
+        });
+        true
+    }
+
+    fn periph_read(&mut self, a: u32) -> u32 {
+        let off = a & 0x3FC;
+        if let Some(port) = gpio_port(a) {
+            if self.gated(0x30, port as u32, GPIO_NAMES[port], GPIO_ENABLE_BITS[port]) {
+                return 0;
+            }
+            return self.gpio[port].read(off);
+        }
+        match a & !0x3FF {
+            map::RCC_BASE => return self.rcc.read(off),
+            map::FLASH_IF_BASE => return self.flash_if.read(off),
+            map::PWR_BASE => {
+                if self.gated(0x40, 28, "PWR", "RCC.APB1ENR.PWREN") {
+                    return 0;
+                }
+                return self.pwr.read(off);
+            }
+            _ => {}
+        }
+        if let Some(i) = USARTS.iter().position(|u| u.1 == a & !0x3FF) {
+            let (name, _, _, _, enr, bit, en) = USARTS[i];
+            if self.gated(enr, bit, name, en) {
+                return 0;
+            }
+            return self.usart[i].read(off);
+        }
+        self.regs.read(a)
+    }
+
+    fn periph_write(&mut self, a: u32, value: u32, lanes: u32) {
+        let off = a & 0x3FC;
+        if let Some(port) = gpio_port(a) {
+            if self.gated(0x30, port as u32, GPIO_NAMES[port], GPIO_ENABLE_BITS[port]) {
+                return;
+            }
+            self.gpio[port].write(off, value, lanes, self.now, &mut self.pin_events);
+            return;
+        }
+        match a & !0x3FF {
+            map::RCC_BASE => {
+                if self.rcc.write(off, value, lanes) {
+                    self.after_clock_write();
+                }
+                if matches!(off, 0x10 | 0x14 | 0x20 | 0x24) {
+                    self.apply_peripheral_resets(off);
+                }
+                return;
+            }
+            map::FLASH_IF_BASE => {
+                self.flash_if.write(off, value, lanes);
+                return;
+            }
+            map::PWR_BASE => {
+                if !self.gated(0x40, 28, "PWR", "RCC.APB1ENR.PWREN") {
+                    self.pwr.write(off, value, lanes);
+                }
+                return;
+            }
+            _ => {}
+        }
+        if let Some(i) = USARTS.iter().position(|u| u.1 == a & !0x3FF) {
+            let (name, _, _, _, enr, bit, en) = USARTS[i];
+            if !self.gated(enr, bit, name, en) {
+                let (now, clocks) = (self.now, self.clocks);
+                self.usart[i].write(i as u8, off, value, lanes, now, &clocks, &mut self.sched);
+            }
+            return;
+        }
+        self.regs.write(a, value, lanes);
+    }
+
+    fn read_inner(&mut self, addr: u32, size: AccessSize) -> Result<u32, BusError> {
+        let a = map::resolve_alias(addr);
+        if self.flash.contains(a, size) {
+            return self.flash.read(a, size);
+        }
+        if self.sram.contains(a, size) {
+            return self.sram.read(a, size);
+        }
+        if map::is_peripheral_space(a) {
+            let word = self.periph_read(a);
+            return Ok((word >> ((a & 3) * 8)) & size_mask(size));
+        }
+        Err(BusError::Unmapped(addr))
+    }
+
+    fn write_inner(&mut self, addr: u32, size: AccessSize, value: u32) -> Result<(), BusError> {
+        let a = map::resolve_alias(addr);
+        if self.sram.contains(a, size) {
+            return self.sram.write(a, size, value);
+        }
+        if self.flash.contains(a, size) {
+            // Flash programming goes through the FLASH interface (later).
+            return Err(BusError::ReadOnly(addr));
+        }
+        if map::is_peripheral_space(a) {
+            let shift = (a & 3) * 8;
+            self.periph_write(a, value << shift, size_mask(size) << shift);
+            return Ok(());
+        }
+        Err(BusError::Unmapped(addr))
+    }
 }
+
+const GPIO_NAMES: [&str; 8] = ["GPIOA", "GPIOB", "GPIOC", "GPIOD", "GPIOE", "", "", "GPIOH"];
 
 /// GPIO port index for an address in the AHB1 GPIO block, if it exists.
 fn gpio_port(addr: u32) -> Option<usize> {
@@ -81,63 +426,6 @@ fn bit_band(addr: u32) -> Option<(u32, u32)> {
     };
     let off = addr - alias;
     Some((target + ((off >> 5) & !3), (off >> 2) & 31))
-}
-
-impl Stm32f401Bus {
-    fn read_inner(&mut self, addr: u32, size: AccessSize) -> Result<u32, BusError> {
-        let a = map::resolve_alias(addr);
-        if self.flash.contains(a, size) {
-            return self.flash.read(a, size);
-        }
-        if self.sram.contains(a, size) {
-            return self.sram.read(a, size);
-        }
-        if let Some(port) = gpio_port(a) {
-            let word = self.gpio[port].read(a & 0x3FC);
-            return Ok((word >> ((a & 3) * 8)) & size_mask(size));
-        }
-        if map::is_peripheral_space(a) {
-            self.unimplemented.push(UnimplementedAccess {
-                addr: a,
-                size,
-                write: None,
-            });
-            return Ok(0);
-        }
-        Err(BusError::Unmapped(addr))
-    }
-
-    fn write_inner(&mut self, addr: u32, size: AccessSize, value: u32) -> Result<(), BusError> {
-        let a = map::resolve_alias(addr);
-        if self.sram.contains(a, size) {
-            return self.sram.write(a, size, value);
-        }
-        if self.flash.contains(a, size) {
-            // Flash programming goes through the FLASH interface (later).
-            return Err(BusError::ReadOnly(addr));
-        }
-        if let Some(port) = gpio_port(a) {
-            let shift = (a & 3) * 8;
-            let lanes = size_mask(size) << shift;
-            self.gpio[port].write(
-                a & 0x3FC,
-                value << shift,
-                lanes,
-                self.now,
-                &mut self.pin_events,
-            );
-            return Ok(());
-        }
-        if map::is_peripheral_space(a) {
-            self.unimplemented.push(UnimplementedAccess {
-                addr: a,
-                size,
-                write: Some(value),
-            });
-            return Ok(());
-        }
-        Err(BusError::Unmapped(addr))
-    }
 }
 
 fn size_mask(size: AccessSize) -> u32 {
@@ -172,6 +460,24 @@ impl Bus for Stm32f401Bus {
     fn set_time(&mut self, now: Cycles) {
         self.now = now;
     }
+
+    fn poll(&mut self, sys: &mut CortexM) -> bool {
+        for u in &self.usart {
+            if u.irq_line() {
+                sys.set_irq_pending(u.irq);
+            }
+        }
+        // A register write may have scheduled an event (e.g. a UART frame)
+        // earlier than the deadline the CPU was given: hand back control so
+        // the machine stops the CPU in time for it.
+        let next = self.sched.next_deadline();
+        let earlier = match (next, self.known_deadline) {
+            (Some(n), Some(k)) => n < k,
+            (Some(_), None) => true,
+            _ => false,
+        };
+        std::mem::take(&mut self.clock_changed) || earlier
+    }
 }
 
 #[cfg(test)]
@@ -188,19 +494,43 @@ mod tests {
     }
 
     #[test]
-    fn unimplemented_peripheral_access_is_recorded() {
+    fn unmodelled_peripherals_keep_values_and_are_counted() {
         let mut bus = Stm32f401Bus::new();
-        let rcc_cr = map::RCC_BASE;
-        assert_eq!(bus.read_u32(rcc_cr).unwrap(), 0);
-        bus.write(rcc_cr, AccessSize::Word, 1).unwrap();
-        assert_eq!(bus.unimplemented.len(), 2);
-        assert_eq!(bus.unimplemented[1].write, Some(1));
-        assert_eq!(map::peripheral_name(rcc_cr), Some("RCC"));
+        let tim3_arr = 0x4000_042C;
+        let reset = regmap::register_at(tim3_arr).unwrap().1.reset;
+        assert_eq!(bus.read_u32(tim3_arr).unwrap(), reset, "SVD reset value");
+        bus.write(tim3_arr, AccessSize::Word, 999).unwrap();
+        assert_eq!(bus.read_u32(tim3_arr).unwrap(), 999);
+        assert_eq!(bus.regs.accesses.len(), 2);
+        assert_eq!(regmap::describe(tim3_arr), "TIM3.ARR");
+    }
+
+    #[test]
+    fn gpio_needs_its_clock() {
+        let mut bus = Stm32f401Bus::new();
+        bus.write(map::GPIOA_BASE, AccessSize::Word, 1 << 10)
+            .unwrap();
+        assert_eq!(
+            bus.read_u32(map::GPIOA_BASE).unwrap(),
+            0,
+            "clock off: write lost, reads 0"
+        );
+        assert!(bus.warnings.contains(&Warning::ClockDisabled {
+            peripheral: "GPIOA",
+            enable_bit: "RCC.AHB1ENR.GPIOAEN"
+        }));
+        bus.write(map::RCC_BASE + 0x30, AccessSize::Word, 1)
+            .unwrap();
+        bus.write(map::GPIOA_BASE, AccessSize::Word, 0xA800_0000 | 1 << 10)
+            .unwrap();
+        assert_eq!(bus.read_u32(map::GPIOA_BASE).unwrap(), 0xA800_0400);
     }
 
     #[test]
     fn bit_banding_sram_and_gpio() {
         let mut bus = Stm32f401Bus::new();
+        bus.write(map::RCC_BASE + 0x30, AccessSize::Word, 1)
+            .unwrap();
         // SRAM word 0x2000_0010, bit 3
         bus.write(0x2200_0000 + 0x10 * 32 + 3 * 4, AccessSize::Word, 1)
             .unwrap();
@@ -213,5 +543,70 @@ mod tests {
         bus.write(odr5, AccessSize::Word, 1).unwrap();
         assert!(bus.gpio[0].level(5));
         assert_eq!(bus.pin_events.last().unwrap().level, Some(true));
+    }
+
+    #[test]
+    fn rcc_reset_bits_reset_the_peripheral() {
+        let mut bus = Stm32f401Bus::new();
+        let usart2 = map::USART2_BASE;
+        bus.write(map::RCC_BASE + 0x40, AccessSize::Word, 1 << 17)
+            .unwrap(); // USART2EN
+        bus.write(usart2 + 0x08, AccessSize::Word, 0x16D).unwrap();
+        bus.write(usart2 + 0x0C, AccessSize::Word, 0x200C).unwrap();
+        bus.write(usart2 + 0x04, AccessSize::Word, b'x' as u32)
+            .unwrap();
+        assert!(bus.next_deadline().is_some(), "a frame is being sent");
+        // __HAL_RCC_USART2_FORCE_RESET(); __HAL_RCC_USART2_RELEASE_RESET();
+        bus.write(map::RCC_BASE + 0x20, AccessSize::Word, 1 << 17)
+            .unwrap();
+        bus.write(map::RCC_BASE + 0x20, AccessSize::Word, 0)
+            .unwrap();
+        assert_eq!(bus.read_u32(usart2 + 0x08).unwrap(), 0);
+        assert_eq!(bus.read_u32(usart2 + 0x0C).unwrap(), 0);
+        bus.run_events(1_000_000);
+        assert!(
+            bus.terminal_take(1).is_empty(),
+            "the frame in flight was dropped"
+        );
+
+        // Unmodelled peripheral (TIM3) and GPIO.
+        bus.write(0x4000_042C, AccessSize::Word, 123).unwrap();
+        bus.write(map::RCC_BASE + 0x20, AccessSize::Word, 1 << 1)
+            .unwrap(); // TIM3RST
+        assert_eq!(
+            bus.read_u32(0x4000_042C).unwrap(),
+            regmap::register_at(0x4000_042C).unwrap().1.reset
+        );
+        bus.write(map::RCC_BASE + 0x30, AccessSize::Word, 1)
+            .unwrap();
+        bus.write(map::GPIOA_BASE, AccessSize::Word, 0xA800_0400)
+            .unwrap();
+        bus.write(map::RCC_BASE + 0x10, AccessSize::Word, 1)
+            .unwrap(); // GPIOARST
+        assert_eq!(bus.read_u32(map::GPIOA_BASE).unwrap(), 0xA800_0000);
+    }
+
+    #[test]
+    fn clock_switch_is_reported_and_flash_latency_checked() {
+        let mut bus = Stm32f401Bus::new();
+        let mut sys = CortexM::new();
+        // PLL 84 MHz from HSI, switch without raising flash latency.
+        bus.write(
+            map::RCC_BASE + 4,
+            AccessSize::Word,
+            16 | (336 << 6) | (1 << 16) | (7 << 24),
+        )
+        .unwrap();
+        bus.write(map::RCC_BASE, AccessSize::Word, 0x83 | 1 << 24)
+            .unwrap();
+        bus.write(map::RCC_BASE + 8, AccessSize::Word, 2).unwrap();
+        assert!(bus.poll(&mut sys));
+        assert_eq!(bus.clocks().hclk, 84_000_000);
+        assert!(bus.warnings.contains(&Warning::FlashLatency {
+            hclk: 84_000_000,
+            latency: 0,
+            required: 2
+        }));
+        assert!(!bus.poll(&mut sys));
     }
 }

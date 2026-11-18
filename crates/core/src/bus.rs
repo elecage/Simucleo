@@ -39,6 +39,15 @@ pub trait Bus {
     /// Tell the bus the current simulated time before an access, so that
     /// peripherals can timestamp pin changes. Default: ignored.
     fn set_time(&mut self, _now: crate::Cycles) {}
+
+    /// Called by the CPU after an instruction that accessed peripheral space
+    /// (`0x4000_0000..0xE000_0000`). The bus forwards its interrupt request
+    /// lines to the NVIC and returns `true` if the CPU should hand control
+    /// back to the machine (for example because the clock configuration
+    /// changed). Default: nothing to do.
+    fn poll(&mut self, _sys: &mut crate::cortexm::CortexM) -> bool {
+        false
+    }
 }
 
 /// A flat, byte-addressed memory region (flash or SRAM).

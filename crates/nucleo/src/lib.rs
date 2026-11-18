@@ -1,20 +1,28 @@
 //! The Nucleo-F401RE as a whole machine.
 //!
 //! [`Nucleo`] owns the CPU backend, the STM32F401 bus and the Cortex-M system
-//! block, loads firmware and advances simulated time.
+//! block, loads firmware and advances simulated time. It also knows the
+//! board around the MCU (the B1 button pull-up, the ST-LINK virtual COM
+//! port on USART2) and explains why firmware stopped ([`Diagnosis`]).
+
+mod diagnose;
 
 use simucleo_core::cortexm::CortexM;
 use simucleo_core::cpu::{CpuBackend, RunResult, StopReason};
 use simucleo_core::Cycles;
 use simucleo_cpu_armv7m::ArmV7M;
 use simucleo_elf::{ElfError, FirmwareImage};
+use simucleo_periph_stm32f4::rcc::ResetCause;
 use simucleo_periph_stm32f4::Stm32f401Bus;
 use thiserror::Error;
 
+pub use diagnose::{Diagnosis, FaultInfo};
 pub use simucleo_periph_stm32f4::gpio::PinEvent;
+pub use simucleo_periph_stm32f4::usart::TerminalByte;
+pub use simucleo_periph_stm32f4::Warning;
 
-/// Core clock after reset: the 16 MHz HSI oscillator.
-pub const RESET_CLOCK_HZ: u32 = 16_000_000;
+/// USART2 is wired to the ST-LINK virtual COM port.
+pub const VCP: usize = 1;
 
 #[derive(Debug, Error)]
 pub enum LoadError {
@@ -26,12 +34,21 @@ pub enum LoadError {
     VectorTable(simucleo_core::bus::BusError),
 }
 
+/// A stretch of simulated time with a constant core clock.
+#[derive(Debug, Clone, Copy)]
+struct Segment {
+    cycle: Cycles,
+    ns: f64,
+    hz: u32,
+}
+
 pub struct Nucleo {
     pub cpu: Box<dyn CpuBackend>,
     pub bus: Stm32f401Bus,
     pub sys: CortexM,
     pub firmware: Option<FirmwareImage>,
     resets: u32,
+    timeline: Vec<Segment>,
 }
 
 impl Default for Nucleo {
@@ -47,19 +64,36 @@ impl Nucleo {
     }
 
     pub fn with_backend(cpu: Box<dyn CpuBackend>) -> Self {
-        Self {
+        let mut board = Self {
             cpu,
             bus: Stm32f401Bus::new(),
             sys: CortexM::new(),
             firmware: None,
             resets: 0,
-        }
+            timeline: Vec::new(),
+        };
+        board.power_on();
+        board
     }
 
-    /// Program an ELF image into flash and reset.
+    /// Fresh chip state plus the board wiring around it.
+    fn power_on(&mut self) {
+        self.bus = Stm32f401Bus::new();
+        // B1 (PC13) has an external pull-up and reads high when released.
+        self.set_user_button(false);
+        self.timeline = vec![Segment {
+            cycle: self.sys.cycles,
+            ns: self.time_ns(),
+            hz: self.bus.clocks().hclk,
+        }];
+    }
+
+    /// Program an ELF image into flash and power the board up.
     pub fn load_elf(&mut self, bytes: &[u8]) -> Result<(), LoadError> {
         let fw = FirmwareImage::parse(bytes)?;
-        self.bus = Stm32f401Bus::new();
+        self.sys = CortexM::new();
+        self.timeline.clear();
+        self.power_on();
         for seg in &fw.segments {
             self.bus
                 .load(seg.addr, &seg.data)
@@ -69,17 +103,21 @@ impl Nucleo {
                 })?;
         }
         self.firmware = Some(fw);
-        self.reset().map_err(LoadError::VectorTable)
+        self.resets = 0;
+        self.cpu
+            .reset(&mut self.bus, &mut self.sys)
+            .map_err(LoadError::VectorTable)
     }
 
-    /// Press the reset button: CPU and system reset; SRAM and flash keep
-    /// their contents (like a real reset, unlike power-on).
+    /// Press the reset button (B2): CPU and peripherals reset; SRAM, flash
+    /// and the backup domain keep their contents.
     pub fn reset(&mut self) -> Result<(), simucleo_core::bus::BusError> {
-        let flash = self.bus.flash.clone();
-        let sram = self.bus.sram.clone();
-        self.bus = Stm32f401Bus::new();
-        self.bus.flash = flash;
-        self.bus.sram = sram;
+        self.system_reset(ResetCause::Pin)
+    }
+
+    fn system_reset(&mut self, cause: ResetCause) -> Result<(), simucleo_core::bus::BusError> {
+        self.bus.system_reset(cause);
+        self.note_clock();
         self.cpu.reset(&mut self.bus, &mut self.sys)
     }
 
@@ -88,38 +126,112 @@ impl Nucleo {
         self.sys.cycles
     }
 
-    /// Core clock frequency (fixed at the reset value until RCC is modelled).
+    /// Current core clock (HCLK) in Hz.
     pub fn clock_hz(&self) -> u32 {
-        RESET_CLOCK_HZ
+        self.bus.clocks().hclk
     }
 
-    /// Run for up to `cycles`. Sleeping time is fast-forwarded.
+    /// Simulated time in nanoseconds of a cycle count (clock changes are
+    /// taken into account).
+    pub fn ns_at(&self, cycle: Cycles) -> f64 {
+        let seg = self
+            .timeline
+            .iter()
+            .rev()
+            .find(|s| s.cycle <= cycle)
+            .or(self.timeline.first());
+        match seg {
+            Some(s) => s.ns + (cycle as f64 - s.cycle as f64) * 1e9 / s.hz as f64,
+            None => cycle as f64 * 1e9 / self.bus.clocks().hclk as f64,
+        }
+    }
+
+    /// Current simulated time in nanoseconds.
+    pub fn time_ns(&self) -> f64 {
+        self.ns_at(self.sys.cycles)
+    }
+
+    fn note_clock(&mut self) {
+        let hz = self.bus.clocks().hclk;
+        if self.timeline.last().map(|s| s.hz) != Some(hz) {
+            let ns = self.time_ns();
+            self.timeline.push(Segment {
+                cycle: self.sys.cycles,
+                ns,
+                hz,
+            });
+        }
+    }
+
+    /// Run for up to `cycles` core cycles. Peripheral events happen on time
+    /// and sleeping (WFI/WFE or an idle `b .` loop) is fast-forwarded.
     pub fn run(&mut self, cycles: Cycles) -> RunResult {
+        let end = self.sys.cycles.saturating_add(cycles);
+        self.run_until(end, None)
+    }
+
+    /// Run for a simulated duration. The deadline is kept in nanoseconds, so
+    /// it holds even when the firmware changes the core clock mid-way.
+    pub fn run_for_ns(&mut self, ns: f64) -> RunResult {
+        let target = self.time_ns() + ns;
+        self.run_until(Cycles::MAX, Some(target))
+    }
+
+    fn run_until(&mut self, end_cycles: Cycles, end_ns: Option<f64>) -> RunResult {
         let start = self.sys.cycles;
-        let end = start + cycles;
+        let mut sleeping = false;
         loop {
-            let budget = end.saturating_sub(self.sys.cycles);
-            let r = self.cpu.run(&mut self.bus, &mut self.sys, budget);
-            if self.sys.reset_requested || r.stop == StopReason::ResetRequested {
-                self.sys.reset_requested = false;
-                self.resets += 1;
-                if self.reset().is_err() {
-                    return RunResult {
-                        cycles: self.sys.cycles - start,
-                        stop: StopReason::Lockup { pc: 0 },
-                    };
-                }
-                continue;
+            let now = self.sys.cycles;
+            // Re-derive the cycle deadline from the time deadline each round:
+            // the clock may have changed (clock changes always end a round).
+            let mut end = end_cycles;
+            if let Some(t) = end_ns {
+                let left = t - self.time_ns();
+                end = if left <= 0.0 {
+                    now
+                } else {
+                    end.min(now + ((left * self.clock_hz() as f64 / 1e9).ceil() as Cycles).max(1))
+                };
             }
+            if now >= end {
+                let stop = if sleeping {
+                    StopReason::Sleeping
+                } else {
+                    StopReason::BudgetExhausted
+                };
+                return RunResult {
+                    cycles: now - start,
+                    stop,
+                };
+            }
+            let until = self
+                .bus
+                .next_deadline()
+                .unwrap_or(Cycles::MAX)
+                .clamp(now + 1, end);
+            let r = self.cpu.run(&mut self.bus, &mut self.sys, until - now);
+            self.after_step();
+            sleeping = false;
             match r.stop {
+                StopReason::BudgetExhausted | StopReason::Yield => {}
                 StopReason::Sleeping => {
-                    // Nothing on the board can wake the core yet (peripheral
-                    // interrupts arrive in M1): sleep until the budget ends.
-                    self.sys.advance(end.saturating_sub(self.sys.cycles));
-                    return RunResult {
-                        cycles: self.sys.cycles - start,
-                        stop: StopReason::Sleeping,
-                    };
+                    // Only a peripheral can wake the core: skip to its event.
+                    let target = self.bus.next_deadline().map_or(end, |d| d.min(end));
+                    if target > self.sys.cycles {
+                        self.sys.advance(target - self.sys.cycles);
+                    }
+                    self.after_step();
+                    sleeping = true;
+                }
+                StopReason::ResetRequested => {
+                    self.sys.reset_requested = false;
+                    self.resets += 1;
+                    if self.system_reset(ResetCause::Software).is_err() {
+                        return RunResult {
+                            cycles: self.sys.cycles - start,
+                            stop: StopReason::Lockup { pc: 0 },
+                        };
+                    }
                 }
                 stop => {
                     return RunResult {
@@ -131,15 +243,44 @@ impl Nucleo {
         }
     }
 
+    /// Process due peripheral events and forward interrupt lines.
+    fn after_step(&mut self) {
+        self.bus.run_events(self.sys.cycles);
+        use simucleo_core::bus::Bus;
+        self.bus.poll(&mut self.sys);
+        self.note_clock();
+    }
+
     /// Level of a GPIO pin, e.g. `pin('A', 5)` for LD2.
     pub fn pin(&self, port: char, pin: u8) -> bool {
         let idx = (port.to_ascii_uppercase() as u8 - b'A') as usize;
         self.bus.gpio[idx].level(pin)
     }
 
+    /// Press (`true`) or release the blue user button B1 (PC13, active low).
+    pub fn set_user_button(&mut self, pressed: bool) {
+        let c = &mut self.bus.gpio[2];
+        c.external_driven |= 1 << 13;
+        if pressed {
+            c.external &= !(1 << 13);
+        } else {
+            c.external |= 1 << 13;
+        }
+    }
+
     /// Take the pin level changes recorded since the last call.
     pub fn take_pin_events(&mut self) -> Vec<PinEvent> {
         std::mem::take(&mut self.bus.pin_events)
+    }
+
+    /// Bytes the ST-LINK virtual COM port received from USART2.
+    pub fn take_console(&mut self) -> Vec<TerminalByte> {
+        self.bus.terminal_take(VCP)
+    }
+
+    /// Type into the virtual COM port (delivered at the UART's baud rate).
+    pub fn console_send(&mut self, bytes: &[u8]) {
+        self.bus.terminal_send(VCP, bytes);
     }
 
     /// Number of software resets (SYSRESETREQ) performed so far.
@@ -207,6 +348,23 @@ mod tests {
         );
     }
 
+    /// RCC_CFGR.HPRE = /8 (HCLK 16 → 2 MHz), then a busy loop.
+    const SLOW_CLOCK_PROGRAM: [u8; 24] = [
+        0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0x02, 0x48, 0xa0, 0x21, 0x01, 0x60, 0x01,
+        0x32, 0xfd, 0xe7, 0x00, 0x00, 0x08, 0x38, 0x02, 0x40,
+    ];
+
+    #[test]
+    fn run_for_ns_holds_its_deadline_when_the_clock_slows_down() {
+        let mut board = Nucleo::new();
+        board.bus.load(0x0800_0000, &SLOW_CLOCK_PROGRAM).unwrap();
+        board.reset().unwrap();
+        board.run_for_ns(10e6);
+        assert_eq!(board.clock_hz(), 2_000_000);
+        let ms = board.time_ns() / 1e6;
+        assert!((10.0..10.01).contains(&ms), "ran {ms} ms instead of 10");
+    }
+
     #[test]
     fn sysresetreq_resets_at_the_next_instruction_boundary() {
         // https://github.com/elecage/Simucleo/issues/5
@@ -215,7 +373,12 @@ mod tests {
             board.bus.load(0x0800_0000, &RESET_PROGRAM).unwrap();
             board.reset().unwrap();
             let r = board.run(budget);
-            assert_eq!(r.stop, StopReason::BudgetExhausted, "budget {budget}");
+            // The program ends in `b done` with interrupts enabled, an idle
+            // loop the board sleeps through once it gets there.
+            assert!(
+                matches!(r.stop, StopReason::Sleeping | StopReason::BudgetExhausted),
+                "budget {budget}"
+            );
             assert_eq!(board.software_resets(), 1, "budget {budget}");
             assert_eq!(
                 board.bus.read_u32(0x2000_0000).unwrap(),

@@ -433,6 +433,7 @@ impl ArmV7M {
     // --------------------------------------------------------------- decode
 
     pub(crate) fn exec_coproc(&mut self, ctx: &mut Ctx, hw1: u32, hw2: u32) -> Exec {
+        self.fp_ops += 1;
         let opcode = (hw1 << 16) | hw2;
         let coproc = (hw2 >> 8) & 0xF;
         if hw1 & (1 << 12) != 0 || coproc & 0b1110 != 0b1010 {

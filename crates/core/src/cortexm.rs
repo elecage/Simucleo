@@ -235,6 +235,10 @@ pub struct CortexM {
     pub cycles: Cycles,
     /// Set by AIRCR.SYSRESETREQ; the machine performs the reset.
     pub reset_requested: bool,
+    /// Bumped whenever state visible to software changes on its own (SysTick
+    /// reaching zero, an exception becoming pending). Busy-wait detection
+    /// only trusts loop iterations within one epoch.
+    pub epoch: u64,
     /// Event latched for WFE by the system (SEVONPEND); the CPU consumes it
     /// with [`CortexM::take_event`].
     pub event: bool,
@@ -291,6 +295,7 @@ impl CortexM {
             dbgmcu_cr: 0,
             cycles: 0,
             reset_requested: false,
+            epoch: 0,
             event: false,
             unimplemented: Vec::new(),
         }
@@ -311,9 +316,19 @@ impl CortexM {
         if self.dwt_ctrl & 1 != 0 {
             self.dwt_cyccnt = self.dwt_cyccnt.wrapping_add(cycles as u32);
         }
-        if self.systick.advance(cycles) && self.systick.tickint {
-            self.set_pending(exc::SYSTICK);
+        if self.systick.advance(cycles) {
+            self.epoch += 1;
+            if self.systick.tickint {
+                self.set_pending(exc::SYSTICK);
+            }
         }
+    }
+
+    /// Cycles until anything this module exposes changes on its own (the
+    /// SysTick counter reaching zero, even with its interrupt disabled,
+    /// because COUNTFLAG can be polled). Used to bound idle-loop skipping.
+    pub fn next_change_in(&self) -> Option<Cycles> {
+        self.systick.cycles_to_zero()
     }
 
     /// Cycles until the next event this module generates by itself.
@@ -465,6 +480,7 @@ impl CortexM {
     /// SCR.SEVONPEND: an interrupt entering the pending state is a WFE
     /// wake-up event, even when it is disabled or masked (PM0214 §4.4.6).
     fn on_new_pending(&mut self) {
+        self.epoch += 1;
         if self.scr & SCR_SEVONPEND != 0 {
             self.event = true;
         }

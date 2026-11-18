@@ -100,7 +100,12 @@ MCU 신호는 MHz 단위로 바뀌는데 화면은 60 Hz다. 부품 모델은 �
 비율이고, 7세그먼트 멀티플렉싱은 잔상으로 보인다. 수동 부저는 엣지 타임스탬프를
 AudioWorklet으로 보내 실제 소리를 만든다.
 
-### 6. 프런트엔드
+### 6. RTOS 인식 (M4)
+- `simucleo-nucleo::rtos`는 디버거의 RTOS 플러그인처럼, 펌웨어를 고치지 않고 ELF 심볼(`pxCurrentTCB`, `pxReadyTasksLists`, 지연·일시중단·삭제 대기 리스트, `xIdleTaskHandles` 등)로 FreeRTOS 커널 자료구조를 읽는다.
+- TCB 배치(이름 길이, `pxEndOfStack` 유무)는 idle 태스크의 TCB에서 알아낸다. 스택 high-water는 채움 패턴(0xA5)으로 계산한다.
+- 문맥 교환은 버스의 SRAM 쓰기 감시로 `pxCurrentTCB`가 바뀔 때마다 사이클과 함께 기록한다. 웹은 이를 실행 타임라인과 CPU 사용률로 보여 준다.
+
+### 7. 프런트엔드
 - React는 패널 UI에만 쓴다. 캔버스는 SVG이고, 실행 중 애니메이션은 React 재렌더링 대신
   DOM 속성을 직접 갱신한다(M3).
 - 0.1인치 그리드 스냅. 핀은 와이어보다 위 레이어에 있어 이미 연결된 핀도 다시 선택할 수 있다.

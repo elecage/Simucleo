@@ -436,3 +436,84 @@ fn wired_switch_and_led_through_the_circuit_model() {
     let w = board.circuit_warnings();
     assert!(w.iter().any(|w| w.starts_with("led1:")), "{w:?}");
 }
+
+// ------------------------------------------------------- FreeRTOS (M4)
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/freertos-two-tasks"]
+fn freertos_tasks_run_and_are_visible() {
+    use simucleo_nucleo::TaskState;
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("freertos-two-tasks", "freertos-two-tasks"))
+        .unwrap();
+    let r = board.run_for_ns(2.2e9);
+    assert!(board.diagnose(&r).is_none(), "{:?}", board.diagnose(&r));
+    let text = console_text(&mut board);
+    assert!(text.starts_with("FreeRTOS V11"), "{text:?}");
+    assert!(
+        text.contains("count 0 at 0 ms\r\ncount 1 at 1001 ms\r\ncount 2 at 2002 ms"),
+        "{text:?}"
+    );
+    // LD2 from the Blink task: 500 ms ticks.
+    let t = ld2_toggles_ms(&mut board);
+    assert!(periods(&t).iter().all(|p| (p - 500.0).abs() < 1.0), "{t:?}");
+
+    // B1 → EXTI → semaphore → Button task (higher priority) prints.
+    board.set_user_button(true);
+    board.run_for_ns(20e6);
+    board.set_user_button(false);
+    board.run_for_ns(20e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("B1 pressed (1)\r\nflag received"), "{text:?}");
+
+    let snap = board.rtos_snapshot().expect("FreeRTOS detected");
+    assert!(snap.scheduler_running);
+    let names: Vec<&str> = snap.tasks.iter().map(|t| t.name.as_str()).collect();
+    for n in ["Blink", "Count", "Button", "Flags", "IDLE", "Tmr Svc"] {
+        assert!(names.contains(&n), "{names:?}");
+    }
+    let task = |n: &str| snap.tasks.iter().find(|t| t.name == n).unwrap();
+    // Between ticks everybody waits; the idle task runs.
+    assert_eq!(task("IDLE").state, TaskState::Running);
+    assert_eq!(task("Blink").state, TaskState::Blocked);
+    assert_eq!(
+        task("Button").state,
+        TaskState::Blocked,
+        "waits forever on the semaphore"
+    );
+    assert_eq!(
+        task("Flags").state,
+        TaskState::Blocked,
+        "waits forever for a notification (thread flags)"
+    );
+    // ST's CMSIS-RTOS2 wrapper creates tasks at osPriority − 1.
+    assert_eq!(task("Button").priority, 31); // osPriorityAboveNormal (32)
+    assert_eq!(snap.api, Some("CMSIS-RTOS2"));
+    assert_eq!(task("Blink").stack_size, Some(512));
+    let free = task("Count").stack_free_min.unwrap();
+    assert!(free > 0 && free < 1024, "{free}");
+
+    // Context switches are logged: Blink runs every 500 ms at least.
+    let switches = board.take_task_switches();
+    let blink = task("Blink").tcb;
+    assert!(switches.iter().any(|&(_, tcb)| tcb == blink));
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/freertos-queue-uart"]
+fn freertos_queues_carry_uart_input_and_samples() {
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("freertos-queue-uart", "freertos-queue-uart"))
+        .unwrap();
+    board.run_for_ns(300e6);
+    board.console_send(b"hello rtos\r");
+    let r = board.run_for_ns(2e9);
+    assert!(board.diagnose(&r).is_none(), "{:?}", board.diagnose(&r));
+    let text = console_text(&mut board);
+    assert!(text.contains("echo: HELLO RTOS\r\n"), "{text:?}");
+    assert!(text.contains("sample 4 at 1000 ms"), "{text:?}");
+    assert!(text.contains("heap free "), "{text:?}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+}

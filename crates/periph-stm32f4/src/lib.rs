@@ -148,6 +148,11 @@ pub struct Stm32f401Bus {
     /// The owner drains it.
     pub level_events: Vec<PinEvent>,
     pub probe_mask: [u16; 8],
+    /// An SRAM word whose writes are logged in `watch_log` as (time, new
+    /// value), e.g. the RTOS's current-task pointer to record context
+    /// switches. The owner drains the log.
+    pub watch: Option<u32>,
+    pub watch_log: Vec<(Cycles, u32)>,
     pub rcc: Rcc,
     pub pwr: Pwr,
     pub flash_if: FlashIf,
@@ -194,6 +199,8 @@ impl Stm32f401Bus {
             pin_events: Vec::new(),
             level_events: Vec::new(),
             probe_mask: [0; 8],
+            watch: None,
+            watch_log: Vec::new(),
             rcc,
             pwr: Pwr::default(),
             flash_if: FlashIf::default(),
@@ -790,7 +797,14 @@ impl Stm32f401Bus {
     fn write_inner(&mut self, addr: u32, size: AccessSize, value: u32) -> Result<(), BusError> {
         let a = map::resolve_alias(addr);
         if self.sram.contains(a, size) {
-            return self.sram.write(a, size, value);
+            self.sram.write(a, size, value)?;
+            if let Some(w) = self.watch {
+                if a & !3 == w {
+                    let v = self.sram.read(w, AccessSize::Word)?;
+                    self.watch_log.push((self.now, v));
+                }
+            }
+            return Ok(());
         }
         if self.flash.contains(a, size) {
             // Flash programming goes through the FLASH interface (later).

@@ -6,6 +6,7 @@
 //! port on USART2) and explains why firmware stopped ([`Diagnosis`]).
 
 mod diagnose;
+pub mod rtos;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -23,6 +24,7 @@ use simucleo_periph_stm32f4::{ExternalCircuit, Stm32f401Bus};
 use thiserror::Error;
 
 pub use diagnose::{Diagnosis, FaultInfo};
+pub use rtos::{RtosSnapshot, TaskInfo, TaskState};
 pub use simucleo_circuit::netlist::{BusCatalog, Circuit};
 pub use simucleo_circuit::sim::{CircuitSim, Drive, PartVisual};
 pub use simucleo_periph_stm32f4::gpio::PinEvent;
@@ -82,6 +84,8 @@ pub struct Nucleo {
     timeline: Vec<Segment>,
     /// Everything wired to the board, plus LD2 and B1.
     circuit: Rc<RefCell<CircuitSim>>,
+    /// The RTOS kernel found in the firmware, if any.
+    rtos: Option<rtos::FreeRtos>,
 }
 
 impl Default for Nucleo {
@@ -110,6 +114,7 @@ impl Nucleo {
                 &HashMap::new(),
                 0,
             ))),
+            rtos: None,
         };
         board.power_on();
         board
@@ -124,6 +129,8 @@ impl Nucleo {
         self.bus.set_time(self.sys.cycles);
         self.bus
             .set_circuit(Some(Box::new(CircuitLink(self.circuit.clone()))));
+        // Log context switches: writes to the kernel's current-task pointer.
+        self.bus.watch = self.rtos.as_ref().map(|r| r.current_tcb);
         self.timeline = vec![Segment {
             cycle: self.sys.cycles,
             ns: self.time_ns(),
@@ -134,6 +141,7 @@ impl Nucleo {
     /// Program an ELF image into flash and power the board up.
     pub fn load_elf(&mut self, bytes: &[u8]) -> Result<(), LoadError> {
         let fw = FirmwareImage::parse(bytes)?;
+        self.rtos = rtos::FreeRtos::detect(&fw, bytes);
         self.sys = CortexM::new();
         self.timeline.clear();
         self.power_on();
@@ -395,6 +403,19 @@ impl Nucleo {
         self.bus
             .peek(addr, simucleo_core::bus::AccessSize::Byte)
             .map(|v| v as u8)
+    }
+
+    /// Tasks of the RTOS in the firmware (FreeRTOS), or `None` without one.
+    pub fn rtos_snapshot(&self) -> Option<RtosSnapshot> {
+        let r = self.rtos.as_ref()?;
+        let word = |a: u32| self.bus.peek(a, simucleo_core::bus::AccessSize::Word);
+        Some(r.snapshot(&word))
+    }
+
+    /// Context switches since the last call: (cycle, TCB of the task that
+    /// now runs).
+    pub fn take_task_switches(&mut self) -> Vec<(Cycles, u32)> {
+        std::mem::take(&mut self.bus.watch_log)
     }
 
     /// Name of the function containing `addr` (nearest symbol at or below).

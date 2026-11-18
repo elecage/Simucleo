@@ -36,7 +36,12 @@ pub struct Simulator {
     frame_start_ns: f64,
     /// Probed pins with their level at the start of the frame.
     probes: Vec<((u8, u8), bool)>,
+    /// RTOS task running at the start of the frame (TCB address).
+    rtos_current: Option<u32>,
 }
+
+/// Most context switches reported per frame.
+const SWITCHES_MAX: usize = 4000;
 
 /// Most edges reported per probe and frame; faster signals are marked dense.
 const PROBE_EDGES_MAX: usize = 4000;
@@ -58,6 +63,7 @@ impl Simulator {
             pins: BTreeMap::new(),
             frame_start_ns: 0.0,
             probes: Vec::new(),
+            rtos_current: None,
         }
     }
 
@@ -93,6 +99,8 @@ impl Simulator {
         }
         // Start a fresh display frame for the parts as well.
         self.board.circuit_frame(0.0);
+        self.board.take_task_switches();
+        self.rtos_current = None;
     }
 
     /// Whether the firmware has stopped (see [`Simulator::run_for_ms`]).
@@ -180,6 +188,35 @@ impl Simulator {
             pins.push(json!({ "port": (b'A' + port) as char, "pin": pin, "level": p.level, "driven": p.driven, "duty": duty }));
         }
         let parts = self.board.circuit_frame(span / 1e9);
+
+        // RTOS: task list, context switches and CPU share in this frame.
+        let switches = self.board.take_task_switches();
+        let rtos = self.board.rtos_snapshot().map(|snap| {
+            let mut cpu: BTreeMap<u32, f64> = BTreeMap::new();
+            let mut cur = self.rtos_current;
+            let mut since = self.frame_start_ns;
+            let mut list = Vec::new();
+            for &(cycle, tcb) in &switches {
+                let t = self.board.ns_at(cycle);
+                if let Some(c) = cur {
+                    *cpu.entry(c).or_default() += t - since;
+                }
+                cur = Some(tcb);
+                since = t;
+                if list.len() < SWITCHES_MAX {
+                    list.push(json!([t / 1e6, tcb]));
+                }
+            }
+            if let Some(c) = cur.or(snap.current) {
+                *cpu.entry(c).or_default() += now - since;
+            }
+            self.rtos_current = snap.current;
+            let cpu: BTreeMap<String, f64> = cpu
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), (v / span).clamp(0.0, 1.0)))
+                .collect();
+            json!({ "snapshot": snap, "switches": list, "cpu": cpu, "dense": switches.len() > SWITCHES_MAX })
+        });
         self.frame_start_ns = now;
 
         let regs = self.board.cpu.registers();
@@ -206,6 +243,7 @@ impl Simulator {
             "parts": parts,
             "circuitWarnings": self.board.circuit_warnings(),
             "probes": probes,
+            "rtos": rtos,
         })
         .to_string()
     }

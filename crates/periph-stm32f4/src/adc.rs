@@ -85,6 +85,8 @@ pub struct Adc {
     pub gen: u32,
     /// Die temperature for the internal sensor, °C.
     pub die_temp: f64,
+    /// The bus clock (RCC ADC1EN) is off: a conversion in progress waits.
+    pub gated: bool,
 }
 
 impl Default for Adc {
@@ -105,6 +107,7 @@ impl Default for Adc {
             converting: None,
             gen: 0,
             die_temp: 25.0,
+            gated: false,
         }
     }
 }
@@ -122,10 +125,11 @@ pub enum AdcAction {
 impl Adc {
     /// Reset, keeping the die temperature (an environment setting).
     pub fn reset(&mut self) {
-        let (gen, die_temp) = (self.gen.wrapping_add(1), self.die_temp);
+        let (gen, die_temp, gated) = (self.gen.wrapping_add(1), self.die_temp, self.gated);
         *self = Self::default();
         self.gen = gen;
         self.die_temp = die_temp;
+        self.gated = gated;
     }
 
     /// Number of conversions in the regular sequence.

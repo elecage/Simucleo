@@ -233,6 +233,7 @@ impl Stm32f401Bus {
         };
         bus.retime_timers();
         bus.update_timer_gates();
+        bus.update_adc_gate();
         bus.sync_levels();
         bus
     }
@@ -249,6 +250,22 @@ impl Stm32f401Bus {
                 self.timers[i].gated = gated;
                 self.reschedule_timer(i);
             }
+        }
+    }
+
+    /// Pause the ADC while its bus clock is off: the conversion in progress
+    /// is dropped from the schedule and starts over when the clock returns.
+    fn update_adc_gate(&mut self) {
+        let gated = !self.rcc.clock_enabled(0x44, 8);
+        if self.adc.gated == gated {
+            return;
+        }
+        self.adc.gated = gated;
+        if gated {
+            self.adc.gen = self.adc.gen.wrapping_add(1);
+        } else if self.adc.converting.is_some() {
+            let (now, clocks) = (self.now, self.clocks);
+            self.adc.begin(now, &clocks, &mut self.sched);
         }
     }
 
@@ -479,6 +496,7 @@ impl Stm32f401Bus {
         }
         self.regs.clear();
         self.update_timer_gates();
+        self.update_adc_gate();
         self.sync_levels();
         self.circuit_update(now);
         let now = self.sched.now();
@@ -798,6 +816,7 @@ impl Stm32f401Bus {
                 }
                 if matches!(off, 0x40 | 0x44) {
                     self.update_timer_gates();
+                    self.update_adc_gate();
                 }
                 return;
             }
@@ -1205,6 +1224,42 @@ mod tests {
         assert_eq!(bus.read_u32(tim2 + 0x24).unwrap(), 7);
         bus.poll(&mut sys);
         assert_eq!(sys.time_reads, before + 1);
+    }
+
+    #[test]
+    fn adc_conversion_waits_while_its_clock_is_off() {
+        let mut bus = Stm32f401Bus::new();
+        let mut sys = CortexM::new();
+        let w = |bus: &mut Stm32f401Bus, a: u32, v: u32| bus.write(a, AccessSize::Word, v).unwrap();
+        w(&mut bus, map::RCC_BASE + 0x44, 1 << 8); // ADC1EN
+        let adc = map::ADC1_BASE;
+        w(&mut bus, adc + 0x304, 1 << 23); // TSVREFE
+        w(&mut bus, adc + 0x34, 17); // SQ1 = VREFINT
+        w(&mut bus, adc + 0x04, 1 << 5); // EOCIE
+        w(&mut bus, adc + 0x08, 1); // ADON
+        w(&mut bus, adc + 0x08, 1 | 1 << 30); // SWSTART
+                                              // Clock off before the conversion ends: nothing completes.
+        w(&mut bus, map::RCC_BASE + 0x44, 0);
+        for t in (0..10_000u64).step_by(100) {
+            bus.set_time(t);
+            bus.run_events(t);
+        }
+        assert_eq!(bus.adc.sr & adc::EOC, 0);
+        bus.poll(&mut sys);
+        assert_eq!(
+            sys.peek(0xE000_E200, AccessSize::Word) & (1 << 18),
+            0,
+            "no ADC IRQ"
+        );
+        // Clock back on: the conversion starts over and completes.
+        bus.set_time(10_000);
+        w(&mut bus, map::RCC_BASE + 0x44, 1 << 8);
+        for t in (10_000..20_000u64).step_by(100) {
+            bus.set_time(t);
+            bus.run_events(t);
+        }
+        assert_eq!(bus.adc.sr & adc::EOC, adc::EOC);
+        assert_eq!(bus.adc.dr, bus.adc.code(adc::VREFINT));
     }
 
     #[test]

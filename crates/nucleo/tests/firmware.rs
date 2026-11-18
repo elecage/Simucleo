@@ -619,6 +619,22 @@ fn adc_reads_the_circuit_and_drives_servo_and_motor() {
     let v = board.circuit_frame(0.016);
     let sv = v.iter().find(|p| p.id == "sv").unwrap();
     assert!(sv.angle.unwrap() < 2.0, "{sv:?}");
+
+    // A warmer die: the internal sensor follows (2.5 mV/°C).
+    board.bus.adc.die_temp = 50.0;
+    board.run_for_ns(600e6);
+    let text = console_text(&mut board);
+    let last = text.lines().rev().find(|l| l.starts_with("pot")).unwrap();
+    let chip: f64 = last
+        .split("chip ")
+        .nth(1)
+        .unwrap()
+        .split(' ')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((chip - 50.0).abs() < 1.0, "{last}");
     assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
     assert!(
         board.circuit_warnings().is_empty(),

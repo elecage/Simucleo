@@ -78,7 +78,8 @@ int main(void)
       /* VDDA from VREFINT (1.21 V typ.), then volts in millivolts. */
       uint32_t vdda_mv = 1210 * 4095 / (vref ? vref : 1);
       uint32_t tmp_mv = tmp36 * vdda_mv / 4095;
-      int32_t chip_c10 = ((int32_t)(chip * vdda_mv / 4095) - 760) * 10 / 25 + 250;
+      /* V25 = 760 mV, 2.5 mV/°C: tenths of a degree = ΔmV × 100 / 25. */
+      int32_t chip_c10 = ((int32_t)(chip * vdda_mv / 4095) - 760) * 100 / 25 + 250;
       printf("pot %4lu servo %4lu us | light %4lu | TMP36 %ld.%ld C | chip %ld.%ld C | VDDA %lu mV\r\n",
              (unsigned long)pot, (unsigned long)pulse_us, (unsigned long)light,
              (long)((int32_t)tmp_mv - 500) / 10, (long)(((int32_t)tmp_mv - 500) % 10 + 10) % 10,

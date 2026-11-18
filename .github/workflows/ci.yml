@@ -8,6 +8,8 @@ on:
 jobs:
   rust:
     runs-on: ubuntu-latest
+    # A full run takes a few minutes; fail fast if a step hangs (e.g. apt).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -25,6 +27,8 @@ jobs:
     # simulator, and compares the CPU core against Unicorn instruction by
     # instruction (the Unicorn dependency is feature-gated, test-only).
     runs-on: ubuntu-latest
+    # A full run takes a few minutes; fail fast if a step hangs (e.g. apt).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -52,6 +56,8 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
+    # A full run takes a few minutes; fail fast if a step hangs (e.g. apt).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

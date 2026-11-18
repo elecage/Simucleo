@@ -1,0 +1,291 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "엔코더 → 스테퍼, 문자 LCD, 서미스터",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "enc",
+      "kind": "rotary-encoder",
+      "x": 48,
+      "y": 24,
+      "props": {}
+    },
+    {
+      "id": "mot",
+      "kind": "stepper-28byj48",
+      "x": 58,
+      "y": 24,
+      "props": {}
+    },
+    {
+      "id": "lcd",
+      "kind": "lcd-i2c",
+      "x": 48,
+      "y": 4,
+      "props": {
+        "address": "0x27"
+      }
+    },
+    {
+      "id": "r1",
+      "kind": "resistor",
+      "x": 74,
+      "y": 24,
+      "props": {
+        "ohms": "10k"
+      }
+    },
+    {
+      "id": "ntc",
+      "kind": "thermistor",
+      "x": 78,
+      "y": 24,
+      "props": {
+        "ohms": "10k",
+        "beta": 3950,
+        "temp": 25
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "enc",
+        "pin": "+"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "b": {
+        "part": "enc",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D12"
+      },
+      "b": {
+        "part": "enc",
+        "pin": "CLK"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D11"
+      },
+      "b": {
+        "part": "enc",
+        "pin": "DT"
+      },
+      "color": "#8e24aa"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "D10"
+      },
+      "b": {
+        "part": "enc",
+        "pin": "SW"
+      },
+      "color": "#00897b"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "nucleo",
+        "pin": "D2"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "IN1"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "nucleo",
+        "pin": "D3"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "IN2"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "nucleo",
+        "pin": "D4"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "IN3"
+      },
+      "color": "#8e24aa"
+    },
+    {
+      "id": "w11",
+      "a": {
+        "part": "nucleo",
+        "pin": "D5"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "IN4"
+      },
+      "color": "#00897b"
+    },
+    {
+      "id": "w12",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "lcd",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w13",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_P2"
+      },
+      "b": {
+        "part": "lcd",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w14",
+      "a": {
+        "part": "nucleo",
+        "pin": "D15"
+      },
+      "b": {
+        "part": "lcd",
+        "pin": "SCL"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w15",
+      "a": {
+        "part": "nucleo",
+        "pin": "D14"
+      },
+      "b": {
+        "part": "lcd",
+        "pin": "SDA"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w16",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "r1",
+        "pin": "1"
+      },
+      "color": "#8e24aa"
+    },
+    {
+      "id": "w17",
+      "a": {
+        "part": "r1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "A0"
+      },
+      "color": "#00897b"
+    },
+    {
+      "id": "w18",
+      "a": {
+        "part": "nucleo",
+        "pin": "A0"
+      },
+      "b": {
+        "part": "ntc",
+        "pin": "1"
+      },
+      "color": "#fbc02d"
+    },
+    {
+      "id": "w19",
+      "a": {
+        "part": "ntc",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#1e88e5"
+    }
+  ],
+  "firmware": {
+    "name": "hal-encoder-stepper-lcd",
+    "example": "hal-encoder-stepper-lcd.elf"
+  }
+}

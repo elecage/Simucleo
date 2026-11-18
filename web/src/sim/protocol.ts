@@ -26,6 +26,7 @@ export interface PartFrame {
   text?: string;
   /** NeoPixel colours, 0xRRGGBB per LED. */
   leds?: number[];
+  lcd?: import("../parts/types").LcdView;
 }
 
 /** Level changes of a probed pin within one frame. */
@@ -100,6 +101,7 @@ export type ToWorker =
   | { type: "console"; text: string }
   | { type: "readMemory"; addr: number; len: number }
   | { type: "sdImage"; part: string }
+  | { type: "rotate"; part: string; detents: number }
   | { type: "sdLoad"; part: string; bytes: ArrayBuffer };
 
 export type FromWorker =

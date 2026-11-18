@@ -62,6 +62,21 @@ export interface VisualState {
   text?: string;
   /** NeoPixel colours, 0xRRGGBB per LED. */
   leds?: number[];
+  /** Character LCD contents. */
+  lcd?: LcdView;
+  /** The pressable element held down now (`data-action`). */
+  action?: string;
   pressed?: boolean;
   burnt?: boolean;
+}
+
+/** What a character LCD shows (`simucleo_circuit::sim::LcdView`). */
+export interface LcdView {
+  /** Character codes per row (0–7 are the custom characters). */
+  rows: number[][];
+  /** 8 custom characters × 8 rows of 5 pixels. */
+  cgram: number[];
+  backlight: boolean;
+  cursor?: [number, number];
+  blink: boolean;
 }

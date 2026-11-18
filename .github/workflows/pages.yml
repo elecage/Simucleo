@@ -44,7 +44,7 @@ jobs:
           make -C firmware/bare-blinky
           make -C firmware/hal-blinky variants
           make -C firmware/hal-uart-printf
-          for d in hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture freertos-two-tasks freertos-queue-uart; do make -C firmware/$d; done
+          for d in hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture hal-7seg-keypad hal-encoder-stepper-lcd hal-sonar-onewire freertos-two-tasks freertos-queue-uart; do make -C firmware/$d; done
       - run: npm run examples
         working-directory: web
       - run: npm run wasm

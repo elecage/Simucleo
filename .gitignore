@@ -5,3 +5,4 @@ web/src/wasm/pkg/
 *.elf.bak
 .DS_Store
 firmware/**/build/
+*.tsbuildinfo

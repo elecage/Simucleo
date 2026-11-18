@@ -111,7 +111,16 @@ export function parse(text: string): Loaded {
     let id = typeof w.id === "string" ? w.id : `w${wires.length + 1}`;
     while (wireIds.has(id) || ids.has(id)) id += "_";
     wireIds.add(id);
-    wires.push({ id, a: w.a, b: w.b, color: typeof w.color === "string" ? w.color : "#1e88e5" });
+    const points = Array.isArray(w.points)
+      ? w.points.filter((q) => Number.isFinite(q?.x) && Number.isFinite(q?.y)).map((q) => ({ x: q.x, y: q.y }))
+      : [];
+    wires.push({
+      id,
+      a: w.a,
+      b: w.b,
+      color: typeof w.color === "string" ? w.color : "#1e88e5",
+      ...(points.length ? { points } : {}),
+    });
   }
   const fw = f.firmware as FirmwareRef | undefined;
   return {

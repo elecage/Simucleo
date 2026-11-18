@@ -63,21 +63,47 @@ pub fn parse_mcu_pin(s: &str) -> Option<(u8, u8)> {
     (pin < 16).then_some((b[1] - b'A', pin))
 }
 
-/// Parse a resistance such as `"220"`, `"4.7k"`, `"1M"` or a number.
+/// Parse a resistance: a number, or text such as `"220"`, `"4.7k"`,
+/// `"4k7"`, `"1M"`, `"2M2"`, `"4R7"`, `"10 kΩ"`, `"330 ohm"` (the same
+/// notations as the editor's `parseOhms`).
 pub fn parse_ohms(v: &serde_json::Value) -> Option<f64> {
     if let Some(x) = v.as_f64() {
-        return Some(x);
+        return (x > 0.0 && x.is_finite()).then_some(x);
     }
-    let s = v.as_str()?.trim().trim_end_matches('Ω');
-    let (num, mul) = match s.chars().last()? {
-        'k' | 'K' => (&s[..s.len() - 1], 1e3),
-        'M' => (&s[..s.len() - 1], 1e6),
-        _ => (s, 1.0),
+    let s: String = v.as_str()?.chars().filter(|c| !c.is_whitespace()).collect();
+    let lower = s.to_ascii_lowercase();
+    let s = if let Some(t) = s.strip_suffix('Ω') {
+        t.to_string()
+    } else if lower.ends_with("ohms") {
+        s[..s.len() - 4].to_string()
+    } else if lower.ends_with("ohm") {
+        s[..s.len() - 3].to_string()
+    } else {
+        s
     };
-    num.parse::<f64>()
-        .ok()
-        .map(|x| x * mul)
-        .filter(|r| *r > 0.0)
+    let mult = |c: char| match c {
+        'R' | 'r' => Some(1.0),
+        'k' | 'K' => Some(1e3),
+        'M' | 'm' => Some(1e6),
+        _ => None,
+    };
+    // 4k7, 2M2, 4R7: the letter stands for the decimal point.
+    if let Some((i, c)) = s.char_indices().find(|(_, c)| c.is_ascii_alphabetic()) {
+        let m = mult(c)?;
+        let (int, frac) = (&s[..i], &s[i + 1..]);
+        let r = if frac.is_empty() {
+            int.parse::<f64>().ok()? * m
+        } else if int.chars().all(|c| c.is_ascii_digit())
+            && frac.chars().all(|c| c.is_ascii_digit())
+            && !int.is_empty()
+        {
+            format!("{int}.{frac}").parse::<f64>().ok()? * m
+        } else {
+            return None;
+        };
+        return (r > 0.0 && r.is_finite()).then_some(r);
+    }
+    s.parse::<f64>().ok().filter(|r| *r > 0.0 && r.is_finite())
 }
 
 fn led_vf(color: &str) -> f64 {
@@ -196,6 +222,8 @@ pub struct CircuitSim {
     last_time: Cycles,
     frame_start: Cycles,
     pub warnings: BTreeSet<String>,
+    /// The warnings about part values (bad resistance), redone on rebuild.
+    value_warnings: Vec<String>,
     board_id: String,
     /// Node of each net-attached pin (for probes): canonical pin → node.
     pin_nodes: HashMap<PinRef, usize>,
@@ -241,6 +269,7 @@ impl CircuitSim {
             last_time: time,
             frame_start: time,
             warnings: BTreeSet::new(),
+            value_warnings: Vec::new(),
             board_id: String::new(),
             pin_nodes: HashMap::new(),
         };
@@ -415,6 +444,7 @@ impl CircuitSim {
 
         let mut elements = Vec::new();
         let mut visuals = Vec::new();
+        let mut bad_values: Vec<String> = Vec::new();
         let mut map = std::mem::take(&mut self.pin_nodes);
         let mut add_visual = |id: &str, kind: VisualKind, channels: usize| {
             visuals.push(VisualSlot {
@@ -512,15 +542,19 @@ impl CircuitSim {
                     }
                 }
                 "resistor" => {
-                    let r = prop(p, "ohms")
-                        .as_ref()
-                        .and_then(parse_ohms)
-                        .unwrap_or(220.0);
-                    elements.push(Element::Resistor {
-                        a: node(PinRef::new(&p.id, "1"), &mut map),
-                        b: node(PinRef::new(&p.id, "2"), &mut map),
-                        r,
-                    });
+                    let a = node(PinRef::new(&p.id, "1"), &mut map);
+                    let b = node(PinRef::new(&p.id, "2"), &mut map);
+                    match prop(p, "ohms") {
+                        None => elements.push(Element::Resistor { a, b, r: 220.0 }),
+                        Some(v) => match parse_ohms(&v) {
+                            Some(r) => elements.push(Element::Resistor { a, b, r }),
+                            // Unknown value: leave it open and say so.
+                            None => bad_values.push(format!(
+                                "{}: unknown resistance {v} (e.g. 220, 4.7k, 4k7, 1M)",
+                                p.id
+                            )),
+                        },
+                    }
                 }
                 "buzzer-active" | "buzzer-passive" => {
                     let active = p.kind == "buzzer-active";
@@ -568,6 +602,12 @@ impl CircuitSim {
                 slot.rises = old.rises;
             }
         }
+        // Value problems describe the circuit as it is now.
+        for w in self.value_warnings.drain(..) {
+            self.warnings.remove(&w);
+        }
+        self.warnings.extend(bad_values.iter().cloned());
+        self.value_warnings = bad_values;
         self.pin_nodes = map;
         self.nodes = nodes;
         self.elements = elements;
@@ -1185,9 +1225,47 @@ mod tests {
     }
 
     #[test]
+    fn unknown_resistance_warns_until_fixed() {
+        let wires = vec![wire(("mcu", "D7"), ("r1", "1"))];
+        let mut s = sim(
+            vec![part("r1", "resistor", &[("ohms", "abc")])],
+            wires.clone(),
+        );
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.starts_with("r1: unknown resistance")),
+            "{:?}",
+            s.warnings
+        );
+        let mut parts = vec![
+            part("mcu", BOARD_KIND, &[]),
+            part("r1", "resistor", &[("ohms", "4k7")]),
+        ];
+        s.set_circuit(
+            &Circuit {
+                parts: parts.clone(),
+                wires: wires.clone(),
+            },
+            0,
+        );
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        parts[1] = part("r1", "resistor", &[("ohms", "")]);
+        s.set_circuit(&Circuit { parts, wires }, 0);
+        assert_eq!(s.warnings.len(), 1);
+    }
+
+    #[test]
     fn ohms_parse() {
         assert_eq!(parse_ohms(&"4.7k".into()), Some(4700.0));
         assert_eq!(parse_ohms(&"1M".into()), Some(1e6));
+        assert_eq!(parse_ohms(&"4k7".into()), Some(4700.0));
+        assert_eq!(parse_ohms(&"2M2".into()), Some(2.2e6));
+        assert_eq!(parse_ohms(&"4R7".into()), Some(4.7));
+        assert_eq!(parse_ohms(&"10 kΩ".into()), Some(10_000.0));
+        assert_eq!(parse_ohms(&"330ohm".into()), Some(330.0));
+        assert_eq!(parse_ohms(&"abc".into()), None);
+        assert_eq!(parse_ohms(&"0".into()), None);
         assert_eq!(parse_ohms(&serde_json::json!(330)), Some(330.0));
         assert_eq!(parse_mcu_pin("PC13"), Some((2, 13)));
         assert_eq!(parse_mcu_pin("PB16"), None);

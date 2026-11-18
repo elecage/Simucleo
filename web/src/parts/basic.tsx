@@ -1,3 +1,4 @@
+import { formatOhms, parseOhms, resistorBands } from "./ohms";
 import { PITCH, type PartDef } from "./types";
 
 const LED_COLORS: Record<string, string> = {
@@ -30,8 +31,13 @@ export const led5mm: PartDef = {
     return (
       <g data-brightness={b.toFixed(2)}>
         {visual.overcurrent && <Overcurrent cx={0.5 * PITCH} cy={0.6 * PITCH} r={1.4 * PITCH} />}
-        <line x1={0} y1={1.2 * PITCH} x2={0} y2={3 * PITCH} className="lead" />
-        <line x1={PITCH} y1={1.2 * PITCH} x2={PITCH} y2={3 * PITCH} className="lead" />
+        {/* Cathode: short straight leg. Anode: the longer leg, drawn with a bend. */}
+        <line x1={0} y1={1.5 * PITCH} x2={0} y2={3 * PITCH} className="lead" />
+        <polyline
+          points={`${PITCH},${1.5 * PITCH} ${PITCH},${1.9 * PITCH} ${1.35 * PITCH},${2.25 * PITCH} ${PITCH},${2.6 * PITCH} ${PITCH},${3 * PITCH}`}
+          className="lead"
+          fill="none"
+        />
         {b > 0 && <circle cx={0.5 * PITCH} cy={0.6 * PITCH} r={PITCH * (1 + b)} fill={color} opacity={0.35 * b} />}
         <path
           d={`M ${-0.3 * PITCH} ${1.3 * PITCH} V ${0.3 * PITCH} A ${0.8 * PITCH} ${0.8 * PITCH} 0 0 1 ${1.3 * PITCH} ${0.3 * PITCH} V ${1.3 * PITCH} Z`}
@@ -39,23 +45,25 @@ export const led5mm: PartDef = {
           className={visual.burnt ? "led-body burnt" : "led-body"}
           style={{ opacity: 0.55 + 0.45 * b }}
         />
+        {/* Rim, flat on the cathode side like a real 5 mm LED. */}
+        <path
+          d={`M ${-0.3 * PITCH} ${1.3 * PITCH} H ${1.3 * PITCH} A ${0.25 * PITCH} ${0.1 * PITCH} 0 0 1 ${1.3 * PITCH} ${1.55 * PITCH} H ${-0.3 * PITCH} Z`}
+          fill={color}
+          className="led-body"
+          style={{ opacity: 0.75 }}
+        />
+        <line x1={-0.3 * PITCH} y1={1.25 * PITCH} x2={-0.3 * PITCH} y2={1.6 * PITCH} className="led-flat" />
+        <text x={1.6 * PITCH} y={2.95 * PITCH} className="polarity plus">+</text>
+        <text x={-0.75 * PITCH} y={2.95 * PITCH} className="polarity minus">−</text>
       </g>
     );
   },
 };
 
-// Resistor colour code bands for common values.
-const BANDS: Record<string, string[]> = {
-  "100": ["brown", "black", "brown"],
-  "220": ["red", "red", "brown"],
-  "330": ["orange", "orange", "brown"],
-  "1k": ["brown", "black", "red"],
-  "4.7k": ["yellow", "violet", "red"],
-  "10k": ["brown", "black", "orange"],
-};
 const BAND_HEX: Record<string, string> = {
   black: "#111", brown: "#7a3e12", red: "#d22", orange: "#f80", yellow: "#ee0",
   green: "#2a2", blue: "#24f", violet: "#a3f", grey: "#888", white: "#fff",
+  gold: "#c9a227", silver: "#c0c0c0",
 };
 
 export const resistor: PartDef = {
@@ -69,20 +77,25 @@ export const resistor: PartDef = {
     { id: "2", x: 4, y: 0 },
   ],
   props: { ohms: "220" },
-  propOptions: { ohms: ["100", "220", "330", "1k", "4.7k", "10k"] },
+  propOptions: { ohms: ["100", "220", "330", "470", "1k", "2.2k", "4.7k", "10k", "100k"] },
   render: (props) => {
-    const bands = BANDS[String(props.ohms)] ?? BANDS["220"];
+    const r = parseOhms(props.ohms);
+    const bands = r ? resistorBands(r) : null;
     return (
-      <g>
+      <g data-bands={bands?.join(",") ?? "invalid"}>
         <line x1={0} y1={0} x2={4 * PITCH} y2={0} className="lead" />
         <rect x={0.9 * PITCH} y={-0.45 * PITCH} width={2.2 * PITCH} height={0.9 * PITCH} rx={4} className="resistor-body" />
-        {[...bands, "gold"].map((c, i) => (
+        {bands?.map((c, i) => (
           <rect
             key={i}
-            x={(1.2 + i * 0.45) * PITCH} y={-0.45 * PITCH} width={0.22 * PITCH} height={0.9 * PITCH}
-            fill={c === "gold" ? "#c9a227" : BAND_HEX[c]}
+            // Tolerance band set apart at the right end, as on real parts.
+            x={(1.15 + i * 0.42 + (i === 3 ? 0.3 : 0)) * PITCH} y={-0.45 * PITCH} width={0.22 * PITCH} height={0.9 * PITCH}
+            fill={BAND_HEX[c]}
           />
         ))}
+        <text x={2 * PITCH} y={-0.75 * PITCH} textAnchor="middle" className={r ? "silk small value" : "silk small value bad"}>
+          {r ? formatOhms(r) : `? ${String(props.ohms)}`}
+        </text>
       </g>
     );
   },
@@ -125,7 +138,7 @@ export const rgbLed: PartDef = {
   ],
   props: { common: "cathode" },
   propOptions: { common: ["cathode", "anode"] },
-  render: (_props, visual) => {
+  render: (props, visual) => {
     const [r, g, b] = visual.channels ?? [0, 0, 0];
     const max = Math.max(r, g, b);
     const mix = `rgb(${Math.round(255 * (0.35 + 0.65 * r))}, ${Math.round(255 * (0.35 + 0.65 * g))}, ${Math.round(255 * (0.35 + 0.65 * b))})`;
@@ -134,6 +147,11 @@ export const rgbLed: PartDef = {
       <g data-rgb={[r, g, b].map((x) => x.toFixed(2)).join(",")}>
         {[0, 1, 2, 3].map((i) => (
           <line key={i} x1={i * PITCH} y1={1.4 * PITCH} x2={i * PITCH} y2={3 * PITCH} className="lead" />
+        ))}
+        {["R", props.common === "anode" ? "+" : "−", "G", "B"].map((t, i) => (
+          <text key={i} x={i * PITCH + 2} y={2.4 * PITCH} className={i === 1 ? "polarity pin-tag" : "silk small pin-tag"}>
+            {t}
+          </text>
         ))}
         {max > 0 && <circle cx={1.5 * PITCH} cy={0.6 * PITCH} r={PITCH * (1.4 + max)} fill={glow} opacity={0.35 * max} />}
         {visual.overcurrent && <Overcurrent cx={1.5 * PITCH} cy={0.6 * PITCH} r={1.8 * PITCH} />}
@@ -177,7 +195,8 @@ function buzzer(kind: string, name: string, description: string): PartDef {
           <line x1={2 * PITCH} y1={1.6 * PITCH} x2={2 * PITCH} y2={3 * PITCH} className="lead" />
           <circle cx={PITCH} cy={0.8 * PITCH} r={1.25 * PITCH} className="buzzer-body" />
           <circle cx={PITCH} cy={0.8 * PITCH} r={0.25 * PITCH} className="buzzer-hole" />
-          <text x={-0.2 * PITCH} y={-0.2 * PITCH} className="silk small">+</text>
+          <text x={-0.75 * PITCH} y={2.95 * PITCH} className="polarity plus">+</text>
+          <text x={2.25 * PITCH} y={2.95 * PITCH} className="polarity minus">−</text>
           {on && <Waves x={2.4 * PITCH} y={0.8 * PITCH} />}
           {visual.freq !== undefined && (
             <text x={PITCH} y={-0.7 * PITCH} textAnchor="middle" className="silk small">{Math.round(visual.freq)} Hz</text>

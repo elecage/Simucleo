@@ -11,6 +11,7 @@ import { createSimulator, type Netlist, type SimHandle } from "./sim/simulator";
 import { useRunner } from "./sim/useRunner";
 import { unlockAudio, useBuzzerAudio } from "./sim/audio";
 import type { VisualState } from "./parts/types";
+import { formatOhms, parseOhms, resistorBands } from "./parts/ohms";
 
 const WIRE_COLORS = ["#e53935", "#1e88e5", "#43a047", "#fdd835", "#fb8c00", "#8e24aa", "#212121"];
 const CATEGORY_LABEL: Record<string, string> = {
@@ -209,6 +210,7 @@ export function App() {
   }, [deleteSelected]);
 
   const selectedPart = project.parts.find((p) => p.id === selected);
+  const selectedWire = project.wires.find((w) => w.id === selected);
   const selectedDef = selectedPart && PART_BY_KIND[selectedPart.kind];
   const categories = [...new Set(PARTS.map((p) => p.category))];
 
@@ -277,13 +279,17 @@ export function App() {
           visuals={visuals}
           onPartAction={onPartAction}
           fitKey={fitKey}
-          onAddWire={(a, b) =>
+          onAddWire={(a, b, points) =>
             setProject((p) => {
               // Both ends must exist when the wire is made (#2).
               const exists = (r: PinRef) => p.parts.some((q) => q.id === r.part);
               if (!exists(a) || !exists(b)) return p;
-              return { ...p, wires: [...p.wires, { id: newId("w", taken()), a, b, color: wireColor }] };
+              const wire = { id: newId("w", taken()), a, b, color: wireColor, ...(points.length ? { points } : {}) };
+              return { ...p, wires: [...p.wires, wire] };
             })
+          }
+          onUpdateWire={(id, points) =>
+            setProject((p) => ({ ...p, wires: p.wires.map((w) => (w.id === id ? { ...w, points } : w)) }))
           }
         />
         {runner.frame?.stopped && (
@@ -325,6 +331,22 @@ export function App() {
                   parts: p.parts.map((q) => (q.id === selectedPart.id ? { ...q, props: { ...q.props, [k]: value } } : q)),
                 }));
               const options = selectedDef.propOptions?.[k];
+              if (k === "ohms") {
+                // Any value: typed, or picked from common ones.
+                const r = parseOhms(v);
+                return (
+                  <label key={k} className="prop">
+                    저항값 (Ω)
+                    <input value={String(v)} onChange={(e) => set(e.target.value)} list="ohms-list" aria-label={k} />
+                    <datalist id="ohms-list">
+                      {options?.map((o) => <option key={o} value={o} />)}
+                    </datalist>
+                    <span className={r ? "dim" : "error"} data-testid="ohms-parsed">
+                      {r ? `${formatOhms(r)} · ${resistorBands(r).join("-")}` : "알 수 없는 값 (예: 220, 4.7k, 4k7, 1M)"}
+                    </span>
+                  </label>
+                );
+              }
               return (
                 <label key={k} className="prop">
                   {k}
@@ -342,8 +364,44 @@ export function App() {
             })}
             <button onClick={deleteSelected}>삭제</button>
           </>
+        ) : selectedWire ? (
+          <>
+            <p>
+              <b>와이어</b> {selectedWire.a.part}.{selectedWire.a.pin} — {selectedWire.b.part}.{selectedWire.b.pin}
+            </p>
+            <div className="swatches">
+              {WIRE_COLORS.map((c) => (
+                <button
+                  key={c}
+                  className={c === selectedWire.color ? "swatch on" : "swatch"}
+                  style={{ background: c }}
+                  aria-label={`와이어 색 ${c}`}
+                  onClick={() =>
+                    setProject((p) => ({ ...p, wires: p.wires.map((w) => (w.id === selectedWire.id ? { ...w, color: c } : w)) }))
+                  }
+                />
+              ))}
+            </div>
+            <p className="hint">꺾는 점은 끌어서 옮기고, 더블클릭하면 지웁니다.</p>
+            {(selectedWire.points?.length ?? 0) > 0 && (
+              <button
+                onClick={() =>
+                  setProject((p) => ({ ...p, wires: p.wires.map((w) => (w.id === selectedWire.id ? { ...w, points: [] } : w)) }))
+                }
+              >
+                꺾는 점 모두 지우기
+              </button>
+            )}{" "}
+            <button onClick={deleteSelected}>삭제</button>
+          </>
         ) : (
-          <p className="hint">부품이나 와이어를 선택하세요.<br />핀 클릭 → 다른 핀 클릭으로 배선, Esc 취소, Delete 삭제, 휠로 확대.</p>
+          <p className="hint">
+            부품이나 와이어를 선택하세요.
+            <br />
+            배선: 핀을 클릭한 뒤 다른 핀을 클릭하거나, 핀에서 끌어다 놓기. 가는 길에 빈 곳을 클릭하면 꺾는 점.
+            <br />
+            Delete 삭제 · 휠/＋−로 확대·축소 · 빈 곳 끌기로 이동
+          </p>
         )}
         <h3>넷리스트 ({visibleNets.length})</h3>
         <ul className="nets">

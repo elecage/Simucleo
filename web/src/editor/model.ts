@@ -14,11 +14,19 @@ export interface PlacedPart {
   props: Record<string, string | number>;
 }
 
+/** A point in grid units. */
+export interface Point {
+  x: number;
+  y: number;
+}
+
 export interface WireModel {
   id: string;
   a: PinRef;
   b: PinRef;
   color: string;
+  /** Bend points between `a` and `b`, in grid units. */
+  points?: Point[];
 }
 
 export interface Project {

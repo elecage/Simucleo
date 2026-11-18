@@ -7,6 +7,7 @@
 
 mod diagnose;
 
+use simucleo_core::bus::Bus;
 use simucleo_core::cortexm::CortexM;
 use simucleo_core::cpu::{CpuBackend, RunResult, StopReason};
 use simucleo_core::Cycles;
@@ -246,7 +247,6 @@ impl Nucleo {
     /// Process due peripheral events and forward interrupt lines.
     fn after_step(&mut self) {
         self.bus.run_events(self.sys.cycles);
-        use simucleo_core::bus::Bus;
         self.bus.poll(&mut self.sys);
         self.note_clock();
     }
@@ -259,13 +259,10 @@ impl Nucleo {
 
     /// Press (`true`) or release the blue user button B1 (PC13, active low).
     pub fn set_user_button(&mut self, pressed: bool) {
-        let c = &mut self.bus.gpio[2];
-        c.external_driven |= 1 << 13;
-        if pressed {
-            c.external &= !(1 << 13);
-        } else {
-            c.external |= 1 << 13;
-        }
+        self.bus.set_time(self.sys.cycles);
+        self.bus.set_external(2, 13, Some(!pressed));
+        // Forward an EXTI interrupt at once, so a sleeping core wakes up.
+        self.bus.poll(&mut self.sys);
     }
 
     /// Take the pin level changes recorded since the last call.

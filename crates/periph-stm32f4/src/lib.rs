@@ -1,12 +1,13 @@
 //! STM32F401RE memory map and peripherals.
 //!
-//! Modelled: flash, SRAM, boot alias, bit-banding, GPIO, RCC (clock tree),
-//! PWR, FLASH interface, USART1/2/6. Every other peripheral is backed by a
+//! Modelled: flash, SRAM, boot alias, bit-banding, GPIO, EXTI, RCC (clock
+//! tree), PWR, FLASH interface, USART1/2/6, TIM1–5 and TIM9–11. Every other peripheral is backed by a
 //! register file initialised from ST's SVD, so firmware reads back what it
 //! wrote and sees correct reset values; those accesses are counted so the
 //! GUI can show which peripheral the firmware relies on that is not
 //! simulated yet.
 
+pub mod exti;
 pub mod gpio;
 pub mod map;
 pub mod rcc;
@@ -15,10 +16,12 @@ pub mod regmap;
 pub mod svd;
 pub mod svd_types;
 pub mod sysctl;
+pub mod timer;
 pub mod usart;
 
 use std::collections::BTreeSet;
 
+use exti::Exti;
 use gpio::{Gpio, PinEvent};
 use rcc::{Clocks, Rcc, ResetCause};
 use regmap::RegisterFile;
@@ -27,6 +30,7 @@ use simucleo_core::cortexm::CortexM;
 use simucleo_core::sched::Scheduler;
 use simucleo_core::Cycles;
 use sysctl::{FlashIf, Pwr};
+use timer::{Timer, TIMERS};
 use usart::{TerminalByte, Usart, UsartEventKind};
 
 /// Peripheral events on the virtual clock.
@@ -35,6 +39,10 @@ pub enum Event {
     Usart {
         idx: u8,
         kind: UsartEventKind,
+        gen: u32,
+    },
+    Timer {
+        idx: u8,
         gen: u32,
     },
 }
@@ -126,6 +134,14 @@ pub struct Stm32f401Bus {
     pub flash_if: FlashIf,
     /// USART1, USART2 (ST-LINK virtual COM port), USART6.
     pub usart: [Usart; 3],
+    pub exti: Exti,
+    /// TIM1, TIM2, TIM3, TIM4, TIM5, TIM9, TIM10, TIM11.
+    pub timers: [Timer; 8],
+    /// Firmware read a register whose value changes with time alone (a
+    /// running timer's CNT or SR); reported to the CPU's loop elision.
+    time_read: bool,
+    /// Pin levels last reported to EXTI, per port.
+    levels: [u16; 8],
     /// Unmodelled peripherals.
     pub regs: RegisterFile,
     pub warnings: BTreeSet<Warning>,
@@ -147,7 +163,7 @@ impl Stm32f401Bus {
     pub fn new() -> Self {
         let rcc = Rcc::new(ResetCause::PowerOn);
         let clocks = rcc.clocks();
-        Self {
+        let mut bus = Self {
             flash: Memory::new(map::FLASH_BASE, map::FLASH_SIZE, false),
             sram: Memory::new(map::SRAM_BASE, map::SRAM_SIZE, true),
             gpio: std::array::from_fn(|i| Gpio::new(i as u8)),
@@ -156,6 +172,10 @@ impl Stm32f401Bus {
             pwr: Pwr::default(),
             flash_if: FlashIf::default(),
             usart: USARTS.map(|(name, _, irq, apb2, ..)| Usart::new(name, irq, apb2)),
+            exti: Exti::default(),
+            timers: TIMERS.map(Timer::new),
+            time_read: false,
+            levels: [0; 8],
             regs: RegisterFile::default(),
             warnings: BTreeSet::new(),
             sched: Scheduler::new(),
@@ -163,7 +183,127 @@ impl Stm32f401Bus {
             clocks,
             clock_changed: false,
             known_deadline: None,
+        };
+        bus.retime_timers();
+        bus.sync_levels();
+        bus
+    }
+
+    /// Give every timer the current HCLK / TIMxCLK relation.
+    fn retime_timers(&mut self) {
+        let (c, now) = (self.clocks, self.now);
+        for t in &mut self.timers {
+            let timclk = if t.info.apb2 { c.tim_apb2 } else { c.tim_apb1 };
+            t.set_clock(c.hclk, timclk, now);
         }
+        for i in 0..self.timers.len() {
+            self.reschedule_timer(i);
+        }
+    }
+
+    fn reschedule_timer(&mut self, i: usize) {
+        let t = &mut self.timers[i];
+        t.gen = t.gen.wrapping_add(1);
+        if let Some(at) = t.next_event() {
+            let gen = t.gen;
+            self.sched
+                .schedule_at(at, Event::Timer { idx: i as u8, gen });
+        }
+    }
+
+    /// A timer's state changed at `time`: update its pins and its schedule.
+    fn timer_changed(&mut self, i: usize, time: Cycles) {
+        self.apply_af(time);
+        self.reschedule_timer(i);
+    }
+
+    /// Drive alternate-function pins from the peripheral outputs selected
+    /// on them (timer channels).
+    fn apply_af(&mut self, time: Cycles) {
+        let mut want = [(0u16, 0u16); 8]; // (driven, level) per port
+        for &(port, pin, af, ti, ch) in timer::PIN_MAP {
+            let g = &self.gpio[port as usize];
+            if g.mode(pin) != gpio::PinMode::Alternate || g.af(pin) != af {
+                continue;
+            }
+            if let Some(level) = self.timers[ti as usize].output(ch as usize) {
+                want[port as usize].0 |= 1 << pin;
+                if level {
+                    want[port as usize].1 |= 1 << pin;
+                }
+            }
+        }
+        for (port, (driven, out)) in want.into_iter().enumerate() {
+            let g = &self.gpio[port];
+            if g.af_driven == driven && g.af_out & driven == out {
+                continue;
+            }
+            let before: Vec<_> = (0..16).map(|p| g.driven(p)).collect();
+            let g = &mut self.gpio[port];
+            g.af_driven = driven;
+            g.af_out = out;
+            for (pin, old) in before.into_iter().enumerate() {
+                let new = self.gpio[port].driven(pin as u8);
+                if new != old {
+                    self.pin_events.push(PinEvent {
+                        time,
+                        port: port as u8,
+                        pin: pin as u8,
+                        level: new,
+                    });
+                }
+            }
+            self.refresh_port(port);
+        }
+    }
+
+    /// Take the current pin levels as the reference for edge detection.
+    fn sync_levels(&mut self) {
+        for (l, g) in self.levels.iter_mut().zip(&self.gpio) {
+            *l = g.levels();
+        }
+    }
+
+    /// Port selected for EXTI line `line` in SYSCFG_EXTICRx (0 = A).
+    fn exti_source(&self, line: u8) -> usize {
+        let cr = self
+            .regs
+            .peek(map::SYSCFG_BASE + 0x08 + 4 * (line as u32 / 4));
+        ((cr >> (4 * (line as u32 % 4))) & 0xF) as usize
+    }
+
+    /// Re-read the levels of a port's pins and report edges to EXTI.
+    fn refresh_port(&mut self, port: usize) {
+        let new = self.gpio[port].levels();
+        let changed = new ^ self.levels[port];
+        self.levels[port] = new;
+        if changed == 0 {
+            return;
+        }
+        for line in (0..16u8).filter(|l| changed & (1 << l) != 0) {
+            if self.exti_source(line) == port {
+                self.exti.edge(line, new & (1 << line) != 0);
+            }
+        }
+    }
+
+    /// Drive a pin from outside the chip (`Some(level)`), or release it
+    /// (`None`: it floats and follows its pull resistor).
+    pub fn set_external(&mut self, port: usize, pin: u8, level: Option<bool>) {
+        let g = &mut self.gpio[port];
+        let bit = 1u16 << pin;
+        match level {
+            Some(l) => {
+                g.external_driven |= bit;
+                if l {
+                    g.external |= bit;
+                } else {
+                    g.external &= !bit;
+                }
+            }
+            None => g.external_driven &= !bit,
+        }
+        self.refresh_port(port);
     }
 
     /// System reset: peripherals return to their reset state; memories,
@@ -181,12 +321,19 @@ impl Stm32f401Bus {
         for u in &mut self.usart {
             u.reset();
         }
+        self.exti = Exti::default();
+        let now = self.sched.now().max(self.now);
+        for t in &mut self.timers {
+            t.reset(now);
+        }
         self.regs.clear();
+        self.sync_levels();
         let now = self.sched.now();
         self.sched = Scheduler::new();
         self.sched.advance_to(now);
         self.clocks = self.rcc.clocks();
         self.clock_changed = true;
+        self.retime_timers();
     }
 
     /// Program a firmware segment into flash or SRAM.
@@ -219,6 +366,13 @@ impl Stm32f401Bus {
                 Event::Usart { idx, kind, gen } => {
                     self.usart[idx as usize].event(idx, kind, gen, at, &clocks, &mut self.sched)
                 }
+                Event::Timer { idx, gen } => {
+                    let i = idx as usize;
+                    if self.timers[i].gen == gen {
+                        self.timers[i].sync(at);
+                        self.timer_changed(i, at);
+                    }
+                }
             }
         }
     }
@@ -240,6 +394,7 @@ impl Stm32f401Bus {
         if c != self.clocks {
             self.clocks = c;
             self.clock_changed = true;
+            self.retime_timers();
         }
         let required = FlashIf::required_latency(c.hclk);
         let latency = self.flash_if.latency();
@@ -289,8 +444,12 @@ impl Stm32f401Bus {
                         });
                     }
                 }
+                self.refresh_port(port);
             } else if let Some(i) = USARTS.iter().position(|u| u.0 == name) {
                 self.usart[i].reset(); // also drops its scheduled events
+            } else if let Some(i) = TIMERS.iter().position(|t| t.name == name) {
+                self.timers[i].reset(self.now);
+                self.timer_changed(i, self.now);
             } else if name == "PWR" {
                 self.pwr = Pwr::default();
             } else if let Some(p) = regmap::peripheral_by_name(name) {
@@ -345,9 +504,20 @@ impl Stm32f401Bus {
             match a & !0x3FF {
                 map::RCC_BASE => self.rcc.read(off),
                 map::FLASH_IF_BASE => self.flash_if.read(off),
+                map::EXTI_BASE => self.exti.read(off),
                 map::PWR_BASE => {
                     if enabled(0x40, 28) {
                         self.pwr.read(off)
+                    } else {
+                        0
+                    }
+                }
+                base if timer_index(base).is_some() => {
+                    let i = timer_index(base).unwrap();
+                    if enabled(timer_enr(i), TIMERS[i].enable_bit) {
+                        let mut t = self.timers[i].clone();
+                        t.sync(self.now);
+                        t.read(off)
                     } else {
                         0
                     }
@@ -379,6 +549,7 @@ impl Stm32f401Bus {
         match a & !0x3FF {
             map::RCC_BASE => return self.rcc.read(off),
             map::FLASH_IF_BASE => return self.flash_if.read(off),
+            map::EXTI_BASE => return self.exti.read(off),
             map::PWR_BASE => {
                 if self.gated(0x40, 28, "PWR", "RCC.APB1ENR.PWREN") {
                     return 0;
@@ -394,6 +565,18 @@ impl Stm32f401Bus {
             }
             return self.usart[i].read(off);
         }
+        if let Some(i) = timer_index(a & !0x3FF) {
+            let info = TIMERS[i];
+            if self.gated(timer_enr(i), info.enable_bit, info.name, info.enable_name) {
+                return 0;
+            }
+            let t = &mut self.timers[i];
+            t.sync(self.now);
+            if t.running() && matches!(off, 0x10 | 0x24) {
+                self.time_read = true;
+            }
+            return t.read(off);
+        }
         self.regs.read(a)
     }
 
@@ -404,6 +587,10 @@ impl Stm32f401Bus {
                 return;
             }
             self.gpio[port].write(off, value, lanes, self.now, &mut self.pin_events);
+            if matches!(off, 0x00 | 0x20 | 0x24) {
+                self.apply_af(self.now);
+            }
+            self.refresh_port(port);
             return;
         }
         match a & !0x3FF {
@@ -420,6 +607,10 @@ impl Stm32f401Bus {
                 self.flash_if.write(off, value, lanes);
                 return;
             }
+            map::EXTI_BASE => {
+                self.exti.write(off, value, lanes);
+                return;
+            }
             map::PWR_BASE => {
                 if !self.gated(0x40, 28, "PWR", "RCC.APB1ENR.PWREN") {
                     self.pwr.write(off, value, lanes);
@@ -433,6 +624,16 @@ impl Stm32f401Bus {
             if !self.gated(enr, bit, name, en) {
                 let (now, clocks) = (self.now, self.clocks);
                 self.usart[i].write(i as u8, off, value, lanes, now, &clocks, &mut self.sched);
+            }
+            return;
+        }
+        if let Some(i) = timer_index(a & !0x3FF) {
+            let info = TIMERS[i];
+            if !self.gated(timer_enr(i), info.enable_bit, info.name, info.enable_name) {
+                let now = self.now;
+                self.timers[i].sync(now);
+                self.timers[i].write(off, value, lanes, now);
+                self.timer_changed(i, now);
             }
             return;
         }
@@ -469,6 +670,20 @@ impl Stm32f401Bus {
             return Ok(());
         }
         Err(BusError::Unmapped(addr))
+    }
+}
+
+/// Index in [`TIMERS`] of the timer whose register block starts at `base`.
+fn timer_index(base: u32) -> Option<usize> {
+    TIMERS.iter().position(|t| t.base == base)
+}
+
+/// RCC enable register offset of a timer (APB2ENR or APB1ENR).
+fn timer_enr(i: usize) -> u32 {
+    if TIMERS[i].apb2 {
+        0x44
+    } else {
+        0x40
     }
 }
 
@@ -534,6 +749,27 @@ impl Bus for Stm32f401Bus {
                 sys.set_irq_pending(u.irq);
             }
         }
+        for irq in self.exti.irqs() {
+            sys.set_irq_pending(irq);
+        }
+        for t in &self.timers {
+            if t.info.advanced {
+                if t.irq_update() {
+                    sys.set_irq_pending(t.info.irq_update);
+                }
+                if t.irq_cc() {
+                    sys.set_irq_pending(t.info.irq_cc);
+                }
+            } else if t.irq_any() {
+                sys.set_irq_pending(t.info.irq_update);
+            }
+        }
+        if std::mem::take(&mut self.time_read) {
+            sys.time_reads += 1;
+        }
+        if std::mem::take(&mut self.exti.event) {
+            sys.event = true;
+        }
         // A register write may have scheduled an event (e.g. a UART frame)
         // earlier than the deadline the CPU was given: hand back control so
         // the machine stops the CPU in time for it.
@@ -563,13 +799,13 @@ mod tests {
     #[test]
     fn unmodelled_peripherals_keep_values_and_are_counted() {
         let mut bus = Stm32f401Bus::new();
-        let tim3_arr = 0x4000_042C;
-        let reset = regmap::register_at(tim3_arr).unwrap().1.reset;
-        assert_eq!(bus.read_u32(tim3_arr).unwrap(), reset, "SVD reset value");
-        bus.write(tim3_arr, AccessSize::Word, 999).unwrap();
-        assert_eq!(bus.read_u32(tim3_arr).unwrap(), 999);
+        let i2c1_oar1 = map::I2C1_BASE + 0x08;
+        let reset = regmap::register_at(i2c1_oar1).unwrap().1.reset;
+        assert_eq!(bus.read_u32(i2c1_oar1).unwrap(), reset, "SVD reset value");
+        bus.write(i2c1_oar1, AccessSize::Word, 0x4033).unwrap();
+        assert_eq!(bus.read_u32(i2c1_oar1).unwrap(), 0x4033);
         assert_eq!(bus.regs.accesses.len(), 2);
-        assert_eq!(regmap::describe(tim3_arr), "TIM3.ARR");
+        assert_eq!(regmap::describe(i2c1_oar1), "I2C1.OAR1");
     }
 
     #[test]
@@ -636,7 +872,7 @@ mod tests {
             "the frame in flight was dropped"
         );
 
-        // Unmodelled peripheral (TIM3) and GPIO.
+        // A timer (TIM3) and GPIO.
         bus.write(0x4000_042C, AccessSize::Word, 123).unwrap();
         bus.write(map::RCC_BASE + 0x20, AccessSize::Word, 1 << 1)
             .unwrap(); // TIM3RST
@@ -651,6 +887,99 @@ mod tests {
         bus.write(map::RCC_BASE + 0x10, AccessSize::Word, 1)
             .unwrap(); // GPIOARST
         assert_eq!(bus.read_u32(map::GPIOA_BASE).unwrap(), 0xA800_0000);
+    }
+
+    #[test]
+    fn pin_edges_reach_the_nvic_through_exti() {
+        let mut bus = Stm32f401Bus::new();
+        let mut sys = CortexM::new();
+        // GPIOC clock, PC13 input; EXTI13 ← port C, falling edge, unmasked.
+        bus.write(map::RCC_BASE + 0x30, AccessSize::Word, 1 << 2)
+            .unwrap();
+        bus.set_external(2, 13, Some(true));
+        bus.write(map::SYSCFG_BASE + 0x14, AccessSize::Word, 2 << 4)
+            .unwrap();
+        bus.write(map::EXTI_BASE + 0x0C, AccessSize::Word, 1 << 13)
+            .unwrap();
+        bus.write(map::EXTI_BASE, AccessSize::Word, 1 << 13)
+            .unwrap();
+        bus.set_external(2, 13, Some(false));
+        assert_eq!(bus.read_u32(map::EXTI_BASE + 0x14).unwrap(), 1 << 13);
+        bus.poll(&mut sys);
+        assert_ne!(
+            sys.peek(0xE000_E204, AccessSize::Word) & (1 << 8),
+            0,
+            "EXTI15_10 pending in NVIC_ISPR1"
+        );
+        // A different port on the same line is ignored.
+        bus.write(map::EXTI_BASE + 0x14, AccessSize::Word, 1 << 13)
+            .unwrap();
+        bus.set_external(0, 13, Some(true));
+        bus.set_external(0, 13, Some(false));
+        assert_eq!(bus.read_u32(map::EXTI_BASE + 0x14).unwrap(), 0);
+        // An output toggled by firmware is an edge too.
+        bus.write(map::SYSCFG_BASE + 0x08, AccessSize::Word, 0)
+            .unwrap();
+        bus.write(map::RCC_BASE + 0x30, AccessSize::Word, 1)
+            .unwrap();
+        bus.write(map::GPIOA_BASE, AccessSize::Word, 1 << 2 | 0xA800_0000)
+            .unwrap(); // PA1 output
+        bus.write(map::EXTI_BASE + 0x08, AccessSize::Word, 1 << 1)
+            .unwrap();
+        bus.write(map::EXTI_BASE, AccessSize::Word, 1 << 1).unwrap();
+        bus.write(map::GPIOA_BASE + 0x18, AccessSize::Word, 1 << 1)
+            .unwrap();
+        assert_eq!(bus.read_u32(map::EXTI_BASE + 0x14).unwrap(), 1 << 1);
+    }
+
+    #[test]
+    fn tim2_pwm_drives_ld2_through_its_alternate_function() {
+        let mut bus = Stm32f401Bus::new();
+        let mut sys = CortexM::new();
+        let w = |bus: &mut Stm32f401Bus, a: u32, v: u32| {
+            bus.write(a, AccessSize::Word, v).unwrap();
+        };
+        w(&mut bus, map::RCC_BASE + 0x30, 1); // GPIOAEN
+        w(&mut bus, map::RCC_BASE + 0x40, 1); // TIM2EN
+        w(&mut bus, map::GPIOA_BASE, 0xA800_0000 | 2 << 10); // PA5 AF
+        w(&mut bus, map::GPIOA_BASE + 0x20, 1 << 20); // AF1 = TIM2_CH1
+        let tim2 = map::TIM2_BASE;
+        w(&mut bus, tim2 + 0x28, 15); // 16 MHz / 16 = 1 MHz
+        w(&mut bus, tim2 + 0x2C, 999); // 1 kHz
+        w(&mut bus, tim2 + 0x34, 250); // 25 %
+        w(&mut bus, tim2 + 0x18, 6 << 4 | 1 << 3); // PWM1, preload
+        w(&mut bus, tim2 + 0x20, 1); // CC1E
+        w(&mut bus, tim2 + 0x14, 1); // UG
+        w(&mut bus, tim2 + 0x0C, 1); // UIE
+        w(&mut bus, tim2, 1 << 7 | 1); // ARPE | CEN
+        assert!(bus.gpio[0].level(5), "PWM starts high");
+        bus.pin_events.clear();
+        for t in (0..=32_000u64).step_by(100) {
+            bus.set_time(t);
+            bus.run_events(t);
+        }
+        let edges: Vec<_> = bus.pin_events.iter().map(|e| (e.time, e.level)).collect();
+        assert_eq!(
+            edges,
+            vec![
+                (4_000, Some(false)),
+                (16_000, Some(true)),
+                (20_000, Some(false)),
+                (32_000, Some(true)),
+            ]
+        );
+        bus.poll(&mut sys);
+        assert_ne!(
+            sys.peek(0xE000_E100 + 0x100, AccessSize::Word) & (1 << 28),
+            0,
+            "TIM2 update interrupt pending"
+        );
+        // Reading CNT of a running timer counts as a time read.
+        let before = sys.time_reads;
+        bus.set_time(32_123);
+        assert_eq!(bus.read_u32(tim2 + 0x24).unwrap(), 7);
+        bus.poll(&mut sys);
+        assert_eq!(sys.time_reads, before + 1);
     }
 
     #[test]
@@ -674,7 +1003,7 @@ mod tests {
             "RXNE still set"
         );
         let accesses = bus.regs.accesses.len();
-        bus.peek(0x4000_042C, AccessSize::Word);
+        bus.peek(map::I2C1_BASE + 0x08, AccessSize::Word);
         assert_eq!(bus.regs.accesses.len(), accesses, "peeks are not recorded");
         assert_eq!(bus.peek(0x6000_0000, AccessSize::Byte), None);
     }

@@ -35,6 +35,10 @@ pub struct Gpio {
     pub external: u16,
     /// Pins with something driving them from outside; others float.
     pub external_driven: u16,
+    /// Levels driven by peripherals on alternate-function pins (timer
+    /// outputs); only pins in `af_driven` are driven.
+    pub af_out: u16,
+    pub af_driven: u16,
 }
 
 impl Gpio {
@@ -56,7 +60,14 @@ impl Gpio {
             afr: [0; 2],
             external: 0,
             external_driven: 0,
+            af_out: 0,
+            af_driven: 0,
         }
+    }
+
+    /// Alternate function number selected for `pin` (AFRL/AFRH).
+    pub fn af(&self, pin: u8) -> u8 {
+        ((self.afr[pin as usize / 8] >> (4 * (pin % 8))) & 0xF) as u8
     }
 
     pub fn mode(&self, pin: u8) -> PinMode {
@@ -68,12 +79,14 @@ impl Gpio {
         }
     }
 
-    /// Level the MCU drives on `pin`, if it is a GPIO output.
+    /// Level the MCU drives on `pin`: a GPIO output, or a peripheral
+    /// output on an alternate-function pin.
     pub fn driven(&self, pin: u8) -> Option<bool> {
-        if self.mode(pin) != PinMode::Output {
-            return None;
-        }
-        let high = self.odr & (1 << pin) != 0;
+        let high = match self.mode(pin) {
+            PinMode::Output => self.odr & (1 << pin) != 0,
+            PinMode::Alternate if self.af_driven & (1 << pin) != 0 => self.af_out & (1 << pin) != 0,
+            _ => return None,
+        };
         // Open-drain outputs only drive low.
         if self.otyper & (1 << pin) != 0 && high {
             return None;
@@ -93,10 +106,15 @@ impl Gpio {
         (self.pupdr >> (2 * pin)) & 3 == 1
     }
 
-    fn idr(&self) -> u32 {
+    /// Levels of all 16 pins (bit n = pin n), as IDR shows them.
+    pub fn levels(&self) -> u16 {
         (0..16)
             .filter(|p| self.level(*p))
             .fold(0, |acc, p| acc | (1 << p))
+    }
+
+    fn idr(&self) -> u32 {
+        self.levels() as u32
     }
 
     pub fn read(&self, offset: u32) -> u32 {

@@ -2,7 +2,7 @@
 //! (STM32CubeIDE / CubeMX Makefile / CMake projects, or hand-written
 //! bare-metal startup code).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use object::elf::{EM_ARM, PT_LOAD};
 use object::read::elf::{ElfFile32, FileHeader, ProgramHeader};
@@ -35,6 +35,9 @@ pub struct FirmwareImage {
     /// Function and object symbols by address (Thumb bit cleared), used for
     /// disassembly labels, call stacks and detecting `Error_Handler` entry.
     pub symbols: BTreeMap<u32, String>,
+    /// Every function and object symbol by name: (address, size). Includes
+    /// file-local (`static`) objects, which kernel-aware views need.
+    pub by_name: HashMap<String, (u32, u32)>,
 }
 
 impl FirmwareImage {
@@ -63,6 +66,19 @@ impl FirmwareImage {
             });
         }
 
+        let by_name = elf
+            .symbols()
+            .filter(|s| matches!(s.kind(), SymbolKind::Text | SymbolKind::Data) && s.address() != 0)
+            .filter_map(|s| {
+                let name = s.name().ok()?;
+                (!name.is_empty() && !name.starts_with('$')).then(|| {
+                    (
+                        name.to_string(),
+                        ((s.address() as u32) & !1, s.size() as u32),
+                    )
+                })
+            })
+            .collect();
         let symbols = elf
             .symbols()
             .filter(|s| matches!(s.kind(), SymbolKind::Text | SymbolKind::Data) && s.address() != 0)
@@ -74,15 +90,18 @@ impl FirmwareImage {
             entry: elf.entry() as u32,
             segments,
             symbols,
+            by_name,
         })
     }
 
     /// Look up the symbol by exact name.
     pub fn symbol(&self, name: &str) -> Option<u32> {
-        self.symbols
-            .iter()
-            .find(|(_, n)| n.as_str() == name)
-            .map(|(a, _)| *a)
+        self.by_name.get(name).map(|(a, _)| *a)
+    }
+
+    /// Address and size of a symbol.
+    pub fn symbol_with_size(&self, name: &str) -> Option<(u32, u32)> {
+        self.by_name.get(name).copied()
     }
 }
 

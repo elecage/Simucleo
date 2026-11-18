@@ -12,6 +12,7 @@ simucleo-periph-stm32f4.workspace = true
 simucleo-elf.workspace = true
 simucleo-circuit.workspace = true
 thiserror.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

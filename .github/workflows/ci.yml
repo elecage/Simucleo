@@ -35,7 +35,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi cmake
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi cmake
       - run: make -C firmware/bare-blinky
       - run: make -C firmware/exceptions
       - run: make -C firmware/difftest
@@ -74,7 +74,7 @@ jobs:
         working-directory: web
       - name: Build the example firmware bundled with the site
         run: |
-          sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi
           make -C firmware/bare-blinky
           make -C firmware/hal-blinky variants
           make -C firmware/hal-uart-printf

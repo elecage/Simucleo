@@ -354,9 +354,11 @@ mod tests {
 
     #[test]
     fn conversion_time_follows_prescaler_and_sampling() {
-        let mut a = Adc::default();
         // PCLK2 84 MHz / 4 = 21 MHz ADC clock; 3 + 12 cycles → 60 core cycles.
-        a.ccr = 1 << 16;
+        let mut a = Adc {
+            ccr: 1 << 16,
+            ..Default::default()
+        };
         assert_eq!(a.conversion_cycles(0, &clocks()), 60);
         a.smpr[1] = 7 << 3; // channel 1: 480 cycles
         assert_eq!(a.conversion_cycles(1, &clocks()), (480 + 12) * 4);

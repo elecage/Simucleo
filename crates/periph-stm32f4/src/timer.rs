@@ -223,6 +223,8 @@ pub struct Timer {
     ocref: [bool; 4],
     /// Bumped whenever the schedule is recomputed; stale events are ignored.
     pub gen: u32,
+    /// The bus clock (RCC TIMxEN) is off: the counter and outputs freeze.
+    pub gated: bool,
 }
 
 impl Timer {
@@ -252,15 +254,17 @@ impl Timer {
             clk_div: 1,
             ocref: [false; 4],
             gen: 0,
+            gated: false,
         }
     }
 
     /// Peripheral reset, keeping the clock relation.
     pub fn reset(&mut self, now: Cycles) {
-        let (clk_div, gen) = (self.clk_div, self.gen + 1);
+        let (clk_div, gen, gated) = (self.clk_div, self.gen + 1, self.gated);
         *self = Self::new(self.info);
         self.clk_div = clk_div;
         self.gen = gen;
+        self.gated = gated;
         self.ref_cycle = now;
     }
 
@@ -380,7 +384,7 @@ impl Timer {
 
     /// Bring the counter and flags up to `now`.
     pub fn sync(&mut self, now: Cycles) {
-        if !self.running() {
+        if !self.running() || self.gated {
             self.ref_cycle = now;
             return;
         }
@@ -476,7 +480,7 @@ impl Timer {
 
     /// Core cycle of the next event worth scheduling, if any.
     pub fn next_event(&self) -> Option<Cycles> {
-        if !self.running() {
+        if !self.running() || self.gated {
             return None;
         }
         let mut ticks: Option<u64> = None;
@@ -718,6 +722,21 @@ mod tests {
         t.sync(10);
         assert_eq!(t.read(0x24), 9);
         assert_eq!(t.sr & UIF, UIF);
+    }
+
+    #[test]
+    fn clock_gating_freezes_the_counter() {
+        let mut t = tim3();
+        t.write(0x2C, 99, u32::MAX, 0);
+        t.write(0x0C, UIF, u32::MAX, 0);
+        t.write(0x00, CEN, u32::MAX, 0);
+        t.sync(30);
+        t.gated = true;
+        assert_eq!(t.next_event(), None);
+        t.sync(1_000);
+        assert_eq!(t.read(0x24), 30, "frozen while the clock is off");
+        t.gated = false;
+        assert_eq!(t.next_event(), Some(1_070), "resumes from where it stopped");
     }
 
     #[test]

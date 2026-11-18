@@ -54,6 +54,7 @@ export function Waveform({ runner }: { runner: Runner }) {
   const [windowMs, setWindowMs] = useState(20);
   const traces = useRef(new Map<string, Trace>());
   const lastTime = useRef(0);
+  const lastFrame = useRef<unknown>(null);
   const { setProbes, ready } = runner;
 
   useEffect(() => {
@@ -62,7 +63,10 @@ export function Waveform({ runner }: { runner: Runner }) {
 
   // Fold each frame's edges into the traces (render-time bookkeeping on a ref).
   const f = runner.frame;
-  if (f && f.timeMs !== lastTime.current) {
+  // Every frame object is new: process each once, even at an unchanged time
+  // (a switch pressed while paused produces a frame at the same time).
+  if (f && f !== lastFrame.current) {
+    lastFrame.current = f;
     if (f.timeMs < lastTime.current) traces.current.clear(); // reset or new firmware
     lastTime.current = f.timeMs;
     for (const p of f.probes) {

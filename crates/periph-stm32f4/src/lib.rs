@@ -214,8 +214,24 @@ impl Stm32f401Bus {
             known_deadline: None,
         };
         bus.retime_timers();
+        bus.update_timer_gates();
         bus.sync_levels();
         bus
+    }
+
+    /// Freeze or resume timers whose RCC enable bit changed.
+    fn update_timer_gates(&mut self) {
+        let now = self.now;
+        for i in 0..self.timers.len() {
+            let gated = !self.rcc.clock_enabled(timer_enr(i), TIMERS[i].enable_bit);
+            if self.timers[i].gated != gated {
+                // Bring the counter to now under the old state; while gated
+                // `sync` only moves the reference, so it resumes in phase.
+                self.timers[i].sync(now);
+                self.timers[i].gated = gated;
+                self.reschedule_timer(i);
+            }
+        }
     }
 
     /// Give every timer the current HCLK / TIMxCLK relation.
@@ -415,6 +431,7 @@ impl Stm32f401Bus {
             t.reset(now);
         }
         self.regs.clear();
+        self.update_timer_gates();
         self.sync_levels();
         self.circuit_update(now);
         let now = self.sched.now();
@@ -706,6 +723,9 @@ impl Stm32f401Bus {
                 }
                 if matches!(off, 0x10 | 0x14 | 0x20 | 0x24) {
                     self.apply_peripheral_resets(off);
+                }
+                if matches!(off, 0x40 | 0x44) {
+                    self.update_timer_gates();
                 }
                 return;
             }

@@ -305,8 +305,9 @@ impl CircuitSim {
         let ids: BTreeSet<&str> = circuit.parts.iter().map(|p| p.id.as_str()).collect();
         self.pressed
             .retain(|p| p == "B1" || ids.contains(p.as_str()));
+        // The frame keeps its start: parts that survive the edit keep what
+        // they accumulated since then (see `rebuild`).
         self.rebuild();
-        self.frame_start = time;
     }
 
     /// Press or release a switch (a `tact-switch` part id, or `"B1"`).
@@ -1222,6 +1223,38 @@ mod tests {
         let rgb = &visual(&v, "rgb").brightness;
         assert_eq!(rgb[0], 0.0);
         assert!(rgb[1] > 0.1 && rgb[2] == 0.0, "{rgb:?}");
+    }
+
+    #[test]
+    fn rewiring_mid_frame_keeps_the_average() {
+        // D7 → 220 Ω → LED → GND, on for the first half of a frame. Editing
+        // the project (same circuit) halfway must not change the result.
+        let parts = vec![
+            part("mcu", BOARD_KIND, &[]),
+            part("r1", "resistor", &[("ohms", "220")]),
+            part("led1", "led-5mm", &[]),
+        ];
+        let wires = vec![
+            wire(("mcu", "D7"), ("r1", "1")),
+            wire(("r1", "2"), ("led1", "A")),
+            wire(("led1", "K"), ("mcu", "GND")),
+        ];
+        let mut s = sim(parts[1..].to_vec(), wires.clone());
+        let on = drives(&s, |p| {
+            if p == (0, 8) {
+                Drive::High
+            } else {
+                Drive::Float
+            }
+        });
+        let off = drives(&s, |_| Drive::Float);
+        s.end_frame(0, 0.0);
+        s.update(0, &on);
+        s.set_circuit(&Circuit { parts, wires }, 500);
+        s.update(500, &off);
+        let v = s.end_frame(1000, 1e-3);
+        let b = visual(&v, "led1").brightness[0];
+        assert!((b - 0.5).abs() < 0.01, "{b}");
     }
 
     #[test]

@@ -85,6 +85,9 @@ export function App() {
   const [projectName, setProjectName] = useState("새 프로젝트");
   const [notice, setNotice] = useState<string | null>(null);
   const [fitKey, setFitKey] = useState(0);
+  /** Centre of the visible canvas, in grid units: where new parts go. */
+  const viewCenter = useRef({ x: 60, y: 30 });
+  const [reveal, setReveal] = useState<{ id: string; seq: number } | undefined>();
 
   // ------------------------------------------------ project files
   const { load } = runner;
@@ -239,14 +242,41 @@ export function App() {
   const addPart = (kind: string) => {
     const def = PART_BY_KIND[kind];
     const id = newId(kind.split("-")[0], taken());
-    // Drop new parts below the default board/breadboard, staggered so they never stack.
-    const n = project.parts.length;
-    // 6 steps apart: wider than any small part, so new parts never touch
-    // pin-to-pin (touching pins are connected).
-    const x = 42 + ((n * 6) % 30);
-    const y = 27 + 3 * Math.floor(n / 7);
+    // Drop the part where the user is looking: the first free spot around
+    // the centre of the view, where none of its pins lands on an existing
+    // pin (pins at the same point are connected) or inside its body.
+    const used = new Set<string>();
+    for (const p of project.parts) {
+      for (const q of PART_BY_KIND[p.kind]?.pins ?? []) used.add(`${p.x + q.x},${p.y + q.y}`);
+    }
+    const c = viewCenter.current;
+    const fits = (x: number, y: number) =>
+      def.pins.every((q) => {
+        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) if (used.has(`${x + q.x + dx},${y + q.y + dy}`)) return false;
+        return true;
+      }) &&
+      // Nor over another part's body (a board or breadboard would also plug
+      // it in by accident); keep a one-step margin, and room for labels above.
+      !project.parts.some((p) => {
+        const d = PART_BY_KIND[p.kind];
+        return d && x + def.w + 1 >= p.x && x - 1 <= p.x + d.w && y + def.h + 1 >= p.y - 1 && y - 2 <= p.y + d.h;
+      });
+    let x = Math.round(c.x - def.w / 2);
+    let y = Math.round(c.y - def.h / 2);
+    search: for (let ring = 0; ring < 40; ring++) {
+      for (let i = -ring; i <= ring; i++) {
+        for (const [dx, dy] of [[i * 2, -ring * 2], [i * 2, ring * 2], [-ring * 2, i * 2], [ring * 2, i * 2]]) {
+          if (fits(x + dx, y + dy)) {
+            x += dx;
+            y += dy;
+            break search;
+          }
+        }
+      }
+    }
     setProject((p) => ({ ...p, parts: [...p.parts, { id, kind, x, y, props: { ...def.props } }] }));
     setSelected(id);
+    setReveal((r) => ({ id, seq: (r?.seq ?? 0) + 1 }));
   };
 
   const deleteSelected = useCallback(() => {
@@ -336,6 +366,8 @@ export function App() {
           visuals={visuals}
           onPartAction={onPartAction}
           fitKey={fitKey}
+          onViewCenter={(p) => (viewCenter.current = p)}
+          reveal={reveal}
           onAddWire={(a, b, points) =>
             setProject((p) => {
               // Both ends must exist when the wire is made (#2).

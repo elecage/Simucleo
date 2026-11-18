@@ -22,6 +22,10 @@ interface Props {
   onPartAction?: (partId: string, action: string, down: boolean) => void;
   /** Changes when a different project is loaded: zoom to fit it. */
   fitKey?: number;
+  /** Reports the centre of the visible area (grid units) when it moves. */
+  onViewCenter?: (p: Point) => void;
+  /** Bring this part into view if it is not (e.g. just added). */
+  reveal?: { id: string; seq: number };
 }
 
 type Drag =
@@ -72,6 +76,8 @@ export function Canvas({
   visuals,
   onPartAction,
   fitKey,
+  onViewCenter,
+  reveal,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: BASE_SCALE });
@@ -147,6 +153,37 @@ export function Canvas({
   useEffect(() => {
     if (fitKey) fitRef.current();
   }, [fitKey]);
+
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el || !onViewCenter) return;
+    onViewCenter({
+      x: (view.x + el.clientWidth / view.scale / 2) / PITCH,
+      y: (view.y + el.clientHeight / view.scale / 2) / PITCH,
+    });
+  }, [view, onViewCenter]);
+
+  // Pan just enough to show a part that is (partly) outside the view.
+  const revealRef = useRef<(id: string) => void>(() => {});
+  revealRef.current = (id: string) => {
+    const el = svgRef.current;
+    const part = project.parts.find((p) => p.id === id);
+    const def = part && PART_BY_KIND[part.kind];
+    if (!el || !part || !def) return;
+    const m = 2 * PITCH; // margin
+    const [x0, y0] = [part.x * PITCH - m, (part.y - 1) * PITCH - m];
+    const [x1, y1] = [(part.x + def.w) * PITCH + m, (part.y + def.h) * PITCH + m];
+    const [vw, vh] = [el.clientWidth / view.scale, el.clientHeight / view.scale];
+    let { x, y } = view;
+    if (x0 < x) x = x0;
+    else if (x1 > x + vw) x = x1 - vw;
+    if (y0 < y) y = y0;
+    else if (y1 > y + vh) y = y1 - vh;
+    if (x !== view.x || y !== view.y) setView({ ...view, x, y });
+  };
+  useEffect(() => {
+    if (reveal) revealRef.current(reveal.id);
+  }, [reveal]);
 
   // Wheel / trackpad pinch: smooth zoom around the pointer. A native listener
   // so the page itself does not scroll or zoom.

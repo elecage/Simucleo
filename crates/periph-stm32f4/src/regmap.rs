@@ -116,6 +116,11 @@ impl RegisterFile {
     pub fn clear(&mut self) {
         self.values.clear();
     }
+
+    /// Return every register of one peripheral block to its reset value.
+    pub fn reset_block(&mut self, base: u32) {
+        self.values.retain(|a, _| !(base..base + BLOCK).contains(a));
+    }
 }
 
 #[cfg(test)]

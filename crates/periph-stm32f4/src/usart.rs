@@ -289,7 +289,11 @@ impl Usart {
         if self.rx_busy || self.rx_queue.is_empty() || !self.enabled() || self.cr1 & RE == 0 {
             return;
         }
-        if let Some(frame) = self.frame_cycles(clocks) {
+        // The terminal sends at its own baud rate (8N1), whatever the
+        // receiver is configured for.
+        if self.baud(clocks).is_some() {
+            let frame =
+                ((10.0 * clocks.hclk as f64 / self.host_baud as f64).round() as Cycles).max(1);
             self.rx_busy = true;
             sched.schedule_at(
                 now + frame,
@@ -515,6 +519,27 @@ mod tests {
             "SR then DR read clears ORE/IDLE"
         );
         assert!(!u.irq_line());
+    }
+
+    #[test]
+    fn terminal_input_arrives_at_the_terminal_baud_rate() {
+        // HCLK 16 MHz, USART at 115200 (BRR 139), terminal at 9600.
+        let c = Clocks {
+            sysclk: 16_000_000,
+            hclk: 16_000_000,
+            pclk1: 16_000_000,
+            pclk2: 16_000_000,
+            tim_apb1: 16_000_000,
+            tim_apb2: 16_000_000,
+        };
+        let mut sched = Scheduler::new();
+        let mut u = Usart::new("USART2", 38, false);
+        u.host_baud = 9600;
+        u.write(1, 0x08, 139, u32::MAX, 0, &c, &mut sched);
+        u.write(1, 0x0C, UE | RE, u32::MAX, 0, &c, &mut sched);
+        u.host_send(1, b"x", 0, &c, &mut sched);
+        // 10 bits at 9600 baud = 1.0417 ms = 16 667 cycles
+        assert_eq!(sched.next_deadline(), Some(16_667));
     }
 
     #[test]

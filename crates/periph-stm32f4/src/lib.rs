@@ -237,6 +237,53 @@ impl Stm32f401Bus {
         }
     }
 
+    /// RCC xxxRSTR: a set bit holds that peripheral in reset (HAL's
+    /// `__HAL_RCC_xxx_FORCE_RESET()` / `_RELEASE_RESET()`). Bit names come
+    /// from the SVD (`USART2RST` → `USART2`).
+    fn apply_peripheral_resets(&mut self, off: u32) {
+        let bits = self.rcc.read(off);
+        if bits == 0 {
+            return;
+        }
+        let Some((_, reg)) = regmap::register_at(map::RCC_BASE + off) else {
+            return;
+        };
+        for f in reg.fields.iter().filter(|f| bits & (1 << f.lsb) != 0) {
+            let name = f.name.strip_suffix("RST").unwrap_or(f.name);
+            // SVD field names that differ from the peripheral names.
+            let name = match name {
+                "UART2" => "USART2",
+                "ADC" => "ADC1",
+                n => n,
+            };
+            if let Some(port) = GPIO_NAMES.iter().position(|g| *g == name) {
+                let g = &mut self.gpio[port];
+                let before: Vec<_> = (0..16).map(|p| g.driven(p)).collect();
+                let (ext, driven) = (g.external, g.external_driven);
+                *g = Gpio::new(port as u8);
+                g.external = ext;
+                g.external_driven = driven;
+                for (pin, old) in before.into_iter().enumerate() {
+                    let new = self.gpio[port].driven(pin as u8);
+                    if new != old {
+                        self.pin_events.push(PinEvent {
+                            time: self.now,
+                            port: port as u8,
+                            pin: pin as u8,
+                            level: new,
+                        });
+                    }
+                }
+            } else if let Some(i) = USARTS.iter().position(|u| u.0 == name) {
+                self.usart[i].reset(); // also drops its scheduled events
+            } else if name == "PWR" {
+                self.pwr = Pwr::default();
+            } else if let Some(p) = regmap::peripheral_by_name(name) {
+                self.regs.reset_block(p.base);
+            }
+        }
+    }
+
     fn gated(
         &mut self,
         enr: u32,
@@ -296,6 +343,9 @@ impl Stm32f401Bus {
             map::RCC_BASE => {
                 if self.rcc.write(off, value, lanes) {
                     self.after_clock_write();
+                }
+                if matches!(off, 0x10 | 0x14 | 0x20 | 0x24) {
+                    self.apply_peripheral_resets(off);
                 }
                 return;
             }
@@ -493,6 +543,47 @@ mod tests {
         bus.write(odr5, AccessSize::Word, 1).unwrap();
         assert!(bus.gpio[0].level(5));
         assert_eq!(bus.pin_events.last().unwrap().level, Some(true));
+    }
+
+    #[test]
+    fn rcc_reset_bits_reset_the_peripheral() {
+        let mut bus = Stm32f401Bus::new();
+        let usart2 = map::USART2_BASE;
+        bus.write(map::RCC_BASE + 0x40, AccessSize::Word, 1 << 17)
+            .unwrap(); // USART2EN
+        bus.write(usart2 + 0x08, AccessSize::Word, 0x16D).unwrap();
+        bus.write(usart2 + 0x0C, AccessSize::Word, 0x200C).unwrap();
+        bus.write(usart2 + 0x04, AccessSize::Word, b'x' as u32)
+            .unwrap();
+        assert!(bus.next_deadline().is_some(), "a frame is being sent");
+        // __HAL_RCC_USART2_FORCE_RESET(); __HAL_RCC_USART2_RELEASE_RESET();
+        bus.write(map::RCC_BASE + 0x20, AccessSize::Word, 1 << 17)
+            .unwrap();
+        bus.write(map::RCC_BASE + 0x20, AccessSize::Word, 0)
+            .unwrap();
+        assert_eq!(bus.read_u32(usart2 + 0x08).unwrap(), 0);
+        assert_eq!(bus.read_u32(usart2 + 0x0C).unwrap(), 0);
+        bus.run_events(1_000_000);
+        assert!(
+            bus.terminal_take(1).is_empty(),
+            "the frame in flight was dropped"
+        );
+
+        // Unmodelled peripheral (TIM3) and GPIO.
+        bus.write(0x4000_042C, AccessSize::Word, 123).unwrap();
+        bus.write(map::RCC_BASE + 0x20, AccessSize::Word, 1 << 1)
+            .unwrap(); // TIM3RST
+        assert_eq!(
+            bus.read_u32(0x4000_042C).unwrap(),
+            regmap::register_at(0x4000_042C).unwrap().1.reset
+        );
+        bus.write(map::RCC_BASE + 0x30, AccessSize::Word, 1)
+            .unwrap();
+        bus.write(map::GPIOA_BASE, AccessSize::Word, 0xA800_0400)
+            .unwrap();
+        bus.write(map::RCC_BASE + 0x10, AccessSize::Word, 1)
+            .unwrap(); // GPIOARST
+        assert_eq!(bus.read_u32(map::GPIOA_BASE).unwrap(), 0xA800_0000);
     }
 
     #[test]

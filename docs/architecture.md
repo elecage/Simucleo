@@ -38,14 +38,15 @@
 
 | 크레이트 | 역할 |
 |---|---|
-| `simucleo-core` | `Bus`, `Memory`, `CpuBackend` trait, `Registers`, 사이클 기반 `Scheduler` |
-| `simucleo-cpu-armv7m` | 자체 Thumb/Thumb-2 + FPv4-SP 인터프리터 (기본 백엔드, WASM 지원) |
-| `simucleo-periph-stm32f4` | F401RE 메모리 맵, 버스 라우팅, Peripheral 모델, 미구현 접근 기록 |
+| `simucleo-core` | `Bus`, `Memory`, `CpuBackend` trait, `Registers`, 사이클 기반 `Scheduler`, **`cortexm`**(NVIC/SCB/SysTick/예외 모델, 모든 백엔드 공용) |
+| `simucleo-cpu-armv7m` | 자체 Thumb/Thumb-2 + DSP + FPv4-SP 인터프리터 (기본 백엔드, WASM 지원) |
+| `simucleo-periph-stm32f4` | F401RE 메모리 맵, 버스 라우팅, 비트밴딩, GPIO, 미구현 접근 기록 |
+| `simucleo-nucleo` | 보드 단위 머신: CPU + 버스 + 시스템, ELF 로드, 리셋, 시간 진행, 핀 이벤트 |
+| `simucleo-difftest` | Unicorn과 lock-step 비교 (테스트 전용, `unicorn` feature, GPLv2 의존성 격리) |
 | `simucleo-circuit` | 배선 → 넷리스트(Union-Find), 부품 모델(`DutyIntegrator`, LED 등) |
 | `simucleo-elf` | ELF 로더: LMA 기준 세그먼트, 심볼 테이블 |
 | `simucleo-cli` | 헤드리스 실행기 (`simucleo info|run fw.elf`). 회귀 테스트에 사용 |
 | `simucleo-wasm` | `wasm-bindgen` 바인딩 |
-| (계획) `simucleo-cpu-unicorn` | Unicorn 백엔드. 네이티브 전용, feature flag, 차분 테스트 기준 |
 
 ## 핵심 설계 결정
 
@@ -90,7 +91,8 @@ AudioWorklet으로 보내 실제 소리를 만든다.
 
 ## 검증 전략
 - **명령어 단위 테스트**: 디코더/실행기 단위 테스트
-- **차분 테스트**: 같은 코드를 Rust 코어와 Unicorn에서 실행해 레지스터/메모리 비교 (네이티브 CI)
+- **차분 테스트**(`crates/difftest`): `firmware/difftest`의 C/어셈블리 프로그램(-O0/-O1/-O2/-Os/-O3)을 Rust 코어와 Unicorn에서 동시에 실행하고, Unicorn이 명령어를 실행할 때마다 R0–R15·APSR·S0–S31·FPSCR를 비교한 뒤 마지막에 SRAM을 비교한다. Unicorn은 IT 조건이 거짓인 명령어에서 훅을 부르지 않으므로 IT 블록 안에서만 따라잡기를 허용한다
+- **예외 모델 자가 테스트**(`firmware/exceptions`): Unicorn에는 NVIC가 없으므로, 예외·인터럽트·FreeRTOS 방식 문맥 교환은 펌웨어가 스스로 검사하고 결과를 SRAM에 남긴다
 - **QEMU lockstep**: `qemu-system-arm -M netduinoplus2`(STM32F405, 같은 Cortex-M4F)와 GDB 스텁으로 한 명령어씩 비교
 - **펌웨어 회귀 테스트**: `firmware/` 예제를 CI에서 빌드한 뒤 `simucleo-cli`로 실행하고 UART 출력과 핀 변화 기록 비교
 - **E2E**: Playwright로 배선 → 넷리스트 → 동작 확인

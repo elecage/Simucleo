@@ -35,6 +35,10 @@ pub trait Bus {
     fn read_u32(&mut self, addr: u32) -> Result<u32, BusError> {
         self.read(addr, AccessSize::Word)
     }
+
+    /// Tell the bus the current simulated time before an access, so that
+    /// peripherals can timestamp pin changes. Default: ignored.
+    fn set_time(&mut self, _now: crate::Cycles) {}
 }
 
 /// A flat, byte-addressed memory region (flash or SRAM).

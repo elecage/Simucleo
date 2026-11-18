@@ -6,7 +6,8 @@
 
 ![배선 편집기 v0](docs/images/wiring-editor-v0.png)
 
-> **상태: 초기 골격(v0).** 배선 편집기와 넷리스트 추출은 동작하고, CPU 명령어 실행은 M0에서 구현한다.
+> **상태: M0 완료.** Cortex-M4F CPU 코어(Thumb-2, DSP, FPU, 예외 모델)가 동작하고 Unicorn과 명령어 단위로
+> 검증했다. 배선 편집기와 넷리스트 추출은 동작하며, Peripheral(M1)과 웹 실행(M2)은 다음 단계다.
 > 진행 상황은 [로드맵](docs/roadmap.md)을 참고.
 
 ## 특징 (목표)
@@ -25,9 +26,11 @@
 ## 구조
 ```
 crates/
-  core/            Bus, CpuBackend trait, 사이클 스케줄러
-  cpu-armv7m/      자체 Cortex-M4F 인터프리터
-  periph-stm32f4/  F401RE 메모리 맵, Peripheral
+  core/            Bus, CpuBackend trait, 사이클 스케줄러, Cortex-M 시스템(NVIC/SCB/SysTick)
+  cpu-armv7m/      자체 Cortex-M4F 인터프리터 (Thumb-2, DSP, FPv4-SP)
+  periph-stm32f4/  F401RE 메모리 맵, GPIO, 비트밴딩
+  nucleo/          보드 단위 머신 (ELF 로드, 리셋, 실행)
+  difftest/        Unicorn과 lock-step 비교 (테스트 전용)
   circuit/         넷리스트 추출, 부품 모델
   elf/             ELF 로더
   cli/             헤드리스 실행기 (simucleo)
@@ -54,8 +57,10 @@ cd web && npm install && npm run wasm && npm run dev
 ```
 
 ```bash
-make -C firmware/bare-blinky && cargo run -p simucleo-cli -- info firmware/bare-blinky/build/bare-blinky.elf
+make -C firmware/bare-blinky && cargo run --release -p simucleo-cli -- run firmware/bare-blinky/build/bare-blinky.elf --ms 2000
 ```
+
+펌웨어 테스트와 Unicorn 차분 테스트는 [firmware/README.md](firmware/README.md)를 참고.
 
 ## 라이선스
 MIT. Unicorn/QEMU(GPLv2)는 기본 배포판에 포함하지 않는다([ADR 0002](docs/adr/0002-cpu-backends.md)).

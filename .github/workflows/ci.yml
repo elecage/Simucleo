@@ -21,14 +21,28 @@ jobs:
       - run: cargo build -p simucleo-wasm --target wasm32-unknown-unknown
 
   firmware:
+    # Builds the test firmware with arm-none-eabi-gcc, runs it on the
+    # simulator, and compares the CPU core against Unicorn instruction by
+    # instruction (the Unicorn dependency is feature-gated, test-only).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
+      - run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi cmake
       - run: make -C firmware/bare-blinky
-      - run: cargo run -p simucleo-cli -- info firmware/bare-blinky/build/bare-blinky.elf
+      - run: make -C firmware/exceptions
+      - run: make -C firmware/difftest
+      - name: Run firmware on the simulator
+        run: cargo test --release -p simucleo-nucleo --test firmware -- --include-ignored
+      - name: CLI smoke test
+        run: cargo run --release -p simucleo-cli -- run firmware/bare-blinky/build/bare-blinky.elf --ms 500
+      - name: Lock-step comparison with Unicorn
+        run: |
+          cargo clippy -p simucleo-difftest --features unicorn --all-targets -- -D warnings
+          cargo test --release -p simucleo-difftest --features unicorn -- --nocapture
 
   web:
     runs-on: ubuntu-latest

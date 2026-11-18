@@ -1,0 +1,13 @@
+[package]
+name = "simucleo-nucleo"
+description = "Nucleo-F401RE board: CPU + STM32F401 peripherals + Cortex-M system, as one machine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+simucleo-core.workspace = true
+simucleo-cpu-armv7m.workspace = true
+simucleo-periph-stm32f4.workspace = true
+simucleo-elf.workspace = true
+thiserror.workspace = true

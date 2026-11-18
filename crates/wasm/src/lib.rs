@@ -5,10 +5,7 @@ use wasm_bindgen::prelude::*;
 
 use simucleo_circuit::netlist::{build_netlist, BusCatalog, Circuit};
 use simucleo_core::bus::Bus;
-use simucleo_core::cpu::CpuBackend;
-use simucleo_cpu_armv7m::ArmV7M;
-use simucleo_elf::FirmwareImage;
-use simucleo_periph_stm32f4::Stm32f401Bus;
+use simucleo_nucleo::Nucleo;
 
 #[wasm_bindgen]
 pub fn version() -> String {
@@ -17,9 +14,7 @@ pub fn version() -> String {
 
 #[wasm_bindgen]
 pub struct Simulator {
-    bus: Stm32f401Bus,
-    cpu: ArmV7M,
-    firmware: Option<FirmwareImage>,
+    board: Nucleo,
     catalog: BusCatalog,
 }
 
@@ -34,9 +29,7 @@ impl Simulator {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self {
-            bus: Stm32f401Bus::new(),
-            cpu: ArmV7M::new(),
-            firmware: None,
+            board: Nucleo::new(),
             catalog: BusCatalog::default(),
         }
     }
@@ -44,24 +37,32 @@ impl Simulator {
     /// Load an uploaded ELF file and reset the core.
     #[wasm_bindgen(js_name = loadElf)]
     pub fn load_elf(&mut self, bytes: &[u8]) -> Result<(), JsError> {
-        let fw = FirmwareImage::parse(bytes)?;
-        self.bus = Stm32f401Bus::new();
-        for seg in &fw.segments {
-            self.bus.load(seg.addr, &seg.data)?;
-        }
-        self.cpu.reset(&mut self.bus, 0)?;
-        self.firmware = Some(fw);
-        Ok(())
+        Ok(self.board.load_elf(bytes)?)
     }
 
     pub fn pc(&self) -> u32 {
-        self.cpu.registers().pc()
+        self.board.cpu.registers().pc()
+    }
+
+    /// Run for `cycles` core cycles; returns the stop reason as text.
+    pub fn run(&mut self, cycles: u32) -> String {
+        format!("{:?}", self.board.run(cycles as u64).stop)
+    }
+
+    /// Simulated time in core cycles.
+    pub fn now(&self) -> f64 {
+        self.board.now() as f64
+    }
+
+    /// Level of a GPIO pin, e.g. `pin("A", 5)`.
+    pub fn pin(&self, port: &str, pin: u8) -> bool {
+        port.chars().next().is_some_and(|p| self.board.pin(p, pin))
     }
 
     /// Read a 32-bit word for the memory viewer.
     #[wasm_bindgen(js_name = readWord)]
     pub fn read_word(&mut self, addr: u32) -> Result<u32, JsError> {
-        Ok(self.bus.read_u32(addr)?)
+        Ok(self.board.bus.read_u32(addr)?)
     }
 
     /// Register the internal buses of every part kind, as JSON

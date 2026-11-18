@@ -8,13 +8,28 @@
 | **M3 · 디지털 부품** ✅ | EXTI, TIM 기본/PWM, Tier 1 부품(LED, RGB LED, 버튼, 부저), 전기 규칙 검사, 프로브/파형 뷰, 프로젝트 저장 | 버튼 인터럽트, PWM 밝기, 부저 멜로디 예제 |
 | **M4 · FreeRTOS** ✅ | CubeMX FreeRTOS 실행, TIM 타임베이스, WFI 시간 건너뛰기, **RTOS 뷰**(태스크, 스택, 전환 타임라인) | `freertos-two-tasks`, `freertos-queue-uart` |
 | **M5 · 아날로그/구동** ✅ | ADC, MNA DC 솔버, Tier 2 부품(가변저항, LDR, 아날로그 온도센서, 서보, DC 모터) | 가변저항 → ADC → 서보/모터 제어 예제 |
-| **M6 · 버스 장치** | I2C, SPI Peripheral, Tier 3 부품(SSD1306 I2C/SPI, I2C RTC, SPI SD 카드 + FatFs, I2C 온습도센서) | OLED 그래픽, RTC 시계, SD 카드 로깅 예제 |
+| **M6 · 버스 장치** ✅ | I2C, SPI Peripheral, Tier 3 부품(SSD1306 I2C/SPI, I2C RTC, SPI SD 카드 + FatFs, I2C 온습도센서) | OLED 그래픽, RTC 시계, SD 카드 로깅 예제 |
 | **M7 · 타이밍 민감 장치** | DMA, 입력 캡처, Tier 4 부품(NeoPixel, DHT11/22) | NeoPixel 무지개, DHT 측정 예제 |
 | 이후 | 회로도 뷰, GDB 원격 서버(데스크톱/Tauri), DWARF 소스 레벨 디버깅, 7세그먼트·LCD·스테퍼 등 | |
 
 상세 부품 계획은 [parts.md](parts.md)를 참고한다.
 
 ## 현재 상태
+
+### M6 완료 (I2C/SPI 버스 장치)
+
+![I2C 시계·온습도](images/m6-i2c.png)
+
+![SD 카드 데이터 로거](images/m6-spi-sd.png)
+
+- [x] **I2C1–3 마스터**: SB/ADDR/BTF/TXE/RXNE/AF 플래그 순서, ACK/POS로 정하는 NACK 위치, DR이 차면 클럭 스트레칭, 진행 중 바이트가 끝난 뒤의 STOP/재시작, CCR·PCLK1로 정한 바이트 시간(9 SCL), 이벤트·에러 인터럽트. HAL I2C 드라이버(폴링, `Mem_Read/Write`, `IsDeviceReady`)를 그대로 사용
+- [x] **SPI1–4 마스터**: 송신 버퍼와 시프트 레지스터(TXE/BSY), 분주비에 따른 프레임 시간, RXNE/OVR(DR → SR 읽기로 해제), 8/16비트, LSB 먼저, 인터럽트. 소프트웨어 NSS인데 SSI가 0이면 실제처럼 MODF로 마스터 모드가 풀림
+- [x] **버스와 회로 연결**: 장치는 SCL/SDA(또는 SCK/MOSI/MISO)가 MCU 핀과 같은 넷에 있고 VCC가 들어와 있을 때만 응답. I2C 모듈은 자체 4.7 kΩ 풀업을 가지므로 모듈 전원이 없으면 버스가 Low에 머무름(경고). SCL/SDA, SCK/MOSI가 바뀐 배선과 MISO를 동시에 구동하는 두 장치도 경고. SPI 장치는 CS 넷이 Low일 때만 선택
+- [x] **장치**: SSD1306(I2C·SPI 공용 코어, 주소 모드 3종, 컬럼/페이지 창, 리맵·COM 방향, 시작 줄, 반전, 차지펌프, RES 핀), DS3231(BCD 시간·날짜, 12/24시간, 세기 비트, 일부 레지스터만 써도 나머지는 계속 흐름, 온도 레지스터, 시뮬레이션 시작 시각 = PC 현지 시각, 보드 리셋·펌웨어 교체에도 배터리로 계속 감), AHT20(보정, 80 ms 측정, 바쁨 비트, CRC-8), SD 카드(SPI 모드 SDHC: CMD0/8/55/ACMD41/58/9/10/12/13/16/17/18/24/25, CMD0·CMD8 CRC 검사, 데이터 응답·바쁨, 희소 저장소)
+- [x] **웹**: OLED 화면 실시간 표시, RTC 날짜·시간 표시, AHT20 온도·습도 슬라이더, SD 카드 접근 LED와 용량 선택, **디스크 이미지 내려받기/넣기**
+- [x] 예제(배선 포함): `hal-i2c-oled`(버스 스캔, OLED 시계 + 온습도, B1로 RTC 쓰기), `hal-spi-sd-logger`(빈 카드를 FatFs로 포맷, RTC 시각이 찍힌 CSV 기록, SPI OLED, B1로 파일 읽기). FatFs R0.16(ST 패키지)을 vendor에 추가
+- [x] 테스트: I2C·SPI 컨트롤러, 장치(OLED 주소 모드, RTC 설정·진행, AHT20 측정·CRC, SD 초기화·읽기·쓰기·이미지), 회로 연결(전원·풀업·주소), 펌웨어 통합 테스트(실제 HAL·FatFs로 포맷·기록·재부팅 후 이어 쓰기), E2E(OLED 화면, 슬라이더 → 측정값, SD 이미지 안의 LOG.CSV)
+- 남은 항목: SD 카드 내용의 자동 저장(IndexedDB), 비트뱅잉 I2C/SPI용 핀 레벨 디코더, DS3231 알람·SQW 출력, SSD1306 스크롤, I2C·SPI DMA와 슬레이브 모드(M7 이후)
 
 ### M5 완료 (아날로그·구동)
 

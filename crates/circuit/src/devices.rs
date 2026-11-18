@@ -192,10 +192,13 @@ impl Ssd1306 {
             return out;
         }
         for y in 0..64usize {
-            let row = if self.com_reverse { 63 - y } else { y };
+            // Modules mount the panel so that the usual A1/C8 setting is
+            // upright with the header at the top: SEG0 is on the right,
+            // COM0 at the bottom.
+            let row = if self.com_reverse { y } else { 63 - y };
             let line = (row + self.start_line as usize) % 64;
             for x in 0..128usize {
-                let seg = if self.seg_remap { 127 - x } else { x };
+                let seg = if self.seg_remap { x } else { 127 - x };
                 let mut px = self.ram[line / 8][seg] >> (line % 8) & 1 != 0;
                 if self.entire_on {
                     px = true;
@@ -965,9 +968,10 @@ mod tests {
         assert_eq!(o.ram[0][1], 0x80);
         assert_eq!(o.ram[1][0], 0xFF);
         let screen = o.screen();
-        // With remap and COM reversed, RAM (page 0, col 0, bit 0) is the
-        // bottom-right pixel.
-        assert_eq!(screen[63 * 16 + 15] & 0x01, 0x01);
+        // With remap and COM reversed (header at the top), RAM page 0,
+        // column 0, bit 0 is the top-left pixel.
+        assert_eq!(screen[0] & 0x80, 0x80);
+        assert_eq!(screen[16] & 0x80, 0x00);
     }
 
     #[test]

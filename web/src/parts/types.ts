@@ -56,6 +56,10 @@ export interface VisualState {
   rpm?: number;
   /** The part's supply is too low. */
   unpowered?: boolean;
+  /** Display contents: 64 rows × 128 pixels, MSB first, base64. */
+  screen?: string;
+  /** A reading shown on the part (RTC date and time). */
+  text?: string;
   pressed?: boolean;
   burnt?: boolean;
 }

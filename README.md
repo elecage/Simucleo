@@ -8,7 +8,10 @@
 
 ![PWM으로 RGB LED와 LD2 밝기 제어](docs/images/m3-pwm-rgb.png)
 
-> **상태: M5 완료.** 가변저항·조도센서·온도센서를 ADC로 읽고, 서보와 DC 모터를 움직인다.
+> **상태: M6 완료.** I2C·SPI로 OLED에 그림을 그리고, RTC 시계와 온습도 센서를 읽고, SD 카드에 FatFs로
+> 기록한다. SD 카드 내용은 디스크 이미지로 내려받거나 넣을 수 있다.
+>
+> **M5:** 가변저항·조도센서·온도센서를 ADC로 읽고, 서보와 DC 모터를 움직인다.
 >
 > **M4:** CubeMX로 만든 FreeRTOS(CMSIS-RTOS v2) 펌웨어가 수정 없이 실행되고, RTOS 탭에서 태스크 상태·스택·CPU 사용률·실행 타임라인을 본다.
 >
@@ -16,7 +19,7 @@
 > 배선된 회로를 DC 해석해 PWM 밝기, 부저 음, 버튼 인터럽트(EXTI)를 보여 주고, 저항 없는 LED 같은
 > 전기 규칙 위반을 알려 준다. 파형(로직 프로브) 뷰, 프로젝트 파일 저장·열기·자동 저장, 배선도 그림 내보내기,
 > 배선이 포함된 예제가 있다. CPU 코어는 Unicorn과 명령어 단위로 검증했고, STM32CubeMX HAL 펌웨어가
-> 84 MHz로 실시간 실행된다. 다음은 I2C/SPI 버스 장치(M6)다. 진행 상황은 [로드맵](docs/roadmap.md)을 참고.
+> 84 MHz로 실시간 실행된다. 다음은 DMA·입력 캡처와 NeoPixel·DHT 같은 타이밍 민감 장치(M7)다. 진행 상황은 [로드맵](docs/roadmap.md)을 참고.
 
 ## 특징 (목표)
 - 수정하지 않은 **베어메탈 / CubeMX HAL / CubeMX FreeRTOS** 펌웨어 실행
@@ -36,7 +39,7 @@
 crates/
   core/            Bus, CpuBackend trait, 사이클 스케줄러, Cortex-M 시스템(NVIC/SCB/SysTick)
   cpu-armv7m/      자체 Cortex-M4F 인터프리터 (Thumb-2, DSP, FPv4-SP)
-  periph-stm32f4/  F401RE Peripheral: RCC/PWR/FLASH/GPIO/EXTI/SYSCFG/USART/TIM, SVD 레지스터 맵, 비트밴딩
+  periph-stm32f4/  F401RE Peripheral: RCC/PWR/FLASH/GPIO/EXTI/SYSCFG/USART/TIM/ADC/I2C/SPI, SVD 레지스터 맵, 비트밴딩
   nucleo/          보드 단위 머신 (ELF 로드, 리셋, 실행)
   difftest/        Unicorn과 lock-step 비교 (테스트 전용)
   circuit/         넷리스트 추출, 회로 DC 해석(LED·스위치·부저), 전기 규칙 검사

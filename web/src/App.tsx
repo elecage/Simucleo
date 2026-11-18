@@ -25,6 +25,8 @@ const PROP_LABEL: Record<string, string> = {
   tempco: "온도계수 (ppm/K, 6띠)",
   color: "색",
   common: "공통 단자",
+  address: "I2C 주소",
+  size: "카드 용량 (MB)",
 };
 
 const BAND_KO: Record<string, string> = {
@@ -175,6 +177,8 @@ export function App() {
         angle: v.angle,
         rpm: v.rpm,
         unpowered: v.unpowered,
+        screen: v.screen,
+        text: v.text,
       };
       if (v.id === "LD2") {
         if (boardId) out[boardId] = { ...out[boardId], brightness: state.brightness, overcurrent: state.overcurrent };
@@ -491,6 +495,7 @@ export function App() {
                 </label>
               );
             })}
+            {selectedPart.kind === "sd-card" && <SdImageButtons part={selectedPart.id} runner={runner} />}
             <button onClick={deleteSelected}>삭제</button>
           </>
         ) : selectedWire ? (
@@ -539,6 +544,50 @@ export function App() {
           ))}
         </ul>
       </aside>
+    </div>
+  );
+}
+
+/** Download or replace the contents of a simulated SD card. */
+function SdImageButtons({ part, runner }: { part: string; runner: ReturnType<typeof useRunner> }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  return (
+    <div className="prop">
+      카드 내용 (디스크 이미지)
+      <div>
+        <button
+          onClick={async () => {
+            const img = await runner.sdImage(part);
+            if (!img.length) return setMsg("카드가 아직 회로에 없습니다.");
+            const url = URL.createObjectURL(new Blob([img], { type: "application/octet-stream" }));
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${part}.img`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            setMsg(`${(img.length / 1048576).toFixed(0)} MB 이미지를 내려받았습니다.`);
+          }}
+        >
+          이미지 내려받기
+        </button>{" "}
+        <button onClick={() => input.current?.click()}>이미지 넣기</button>
+        <input
+          ref={input}
+          type="file"
+          accept=".img,.bin,application/octet-stream"
+          hidden
+          data-testid="sd-image-input"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (!f) return;
+            runner.sdLoad(part, await f.arrayBuffer());
+            setMsg(`${f.name}을(를) 카드에 넣었습니다.`);
+          }}
+        />
+      </div>
+      {msg && <span className="hint">{msg}</span>}
     </div>
   );
 }

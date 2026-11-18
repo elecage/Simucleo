@@ -2157,7 +2157,7 @@ mod tests {
 
         // Draw on the OLED and see it in the frame.
         assert!(s.i2c_start(0, scl, sda, 0x3C, false));
-        for b in [0x00, 0x8D, 0x14, 0xAF, 0x20, 0x00] {
+        for b in [0x00, 0x8D, 0x14, 0xAF, 0x20, 0x00, 0xA1, 0xC8] {
             s.i2c_write(0, scl, b);
         }
         s.i2c_stop(0, scl);

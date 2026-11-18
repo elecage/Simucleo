@@ -333,6 +333,25 @@ impl Simulator {
         Ok(())
     }
 
+    /// The date and time (seconds since 1970, in the time zone the clock
+    /// should show) that RTC modules placed from now on start at.
+    #[wasm_bindgen(js_name = setWallClock)]
+    pub fn set_wall_clock(&mut self, seconds: f64) {
+        self.board.set_wall_clock(seconds);
+    }
+
+    /// The SD card of part `id` as a disk image (empty if there is none).
+    #[wasm_bindgen(js_name = sdImage)]
+    pub fn sd_image(&self, id: &str) -> Vec<u8> {
+        self.board.sd_image(id).unwrap_or_default()
+    }
+
+    /// Insert a disk image into the SD card of part `id`.
+    #[wasm_bindgen(js_name = sdLoad)]
+    pub fn sd_load(&mut self, id: &str, image: &[u8]) -> bool {
+        self.board.sd_load(id, image)
+    }
+
     /// Press or release a switch: a `tact-switch` part id or `"B1"`.
     pub fn press(&mut self, part: &str, pressed: bool) {
         self.board.press(part, pressed);

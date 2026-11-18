@@ -215,3 +215,12 @@ main { position: relative; }
 .motor-shaft { fill: #fbbf24; stroke: #92400e; }
 .unpowered { fill: #9ca3af; font-weight: 700; }
 .prop input[type="range"] { width: 100%; }
+
+/* Bus modules (M6) */
+.module-pcb { fill: #1d4ed8; stroke: #1e3a8a; }
+.module-label { fill: #e5e7eb; font-size: 3.6px; }
+.header-pin { fill: #d4af37; stroke: #8a6d1d; stroke-width: 0.5; }
+.oled-glass { fill: #05070d; stroke: #374151; }
+.coin-cell { fill: #cbd5e1; stroke: #64748b; }
+.chip { fill: #222; stroke: #000; }
+.sd-slot { fill: #9ca3af; stroke: #4b5563; }

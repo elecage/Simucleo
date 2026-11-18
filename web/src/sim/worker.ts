@@ -116,10 +116,18 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     case "readMemory":
       post({ type: "memory", addr: m.addr, bytes: sim.readMemory(m.addr, m.len) });
       break;
+    case "sdImage":
+      post({ type: "sdImage", part: m.part, bytes: sim.sdImage(m.part) });
+      break;
+    case "sdLoad":
+      sim.sdLoad(m.part, new Uint8Array(m.bytes));
+      break;
   }
 };
 
 init().then(() => {
   sim = new Simulator();
+  // RTC modules start at the local date and time.
+  sim.setWallClock(Date.now() / 1000 - new Date().getTimezoneOffset() * 60);
   post({ type: "ready", version: version() });
 });

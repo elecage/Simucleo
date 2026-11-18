@@ -11,9 +11,11 @@
 //! Modelled: up/down counting, prescaler and auto-reload with preload,
 //! one-pulse mode, UG/CCxG, update and compare interrupts, output compare
 //! (frozen, active/inactive/toggle on match, force) and PWM modes 1/2 with
-//! polarity, and BDTR.MOE on TIM1. Not yet: center-aligned counting (counts
-//! up), the repetition counter, input capture, slave modes, DMA requests and
-//! complementary outputs.
+//! polarity, BDTR.MOE on TIM1, and DMA requests on update and compare events
+//! (CCDS). Not yet: center-aligned counting (counts up), the repetition
+//! counter, slave modes other than reset, and complementary outputs.
+//! Input capture (direct/indirect TI mapping, edge polarity, prescaler,
+//! overcapture) and the reset slave mode take pin edges from the bus.
 
 use simucleo_core::Cycles;
 
@@ -27,6 +29,12 @@ const ARPE: u32 = 1 << 7;
 // SR / DIER
 pub const UIF: u32 = 1 << 0;
 const CC_IF: [u32; 4] = [1 << 1, 1 << 2, 1 << 3, 1 << 4];
+const CC_OF: [u32; 4] = [1 << 9, 1 << 10, 1 << 11, 1 << 12];
+// DIER DMA enables
+const UDE: u32 = 1 << 8;
+const CC_DE: [u32; 4] = [1 << 9, 1 << 10, 1 << 11, 1 << 12];
+// CR2
+const CCDS: u32 = 1 << 3;
 // BDTR
 const MOE: u32 = 1 << 15;
 
@@ -225,6 +233,10 @@ pub struct Timer {
     pub gen: u32,
     /// The bus clock (RCC TIMxEN) is off: the counter and outputs freeze.
     pub gated: bool,
+    /// Pending DMA requests: bit 0 update, bits 1–4 capture/compare 1–4.
+    pub dma_req: u32,
+    /// Input-capture edges counted per channel (for ICxPSC).
+    ic_count: [u32; 4],
 }
 
 impl Timer {
@@ -255,6 +267,8 @@ impl Timer {
             ocref: [false; 4],
             gen: 0,
             gated: false,
+            dma_req: 0,
+            ic_count: [0; 4],
         }
     }
 
@@ -336,6 +350,9 @@ impl Timer {
             return;
         };
         self.sr |= CC_IF[ch];
+        if self.dier & CC_DE[ch] != 0 && self.cr2 & CCDS == 0 {
+            self.dma_req |= 2 << ch;
+        }
         match mode {
             1 => self.ocref[ch] = true,
             2 => self.ocref[ch] = false,
@@ -367,6 +384,17 @@ impl Timer {
         if set_flag {
             self.sr |= UIF;
         }
+        if self.dier & UDE != 0 {
+            self.dma_req |= 1;
+        }
+        // CCDS: capture/compare DMA requests go out on the update event.
+        if self.cr2 & CCDS != 0 {
+            for (ch, de) in CC_DE.iter().enumerate().take(self.info.channels as usize) {
+                if self.dier & de != 0 {
+                    self.dma_req |= 2 << ch;
+                }
+            }
+        }
         self.psc_act = self.psc;
         self.arr_act = self.arr;
         for ch in 0..4 {
@@ -380,6 +408,86 @@ impl Timer {
         self.psc_act == self.psc
             && self.arr_act == self.arr
             && (0..4).all(|ch| !self.preload(ch) || self.ccr_act[ch] == self.ccr[ch])
+    }
+
+    /// Capture/compare selection of a channel (CCxS): 0 output, 1 input
+    /// from its own pin (TIx), 2 from the neighbour's (TI2 for IC1, …), 3 TRC.
+    fn ccs(&self, ch: usize) -> u32 {
+        (self.ccmr[ch / 2] >> (8 * (ch % 2))) & 3
+    }
+
+    /// A channel configured as an input.
+    pub fn is_input(&self, ch: usize) -> bool {
+        self.ccs(ch) != 0
+    }
+
+    /// An edge on the timer input pin of channel `ti` (TI1 = 0, …) at
+    /// `now`: input capture on the channels listening to it, and the slave
+    /// controller's reset mode on TI1FP1/TI2FP2.
+    pub fn input_edge(&mut self, ti: usize, rising: bool, now: Cycles) {
+        if self.gated {
+            return;
+        }
+        self.sync(now);
+        // Edge selection of a channel: CCxP/CCxNP = 00 rising, 01 falling,
+        // 11 both.
+        let wants =
+            |ccer: u32, ch: usize| match ((ccer >> (4 * ch + 1)) & 1, (ccer >> (4 * ch + 3)) & 1) {
+                (0, 0) => rising,
+                (1, 0) => !rising,
+                (1, 1) => true,
+                _ => rising,
+            };
+        for ch in 0..self.info.channels as usize {
+            let src = match self.ccs(ch) {
+                1 => ch,
+                2 => ch ^ 1,
+                _ => continue,
+            };
+            if src != ti || self.ccer & (1 << (4 * ch)) == 0 || !wants(self.ccer, ch) {
+                continue;
+            }
+            // ICxPSC: capture every 1, 2, 4 or 8 edges.
+            let psc = (self.ccmr[ch / 2] >> (8 * (ch % 2) + 2)) & 3;
+            self.ic_count[ch] = self.ic_count[ch].wrapping_add(1);
+            if !self.ic_count[ch].is_multiple_of(1 << psc) {
+                continue;
+            }
+            if self.sr & CC_IF[ch] != 0 {
+                self.sr |= CC_OF[ch];
+            }
+            self.ccr[ch] = self.cnt;
+            self.ccr_act[ch] = self.cnt;
+            self.sr |= CC_IF[ch];
+            if self.dier & CC_DE[ch] != 0 {
+                self.dma_req |= 2 << ch;
+            }
+        }
+        // Slave mode controller, reset mode (SMS = 100) triggered by
+        // TI1FP1 (TS = 101) or TI2FP2 (TS = 110): the counter restarts.
+        let sms = self.smcr & 7;
+        let ts = (self.smcr >> 4) & 7;
+        let trigger = match (ts, ti) {
+            (5, 0) => wants(self.ccer, 0),
+            (6, 1) => wants(self.ccer, 1),
+            _ => false,
+        };
+        if sms == 4 && trigger && self.running() {
+            self.cnt = if self.down() { self.arr_act } else { 0 };
+            self.ref_cycle = now;
+            self.update_event(self.cr1 & URS == 0);
+        }
+    }
+
+    /// Side effects of a register read: reading CCRx of an input channel
+    /// clears CCxIF.
+    pub fn after_read(&mut self, offset: u32) {
+        if let 0x34..=0x40 = offset {
+            let ch = ((offset - 0x34) / 4) as usize;
+            if ch < self.info.channels as usize && self.is_input(ch) {
+                self.sr &= !CC_IF[ch];
+            }
+        }
     }
 
     /// Bring the counter and flags up to `now`.
@@ -406,13 +514,15 @@ impl Timer {
             }
             self.ref_cycle += tick;
             self.cnt = if self.down() { self.arr_act } else { 0 };
+            // The update loads the preloaded registers first; the new
+            // compare values apply to the counter's first value.
+            if self.cr1 & UDIS == 0 {
+                self.update_event(true);
+            }
             for ch in 0..self.info.channels as usize {
                 if self.ccr_act[ch] == self.cnt {
                     self.compare_match(ch, 1);
                 }
-            }
-            if self.cr1 & UDIS == 0 {
-                self.update_event(true);
             }
             if self.cr1 & OPM != 0 {
                 self.cr1 &= !CEN;
@@ -471,7 +581,8 @@ impl Timer {
     /// Level driven on a channel's output pin, or `None` if the output is
     /// disabled.
     pub fn output(&self, ch: usize) -> Option<bool> {
-        if ch >= self.info.channels as usize || !self.output_enabled(ch) {
+        // An input-capture channel drives nothing (CCxE enables capture).
+        if ch >= self.info.channels as usize || !self.output_enabled(ch) || self.is_input(ch) {
             return None;
         }
         let polarity = self.ccer & (2 << (4 * ch)) != 0;
@@ -491,7 +602,14 @@ impl Timer {
         };
         let any_pwm = (0..self.info.channels as usize)
             .any(|ch| self.output_enabled(ch) && matches!(self.oc_mode(ch), Some(6 | 7)));
-        if self.dier & UIF != 0 || !self.shadows_settled() || self.cr1 & OPM != 0 || any_pwm {
+        let dma_on_update =
+            self.dier & UDE != 0 || (self.cr2 & CCDS != 0 && self.dier & 0x1E00 != 0);
+        if self.dier & UIF != 0
+            || dma_on_update
+            || !self.shadows_settled()
+            || self.cr1 & OPM != 0
+            || any_pwm
+        {
             consider(Some(self.ticks_to_wrap()));
         }
         for ch in 0..self.info.channels as usize {
@@ -499,7 +617,7 @@ impl Timer {
                 continue;
             };
             let visible = self.output_enabled(ch) && matches!(mode, 1 | 2 | 3 | 6 | 7);
-            if self.dier & CC_IF[ch] != 0 || visible {
+            if self.dier & (CC_IF[ch] | CC_DE[ch]) != 0 || visible {
                 consider(self.ticks_to_value(self.ccr_act[ch]));
             }
         }
@@ -747,5 +865,28 @@ mod tests {
         assert_eq!(t.output(0), None);
         t.write(0x44, MOE, u32::MAX, 0);
         assert_eq!(t.output(0), Some(true));
+    }
+
+    #[test]
+    fn input_capture_and_pwm_input_mode() {
+        let mut t = tim3();
+        // IC1 on TI1 rising, IC2 on TI1 falling (indirect), reset on TI1FP1.
+        t.write(0x18, 1 | 2 << 8, 0xFFFF, 0);
+        t.write(0x20, 1 | (1 << 4) | (1 << 5), 0xFFFF, 0);
+        t.write(0x08, 4 | 5 << 4, 0xFFFF, 0);
+        t.write(0x00, 1, 0xFFFF, 0); // CEN, 1 tick per cycle
+        t.input_edge(0, true, 100); // period start: counter reset
+        t.input_edge(0, false, 130); // 30 high
+        t.input_edge(0, true, 200); // period 100
+        assert_eq!(t.read(0x34), 100, "period");
+        assert_eq!(t.read(0x38), 30, "high time");
+        assert_ne!(t.sr & (CC_IF[0] | CC_IF[1]), 0);
+        t.after_read(0x34);
+        assert_eq!(t.sr & CC_IF[0], 0, "reading CCR1 clears CC1IF");
+        assert_ne!(
+            t.sr & CC_OF[0],
+            0,
+            "CC1 captured twice before the flag was cleared"
+        );
     }
 }

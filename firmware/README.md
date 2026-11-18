@@ -20,7 +20,7 @@ CI builds every project here and runs it through `simucleo` as a regression test
 | `freertos-queue-uart` | CubeMX + FreeRTOS (CMSIS-RTOS v2) | UART RX ISR → message queue → echo task; producer/consumer queue; heap and stack statistics | M4 ✅ |
 
 ```sh
-for d in bare-blinky exceptions difftest hal-uart-printf hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger freertos-two-tasks freertos-queue-uart; do make -C firmware/$d; done
+for d in bare-blinky exceptions difftest hal-uart-printf hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture freertos-two-tasks freertos-queue-uart; do make -C firmware/$d; done
 make -C firmware/hal-blinky variants
 cargo run --release -p simucleo-cli -- run firmware/bare-blinky/build/bare-blinky.elf --ms 2000
 cargo test --release -p simucleo-nucleo --test firmware -- --include-ignored

@@ -9,6 +9,7 @@
 //! simulated yet.
 
 pub mod adc;
+pub mod dma;
 pub mod exti;
 pub mod gpio;
 pub mod i2c;
@@ -26,6 +27,7 @@ pub mod usart;
 use std::collections::BTreeSet;
 
 use adc::{Adc, AdcAction};
+use dma::{Dma, Request};
 use exti::Exti;
 use gpio::{Gpio, PinDrive, PinEvent};
 use i2c::{I2c, I2cBus, I2cOp, I2cReply};
@@ -61,6 +63,11 @@ pub enum Event {
     },
     Spi {
         idx: u8,
+        gen: u32,
+    },
+    /// Something in the external circuit changes on its own (a sensor's
+    /// reply on a data line).
+    Circuit {
         gen: u32,
     },
 }
@@ -109,6 +116,11 @@ pub trait ExternalCircuit {
     /// each of those pins sees from outside (`None`: nothing drives it) if
     /// that may have changed.
     fn update(&mut self, time: Cycles, drives: &[PinDrive]) -> Option<Vec<Option<bool>>>;
+    /// When the circuit next changes by itself (a device driving a line on
+    /// its own schedule); the bus calls [`ExternalCircuit::update`] then.
+    fn next_event(&self) -> Option<Cycles> {
+        None
+    }
     /// Voltage the circuit puts on a pin (for the ADC), if it is connected.
     fn voltage(&self, _port: u8, _pin: u8) -> Option<f64> {
         None
@@ -349,6 +361,11 @@ pub struct Stm32f401Bus {
     pub i2c: [I2c; 3],
     /// SPI1, SPI2, SPI3, SPI4.
     pub spi: [Spi; 4],
+    /// DMA1, DMA2.
+    pub dma: [Dma; 2],
+    /// A DMA transfer is being made (its register accesses must not start
+    /// another round).
+    dma_busy: bool,
     /// TIM1, TIM2, TIM3, TIM4, TIM5, TIM9, TIM10, TIM11.
     pub timers: [Timer; 8],
     /// Firmware read a register whose value changes with time alone (a
@@ -360,6 +377,8 @@ pub struct Stm32f401Bus {
     circuit: Option<Box<dyn ExternalCircuit>>,
     /// Pins the circuit currently drives from outside.
     circuit_pins: Vec<(u8, u8)>,
+    /// Generation of the circuit's own scheduled event.
+    circuit_gen: u32,
     /// Unmodelled peripherals.
     pub regs: RegisterFile,
     pub warnings: BTreeSet<Warning>,
@@ -399,11 +418,14 @@ impl Stm32f401Bus {
             adc: Adc::default(),
             i2c: I2CS.map(|c| I2c::new(c.name, c.irq_ev, c.irq_er)),
             spi: SPIS.map(|c| Spi::new(c.name, c.irq)),
+            dma: [Dma::new(0), Dma::new(1)],
+            dma_busy: false,
             timers: TIMERS.map(Timer::new),
             time_read: false,
             levels: [0; 8],
             circuit: None,
             circuit_pins: Vec::new(),
+            circuit_gen: 0,
             regs: RegisterFile::default(),
             warnings: BTreeSet::new(),
             sched: Scheduler::new(),
@@ -555,6 +577,21 @@ impl Stm32f401Bus {
                 self.exti.edge(line, new & (1 << line) != 0);
             }
         }
+        // Timer inputs (input capture, slave reset) on alternate-function pins.
+        for &(p, pin, af, ti, ch) in timer::PIN_MAP {
+            if p as usize != port || changed & (1 << pin) == 0 {
+                continue;
+            }
+            let g = &self.gpio[port];
+            if g.mode(pin) != gpio::PinMode::Alternate || g.af(pin) != af {
+                continue;
+            }
+            let t = &mut self.timers[ti as usize];
+            if (0..t.info.channels as usize).any(|c| t.is_input(c)) {
+                t.input_edge(ch as usize, new & (1 << pin) != 0, time);
+                self.reschedule_timer(ti as usize);
+            }
+        }
     }
 
     /// Attach (or with `None` detach) the external circuit and let it see
@@ -593,6 +630,12 @@ impl Stm32f401Bus {
             .map(|&(port, pin)| self.gpio[port as usize].drive(pin))
             .collect();
         let levels = c.update(time, &drives);
+        // The circuit's own next change.
+        self.circuit_gen = self.circuit_gen.wrapping_add(1);
+        if let Some(at) = c.next_event() {
+            let gen = self.circuit_gen;
+            self.sched.schedule_at(at.max(time), Event::Circuit { gen });
+        }
         self.circuit = Some(c);
         if let Some(levels) = levels {
             let pins = self.circuit_pins.clone();
@@ -723,6 +766,9 @@ impl Stm32f401Bus {
         for s in &mut self.spi {
             s.reset();
         }
+        for d in &mut self.dma {
+            d.reset();
+        }
         let now = self.sched.now().max(self.now);
         for t in &mut self.timers {
             t.reset(now);
@@ -794,6 +840,11 @@ impl Stm32f401Bus {
                         self.spi[i].event(at, cycles, &mut self.sched, idx, &mut bus);
                     }
                 }
+                Event::Circuit { gen } => {
+                    if self.circuit_gen == gen {
+                        self.circuit_update_forced(at);
+                    }
+                }
                 Event::Adc { gen } => {
                     if self.adc.gen == gen {
                         if let Some(ch) = self.adc.converting {
@@ -812,7 +863,92 @@ impl Stm32f401Bus {
                     }
                 }
             }
+            // Requests the event raised are served at its time.
+            let saved = self.now;
+            self.now = at;
+            self.service_dma();
+            self.now = saved.max(at);
         }
+    }
+
+    /// Whether a peripheral DMA request line is active.
+    fn dma_request_active(&self, r: Request) -> bool {
+        match r {
+            Request::UsartTx(i) => {
+                let u = &self.usart[i as usize];
+                u.cr3 & (1 << 7) != 0 && u.sr & usart::TXE != 0
+            }
+            Request::UsartRx(i) => {
+                let u = &self.usart[i as usize];
+                u.cr3 & (1 << 6) != 0 && u.sr & usart::RXNE != 0
+            }
+            Request::SpiTx(i) => {
+                let s = &self.spi[i as usize];
+                s.cr2 & 2 != 0 && s.sr & spi::TXE != 0
+            }
+            Request::SpiRx(i) => {
+                let s = &self.spi[i as usize];
+                s.cr2 & 1 != 0 && s.sr & spi::RXNE != 0
+            }
+            Request::Adc1 => self.adc.cr2 & (1 << 8) != 0 && self.adc.sr & adc::EOC != 0,
+            Request::TimUp(t) => self.timers[t as usize].dma_req & 1 != 0,
+            Request::TimCh(t, c) => self.timers[t as usize].dma_req & (2 << c) != 0,
+        }
+    }
+
+    /// Move data for every DMA stream whose request is active, until none
+    /// is (each transfer can clear or raise requests).
+    fn service_dma(&mut self) {
+        if self.dma_busy
+            || !self
+                .dma
+                .iter()
+                .any(|d| d.streams.iter().any(|s| s.enabled()))
+        {
+            return;
+        }
+        self.dma_busy = true;
+        // A runaway (memory-to-memory of 65535 items, a peripheral that
+        // keeps requesting) is bounded per round.
+        for _ in 0..200_000 {
+            let mut moved = false;
+            for d in 0..2 {
+                for i in 0..8 {
+                    if !self.dma[d].streams[i].enabled() {
+                        continue;
+                    }
+                    let reqs = self.dma[d].requests(i);
+                    let m2m = self.dma[d].streams[i].dir() == 2;
+                    if !m2m && !reqs.iter().any(|&r| self.dma_request_active(r)) {
+                        continue;
+                    }
+                    let t = self.dma[d].next_transfer(i);
+                    let size = match t.bytes {
+                        1 => AccessSize::Byte,
+                        2 => AccessSize::Half,
+                        _ => AccessSize::Word,
+                    };
+                    let ok = match self.read_inner(t.src, size) {
+                        Ok(v) => self.write_inner(t.dst, size, v).is_ok(),
+                        Err(_) => false,
+                    };
+                    // Timer requests are events: one transfer serves one.
+                    for r in reqs {
+                        match r {
+                            Request::TimUp(tm) => self.timers[tm as usize].dma_req &= !1,
+                            Request::TimCh(tm, c) => self.timers[tm as usize].dma_req &= !(2 << c),
+                            _ => {}
+                        }
+                    }
+                    self.dma[d].advance(i, ok);
+                    moved = true;
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
+        self.dma_busy = false;
     }
 
     /// Characters typed into the terminal attached to a USART (0 = USART1,
@@ -897,6 +1033,8 @@ impl Stm32f401Bus {
                 self.i2c[i].reset();
             } else if let Some(i) = SPIS.iter().position(|c| c.name == name) {
                 self.spi[i].reset();
+            } else if name == "DMA1" || name == "DMA2" {
+                self.dma[(name == "DMA2") as usize].reset();
             } else if name == "ADC1" {
                 self.adc.reset();
             } else if let Some(p) = regmap::peripheral_by_name(name) {
@@ -952,6 +1090,14 @@ impl Stm32f401Bus {
                 map::RCC_BASE => self.rcc.read(off),
                 map::FLASH_IF_BASE => self.flash_if.read(off),
                 map::EXTI_BASE => self.exti.read(off),
+                DMA1_BASE | DMA2_BASE => {
+                    let d = (a & !0x3FF == DMA2_BASE) as usize;
+                    if enabled(0x30, 21 + d as u32) {
+                        self.dma[d].read(off)
+                    } else {
+                        0
+                    }
+                }
                 map::ADC1_BASE => {
                     if enabled(0x44, 8) {
                         self.adc.peek(off)
@@ -1027,6 +1173,18 @@ impl Stm32f401Bus {
             map::RCC_BASE => return self.rcc.read(off),
             map::FLASH_IF_BASE => return self.flash_if.read(off),
             map::EXTI_BASE => return self.exti.read(off),
+            DMA1_BASE | DMA2_BASE => {
+                let d = (a & !0x3FF == DMA2_BASE) as usize;
+                if self.gated(
+                    0x30,
+                    21 + d as u32,
+                    ["DMA1", "DMA2"][d],
+                    ["RCC.AHB1ENR.DMA1EN", "RCC.AHB1ENR.DMA2EN"][d],
+                ) {
+                    return 0;
+                }
+                return self.dma[d].read(off);
+            }
             map::ADC1_BASE => {
                 if self.gated(0x44, 8, "ADC1", "RCC.APB2ENR.ADC1EN") {
                     return 0;
@@ -1086,7 +1244,9 @@ impl Stm32f401Bus {
             if t.running() && matches!(off, 0x10 | 0x24) {
                 self.time_read = true;
             }
-            return t.read(off);
+            let v = t.read(off);
+            t.after_read(off);
+            return v;
         }
         self.regs.read(a)
     }
@@ -1103,6 +1263,18 @@ impl Stm32f401Bus {
             }
             self.refresh_port(port, self.now);
             self.circuit_update(self.now);
+            return;
+        }
+        if a & !0x3FF == DMA1_BASE || a & !0x3FF == DMA2_BASE {
+            let d = (a & !0x3FF == DMA2_BASE) as usize;
+            if !self.gated(
+                0x30,
+                21 + d as u32,
+                ["DMA1", "DMA2"][d],
+                ["RCC.AHB1ENR.DMA1EN", "RCC.AHB1ENR.DMA2EN"][d],
+            ) {
+                self.dma[d].write(off, value, lanes);
+            }
             return;
         }
         match a & !0x3FF {
@@ -1241,6 +1413,9 @@ impl Stm32f401Bus {
     }
 }
 
+const DMA1_BASE: u32 = 0x4002_6000;
+const DMA2_BASE: u32 = 0x4002_6400;
+
 /// Index in [`TIMERS`] of the timer whose register block starts at `base`.
 fn timer_index(base: u32) -> Option<usize> {
     TIMERS.iter().position(|t| t.base == base)
@@ -1289,9 +1464,15 @@ fn size_mask(size: AccessSize) -> u32 {
 impl Bus for Stm32f401Bus {
     fn read(&mut self, addr: u32, size: AccessSize) -> Result<u32, BusError> {
         if let Some((word, bit)) = bit_band(addr) {
-            return Ok((self.read_inner(word, AccessSize::Word)? >> bit) & 1);
+            let v = (self.read_inner(word, AccessSize::Word)? >> bit) & 1;
+            self.service_dma();
+            return Ok(v);
         }
-        self.read_inner(addr, size)
+        let v = self.read_inner(addr, size);
+        if map::is_peripheral_space(addr) {
+            self.service_dma();
+        }
+        v
     }
 
     fn write(&mut self, addr: u32, size: AccessSize, value: u32) -> Result<(), BusError> {
@@ -1302,9 +1483,15 @@ impl Bus for Stm32f401Bus {
             } else {
                 old & !(1 << bit)
             };
-            return self.write_inner(word, AccessSize::Word, new);
+            let r = self.write_inner(word, AccessSize::Word, new);
+            self.service_dma();
+            return r;
         }
-        self.write_inner(addr, size, value)
+        let r = self.write_inner(addr, size, value);
+        if map::is_peripheral_space(addr) {
+            self.service_dma();
+        }
+        r
     }
 
     fn set_time(&mut self, now: Cycles) {
@@ -1332,6 +1519,13 @@ impl Bus for Stm32f401Bus {
             }
             if er {
                 sys.set_irq_pending(i.irq_er);
+            }
+        }
+        for d in &self.dma {
+            for (irq, on) in d.irqs().into_iter().zip(d.irq_lines()) {
+                if on {
+                    sys.set_irq_pending(irq);
+                }
             }
         }
         for irq in self.exti.irqs() {
@@ -1567,6 +1761,126 @@ mod tests {
         assert_eq!(bus.read_u32(tim2 + 0x24).unwrap(), 7);
         bus.poll(&mut sys);
         assert_eq!(sys.time_reads, before + 1);
+    }
+
+    #[test]
+    fn dma_feeds_pwm_duty_cycles_from_memory() {
+        // TIM3 CH1 PWM on PA6; DMA1 stream 4 channel 5 (TIM3_CH1) writes
+        // CCR1 from a table at every compare event: the classic NeoPixel
+        // set-up.
+        let mut bus = Stm32f401Bus::new();
+        let w = |bus: &mut Stm32f401Bus, a: u32, v: u32| {
+            bus.write(a, AccessSize::Word, v).unwrap();
+        };
+        let duties = [30u16, 60, 30, 60, 0];
+        for (i, d) in duties.iter().enumerate() {
+            bus.write(0x2000_0100 + 2 * i as u32, AccessSize::Half, *d as u32)
+                .unwrap();
+        }
+        w(&mut bus, map::RCC_BASE + 0x30, 1 | 1 << 21); // GPIOAEN, DMA1EN
+        w(&mut bus, map::RCC_BASE + 0x40, 1 << 1); // TIM3EN
+        w(&mut bus, map::GPIOA_BASE, 0xA800_0000 | 2 << 12); // PA6 AF
+        w(&mut bus, map::GPIOA_BASE + 0x20, 2 << 24); // AF2 = TIM3_CH1
+        let s4 = DMA1_BASE + 0x10 + 0x18 * 4;
+        w(&mut bus, s4 + 0x04, duties.len() as u32);
+        w(&mut bus, s4 + 0x08, map::TIM3_BASE + 0x34);
+        w(&mut bus, s4 + 0x0C, 0x2000_0100);
+        // Channel 5, memory → peripheral, MINC, 16-bit both sides, TCIE.
+        w(
+            &mut bus,
+            s4,
+            5 << 25 | 1 << 13 | 1 << 11 | 1 << 10 | 1 << 6 | 1 << 4 | 1,
+        );
+        let tim3 = map::TIM3_BASE;
+        w(&mut bus, tim3 + 0x2C, 99); // 100-cycle period at 16 MHz
+        w(&mut bus, tim3 + 0x18, 6 << 4 | 1 << 3); // PWM1, preload
+        w(&mut bus, tim3 + 0x20, 1); // CC1E
+        w(&mut bus, tim3 + 0x0C, 1 << 9); // CC1DE
+        w(&mut bus, tim3, 1 << 7 | 1); // ARPE | CEN
+        bus.pin_events.clear();
+        for t in 0..=800u64 {
+            bus.set_time(t);
+            bus.run_events(t);
+        }
+        // High time of each period follows the table, one period late
+        // (CCR is preloaded): 0, 30, 60, 30, 60, then 0.
+        let highs: Vec<u64> = bus
+            .pin_events
+            .windows(2)
+            .filter(|p| p[0].level == Some(true))
+            .map(|p| p[1].time - p[0].time)
+            .collect();
+        assert_eq!(highs, [30, 60, 30, 60], "{:?}", bus.pin_events);
+        assert!(!bus.dma[0].streams[4].enabled(), "transfer complete");
+        assert_ne!(bus.dma[0].flags(4) & dma::TCIF, 0);
+        assert!(bus.dma[0].irq_lines()[4]);
+    }
+
+    #[test]
+    fn input_capture_sees_external_edges_on_its_pin() {
+        // TIM2 CH1 on PA0 (AF1), rising-edge capture; the pin is driven
+        // from outside, not by the timer.
+        let mut bus = Stm32f401Bus::new();
+        let w = |bus: &mut Stm32f401Bus, a: u32, v: u32| {
+            bus.write(a, AccessSize::Word, v).unwrap();
+        };
+        w(&mut bus, map::RCC_BASE + 0x30, 1); // GPIOAEN
+        w(&mut bus, map::RCC_BASE + 0x40, 1); // TIM2EN
+        w(&mut bus, map::GPIOA_BASE, 0xA800_0000 | 2); // PA0 AF
+        w(&mut bus, map::GPIOA_BASE + 0x20, 1); // AF1 = TIM2_CH1
+        let tim2 = map::TIM2_BASE;
+        w(&mut bus, tim2 + 0x18, 1); // CC1S = TI1
+        w(&mut bus, tim2 + 0x20, 1); // CC1E, rising
+        w(&mut bus, tim2, 1); // CEN
+        assert_eq!(
+            bus.gpio[0].driven(0),
+            None,
+            "an input channel drives nothing"
+        );
+        bus.set_time(500);
+        bus.set_external(0, 0, Some(true));
+        assert!(bus.gpio[0].level(0));
+        bus.set_time(600);
+        assert_eq!(
+            bus.read_u32(tim2 + 0x34).unwrap(),
+            500,
+            "captured at the edge"
+        );
+        assert_eq!(
+            bus.read_u32(tim2 + 0x10).unwrap() & 2,
+            0,
+            "reading CCR1 cleared CC1IF"
+        );
+    }
+
+    #[test]
+    fn dma_sends_a_string_through_usart2() {
+        let mut bus = Stm32f401Bus::new();
+        let w = |bus: &mut Stm32f401Bus, a: u32, v: u32| {
+            bus.write(a, AccessSize::Word, v).unwrap();
+        };
+        for (i, b) in b"DMA!".iter().enumerate() {
+            bus.write(0x2000_0200 + i as u32, AccessSize::Byte, *b as u32)
+                .unwrap();
+        }
+        w(&mut bus, map::RCC_BASE + 0x30, 1 << 21); // DMA1EN
+        w(&mut bus, map::RCC_BASE + 0x40, 1 << 17); // USART2EN
+        let u2 = map::USART2_BASE;
+        w(&mut bus, u2 + 0x08, 139); // 115200 Bd at 16 MHz
+        w(&mut bus, u2 + 0x14, 1 << 7); // DMAT
+        w(&mut bus, u2 + 0x0C, 1 << 13 | 1 << 3); // UE | TE
+        let s6 = DMA1_BASE + 0x10 + 0x18 * 6;
+        w(&mut bus, s6 + 0x04, 4);
+        w(&mut bus, s6 + 0x08, u2 + 0x04);
+        w(&mut bus, s6 + 0x0C, 0x2000_0200);
+        w(&mut bus, s6, 4 << 25 | 1 << 10 | 1 << 6 | 1);
+        for t in (0..=10_000u64).step_by(50) {
+            bus.set_time(t);
+            bus.run_events(t);
+        }
+        let text: Vec<u8> = bus.terminal_take(1).iter().map(|b| b.byte).collect();
+        assert_eq!(text, b"DMA!");
+        assert_eq!(bus.read_u32(s6 + 0x04).unwrap(), 0);
     }
 
     #[test]

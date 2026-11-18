@@ -60,6 +60,8 @@ export interface VisualState {
   screen?: string;
   /** A reading shown on the part (RTC date and time). */
   text?: string;
+  /** NeoPixel colours, 0xRRGGBB per LED. */
+  leds?: number[];
   pressed?: boolean;
   burnt?: boolean;
 }

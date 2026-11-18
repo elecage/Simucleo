@@ -1,0 +1,65 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "NeoPixel 무지개 (TIM PWM + DMA)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "ring",
+      "kind": "neopixel-ring",
+      "x": 48,
+      "y": 10,
+      "props": {
+        "count": 12
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "ring",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "D5"
+      },
+      "b": {
+        "part": "ring",
+        "pin": "DIN"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "b": {
+        "part": "ring",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    }
+  ],
+  "firmware": {
+    "name": "hal-neopixel-dma",
+    "example": "hal-neopixel-dma.elf"
+  }
+}

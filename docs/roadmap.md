@@ -9,12 +9,28 @@
 | **M4 · FreeRTOS** ✅ | CubeMX FreeRTOS 실행, TIM 타임베이스, WFI 시간 건너뛰기, **RTOS 뷰**(태스크, 스택, 전환 타임라인) | `freertos-two-tasks`, `freertos-queue-uart` |
 | **M5 · 아날로그/구동** ✅ | ADC, MNA DC 솔버, Tier 2 부품(가변저항, LDR, 아날로그 온도센서, 서보, DC 모터) | 가변저항 → ADC → 서보/모터 제어 예제 |
 | **M6 · 버스 장치** ✅ | I2C, SPI Peripheral, Tier 3 부품(SSD1306 I2C/SPI, I2C RTC, SPI SD 카드 + FatFs, I2C 온습도센서) | OLED 그래픽, RTC 시계, SD 카드 로깅 예제 |
-| **M7 · 타이밍 민감 장치** | DMA, 입력 캡처, Tier 4 부품(NeoPixel, DHT11/22) | NeoPixel 무지개, DHT 측정 예제 |
+| **M7 · 타이밍 민감 장치** ✅ | DMA, 입력 캡처, Tier 4 부품(NeoPixel, DHT11/22) | NeoPixel 무지개, DHT 측정 예제 |
 | 이후 | 회로도 뷰, GDB 원격 서버(데스크톱/Tauri), DWARF 소스 레벨 디버깅, 7세그먼트·LCD·스테퍼 등 | |
 
 상세 부품 계획은 [parts.md](parts.md)를 참고한다.
 
 ## 현재 상태
+
+### M7 완료 (DMA, 입력 캡처, 타이밍 민감 장치)
+
+![NeoPixel 링](images/m7-neopixel.png)
+
+- [x] **DMA1/DMA2**: 스트림 8개씩, 채널 선택으로 요청 연결(RM0368 표 28·29: USART TX/RX, SPI TX/RX, ADC1, TIM 업데이트·비교), 주변장치↔메모리·메모리↔메모리, 증가, 데이터 크기, 순환·이중 버퍼, HT/TC/TE 플래그와 인터럽트, 실행 중 끄기. 데이터는 CPU와 같은 레지스터 경로로 옮기므로 DR 읽기 같은 부수 효과가 그대로 일어남. HAL DMA 드라이버를 그대로 사용
+- [x] **TIM DMA 요청**: 업데이트(UDE), 비교(CCxDE), CCDS. 업데이트에서 다시 읽힌 비교값이 그 주기의 첫 카운터 값부터 적용
+- [x] **TIM 입력 캡처**: 직접·간접(TI1 ↔ IC2) 연결, 상승/하강/양쪽 엣지, 프리스케일러, 과캡처(CCxOF), CCR 읽기로 CCxIF 해제, DMA 요청. 리셋 슬레이브 모드(TI1FP1/TI2FP2)로 PWM 입력 측정 가능
+- [x] **회로가 스스로 바꾸는 신호**: 회로가 다음 변화 시각을 알려 주면 버스가 그 시각에 이벤트를 예약해 핀 레벨을 갱신(EXTI·입력 캡처까지 같은 시각에 반영)
+- [x] **DHT11/DHT22**: 시작 신호 길이 검사(DHT22 1 ms, DHT11 18 ms 미만이면 응답 없음 + 경고), 80/80 µs 응답, 40비트 펄스 폭, 체크섬, 음수 온도. 모듈의 10 kΩ 풀업
+- [x] **NeoPixel(WS2812B)**: 핀 엣지 시각으로 High 폭을 재서 비트 판정(0.4/0.8 µs ±150 ns), GRB 순서, 50 µs Low로 표시 갱신, 어느 쪽에도 맞지 않는 펄스는 경고. 스트립(8), 링(12/16/24), 8×8 매트릭스. 5V 전원 필요(3.5 V 미만이면 전원 부족)
+- [x] 예제(배선 포함): `hal-neopixel-dma`(TIM3 PWM 800 kHz + DMA로 12 LED 링에 무지개, B1 밝기), `hal-dht-capture`(TIM2 양쪽 엣지 입력 캡처 인터럽트로 DHT22 읽기, B1로 펄스 폭 출력)
+- [x] 테스트: DMA(메모리→USART, 표 → PWM 듀티, 순환·이중 버퍼), 입력 캡처·PWM 입력 모드, DHT 프레임, NeoPixel 디코드, 펌웨어 통합 테스트(링 색, DHT22 값, DHT11을 DHT22로 잘못 해석하는 경우), E2E(무지개가 돎, 슬라이더 → 측정값)
+- 남은 항목: NeoPixel 체인 연결(DOUT → 다음 부품 DIN), I2C DMA·ADC DMA 연속 요청(DDS)·DMA FIFO 패킹, 중앙 정렬 카운팅·반복 카운터·상보 출력, 입력 필터(ICxF)
+
+![DHT22](images/m7-dht.png)
 
 ### M6 완료 (I2C/SPI 버스 장치)
 

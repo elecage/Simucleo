@@ -24,6 +24,8 @@ export interface PartFrame {
   screen?: string;
   /** A reading shown on the part (RTC date and time). */
   text?: string;
+  /** NeoPixel colours, 0xRRGGBB per LED. */
+  leds?: number[];
 }
 
 /** Level changes of a probed pin within one frame. */

@@ -79,6 +79,10 @@ impl ExternalCircuit for CircuitLink {
         self.0.borrow().mcu_voltage(port, pin)
     }
 
+    fn next_event(&self) -> Option<Cycles> {
+        self.0.borrow().next_event()
+    }
+
     fn i2c(&mut self, time: Cycles, scl: (u8, u8), sda: (u8, u8), op: I2cOp) -> I2cReply {
         let mut c = self.0.borrow_mut();
         match op {

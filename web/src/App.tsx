@@ -27,6 +27,9 @@ const PROP_LABEL: Record<string, string> = {
   common: "공통 단자",
   address: "I2C 주소",
   size: "카드 용량 (MB)",
+  model: "모델",
+  layout: "모양",
+  count: "LED 수",
 };
 
 const BAND_KO: Record<string, string> = {
@@ -179,6 +182,7 @@ export function App() {
         unpowered: v.unpowered,
         screen: v.screen,
         text: v.text,
+        leds: v.leds,
       };
       if (v.id === "LD2") {
         if (boardId) out[boardId] = { ...out[boardId], brightness: state.brightness, overcurrent: state.overcurrent };

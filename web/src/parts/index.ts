@@ -3,10 +3,11 @@ import { buzzerActive, buzzerPassive, led5mm, resistor, rgbLed, tactSwitch } fro
 import { nucleoF401re, nucleoSignal } from "./nucleo";
 import { dcMotor, ldr, potentiometer, servo, tempSensor } from "./analog";
 import { aht20, oledI2c, oledSpi, rtc, sdCard } from "./bus";
+import { dht, neopixelMatrix, neopixelRing, neopixelStrip } from "./timing";
 import type { PartDef } from "./types";
 
 export const PARTS: PartDef[] = [nucleoF401re, breadboardHalf, led5mm, rgbLed, resistor, tactSwitch, buzzerActive, buzzerPassive,
-  potentiometer, ldr, tempSensor, servo, dcMotor, oledI2c, oledSpi, rtc, aht20, sdCard];
+  potentiometer, ldr, tempSensor, servo, dcMotor, oledI2c, oledSpi, rtc, aht20, sdCard, neopixelStrip, neopixelRing, neopixelMatrix, dht];
 
 export const PART_BY_KIND: Record<string, PartDef> = Object.fromEntries(PARTS.map((p) => [p.kind, p]));
 

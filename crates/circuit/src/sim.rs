@@ -20,7 +20,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
-use crate::devices::{Aht20, Device, Ds3231, SdCard, Ssd1306};
+use crate::devices::{Aht20, Device, Dht, Ds3231, NeoPixel, SdCard, Ssd1306};
 
 use crate::netlist::{build_netlist, BusCatalog, Circuit, PartCatalog, PartInstance, PinRef, Wire};
 
@@ -207,6 +207,9 @@ pub struct PartVisual {
     /// A reading to show on the part (RTC time).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// NeoPixel colours, 0xRRGGBB per LED.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub leds: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -286,12 +289,28 @@ pub struct CircuitSim {
     /// Their state (display RAM, clock, …), by part id.
     devices: HashMap<String, Device>,
     spi_parts: Vec<SpiPart>,
+    /// Single-wire parts (DHT, NeoPixel) and their data line.
+    wire_parts: Vec<WirePart>,
+    /// Lines devices pull low on their own: (part id, node).
+    dev_outputs: Vec<(String, usize)>,
+    /// Last level each single-wire part saw on its line.
+    line_levels: HashMap<String, bool>,
     /// The device addressed on each I2C bus (by SCL pin).
     i2c_active: HashMap<(u8, u8), String>,
     /// Time base: (cycle, seconds at that cycle, Hz).
     clock: (Cycles, f64, f64),
     /// Unix time a newly placed clock chip starts from.
     wall_clock: f64,
+}
+
+/// A part with a single data line.
+#[derive(Debug, Clone)]
+struct WirePart {
+    id: String,
+    vcc: usize,
+    gnd: usize,
+    data: usize,
+    vmin: f64,
 }
 
 /// A part on an SPI bus.
@@ -372,6 +391,9 @@ impl CircuitSim {
             pin_nodes: HashMap::new(),
             bus_parts: Vec::new(),
             spi_parts: Vec::new(),
+            wire_parts: Vec::new(),
+            dev_outputs: Vec::new(),
+            line_levels: HashMap::new(),
             devices: HashMap::new(),
             i2c_active: HashMap::new(),
             clock: (time, 0.0, 16e6),
@@ -392,6 +414,8 @@ impl CircuitSim {
                 Device::Oled(o) => **o = Ssd1306::new(o.address),
                 Device::Aht(a) => *a = Aht20::new(a.temp, a.humidity),
                 Device::Sd(sd) => sd.power_cycle(),
+                Device::Dht(d) => *d = Dht::new(d.dht22, d.temp, d.humidity),
+                Device::Pixels(n) => *n = NeoPixel::new(n.leds.len()),
             }
         }
         self.i2c_active.clear();
@@ -565,6 +589,8 @@ impl CircuitSim {
         let mut bad_values: Vec<String> = Vec::new();
         let mut bus_parts = Vec::new();
         let mut spi_parts = Vec::new();
+        let mut wire_parts = Vec::new();
+        let mut dev_outputs = Vec::new();
         let now_s = self.seconds_at(self.last_time);
         let mut map = std::mem::take(&mut self.pin_nodes);
         let mut add_visual = |id: &str, kind: VisualKind, channels: usize| {
@@ -792,6 +818,71 @@ impl CircuitSim {
                         });
                     }
                 }
+                "dht" => {
+                    // 3-pin module: sensor plus a 10 kΩ pull-up on DATA.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    let data = node(pin("DATA"), &mut map);
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: 3.0,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    elements.push(Element::Resistor {
+                        a: vcc,
+                        b: data,
+                        r: 10_000.0,
+                    });
+                    wire_parts.push(WirePart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        data,
+                        vmin: 3.0,
+                    });
+                    dev_outputs.push((p.id.clone(), data));
+                    let dht22 = prop_str(p, "model", "DHT22") != "DHT11";
+                    let (t, h) = (prop_f64(p, "temp", 25.0), prop_f64(p, "humidity", 50.0));
+                    match self.devices.get_mut(&p.id) {
+                        Some(Device::Dht(d)) if d.dht22 == dht22 => {
+                            d.temp = t;
+                            d.humidity = h;
+                        }
+                        _ => {
+                            self.devices
+                                .insert(p.id.clone(), Device::Dht(Dht::new(dht22, t, h)));
+                        }
+                    }
+                }
+                "neopixel" | "neopixel-ring" | "neopixel-strip" | "neopixel-matrix" => {
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    let din = node(pin("DIN"), &mut map);
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: 3.5,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    wire_parts.push(WirePart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        data: din,
+                        vmin: 3.5,
+                    });
+                    let count = prop_f64(p, "count", 8.0).clamp(1.0, 256.0) as usize;
+                    let keep = matches!(self.devices.get(&p.id), Some(Device::Pixels(n)) if n.leds.len() == count);
+                    if !keep {
+                        self.devices
+                            .insert(p.id.clone(), Device::Pixels(NeoPixel::new(count)));
+                    }
+                }
                 "oled-ssd1306-spi" | "sd-card" => {
                     let vis = add_visual(&p.id, VisualKind::Sensor, 1);
                     let pin = |n: &str| PinRef::new(&p.id, n);
@@ -937,6 +1028,7 @@ impl CircuitSim {
             .iter()
             .map(|b: &BusPart| b.id.as_str())
             .chain(spi_parts.iter().map(|b: &SpiPart| b.id.as_str()))
+            .chain(wire_parts.iter().map(|b: &WirePart| b.id.as_str()))
             .collect();
         self.devices.retain(|id, _| ids.contains(id.as_str()));
         // A transfer in progress continues if its device is still on the
@@ -945,6 +1037,10 @@ impl CircuitSim {
         self.i2c_active.retain(|_, id| on_bus(id));
         self.bus_parts = bus_parts;
         self.spi_parts = spi_parts;
+        self.line_levels
+            .retain(|id, _| wire_parts.iter().any(|w| &w.id == id));
+        self.wire_parts = wire_parts;
+        self.dev_outputs = dev_outputs;
         self.nodes = nodes;
         self.elements = elements;
         self.visuals = visuals;
@@ -1139,6 +1235,15 @@ impl CircuitSim {
                 sourced[r] = true;
             }
         }
+        for (j, (_, node)) in self.dev_outputs.iter().enumerate() {
+            if drives
+                .get(self.mcu.len() + j)
+                .is_some_and(|&d| drive_source(d).is_some())
+            {
+                let r = find(&mut parent, *node);
+                sourced[r] = true;
+            }
+        }
         (0..n).map(|x| sourced[find(&mut parent, x)]).collect()
     }
 
@@ -1204,6 +1309,14 @@ impl CircuitSim {
                 source(&mut g, &mut rhs, node, v, r);
             }
         }
+        for (j, (_, node)) in self.dev_outputs.iter().enumerate() {
+            if let Some((v, r)) = drives
+                .get(self.mcu.len() + j)
+                .and_then(|&d| drive_source(d))
+            {
+                source(&mut g, &mut rhs, *node, v, r);
+            }
+        }
         let x = gauss(&mut g, &mut rhs, m);
         let mut v = vec![0.0; n];
         v[1..].copy_from_slice(&x);
@@ -1227,6 +1340,21 @@ impl CircuitSim {
     /// input level of every pin of [`CircuitSim::mcu_pins`] if any of them
     /// may have changed.
     pub fn update(&mut self, time: Cycles, drives: &[Drive]) -> Option<Vec<Option<bool>>> {
+        // Devices that drive a line on their own schedule (DHT) come after
+        // the MCU's pins in the drive list, so they are part of the cache key.
+        let now_s = self.seconds_at(time);
+        let mut key = drives.to_vec();
+        for (id, _) in &self.dev_outputs {
+            let low = match self.devices.get_mut(id) {
+                Some(Device::Dht(d)) => {
+                    d.advance(now_s);
+                    d.pulling
+                }
+                _ => false,
+            };
+            key.push(if low { Drive::Low } else { Drive::Float });
+        }
+        let drives = &key[..];
         if self.drives.as_deref() == Some(drives) {
             return None;
         }
@@ -1281,6 +1409,7 @@ impl CircuitSim {
             }
         }
         self.drives = Some(drives.to_vec());
+        self.observe_lines(now_s, &sol);
         let changed = old.is_none_or(|o| o.inputs != sol.inputs);
         changed.then(|| sol.inputs.clone())
     }
@@ -1372,6 +1501,17 @@ impl CircuitSim {
                             v.text = Some(r.display(t));
                         }
                         Some(Device::Aht(a)) if !powered_now => *a = Aht20::new(a.temp, a.humidity),
+                        Some(Device::Pixels(n)) => {
+                            if powered_now {
+                                n.settle(
+                                    self.clock.1
+                                        + (time as f64 - self.clock.0 as f64) / self.clock.2,
+                                );
+                            } else {
+                                *n = NeoPixel::new(n.leds.len());
+                            }
+                            v.leds = n.leds.clone();
+                        }
                         Some(Device::Sd(sd)) => {
                             if !powered_now {
                                 sd.power_cycle();
@@ -1394,6 +1534,61 @@ impl CircuitSim {
         }
         self.frame_start = time;
         out
+    }
+
+    /// Single-wire devices watch their data line: a DHT notices the host's
+    /// start signal, a NeoPixel chain decodes pulses.
+    fn observe_lines(&mut self, now: f64, sol: &Solution) {
+        for part in &self.wire_parts {
+            let powered = sol.v[part.vcc] - sol.v[part.gnd] >= part.vmin;
+            let high = sol.v[part.data] > VDD / 2.0;
+            let last = self.line_levels.insert(part.id.clone(), high);
+            // The first level seen is a state, not an edge.
+            if last.is_none() || last == Some(high) || !powered {
+                continue;
+            }
+            match self.devices.get_mut(&part.id) {
+                Some(Device::Dht(d)) => {
+                    d.observe(now, high);
+                    if let Some(w) = d.short_start.take() {
+                        let need = if d.dht22 {
+                            "1 ms (DHT22)"
+                        } else {
+                            "18 ms (DHT11)"
+                        };
+                        self.warnings.insert(format!(
+                            "{}: start signal held low {:.2} ms — the sensor needs at least {need}",
+                            part.id,
+                            w * 1e3
+                        ));
+                    }
+                }
+                Some(Device::Pixels(n)) => {
+                    n.edge(now, high);
+                    if let Some(w) = n.bad_pulse.take() {
+                        self.warnings.insert(format!(
+                            "{}: a {w:.2} µs high pulse is neither a 0 (0.4 µs) nor a 1 (0.8 µs) — check the timer period and duty values",
+                            part.id
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// When a device next changes a line by itself (a DHT's reply), in
+    /// core cycles.
+    pub fn next_event(&self) -> Option<Cycles> {
+        let (c, s, hz) = self.clock;
+        self.dev_outputs
+            .iter()
+            .filter_map(|(id, _)| match self.devices.get(id) {
+                Some(Device::Dht(d)) => d.next(),
+                _ => None,
+            })
+            .map(|t| c + ((t - s) * hz).ceil().max(0.0) as Cycles)
+            .min()
     }
 
     /// The time base: `cycle` is `seconds` of simulated time and the core

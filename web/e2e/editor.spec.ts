@@ -24,7 +24,8 @@ test("LED and resistor on the breadboard form the expected nets", async ({ page 
   const res = await partId(page, "resistor");
 
   const drag = async (part: string, pinId: string, target: { x: number; y: number }) => {
-    const body = await page.locator(`[data-id="${part}"] > g`).boundingBox();
+    // Grab the part's body (not its label).
+    const body = await page.locator(`[data-id="${part}"] :is(.resistor-body, .led-body)`).first().boundingBox();
     const from = await pin(page, part, pinId);
     const bx = body!.x + body!.width / 2;
     const by = body!.y + body!.height / 2;

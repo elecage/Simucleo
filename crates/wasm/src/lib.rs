@@ -81,6 +81,12 @@ impl Simulator {
         self.pins.clear();
         self.board.take_pin_events();
         self.board.bus.level_events.clear();
+        // Loading firmware builds a new bus: keep probing the same pins.
+        let mut mask = [0u16; 8];
+        for ((port, pin), _) in &self.probes {
+            mask[*port as usize] |= 1 << pin;
+        }
+        self.board.bus.probe_mask = mask;
         self.frame_start_ns = self.board.time_ns();
         for (pin, level) in &mut self.probes {
             *level = self.board.pin((b'A' + pin.0) as char, pin.1);

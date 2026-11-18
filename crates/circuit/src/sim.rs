@@ -879,7 +879,8 @@ impl CircuitSim {
                 VisualKind::Switch => v.pressed = self.pressed.contains(&slot.id),
             }
             slot.acc.iter_mut().for_each(|a| *a = 0.0);
-            slot.overcurrent = false;
+            // The next frame starts in the present operating point.
+            slot.overcurrent = cur.as_ref().is_some_and(|s| s.over[i]);
             slot.rises = 0;
             out.push(v);
         }
@@ -1048,6 +1049,9 @@ mod tests {
         });
         s.update(0, &hi);
         let v = s.end_frame(100, 1e-6);
+        assert!(visual(&v, "led1").overcurrent);
+        // Still lit, no change in drives: still flagged in later frames.
+        let v = s.end_frame(200, 1e-6);
         assert!(visual(&v, "led1").overcurrent);
         assert!(
             s.warnings.iter().any(|w| w.starts_with("led1:")),

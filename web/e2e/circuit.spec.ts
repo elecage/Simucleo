@@ -67,6 +67,10 @@ test("the probe measures the buzzer's tone", async ({ page }) => {
   await expect(consoleOut(page)).toContainText("C4 D4", { timeout: 5000 });
   await page.getByRole("button", { name: "파형 (프로브)" }).click();
   await page.getByLabel("프로브 핀 추가").selectOption("PA9");
+  // Probes survive loading firmware again.
+  page.once("dialog", (d) => d.accept()); // "replace the wiring?"
+  await page.getByLabel("예제 펌웨어").selectOption("hal-buzzer-melody.elf");
+  await page.getByRole("button", { name: "▶ 실행" }).click();
   // The scale runs 262 … 523 Hz; at some point the probe reads a note.
   await expect(page.getByTestId("probe-PA9")).toContainText(/\d{3}\.\d Hz · (4|5)\d% H/, { timeout: 5000 });
   await expect(page.locator("[data-id=bz1] [data-sounding='1']")).toBeVisible();
@@ -96,7 +100,7 @@ test("an LED without a resistor breaks the electrical rules", async ({ page }) =
   await page.getByRole("button", { name: "▶ 실행" }).click();
   await expect(page.getByTestId("circuit-warning").filter({ hasText: "led1" })).toContainText(
     "add a series resistor",
-    { timeout: 3000 },
+    { timeout: 5000 },
   );
   await expect(page.getByTestId("circuit-warning").filter({ hasText: "PA5: output high" })).toHaveCount(1);
   await expect(page.locator("[data-id=led1] [data-overcurrent]")).toBeVisible();

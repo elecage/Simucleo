@@ -42,7 +42,23 @@ export function Canvas({ project, netOf, selected, onSelect, onMovePart, onAddWi
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  /** Route all pointer events to the canvas until the button is released,
+   * even outside it, so a drag always ends (#3). */
+  const startDrag = (e: RPointerEvent, d: Drag) => {
+    svgRef.current?.setPointerCapture(e.pointerId);
+    setDrag(d);
+  };
+  const endDrag = (e: RPointerEvent) => {
+    if (svgRef.current?.hasPointerCapture(e.pointerId)) svgRef.current.releasePointerCapture(e.pointerId);
+    setDrag(null);
+  };
+
   const onPointerMove = (e: RPointerEvent) => {
+    if (drag && e.buttons === 0) {
+      // The release happened somewhere we could not see it.
+      setDrag(null);
+      return;
+    }
     const p = toCanvas(e);
     setMouse(p);
     if (drag?.kind === "part") {
@@ -59,8 +75,14 @@ export function Canvas({ project, netOf, selected, onSelect, onMovePart, onAddWi
     setView({ scale, x: p.x - (e.clientX - r.left) / scale, y: p.y - (e.clientY - r.top) / scale });
   };
 
+  // Cancel a wire in progress whose starting part was deleted (#2).
+  const pendingValid = pendingWire !== null && partById.has(pendingWire.part);
+  useEffect(() => {
+    if (pendingWire && !project.parts.some((p) => p.id === pendingWire.part)) setPendingWire(null);
+  }, [project.parts, pendingWire]);
+
   const clickPin = (pin: PinRef) => {
-    if (!pendingWire) setPendingWire(pin);
+    if (!pendingWire || !pendingValid) setPendingWire(pin);
     else {
       if (pinKey(pendingWire) !== pinKey(pin)) onAddWire(pendingWire, pin);
       setPendingWire(null);
@@ -76,7 +98,7 @@ export function Canvas({ project, netOf, selected, onSelect, onMovePart, onAddWi
   const ordered = [...project.parts].sort(
     (a, b) => (LAYER[PART_BY_KIND[a.kind]?.category] ?? 2) - (LAYER[PART_BY_KIND[b.kind]?.category] ?? 2),
   );
-  const pendingStart = pendingWire && absPin(pendingWire);
+  const pendingStart = pendingValid && pendingWire ? absPin(pendingWire) : undefined;
 
   return (
     <div className="canvas-wrap">
@@ -87,11 +109,13 @@ export function Canvas({ project, netOf, selected, onSelect, onMovePart, onAddWi
         onPointerDown={(e) => {
           if (e.target === svgRef.current) {
             onSelect(null);
-            setDrag({ kind: "pan", sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y });
+            startDrag(e, { kind: "pan", sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y });
           }
         }}
         onPointerMove={onPointerMove}
-        onPointerUp={() => setDrag(null)}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onLostPointerCapture={() => setDrag(null)}
         onWheel={onWheel}
       >
         <defs>
@@ -116,7 +140,7 @@ export function Canvas({ project, netOf, selected, onSelect, onMovePart, onAddWi
                   e.stopPropagation();
                   onSelect(part.id);
                   const p = toCanvas(e);
-                  setDrag({ kind: "part", id: part.id, dx: p.x / PITCH - part.x, dy: p.y / PITCH - part.y });
+                  startDrag(e, { kind: "part", id: part.id, dx: p.x / PITCH - part.x, dy: p.y / PITCH - part.y });
                 }}
               >
                 {def.render({ ...def.props, ...part.props }, {})}

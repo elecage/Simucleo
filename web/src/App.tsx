@@ -150,7 +150,12 @@ export function App() {
             setProject((p) => ({ ...p, parts: p.parts.map((q) => (q.id === id ? { ...q, x, y } : q)) }))
           }
           onAddWire={(a, b) =>
-            setProject((p) => ({ ...p, wires: [...p.wires, { id: newId("w", taken()), a, b, color: wireColor }] }))
+            setProject((p) => {
+              // Both ends must exist when the wire is made (#2).
+              const exists = (r: PinRef) => p.parts.some((q) => q.id === r.part);
+              if (!exists(a) || !exists(b)) return p;
+              return { ...p, wires: [...p.wires, { id: newId("w", taken()), a, b, color: wireColor }] };
+            })
           }
         />
       </main>

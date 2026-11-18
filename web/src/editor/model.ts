@@ -47,7 +47,9 @@ export function pinPosition(part: PlacedPart, pinId: string): { x: number; y: nu
  * a jumper lands on a header, just like on a real bench.
  */
 export function toCircuit(project: Project): CircuitJson {
-  const wires = project.wires.map(({ a, b }) => ({ a, b }));
+  // Never hand the simulator a wire to a part that no longer exists.
+  const ids = new Set(project.parts.map((p) => p.id));
+  const wires = project.wires.filter(({ a, b }) => ids.has(a.part) && ids.has(b.part)).map(({ a, b }) => ({ a, b }));
   const byPoint = new Map<string, PinRef[]>();
   for (const part of project.parts) {
     const def = PART_BY_KIND[part.kind];

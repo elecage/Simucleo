@@ -6,3 +6,5 @@ web/src/wasm/pkg/
 .DS_Store
 firmware/**/build/
 *.tsbuildinfo
+web/test-results/
+web/playwright-report/

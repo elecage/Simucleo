@@ -33,6 +33,7 @@ pub use simucleo_circuit::netlist::{BusCatalog, Circuit};
 pub use simucleo_circuit::sim::{CircuitSim, Drive, MotorView, PartVisual, UartLink};
 pub use simucleo_periph_stm32f4::gpio::PinEvent;
 pub use simucleo_periph_stm32f4::usart::TerminalByte;
+pub use simucleo_periph_stm32f4::wire::{SynthEdge, WireEvent, WireSignal};
 pub use simucleo_periph_stm32f4::Warning;
 
 /// USART2 is wired to the ST-LINK virtual COM port.
@@ -616,6 +617,24 @@ impl Nucleo {
     /// Electrical-rule violations found so far (LED without resistor, …).
     pub fn circuit_warnings(&self) -> Vec<String> {
         self.circuit.borrow().warnings.iter().cloned().collect()
+    }
+
+    /// Analog probes: log the net voltage of each pin named (`"PA1"` or
+    /// `"part.pin"`) whenever the circuit's operating point changes.
+    pub fn set_voltage_probes(&mut self, names: &[String]) {
+        let now = self.sys.cycles;
+        self.circuit.borrow_mut().set_voltage_probes(names, now);
+    }
+
+    /// The voltages logged since the last call: (cycle, one per probe;
+    /// `None` for a pin on no net).
+    pub fn take_voltage_log(&mut self) -> Vec<(Cycles, Vec<Option<f64>>)> {
+        self.circuit.borrow_mut().take_voltage_log()
+    }
+
+    /// The analog probes' voltages now.
+    pub fn probe_voltages(&self) -> Vec<Option<f64>> {
+        self.circuit.borrow().probe_voltages()
     }
 
     /// Voltage on the net of a pin (`part`, `pin`), for probes.

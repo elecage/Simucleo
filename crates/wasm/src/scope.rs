@@ -6,6 +6,13 @@
 //! only; once it fires, the window around it (the part before the trigger
 //! comes from the rings) is collected edge by edge, at full resolution, and
 //! handed over whole when the simulation has passed its end.
+//!
+//! Analog channels (net voltages, M22) work the same way with samples
+//! (time, volts) instead of edges: a voltage is constant between two
+//! samples (it only changes when the circuit's operating point does). A
+//! level trigger fires when the source's voltage goes through a threshold,
+//! re-armed only after it has been beyond the hysteresis band on the
+//! other side.
 
 use std::collections::VecDeque;
 
@@ -15,6 +22,10 @@ use serde::Deserialize;
 pub const RING_EDGES: usize = 65536;
 /// Most edges a capture holds per pin.
 pub const CAPTURE_EDGES: usize = 65536;
+/// Most samples kept per analog channel (the pre-trigger history).
+pub const RING_SAMPLES: usize = 65536;
+/// Most samples a capture holds per analog channel.
+pub const CAPTURE_SAMPLES: usize = 65536;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -67,6 +78,14 @@ pub struct Config {
     /// Ask the caller to pause when a capture is complete.
     #[serde(default)]
     pub pause: bool,
+    /// Threshold (V) of a level trigger on an analog source (default
+    /// 1.65 V, half the supply).
+    #[serde(default)]
+    pub level: Option<f64>,
+    /// Hysteresis (V): the voltage must have been this far on the other
+    /// side of the threshold before it can trigger again.
+    #[serde(default)]
+    pub hysteresis: f64,
 }
 
 /// One pin of a capture. Times are in ns relative to the trigger.
@@ -83,6 +102,18 @@ pub struct Channel {
     pub to_ns: f64,
 }
 
+/// One analog channel of a capture. Times in ns relative to the trigger.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnalogChannel {
+    pub name: String,
+    /// Voltage at the start of the window (before the first sample).
+    pub v0: f64,
+    /// (time, volts): the voltage from then until the next sample.
+    pub samples: Vec<(f64, f64)>,
+    pub from_ns: f64,
+    pub to_ns: f64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Capture {
     pub seq: u32,
@@ -93,6 +124,7 @@ pub struct Capture {
     pub start_ns: f64,
     pub end_ns: f64,
     pub channels: Vec<Channel>,
+    pub analog: Vec<AnalogChannel>,
 }
 
 #[derive(Debug, Default)]
@@ -119,6 +151,37 @@ impl Ring {
             self.edges[i - 1].1
         }
     }
+}
+
+/// Samples of one analog channel.
+#[derive(Debug, Default)]
+struct ARing {
+    name: String,
+    samples: VecDeque<(f64, f64)>,
+    /// Voltage before the oldest sample kept.
+    v0: f64,
+    /// Present voltage.
+    v: f64,
+    lost_until: Option<f64>,
+    since: f64,
+}
+
+impl ARing {
+    fn value_before(&self, t: f64) -> f64 {
+        let i = self.samples.partition_point(|e| e.0 < t);
+        if i == 0 {
+            self.v0
+        } else {
+            self.samples[i - 1].1
+        }
+    }
+}
+
+/// The trigger's source channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Src {
+    Digital(usize),
+    Analog(usize),
 }
 
 #[derive(Debug)]
@@ -158,8 +221,13 @@ impl Status {
 #[derive(Debug)]
 pub struct Scope {
     rings: Vec<Ring>,
+    analog: Vec<ARing>,
     config: Option<Config>,
-    source: Option<usize>,
+    source: Option<Src>,
+    /// Level trigger: the source has been below (rising) / above
+    /// (falling) the hysteresis band since it last triggered.
+    armed_low: bool,
+    armed_high: bool,
     state: State,
     /// Latest time seen (edges, or `advance`).
     now: f64,
@@ -178,8 +246,11 @@ impl Scope {
     pub fn new() -> Self {
         Self {
             rings: Vec::new(),
+            analog: Vec::new(),
             config: None,
             source: None,
+            armed_low: false,
+            armed_high: false,
             state: State::Armed { after: f64::MIN },
             now: 0.0,
             seq: 0,
@@ -207,6 +278,24 @@ impl Scope {
         self.arm();
     }
 
+    /// The analog channels (names, voltages at `now`), numbered for
+    /// `push_analog`. Their history is dropped and the trigger re-armed.
+    pub fn set_analog(&mut self, channels: Vec<(String, f64)>, now: f64) {
+        self.now = self.now.max(now);
+        self.analog = channels
+            .into_iter()
+            .map(|(name, v)| ARing {
+                name,
+                v0: v,
+                v,
+                since: now,
+                ..Default::default()
+            })
+            .collect();
+        self.resolve_source();
+        self.arm();
+    }
+
     /// Set (or clear) the trigger and re-arm.
     pub fn configure(&mut self, config: Option<Config>) {
         self.config = config.map(|mut c| {
@@ -220,21 +309,58 @@ impl Scope {
     }
 
     fn resolve_source(&mut self) {
-        self.source = self
-            .config
-            .as_ref()
-            .and_then(|c| self.rings.iter().position(|r| r.name == c.source));
+        self.source = self.config.as_ref().and_then(|c| {
+            self.rings
+                .iter()
+                .position(|r| r.name == c.source)
+                .map(Src::Digital)
+                .or_else(|| {
+                    self.analog
+                        .iter()
+                        .position(|r| r.name == c.source)
+                        .map(Src::Analog)
+                })
+        });
     }
 
     /// Wait for the next trigger (after now): Single's "arm" button.
     pub fn arm(&mut self) {
         self.state = State::Armed { after: self.now };
         self.pause_hit = false;
+        self.arm_level();
+    }
+
+    /// Threshold and hysteresis of the level trigger.
+    fn level(&self) -> (f64, f64) {
+        let c = self.config.as_ref();
+        (
+            c.and_then(|c| c.level).unwrap_or(1.65),
+            c.map_or(0.0, |c| c.hysteresis.max(0.0)),
+        )
+    }
+
+    /// Start the level trigger from the source's present voltage: a
+    /// crossing needs it to have been on the other side first.
+    fn arm_level(&mut self) {
+        let Some(Src::Analog(ch)) = self.source else {
+            return;
+        };
+        let v = self.analog[ch].v;
+        let (level, h) = self.level();
+        self.armed_low = v < level - h;
+        self.armed_high = v > level + h;
     }
 
     /// The machine was reset (time starts again): drop the history and
     /// re-arm, with the pins at `levels` (in channel order).
-    pub fn reset(&mut self, levels: &[bool]) {
+    pub fn reset(&mut self, levels: &[bool], volts: &[f64]) {
+        for (r, &v) in self.analog.iter_mut().zip(volts) {
+            r.samples.clear();
+            r.v0 = v;
+            r.v = v;
+            r.lost_until = None;
+            r.since = f64::MIN;
+        }
         for (r, &l) in self.rings.iter_mut().zip(levels) {
             r.edges.clear();
             r.level0 = l;
@@ -326,11 +452,77 @@ impl Scope {
             return;
         }
         if let State::Armed { after } = self.state {
-            if Some(ch) == self.source && t >= after {
+            if Some(Src::Digital(ch)) == self.source && t >= after {
                 if let Some(t0) = self.trigger_at(ch, level) {
                     self.start(t0);
                 }
             }
+        }
+    }
+
+    /// Analog channel `ch` changed to `v` volts at `t` (ns), in time order.
+    pub fn push_analog(&mut self, ch: usize, t: f64, v: f64) {
+        if self.analog.get(ch).is_none_or(|r| r.v == v) {
+            return;
+        }
+        // A capture this sample is past ends first, so the trigger re-arms
+        // from the voltage before it (the sample may be the next crossing).
+        if let State::Collecting { end, .. } = self.state {
+            if t > end {
+                self.finish();
+            }
+        }
+        let ring = &mut self.analog[ch];
+        ring.v = v;
+        if ring.samples.len() >= RING_SAMPLES {
+            if let Some((lt, lv)) = ring.samples.pop_front() {
+                ring.v0 = lv;
+                ring.lost_until = Some(lt);
+            }
+        }
+        ring.samples.push_back((t, v));
+        self.now = self.now.max(t);
+
+        if let State::Collecting { cap, .. } = &mut self.state {
+            let c = &mut cap.analog[ch];
+            let rel = t - cap.trigger_ns;
+            if c.to_ns >= rel {
+                if c.samples.len() < CAPTURE_SAMPLES {
+                    c.samples.push((rel, v));
+                } else {
+                    c.to_ns = rel;
+                }
+            }
+            return;
+        }
+        if Some(Src::Analog(ch)) != self.source {
+            return;
+        }
+        let State::Armed { after } = self.state else {
+            return;
+        };
+        let Some(edge) = self.config.as_ref().map(|c| c.edge) else {
+            return;
+        };
+        let (level, h) = self.level();
+        let rising = self.armed_low && v >= level;
+        let falling = self.armed_high && v <= level;
+        let fire = t >= after
+            && match edge {
+                Edge::Rising => rising,
+                Edge::Falling => falling,
+                Edge::Either => rising || falling,
+            };
+        if v < level - h {
+            self.armed_low = true;
+        }
+        if v > level + h {
+            self.armed_high = true;
+        }
+        if fire {
+            self.armed_low = false;
+            self.armed_high = false;
+            self.start(t);
         }
     }
 
@@ -408,6 +600,29 @@ impl Scope {
                 }
             })
             .collect();
+        let analog = self
+            .analog
+            .iter()
+            .map(|r| {
+                let from = r.lost_until.map_or(start, |l| l.max(start)).max(r.since);
+                let lo = r.samples.partition_point(|e| e.0 < start);
+                let hi = r.samples.partition_point(|e| e.0 <= end);
+                let mut samples: Vec<(f64, f64)> =
+                    r.samples.range(lo..hi).map(|&(t, v)| (t - t0, v)).collect();
+                let mut to_ns = end - t0;
+                if samples.len() > CAPTURE_SAMPLES {
+                    to_ns = samples[CAPTURE_SAMPLES].0;
+                    samples.truncate(CAPTURE_SAMPLES);
+                }
+                AnalogChannel {
+                    name: r.name.clone(),
+                    v0: r.value_before(start),
+                    samples,
+                    from_ns: from - t0,
+                    to_ns,
+                }
+            })
+            .collect();
         self.seq += 1;
         self.state = State::Collecting {
             cap: Capture {
@@ -417,6 +632,7 @@ impl Scope {
                 start_ns: start - t0,
                 end_ns: end - t0,
                 channels,
+                analog,
             },
             end,
         };
@@ -439,6 +655,7 @@ impl Scope {
         }
         if c.is_some_and(|c| c.mode != Mode::Single) {
             self.state = State::Armed { after: end };
+            self.arm_level();
         }
     }
 }
@@ -459,6 +676,8 @@ mod tests {
             pre,
             width: None,
             pause: false,
+            level: None,
+            hysteresis: 0.0,
         }
     }
 
@@ -778,12 +997,148 @@ mod tests {
         let mut s = scope(config(Edge::Rising, Mode::Single, 1000.0, 0.5));
         square(&mut s, 0.0, 10_000.0, 1000.0, 2);
         assert!(s.take_capture().is_some());
-        s.reset(&[false, false]);
+        s.reset(&[false, false], &[]);
         assert_eq!(s.status(), Status::Armed);
         // Time starts again from 0.
         square(&mut s, 10.0, 10_000.0, 1000.0, 1);
         let c = s.take_capture().unwrap();
         assert_eq!(c.trigger_ns, 10.0);
         assert_eq!(c.channels[0].edges[0], (0.0, true));
+    }
+
+    fn analog_scope(edge: Edge, mode: Mode, level: f64, hysteresis: f64) -> Scope {
+        let mut s = Scope::new();
+        s.set_channels(vec![("PA0".into(), false)], f64::MIN);
+        s.set_analog(vec![("V(pot.W)".into(), 0.0)], f64::MIN);
+        let mut c = config(edge, mode, 1000.0, 0.5);
+        c.source = "V(pot.W)".into();
+        c.level = Some(level);
+        c.hysteresis = hysteresis;
+        s.configure(Some(c));
+        s
+    }
+
+    #[test]
+    fn level_trigger_fires_rising_through_the_threshold() {
+        let mut s = analog_scope(Edge::Rising, Mode::Single, 1.5, 0.0);
+        assert_eq!(s.status(), Status::Armed);
+        s.push_analog(0, 100.0, 1.0);
+        s.push_analog(0, 200.0, 1.4);
+        s.push(0, 250.0, true); // digital edges do not trigger it
+        assert_eq!(s.status(), Status::Armed);
+        s.push_analog(0, 300.0, 2.0);
+        assert_eq!(s.status(), Status::Collecting);
+        s.push_analog(0, 600.0, 3.0);
+        s.push_analog(0, 900.0, 0.5); // after the window
+        let c = s.take_capture().expect("captured");
+        assert_eq!(c.trigger_ns, 300.0);
+        assert_eq!(c.source, "V(pot.W)");
+        let a = &c.analog[0];
+        // Pre-trigger samples are in the capture (window from -500 ns).
+        assert_eq!(a.v0, 0.0);
+        assert_eq!(
+            a.samples,
+            vec![(-200.0, 1.0), (-100.0, 1.4), (0.0, 2.0), (300.0, 3.0)]
+        );
+        assert_eq!(a.from_ns, -500.0);
+        assert_eq!(a.to_ns, 500.0);
+        // The digital channel is captured with it.
+        assert_eq!(c.channels[0].edges, vec![(-50.0, true)]);
+    }
+
+    #[test]
+    fn level_trigger_rearms_from_the_voltage_before_the_next_crossing() {
+        // Normal mode, 100 ns window: up at 100, down at 120 (inside the
+        // capture), up again at 200, past its end — a second capture.
+        let mut s = Scope::new();
+        s.set_channels(vec![("PA0".into(), false)], f64::MIN);
+        s.set_analog(vec![("V(pot.W)".into(), 0.0)], f64::MIN);
+        let mut c = config(Edge::Rising, Mode::Normal, 100.0, 0.5);
+        c.source = "V(pot.W)".into();
+        c.level = Some(1.5);
+        s.configure(Some(c));
+        s.push_analog(0, 100.0, 3.0);
+        s.push_analog(0, 120.0, 0.0);
+        s.push_analog(0, 200.0, 3.0);
+        assert_eq!(s.take_capture().map(|c| c.trigger_ns), Some(100.0));
+        assert_eq!(s.status(), Status::Collecting);
+        s.advance(400.0);
+        assert_eq!(s.take_capture().map(|c| c.trigger_ns), Some(200.0));
+    }
+
+    #[test]
+    fn level_trigger_falling_ignores_rising_crossings() {
+        let mut s = analog_scope(Edge::Falling, Mode::Single, 1.5, 0.0);
+        s.push_analog(0, 100.0, 2.0); // rising through: no trigger
+        assert_eq!(s.status(), Status::Armed);
+        s.push_analog(0, 200.0, 1.0);
+        s.advance(2000.0);
+        assert_eq!(s.take_capture().unwrap().trigger_ns, 200.0);
+    }
+
+    #[test]
+    fn level_trigger_needs_the_source_below_the_hysteresis_band() {
+        // Noise around 1.5 V within ±0.2 V re-triggers without hysteresis…
+        let noisy = |h: f64| {
+            let mut s = analog_scope(Edge::Rising, Mode::Normal, 1.5, h);
+            s.push_analog(0, 10.0, 1.0);
+            let mut triggers = Vec::new();
+            for i in 0..20 {
+                let t = 2000.0 * (i + 1) as f64;
+                s.push_analog(0, t, 1.6);
+                s.push_analog(0, t + 1000.0, 1.4);
+                s.advance(t + 1999.0);
+                if let Some(c) = s.take_capture() {
+                    triggers.push(c.trigger_ns);
+                }
+            }
+            triggers
+        };
+        assert_eq!(noisy(0.0).len(), 20);
+        // … but only once with 0.2 V of hysteresis: 1.4 V is not below 1.3 V.
+        assert_eq!(noisy(0.2), vec![2000.0]);
+    }
+
+    #[test]
+    fn level_trigger_starting_above_waits_for_a_dip() {
+        let mut s = Scope::new();
+        s.set_analog(vec![("V(PA1)".into(), 3.0)], 0.0);
+        let mut c = config(Edge::Rising, Mode::Single, 100.0, 0.5);
+        c.source = "V(PA1)".into();
+        c.level = Some(1.0);
+        s.configure(Some(c));
+        s.push_analog(0, 10.0, 2.5); // still above
+        s.advance(1000.0);
+        assert!(s.take_capture().is_none());
+        s.push_analog(0, 1100.0, 0.2);
+        s.push_analog(0, 1200.0, 2.0);
+        s.advance(2000.0);
+        let cap = s.take_capture().unwrap();
+        assert_eq!(cap.trigger_ns, 1200.0);
+        // History before probing started (at 0) is not claimed.
+        assert_eq!(cap.analog[0].v0, 0.2);
+    }
+
+    #[test]
+    fn digital_trigger_captures_the_analog_channels() {
+        let mut s = scope(config(Edge::Rising, Mode::Single, 1000.0, 0.5));
+        s.set_analog(vec![("V(PA0)".into(), 0.0)], f64::MIN);
+        s.push_analog(0, 50.0, 3.3);
+        s.push(0, 100.0, true);
+        s.push_analog(0, 200.0, 0.0);
+        s.advance(1000.0);
+        let c = s.take_capture().unwrap();
+        assert_eq!(c.analog[0].samples, vec![(-50.0, 3.3), (100.0, 0.0)]);
+    }
+
+    #[test]
+    fn analog_ring_is_bounded() {
+        let mut s = analog_scope(Edge::Rising, Mode::Single, 100.0, 0.0);
+        let n = RING_SAMPLES + 100;
+        for i in 0..n {
+            s.push_analog(0, i as f64, (i % 7) as f64 / 10.0);
+        }
+        assert_eq!(s.analog[0].samples.len(), RING_SAMPLES);
+        assert!(s.analog[0].lost_until.is_some());
     }
 }

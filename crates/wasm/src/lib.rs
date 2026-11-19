@@ -10,10 +10,37 @@ use simucleo_circuit::netlist::{build_netlist, BusCatalog, Circuit};
 use simucleo_circuit::sim::parse_mcu_pin;
 
 use simucleo_core::cortexm::exc;
-use simucleo_nucleo::{Nucleo, Step, StepEnd};
+use simucleo_nucleo::{Nucleo, Step, StepEnd, SynthEdge, WireSignal};
 
 pub mod scope;
 use scope::Scope;
+
+/// An analog probe: the voltage of a net.
+#[derive(Debug, Clone)]
+struct AnalogProbe {
+    /// What it measures: `"PA1"` or `"part.pin"`.
+    spec: String,
+    /// Channel name, `"V(PA1)"`.
+    name: String,
+    /// The MCU pin, for a spec that names one.
+    mcu: Option<(u8, u8)>,
+    /// The circuit puts the pin on a net (else an MCU pin's voltage
+    /// follows its logic level).
+    on_net: bool,
+    /// Voltage as last pushed, and at the start of the display frame.
+    v: f64,
+    frame_v0: f64,
+    /// Samples in this frame (ms, V), capped, and whether some did not fit.
+    samples: Vec<(f64, f64)>,
+    dense: bool,
+}
+
+/// A probe sample waiting to go to the scope in time order.
+#[derive(Debug, Clone, Copy)]
+enum Pending {
+    Edge(usize, bool),
+    Volt(usize, f64),
+}
 
 /// Level history of one GPIO pin within the current display frame.
 #[derive(Debug, Clone, Copy, Default)]
@@ -42,6 +69,23 @@ pub struct Simulator {
     /// Edges of each probed pin in this frame (ms, level), capped at
     /// `PROBE_EDGES_MAX`, and whether some did not fit.
     probe_edges: Vec<(Vec<(f64, bool)>, bool)>,
+    /// Level of each probed pin as last given to the scope.
+    probe_level: Vec<bool>,
+    /// The byte-level signal (USART, I2C, SPI) each probed pin carries:
+    /// its edges are synthesized from the bytes, not read from the GPIO.
+    synth: Vec<Option<WireSignal>>,
+    /// Time of each probe's last synthesized edge (ns).
+    synth_last: Vec<f64>,
+    /// Analog probes (net voltages).
+    analog: Vec<AnalogProbe>,
+    /// Edges and samples not given to the scope yet: synthesized I2C and
+    /// SPI bytes are logged when they end, so everything waits
+    /// `holdback_ns` to go to the scope in time order.
+    pending: Vec<(f64, Pending)>,
+    holdback_ns: f64,
+    /// Time of the last `feed_scope` (ns).
+    fed_ns: f64,
+    wire_buf: Vec<SynthEdge>,
     /// Trigger and capture over the probed pins.
     scope: Scope,
     /// The last run stopped because a capture completed with "pause on
@@ -79,6 +123,14 @@ impl Simulator {
             frame_start_ns: 0.0,
             probes: Vec::new(),
             probe_edges: Vec::new(),
+            probe_level: Vec::new(),
+            synth: Vec::new(),
+            synth_last: Vec::new(),
+            analog: Vec::new(),
+            pending: Vec::new(),
+            holdback_ns: 0.0,
+            fed_ns: 0.0,
+            wire_buf: Vec::new(),
             scope: Scope::new(),
             trigger_paused: false,
             rtos_current: None,
@@ -108,12 +160,10 @@ impl Simulator {
         self.board.take_pin_events();
         self.board.bus.level_events.clear();
         // Loading firmware builds a new bus: keep probing the same pins.
-        let mut mask = [0u16; 8];
-        for ((port, pin), _) in &self.probes {
-            mask[*port as usize] |= 1 << pin;
-        }
-        self.board.bus.probe_mask = mask;
+        self.apply_probe_mask();
+        self.board.bus.take_wire_events();
         self.frame_start_ns = self.board.time_ns();
+        self.fed_ns = self.frame_start_ns;
         for (pin, level) in &mut self.probes {
             *level = self.board.pin((b'A' + pin.0) as char, pin.1);
         }
@@ -121,7 +171,17 @@ impl Simulator {
             *e = (Vec::new(), false);
         }
         let levels: Vec<bool> = self.probes.iter().map(|p| p.1).collect();
-        self.scope.reset(&levels);
+        self.probe_level = levels.clone();
+        self.synth = vec![None; self.probes.len()];
+        self.synth_last = vec![f64::MIN; self.probes.len()];
+        self.pending.clear();
+        self.holdback_ns = 0.0;
+        let specs: Vec<String> = self.analog.iter().map(|a| a.spec.clone()).collect();
+        self.board.set_voltage_probes(&specs);
+        self.board.take_voltage_log();
+        self.read_analog();
+        let volts: Vec<f64> = self.analog.iter().map(|a| a.v).collect();
+        self.scope.reset(&levels, &volts);
         self.trigger_paused = false;
         // Start a fresh display frame for the parts as well.
         self.board.circuit_frame(0.0);
@@ -153,7 +213,8 @@ impl Simulator {
             // the capture's end.
             let mut ns = end - now;
             if self.scope.watching_for_pause() {
-                ns = ns.min(self.scope.step_ns(now));
+                // (The scope is `holdback_ns` behind.)
+                ns = ns.min(self.scope.step_ns(now - self.holdback_ns));
             }
             let r = self.board.run_for_ns_debug(ns);
             self.feed_scope();
@@ -183,29 +244,164 @@ impl Simulator {
         String::new()
     }
 
-    /// Move the probed pins' level changes from the bus to this frame's
-    /// edge lists and to the trigger.
+    /// Probe the digital pins and the MCU pins of the analog probes.
+    fn apply_probe_mask(&mut self) {
+        let mut mask = [0u16; 8];
+        let pins = self.probes.iter().map(|p| p.0);
+        for (port, pin) in pins.chain(self.analog.iter().filter_map(|a| a.mcu)) {
+            mask[port as usize] |= 1 << pin;
+        }
+        self.board.bus.probe_mask = mask;
+        self.board.bus.sync_wire_logging();
+    }
+
+    /// Present voltages of the analog probes (an MCU pin on no net: its
+    /// drive's voltage).
+    fn read_analog(&mut self) {
+        let volts = self.board.probe_voltages();
+        for (a, v) in self.analog.iter_mut().zip(volts) {
+            a.on_net = v.is_some();
+            a.v = match (v, a.mcu) {
+                (Some(v), _) => v,
+                (None, Some((port, pin))) => self.board.bus.pin_voltage(port, pin),
+                (None, None) => 0.0,
+            };
+            a.frame_v0 = a.v;
+        }
+    }
+
+    /// Nanoseconds at a fractional core cycle.
+    fn ns_at_cycle(&self, c: f64) -> f64 {
+        let whole = c.max(0.0).floor();
+        self.board.ns_at(whole as u64) + (c - whole) * 1e9 / self.board.clock_hz().max(1) as f64
+    }
+
+    /// Move the probed pins' level changes, the synthesized edges of the
+    /// byte-level peripherals and the analog probes' voltages from the bus
+    /// to this frame's lists and to the trigger, in time order.
     fn feed_scope(&mut self) {
+        let now = self.board.time_ns();
+        // Pins newly routed to (or released by) a USART, I2C or SPI.
+        for (i, &((port, pin), _)) in self.probes.iter().enumerate() {
+            let sig = self.board.bus.wire_signal(port, pin);
+            if sig.is_some() != self.synth[i].is_some() {
+                let level = match sig {
+                    Some(s) => s.idle().unwrap_or(self.probe_level[i]),
+                    None => self.board.pin((b'A' + port) as char, pin),
+                };
+                let t = self.fed_ns.max(self.synth_last[i]);
+                self.pending.push((t, Pending::Edge(i, level)));
+                self.synth_last[i] = t;
+            }
+            self.synth[i] = sig;
+        }
         let events = std::mem::take(&mut self.board.bus.level_events);
         for e in &events {
-            let Some(ch) = self.probes.iter().position(|p| p.0 == (e.port, e.pin)) else {
-                continue;
-            };
             let t = self.board.ns_at(e.time);
             let level = e.level == Some(true);
-            self.scope.push(ch, t, level);
-            if let Some((edges, dense)) = self.probe_edges.get_mut(ch) {
-                if edges.len() >= PROBE_EDGES_MAX {
-                    *dense = true;
-                } else {
-                    edges.push((t / 1e6, level));
+            if let Some(ch) = self.probes.iter().position(|p| p.0 == (e.port, e.pin)) {
+                if self.synth[ch].is_none() {
+                    self.pending.push((t, Pending::Edge(ch, level)));
+                }
+            }
+            for (k, a) in self.analog.iter().enumerate() {
+                if a.mcu == Some((e.port, e.pin)) && !a.on_net {
+                    let v = if level {
+                        simucleo_circuit::sim::VDD
+                    } else {
+                        0.0
+                    };
+                    self.pending.push((t, Pending::Volt(k, v)));
                 }
             }
         }
         // Keep the allocation.
         self.board.bus.level_events = events;
         self.board.bus.level_events.clear();
-        self.scope.advance(self.board.time_ns());
+        // Bytes the peripherals moved, drawn bit by bit.
+        let wire = self.board.bus.take_wire_events();
+        let ns_per_cycle = 1e9 / self.board.clock_hz().max(1) as f64;
+        let mut buf = std::mem::take(&mut self.wire_buf);
+        for ev in &wire {
+            self.holdback_ns = self.holdback_ns.max(ev.latency() * ns_per_cycle);
+            buf.clear();
+            ev.edges(&mut buf);
+            for e in &buf {
+                let Some(ch) = self.probes.iter().position(|p| p.0 == e.pin) else {
+                    continue;
+                };
+                if self.synth[ch].is_none() {
+                    continue;
+                }
+                // In time order per pin, even where two transfers overlap.
+                let t = self.ns_at_cycle(e.time).max(self.synth_last[ch]);
+                self.synth_last[ch] = t;
+                self.pending.push((t, Pending::Edge(ch, e.level)));
+            }
+        }
+        self.wire_buf = buf;
+        // Voltages, at each change of the circuit's operating point.
+        if !self.analog.is_empty() {
+            for (cycle, volts) in self.board.take_voltage_log() {
+                let t = self.board.ns_at(cycle);
+                for (k, v) in volts.into_iter().enumerate() {
+                    if let Some(a) = self.analog.get_mut(k) {
+                        a.on_net = v.is_some();
+                        if let Some(v) = v {
+                            self.pending.push((t, Pending::Volt(k, v)));
+                        }
+                    }
+                }
+            }
+        }
+        self.fed_ns = now;
+        self.flush_pending(now - self.holdback_ns);
+    }
+
+    /// Give the scope and the frame's lists what is pending up to `until`
+    /// (ns), and tell it time has passed that far (no further than now).
+    fn flush_pending(&mut self, until: f64) {
+        if self.pending.is_empty() {
+            self.scope.advance(until.min(self.fed_ns));
+            return;
+        }
+        // (Stable: what happened at the same time keeps its order.)
+        self.pending.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let n = self.pending.partition_point(|p| p.0 <= until);
+        for (t, p) in self.pending.drain(..n) {
+            match p {
+                Pending::Edge(ch, level) => {
+                    if self.probe_level.get(ch) == Some(&level) {
+                        continue;
+                    }
+                    self.probe_level[ch] = level;
+                    self.scope.push(ch, t, level);
+                    if let Some((edges, dense)) = self.probe_edges.get_mut(ch) {
+                        if edges.len() >= PROBE_EDGES_MAX {
+                            *dense = true;
+                        } else {
+                            edges.push((t / 1e6, level));
+                        }
+                    }
+                }
+                Pending::Volt(k, v) => {
+                    let Some(a) = self.analog.get_mut(k) else {
+                        continue;
+                    };
+                    if a.v == v {
+                        continue;
+                    }
+                    a.v = v;
+                    self.scope.push_analog(k, t, v);
+                    if a.samples.len() >= PROBE_EDGES_MAX {
+                        a.dense = true;
+                    } else {
+                        a.samples.push((t / 1e6, v));
+                    }
+                }
+            }
+        }
+        self.scope.advance(until.min(self.fed_ns));
     }
 
     /// The last `runForMs` paused because a capture completed with "pause
@@ -216,7 +412,9 @@ impl Simulator {
     }
 
     /// Set the oscilloscope trigger from JSON `{source, edge, mode,
-    /// windowNs, pre, width?: {cmp, ns}, pause}` (`edge`: `"rising"`,
+    /// windowNs, pre, width?: {cmp, ns}, pause, level?, hysteresis?}` (the
+    /// source a probed pin or an analog channel `"V(…)"`, which triggers
+    /// on its voltage going through `level` volts; `edge`: `"rising"`,
     /// `"falling"`, `"either"`; `mode`: `"auto"`, `"normal"`, `"single"`;
     /// `cmp`: `"lt"`, `"gt"`), or clear it with `""`. Re-arms.
     #[wasm_bindgen(js_name = setTrigger)]
@@ -471,14 +669,31 @@ impl Simulator {
         // Probes: level changes of the probed pins within the frame.
         self.feed_scope();
         let mut probes = Vec::new();
-        for ((pin, level0), (edges, dense)) in self.probes.iter_mut().zip(&mut self.probe_edges) {
+        for ((((pin, level0), (edges, dense)), &level), synth) in self
+            .probes
+            .iter_mut()
+            .zip(&mut self.probe_edges)
+            .zip(&self.probe_level)
+            .zip(&self.synth)
+        {
             probes.push(json!({
                 "name": format!("P{}{}", (b'A' + pin.0) as char, pin.1),
                 "level0": *level0,
                 "edges": std::mem::take(edges),
                 "dense": std::mem::take(dense),
+                "synth": synth.is_some(),
             }));
-            *level0 = self.board.pin((b'A' + pin.0) as char, pin.1);
+            *level0 = level;
+        }
+        let mut analog = Vec::new();
+        for a in &mut self.analog {
+            analog.push(json!({
+                "name": a.name,
+                "v0": a.frame_v0,
+                "samples": std::mem::take(&mut a.samples),
+                "dense": std::mem::take(&mut a.dense),
+            }));
+            a.frame_v0 = a.v;
         }
         let capture = self.scope.take_capture().map(|c| {
             let channels: Vec<_> = c
@@ -494,6 +709,19 @@ impl Simulator {
                     })
                 })
                 .collect();
+            let analog: Vec<_> = c
+                .analog
+                .into_iter()
+                .map(|a| {
+                    json!({
+                        "name": a.name,
+                        "v0": a.v0,
+                        "samples": a.samples,
+                        "fromNs": a.from_ns,
+                        "toNs": a.to_ns,
+                    })
+                })
+                .collect();
             json!({
                 "seq": c.seq,
                 "source": c.source,
@@ -501,6 +729,7 @@ impl Simulator {
                 "startNs": c.start_ns,
                 "endNs": c.end_ns,
                 "channels": channels,
+                "analog": analog,
             })
         });
         let scope = json!({ "state": self.scope.status().name(), "capture": capture });
@@ -572,6 +801,7 @@ impl Simulator {
             "parts": parts,
             "circuitWarnings": self.board.circuit_warnings(),
             "probes": probes,
+            "analog": analog,
             "scope": scope,
             "rtos": rtos,
             "bluetooth": self.board.bluetooth(),
@@ -732,23 +962,80 @@ impl Simulator {
         let names: Vec<String> = serde_json::from_str(pins_json)?;
         // Edges of the pins probed so far go to their lists first.
         self.feed_scope();
+        self.flush_pending(f64::INFINITY);
+        let now = self.board.time_ns();
+        let old: Vec<((u8, u8), Option<WireSignal>, bool)> = self
+            .probes
+            .iter()
+            .zip(&self.synth)
+            .zip(&self.probe_level)
+            .map(|((p, s), l)| (p.0, *s, *l))
+            .collect();
         let mut mask = [0u16; 8];
         self.probes.clear();
+        self.synth.clear();
+        self.probe_level.clear();
         for (port, pin) in names.iter().filter_map(|n| parse_mcu_pin(n)) {
             if mask[port as usize] & (1 << pin) != 0 {
                 continue;
             }
             mask[port as usize] |= 1 << pin;
-            let level = self.board.pin((b'A' + port) as char, pin);
+            // A pin probed before keeps its (maybe synthesized) level.
+            let (synth, level) = match old.iter().find(|o| o.0 == (port, pin)) {
+                Some(&(_, s, l)) => (s, l),
+                None => {
+                    let s = self.board.bus.wire_signal(port, pin);
+                    let real = self.board.pin((b'A' + port) as char, pin);
+                    (s, s.and_then(|s| s.idle()).unwrap_or(real))
+                }
+            };
             self.probes.push(((port, pin), level));
+            self.synth.push(synth);
+            self.probe_level.push(level);
         }
-        self.board.bus.probe_mask = mask;
+        self.synth_last = vec![now; self.probes.len()];
+        self.apply_probe_mask();
+        self.holdback_ns = 0.0;
         self.probe_edges = vec![(Vec::new(), false); self.probes.len()];
         self.scope.set_channels(
             self.probes
                 .iter()
                 .map(|&((port, pin), level)| (format!("P{}{pin}", (b'A' + port) as char), level))
                 .collect(),
+            now,
+        );
+        Ok(())
+    }
+
+    /// Choose the analog probes, as JSON (`["PA1", "pot.W"]`: an MCU pin or
+    /// a part's pin); their channels are named `"V(PA1)"`, `"V(pot.W)"`.
+    /// Each frame reports their voltage changes (`analog`), and captures
+    /// hold them around the trigger.
+    #[wasm_bindgen(js_name = setAnalogProbes)]
+    pub fn set_analog_probes(&mut self, specs_json: &str) -> Result<(), JsError> {
+        let mut specs: Vec<String> = serde_json::from_str(specs_json)?;
+        specs.dedup();
+        self.feed_scope();
+        self.flush_pending(f64::INFINITY);
+        self.analog = specs
+            .iter()
+            .map(|spec| AnalogProbe {
+                spec: spec.clone(),
+                name: format!("V({spec})"),
+                mcu: parse_mcu_pin(spec),
+                on_net: false,
+                v: 0.0,
+                frame_v0: 0.0,
+                samples: Vec::new(),
+                dense: false,
+            })
+            .collect();
+        self.board.set_voltage_probes(&specs);
+        self.board.take_voltage_log();
+        self.read_analog();
+        self.apply_probe_mask();
+        self.scope.set_analog(
+            self.analog.iter().map(|a| (a.name.clone(), a.v)).collect(),
             self.board.time_ns(),
         );
         Ok(())

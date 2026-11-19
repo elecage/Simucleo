@@ -66,6 +66,29 @@ export interface ProbeFrame {
   edges: [number, boolean][];
   /** Too many edges to report: the signal is faster than the display. */
   dense: boolean;
+  /** The pin carries a USART, I2C or SPI signal: its edges are
+   * synthesized from the bytes the peripheral moves (M22). */
+  synth?: boolean;
+}
+
+/** Voltage changes of an analog probe within one frame (M22). */
+export interface AnalogFrame {
+  /** "V(PA1)", "V(pot.W)". */
+  name: string;
+  /** Voltage at the start of the frame. */
+  v0: number;
+  /** [time in ms, volts]: the voltage from then on. */
+  samples: [number, number][];
+  dense: boolean;
+}
+
+/** An analog channel of a capture; times in ns relative to the trigger. */
+export interface CaptureAnalog {
+  name: string;
+  v0: number;
+  samples: [number, number][];
+  fromNs: number;
+  toNs: number;
 }
 
 /** One pin of a triggered capture; times in ns relative to the trigger. */
@@ -92,6 +115,8 @@ export interface ScopeCapture {
   startNs: number;
   endNs: number;
   channels: CaptureChannel[];
+  /** Analog channels (absent from captures of older simulators). */
+  analog?: CaptureAnalog[];
 }
 
 export type ScopeState = "off" | "nosource" | "armed" | "collecting" | "stopped";
@@ -116,6 +141,10 @@ export interface TriggerConfig {
   width?: { cmp: "lt" | "gt"; ns: number };
   /** Pause the simulation once a capture is complete. */
   pause: boolean;
+  /** Level trigger on an analog source ("V(…)"): threshold in volts … */
+  level?: number;
+  /** … and hysteresis in volts. */
+  hysteresis?: number;
 }
 
 export interface RtosTask {
@@ -163,6 +192,8 @@ export interface SimFrame {
   /** Electrical-rule violations (LED without resistor, …). */
   circuitWarnings: string[];
   probes: ProbeFrame[];
+  /** Analog probes' voltage changes in this frame. */
+  analog?: AnalogFrame[];
   /** Trigger state and the capture completed in this frame. */
   scope: ScopeFrame;
   /** Present when the firmware contains an RTOS (FreeRTOS). */
@@ -183,6 +214,8 @@ export type ToWorker =
   | { type: "press"; part: string; pressed: boolean } // a tact-switch part id, or "B1"
   | { type: "wiring"; circuit: string; catalog: string; signals: string } // JSON
   | { type: "probes"; pins: string[] }
+  /** Analog probes: "PA1" or "part.pin". */
+  | { type: "analogProbes"; specs: string[] }
   /** Set the oscilloscope trigger (null: none) and arm it. */
   | { type: "trigger"; config: TriggerConfig | null }
   /** Wait for the next trigger (Single). */

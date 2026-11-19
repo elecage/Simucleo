@@ -1017,25 +1017,49 @@ impl DebugInfo {
                     v.value = unreadable();
                     return v;
                 };
-                let raw = b.iter().rev().fold(0u64, |a, &x| a << 8 | x as u64) as i64;
-                v.value = raw.to_string();
+                let raw_u = b.iter().rev().fold(0u64, |a, &x| a << 8 | x as u64);
+                let mask = if size >= 8 {
+                    u64::MAX
+                } else {
+                    (1u64 << (8 * size)) - 1
+                };
+                let shift = 64 - 8 * size.min(8) as u32;
+                let sext = |u: u64| ((u << shift) as i64) >> shift;
+                // Enumerators, and whether the enum is signed (its underlying
+                // type, or a negative enumerator).
+                let mut enumerators: Vec<(String, i64)> = Vec::new();
+                let mut signed = type_of(&e)
+                    .and_then(|t| unit.entry(t).ok())
+                    .and_then(|t| t.attr_value(gimli::DW_AT_encoding).ok().flatten())
+                    .is_some_and(|enc| enc == AttributeValue::Encoding(gimli::DW_ATE_signed));
                 if let Ok(mut tree) = unit.entries_tree(Some(off)) {
                     if let Ok(root) = tree.root() {
                         let mut ch = root.children();
                         while let Ok(Some(c)) = ch.next() {
                             let ce = c.entry();
                             let cv = match ce.attr_value(gimli::DW_AT_const_value).ok().flatten() {
-                                Some(AttributeValue::Sdata(s)) => Some(s),
+                                Some(AttributeValue::Sdata(s)) => {
+                                    signed |= s < 0;
+                                    Some(s)
+                                }
                                 Some(other) => attr_u64(other).map(|u| u as i64),
                                 None => None,
                             };
-                            if cv == Some(raw) {
-                                if let Some(n) = name_of(dwarf, unit, ce) {
-                                    v.value = format!("{n} ({raw})");
-                                }
+                            if let (Some(cv), Some(n)) = (cv, name_of(dwarf, unit, ce)) {
+                                enumerators.push((n, cv));
                             }
                         }
                     }
+                }
+                let shown = if signed { sext(raw_u) } else { raw_u as i64 };
+                v.value = shown.to_string();
+                // Compare within the enum's width: a 4-byte −1 stored as
+                // 0xFFFFFFFF matches the enumerator −1.
+                if let Some((n, _)) = enumerators
+                    .iter()
+                    .find(|(_, cv)| (*cv as u64) & mask == raw_u & mask)
+                {
+                    v.value = format!("{n} ({shown})");
                 }
             }
             gimli::DW_TAG_pointer_type => {

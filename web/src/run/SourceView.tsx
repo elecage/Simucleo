@@ -109,6 +109,12 @@ export function SourceView({ runner }: { runner: Runner }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pause.n]);
   const paused = !running && debugState !== null;
+  // Globals follow the file on screen (stepping into another file, or
+  // picking one): ask again for the shown frame with this file's globals.
+  useEffect(() => {
+    if (paused && fileIdx !== null) requestDebugState(frame, fileIdx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileIdx]);
   const shownFrame = debugState?.frames[frame];
   useEffect(() => {
     const f = debugState?.frames[frame];

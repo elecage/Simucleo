@@ -16,6 +16,10 @@ test("breakpoint, step over/into/out, call stack and variables", async ({ page }
   // Break on line 92 and run.
   await page.getByTestId("gutter-92").click();
   await expect(page.getByTestId("gutter-92")).toHaveClass(/bp/);
+  // Looking at another tab keeps the breakpoint.
+  await page.getByRole("button", { name: "가상 콘솔 (USART2)" }).click();
+  await page.getByRole("button", { name: "소스 (디버그)" }).click();
+  await expect(page.getByTestId("gutter-92")).toHaveClass(/bp/);
   await page.getByRole("button", { name: "▶ 실행" }).click();
   await expect(page.getByTestId("debug-status")).toContainText("중단점", { timeout: 5000 });
   await expect(page.locator(".src-line.here")).toHaveAttribute("data-line", "92");

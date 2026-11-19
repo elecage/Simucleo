@@ -30,7 +30,10 @@ export function BottomPanel({ runner }: { runner: Runner }) {
       </nav>
       <div className="tab-body">
         {tab === "console" && <Console runner={runner} />}
-        {tab === "source" && <SourceView runner={runner} />}
+        {/* Kept mounted: breakpoints and added sources survive tab switches. */}
+        <div className="tab-keep" hidden={tab !== "source"}>
+          <SourceView runner={runner} />
+        </div>
         {tab === "waveform" && <Waveform runner={runner} />}
         {tab === "rtos" && <RtosView runner={runner} />}
         {tab === "registers" && <Registers runner={runner} />}

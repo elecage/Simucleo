@@ -282,3 +282,5 @@ main { position: relative; }
 .var-name { color: #1d4ed8; }
 .var-type { color: #6b7280; font-size: 11px; }
 .var-value { color: #111827; }
+.tab-keep { height: 100%; }
+.tab-keep[hidden] { display: none; }

@@ -1,7 +1,13 @@
 // The schematic: symbols from `buildSchematic`, connections as net labels.
 // Hovering or clicking a label highlights the whole net; while the firmware
 // runs, nets on MCU pins show their level and LEDs glow.
-import { useState, type JSX } from "react";
+//
+// Wiring (M18): drag from one pin end (stub tip, net flag, ground or supply
+// symbol, the "not connected" X) to another to add a wire between the two
+// pins. A click on a pin end pins its net and selects the pin, which
+// "연결 끊기" or Delete disconnects. The project stays the only source of
+// truth: App turns both into wires, and the schematic is drawn again.
+import { useEffect, useRef, useState, type JSX, type PointerEvent as RPointerEvent } from "react";
 import type { PinFrame } from "../sim/protocol";
 import type { VisualState } from "../parts/types";
 import { G, STUB, type SchNet, type SchPin, type SchSymbol, type Schematic } from "./layout";
@@ -157,7 +163,7 @@ function PinEnd({
   net?: SchNet;
   level: string;
   lit: boolean;
-  onNet: (n: string | null, pin?: boolean) => void;
+  onNet: (n: string | null) => void;
 }): JSX.Element {
   const left = p.side === "left";
   if (!net)
@@ -170,10 +176,6 @@ function PinEnd({
   const hover = {
     onMouseEnter: () => onNet(net.name),
     onMouseLeave: () => onNet(null),
-    onClick: (e: React.MouseEvent) => {
-      e.stopPropagation();
-      onNet(net.name, true);
-    },
   };
   const tip = <title>{`${net.name}: ${net.members.join(", ") || "보드"}`}</title>;
   if (net.power === "gnd")
@@ -199,6 +201,41 @@ function PinEnd({
   );
 }
 
+/** A pin end of the drawing: a part and the pins its terminal stands for. */
+export interface SchEnd {
+  part: string;
+  ids: string[];
+}
+
+interface End extends SchEnd {
+  key: string;
+  /** Name shown for it (R1.2, nucleo.PA5). */
+  label: string;
+  net: string | null;
+  x: number;
+  y: number;
+}
+
+const endKey = (part: string, ids: string[]) => `${part}|${ids.join("/")}`;
+
+/** A press on a pin end: a click if it does not move, else a new wire. */
+interface Drag {
+  pointer: number;
+  from: End;
+  sx: number;
+  sy: number;
+  moved: boolean;
+  /** The pointer, in drawing units. */
+  at: { x: number; y: number };
+  /** The pin end it is over (where the wire would go). */
+  over: End | null;
+}
+
+/** Screen distance before a press on a pin end becomes a drag. */
+const DRAG_START = 4;
+/** How near (drawing units) a drop must be to a pin end to land on it. */
+const SNAP = 14;
+
 export function SchematicView({
   schematic,
   pins,
@@ -207,6 +244,10 @@ export function SchematicView({
   onSelect,
   parts,
   onAction,
+  allPins = false,
+  onAllPins,
+  onConnect,
+  onDisconnect,
 }: {
   schematic: Schematic;
   pins?: PinFrame[];
@@ -216,20 +257,157 @@ export function SchematicView({
   parts: { id: string; props: Record<string, string | number> }[];
   /** Press a switch (like the breadboard's parts). */
   onAction?: (part: string, action: string, down: boolean) => void;
+  /** Every MCU pin is listed (for wiring to one not in use yet). */
+  allPins?: boolean;
+  onAllPins?: (on: boolean) => void;
+  /** A wire was drawn from one pin end to another. */
+  onConnect?: (a: SchEnd, b: SchEnd) => void;
+  /** Remove the wires on a pin. */
+  onDisconnect?: (end: SchEnd) => void;
 }) {
   const [hover, setHover] = useState<string | null>(null);
   const [pinned, setPinned] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [selKey, setSelKey] = useState<string | null>(null);
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  // The click that follows a press handled here (it would deselect).
+  const swallow = useRef(false);
   const lit = hover ?? pinned;
-  const onNet = (n: string | null, pin?: boolean) => {
-    if (pin) setPinned((p) => (p === n ? null : n));
-    else setHover(n);
+  const onNet = (n: string | null) => {
+    if (!drag) setHover(n);
   };
   const { width, height, symbols, nets } = schematic;
   const net = lit ? nets[lit] : undefined;
+
+  const ends: End[] = symbols.flatMap((s) =>
+    s.pins.map((p) => ({
+      part: s.part,
+      ids: p.ids,
+      key: endKey(s.part, p.ids),
+      label: `${s.part}.${s.shape === "mcu" ? p.name.replace(/ .*/, "") : p.name}`,
+      net: p.net,
+      x: p.x,
+      y: p.y,
+    })),
+  );
+  const selEnd = ends.find((e) => e.key === selKey) ?? null;
+
+  // Selecting a part (here or on the breadboard) drops the pin selection.
+  useEffect(() => {
+    if (selected) setSelKey(null);
+  }, [selected]);
+
+  const toDrawing = (e: { clientX: number; clientY: number }) => {
+    const m = svgRef.current?.getScreenCTM();
+    if (!m) return { x: 0, y: 0 };
+    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+    return { x: p.x, y: p.y };
+  };
+  /** The pin end under the pointer: the one drawn there, else the nearest. */
+  const endAt = (e: { clientX: number; clientY: number }): End | null => {
+    const el = document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-end]");
+    const hit = el && ends.find((x) => x.key === el.getAttribute("data-end"));
+    if (hit) return hit;
+    const p = toDrawing(e);
+    let best: End | null = null;
+    let d = SNAP;
+    for (const x of ends) {
+      const dd = Math.hypot(x.x - p.x, x.y - p.y);
+      if (dd < d) {
+        d = dd;
+        best = x;
+      }
+    }
+    return best;
+  };
+
+  const swallowClick = () => {
+    swallow.current = true;
+    // Only the click of this press: it comes right after the release.
+    setTimeout(() => (swallow.current = false), 0);
+  };
+  const swallowed = () => {
+    if (!swallow.current) return false;
+    swallow.current = false;
+    return true;
+  };
+
+  const press = (e: RPointerEvent, end: End) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    e.stopPropagation();
+    if (drag) return; // a second finger
+    try {
+      svgRef.current?.setPointerCapture(e.pointerId);
+    } catch {
+      // A synthetic pointer: the press still ends on its pointerup.
+    }
+    setDrag({ pointer: e.pointerId, from: end, sx: e.clientX, sy: e.clientY, moved: false, at: toDrawing(e), over: null });
+  };
+  const move = (e: RPointerEvent) => {
+    if (!drag || e.pointerId !== drag.pointer) return;
+    const moved = drag.moved || Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > DRAG_START;
+    if (moved && !drag.moved) setHover(null);
+    const over = moved ? endAt(e) : null;
+    setDrag({ ...drag, moved, at: toDrawing(e), over: over && over.key !== drag.from.key ? over : null });
+  };
+  const release = (e: RPointerEvent) => {
+    if (!drag || e.pointerId !== drag.pointer) return;
+    if (svgRef.current?.hasPointerCapture(e.pointerId)) svgRef.current.releasePointerCapture(e.pointerId);
+    swallowClick();
+    const { from } = drag;
+    setDrag(null);
+    if (!drag.moved) {
+      // A click: pin the net and select the pin (or let go of both).
+      if (selKey === from.key) {
+        setSelKey(null);
+        setPinned(null);
+      } else {
+        setSelKey(from.key);
+        setPinned(from.net);
+        onSelect(null);
+      }
+      return;
+    }
+    const to = endAt(e);
+    // Dropped on empty space (or back on itself): nothing.
+    if (to && to.key !== from.key) onConnect?.({ part: from.part, ids: from.ids }, { part: to.part, ids: to.ids });
+  };
+  const cancel = () => {
+    setDrag(null);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      if (e.key === "Escape") {
+        if (drag) setDrag(null);
+        else if (selKey) {
+          setSelKey(null);
+          setPinned(null);
+        }
+      } else if ((e.key === "Delete" || e.key === "Backspace") && selEnd && !drag) {
+        // The pin, not the part: before the app's Delete handler.
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onDisconnect?.({ part: selEnd.part, ids: selEnd.ids });
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
+
+  const target = drag?.moved ? drag.over : null;
   return (
-    <div className="schematic-wrap" onClick={() => setPinned(null)}>
-      <div className="schematic-bar">
+    <div
+      className="schematic-wrap"
+      onClick={() => {
+        if (swallowed()) return;
+        setPinned(null);
+        setSelKey(null);
+      }}
+    >
+      <div className="schematic-bar" onClick={(e) => e.stopPropagation()}>
         <button onClick={() => setZoom((z) => Math.max(0.4, z / 1.25))} aria-label="회로도 축소">
           −
         </button>
@@ -237,17 +415,44 @@ export function SchematicView({
         <button onClick={() => setZoom((z) => Math.min(3, z * 1.25))} aria-label="회로도 확대">
           +
         </button>
+        <label className="all-pins" title="쓰지 않는 MCU 핀과 전원 핀(3V3, 5V, GND, …)도 보여, 그 핀에 배선할 수 있습니다">
+          <input type="checkbox" checked={allPins} onChange={(e) => onAllPins?.(e.target.checked)} /> 모든 MCU 핀
+        </label>
+        {selEnd && (
+          <span className="pin-selection" data-testid="pin-selection">
+            선택: <b>{selEnd.label}</b>
+            {selEnd.net ? ` (${selEnd.net})` : " (연결 안 됨)"}{" "}
+            <button onClick={() => onDisconnect?.({ part: selEnd.part, ids: selEnd.ids })}>연결 끊기</button>
+          </span>
+        )}
         <span className="hint" data-testid="net-info">
-          {net ? `${net.name}: ${net.members.join(", ") || "보드"}` : "넷 이름에 마우스를 올리면 같은 넷이 강조됩니다. 클릭하면 고정."}
+          {drag?.moved
+            ? target
+              ? `${drag.from.label} → ${target.label}: 놓으면 와이어가 생깁니다`
+              : `${drag.from.label}에서 배선 중: 다른 핀 끝에 놓으세요 (Esc 또는 빈 곳에 놓으면 취소)`
+            : net
+              ? `${net.name}: ${net.members.join(", ") || "보드"}`
+              : "넷 이름에 마우스를 올리면 같은 넷이 강조됩니다. 핀 끝을 클릭하면 넷 고정 + 핀 선택(연결 끊기·Delete), 핀 끝에서 다른 핀 끝으로 끌면 배선."}
         </span>
       </div>
       <div className="schematic-scroll">
         <svg
-          className="schematic"
+          ref={svgRef}
+          className={drag?.moved ? "schematic wiring" : "schematic"}
           width={width * zoom}
           height={height * zoom}
           viewBox={`0 0 ${width} ${height}`}
-          onClick={() => onSelect(null)}
+          onClick={() => {
+            if (swallow.current) return; // the wrap's handler takes it
+            onSelect(null);
+          }}
+          onPointerMove={move}
+          onPointerUp={release}
+          onPointerCancel={cancel}
+          onLostPointerCapture={(e) => {
+            // Released somewhere we did not see (the pointerup already ran otherwise).
+            if (drag && e.pointerId === drag.pointer) setTimeout(() => setDrag((d) => (d?.pointer === e.pointerId ? null : d)), 0);
+          }}
         >
           {symbols.map((s) => {
             const color = LED_HEX[String(parts.find((p) => p.id === s.part)?.props.color ?? "red")] ?? "#ef4444";
@@ -258,6 +463,7 @@ export function SchematicView({
                 data-part={s.part}
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (swallowed()) return;
                   onSelect(s.part);
                 }}
               >
@@ -270,6 +476,8 @@ export function SchematicView({
                   const edge = p.side === "left" ? p.x + STUB : p.x - STUB;
                   const n = p.net ? nets[p.net] : undefined;
                   const level = levelOf(n, pins);
+                  const key = endKey(s.part, p.ids);
+                  const end = ends.find((x) => x.key === key)!;
                   return (
                     <g key={i} className="sym-pin" data-pin={p.ids.join("/")}>
                       <line className={`sym-stub${level}`} x1={edge} y1={p.y} x2={p.x} y2={p.y} />
@@ -283,13 +491,31 @@ export function SchematicView({
                           {p.name}
                         </text>
                       )}
-                      <PinEnd p={p} net={n} level={level} lit={!!p.net && p.net === lit} onNet={onNet} />
+                      <g
+                        className={`pin-end${selKey === key ? " sel" : ""}${target?.key === key ? " target" : ""}`}
+                        data-end={key}
+                        onPointerDown={(e) => press(e, end)}
+                      >
+                        {/* The stub tip: easy to grab, also with a finger. */}
+                        <circle className="pin-hit" cx={p.x} cy={p.y} r={7} />
+                        <PinEnd p={p} net={n} level={level} lit={!!p.net && p.net === lit} onNet={onNet} />
+                        {selKey === key && <circle className="pin-sel" cx={p.x} cy={p.y} r={6} />}
+                      </g>
                     </g>
                   );
                 })}
               </g>
             );
           })}
+          {drag?.moved && (
+            <line
+              className="sch-rubber"
+              x1={drag.from.x}
+              y1={drag.from.y}
+              x2={target ? target.x : drag.at.x}
+              y2={target ? target.y : drag.at.y}
+            />
+          )}
         </svg>
       </div>
     </div>

@@ -120,6 +120,8 @@ main { grid-area: main; min-width: 0; min-height: 0; }
 .run-controls select { font: inherit; font-size: 13px; padding: 4px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); }
 .version { color: var(--muted); font-size: 12px; }
 main { position: relative; }
+/* Below the schematic bar, whose buttons (연결 끊기) it would cover. */
+main.schematic-on .notice { top: 44px; }
 .diagnosis, .warning {
   position: absolute; left: 12px; right: 12px; padding: 8px 12px; border-radius: 8px; font-size: 13px; white-space: pre-wrap;
 }
@@ -477,3 +479,17 @@ main { position: relative; }
   .bt-warn { background: #3a3011; color: #f5dc8a; border-color: #6e5a1c; }
   .bubble.garbled { color: #fbbf24; }
 }
+/* M18: wiring on the schematic. */
+.schematic .pin-end { cursor: crosshair; touch-action: none; }
+.schematic .pin-hit { fill: transparent; }
+.schematic .pin-end:hover .pin-hit { fill: rgba(67, 56, 202, 0.12); }
+.schematic .pin-end.target .pin-hit { fill: rgba(22, 163, 74, 0.3); stroke: #16a34a; stroke-width: 1.5; }
+.schematic .pin-sel { fill: none; stroke: var(--accent); stroke-width: 2.4; pointer-events: none; }
+.schematic .sch-rubber { stroke: #16a34a; stroke-width: 2; stroke-dasharray: 5 3; pointer-events: none; }
+.schematic.wiring, .schematic.wiring * { cursor: crosshair; }
+.schematic-bar .all-pins { display: inline-flex; gap: 4px; align-items: center; margin-left: 8px; white-space: nowrap; }
+.schematic-bar .pin-selection { white-space: nowrap; }
+/* The bar keeps its height while its text changes (during a drag the
+ * drawing must not move under the pointer); no text selection by drags. */
+.schematic-bar .hint { flex: 1; min-width: 0; height: 2.6em; line-height: 1.3em; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.schematic { user-select: none; -webkit-user-select: none; }

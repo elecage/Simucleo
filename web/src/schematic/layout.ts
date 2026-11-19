@@ -7,6 +7,7 @@ import { PART_BY_KIND } from "../parts";
 import { nucleoSignal } from "../parts/nucleo";
 import type { Netlist } from "../sim/simulator";
 import { formatOhms, parseOhms } from "../parts/ohms";
+import { mcuSides, POWER_SIGNALS, signalOrder, stableOrder } from "./wiring";
 
 /** Drawing grid (SVG units). */
 export const G = 10;
@@ -62,15 +63,8 @@ export interface Schematic {
   height: number;
 }
 
-const POWER_SIGNALS = new Set(["3V3", "5V", "E5V", "VIN", "IOREF", "VBAT"]);
 const isBoard = (kind: string) => kind === "nucleo-f401re";
 const isMechanical = (kind: string) => kind.startsWith("breadboard");
-
-/** MCU signals in port order (PA0, PA1, … PB0, …). */
-function signalOrder(s: string): number {
-  const m = /^P([A-H])(\d+)$/.exec(s);
-  return m ? (m[1].charCodeAt(0) - 65) * 16 + Number(m[2]) : 1000;
-}
 
 const SHAPE_OF: Record<string, Shape> = {
   resistor: "resistor",
@@ -130,7 +124,15 @@ const BOX_LAYOUT: Record<
   },
 };
 
-export function buildSchematic(project: Project, netlist: Netlist): Schematic {
+export interface SchematicOptions {
+  /** List every MCU signal and supply pin, not only those in use. */
+  allPins?: boolean;
+  /** Part order of the previous drawing, kept so a new wire does not
+   * reshuffle the symbols (see `stableOrder`). */
+  order?: string[];
+}
+
+export function buildSchematic(project: Project, netlist: Netlist, opts: SchematicOptions = {}): Schematic {
   const kindOf = new Map(project.parts.map((p) => [p.id, p.kind]));
   // Nets that connect something (the breadboard does not count): pins of
   // two parts, or two pins of one part that are not joined inside it (a
@@ -177,25 +179,40 @@ export function buildSchematic(project: Project, netlist: Netlist): Schematic {
 
   const symbols: SchSymbol[] = [];
 
-  // The board: the MCU signals in use, I/O first, then power.
+  // The board: the MCU signals in use, I/O first, then power (or, for
+  // wiring, every signal over both sides).
   const board = project.parts.find((p) => isBoard(p.kind));
   let mcuH = 0;
   const mcuW = 14 * G;
+  // Room for the labels of left-side MCU pins.
+  let mcuX = 4 * G;
   if (board) {
     const bySignal = new Map<string, string[]>();
     for (const pin of PART_BY_KIND[board.kind].pins) {
-      if (netName({ part: board.id, pin: pin.id }) === null) continue;
       const s = nucleoSignal(pin.id) ?? pin.id;
+      const used = netName({ part: board.id, pin: pin.id }) !== null;
+      // Unused NC pins are not worth a row (they join nothing on the board).
+      if (!used && (!opts.allPins || s === "NC")) continue;
       bySignal.set(s, [...(bySignal.get(s) ?? []), pin.id]);
     }
-    const sigs = [...bySignal.keys()].sort((a, b) => {
-      const pa = POWER_SIGNALS.has(a) || a === "GND";
-      const pb = POWER_SIGNALS.has(b) || b === "GND";
-      return Number(pa) - Number(pb) || signalOrder(a) - signalOrder(b) || a.localeCompare(b);
-    });
-    mcuH = Math.max(6, sigs.length * 2 + 2) * G;
-    const x = 4 * G;
+    const sides = mcuSides([...bySignal.keys()], !!opts.allPins);
+    if (sides.left.length) mcuX += LABEL_ROOM + STUB;
+    mcuH = Math.max(6, Math.max(sides.left.length, sides.right.length) * 2 + 2) * G;
+    const x = mcuX;
     const y = 6 * G;
+    const pin = (s: string, i: number, side: "left" | "right"): SchPin => {
+      const ids = bySignal.get(s)!;
+      // The Arduino name, when the signal has one (D13, A0).
+      const alias = ids.find((id) => /^[DA]\d+$/.test(id));
+      return {
+        ids,
+        name: alias ? `${s} (${alias})` : s,
+        net: netName({ part: board.id, pin: ids[0] }),
+        side,
+        x: side === "left" ? x - STUB : x + mcuW + STUB,
+        y: y + (2 * i + 2) * G,
+      };
+    };
     symbols.push({
       part: board.id,
       kind: board.kind,
@@ -206,29 +223,18 @@ export function buildSchematic(project: Project, netlist: Netlist): Schematic {
       y,
       w: mcuW,
       h: mcuH,
-      pins: sigs.map((s, i) => {
-        const ids = bySignal.get(s)!;
-        // The Arduino name, when the signal has one (D13, A0).
-        const alias = ids.find((id) => /^[DA]\d+$/.test(id));
-        return {
-          ids,
-          name: alias ? `${s} (${alias})` : s,
-          net: netName({ part: board.id, pin: ids[0] }),
-          side: "right" as const,
-          x: x + mcuW + STUB,
-          y: y + (2 * i + 2) * G,
-        };
-      }),
+      pins: [...sides.left.map((s, i) => pin(s, i, "left")), ...sides.right.map((s, i) => pin(s, i, "right"))],
     });
   }
 
   // Other parts in columns to the right, those on lower MCU pins first.
   // Compared pin by pin, so of two parts on the same clock the one on more
   // MCU pins (the first of a chain) comes first.
-  const order = new Map(symbols[0]?.pins.map((p, i) => [p.net, i]) ?? []);
+  // (Pins in use only: with every MCU pin shown, most have no net.)
+  const order = new Map(symbols[0]?.pins.flatMap((p, i) => (p.net ? [[p.net, i] as const] : [])) ?? []);
   const rank = (id: string) => {
     const def = PART_BY_KIND[kindOf.get(id)!];
-    return def.pins.map((p) => order.get(netName({ part: id, pin: p.id })) ?? 999).sort((a, b) => a - b);
+    return def.pins.map((p) => order.get(netName({ part: id, pin: p.id }) ?? "") ?? 999).sort((a, b) => a - b);
   };
   const byRank = (a: number[], b: number[]) => {
     for (let i = 0; i < Math.max(a.length, b.length); i++) {
@@ -237,10 +243,15 @@ export function buildSchematic(project: Project, netlist: Netlist): Schematic {
     }
     return 0;
   };
-  const parts = project.parts
+  const ideal = project.parts
     .filter((p) => !isBoard(p.kind) && !isMechanical(p.kind) && PART_BY_KIND[p.kind])
     .sort((a, b) => byRank(rank(a.id), rank(b.id)) || a.id.localeCompare(b.id));
-  const colX0 = (board ? 4 * G + mcuW + STUB : 0) + LABEL_ROOM + STUB;
+  const byId = new Map(ideal.map((p) => [p.id, p]));
+  const parts = stableOrder(
+    ideal.map((p) => p.id),
+    opts.order ?? [],
+  ).map((id) => byId.get(id)!);
+  const colX0 = (board ? mcuX + mcuW + STUB : 0) + LABEL_ROOM + STUB;
   const maxColH = Math.max(mcuH + 6 * G, 60 * G);
   let colX = colX0;
   let colW = 0;
@@ -337,7 +348,7 @@ export function buildSchematic(project: Project, netlist: Netlist): Schematic {
     y = sym.y + sym.h + 4 * G;
   }
 
-  const right = Math.max(colX + colW + STUB + LABEL_ROOM, board ? 4 * G + mcuW + STUB + LABEL_ROOM : 0);
+  const right = Math.max(colX + colW + STUB + LABEL_ROOM, board ? mcuX + mcuW + STUB + LABEL_ROOM : 0);
   const bottom = Math.max(...symbols.map((s) => s.y + s.h), 0) + 6 * G;
   return { symbols, nets, width: right, height: bottom };
 }

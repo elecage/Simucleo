@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas } from "./editor/Canvas";
 import { buildSchematic } from "./schematic/layout";
-import { SchematicView } from "./schematic/SchematicView";
-import { defaultProject, newId, pinKey, toCircuit, type PinRef, type Project } from "./editor/model";
+import { SchematicView, type SchEnd } from "./schematic/SchematicView";
+import { boardExit, choosePin, routePoints } from "./schematic/wiring";
+import { josa } from "./lessons/korean";
+import { defaultProject, newId, pinKey, pinPosition, toCircuit, type PinRef, type Project } from "./editor/model";
 import { PARTS, PART_BY_KIND } from "./parts";
 import { nucleoSignal } from "./parts/nucleo";
 import { BottomPanel } from "./run/BottomPanel";
@@ -93,6 +95,11 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   // Breadboard (where wires go) or schematic (what connects to what).
   const [view, setView] = useState<"board" | "schematic">("board");
+  // The schematic lists every MCU pin (to wire one not in use yet).
+  const [allPins, setAllPins] = useState(false);
+  // Part order of the last schematic drawn, so a wire does not reshuffle it;
+  // forgotten when another project is opened.
+  const schOrder = useRef<string[]>([]);
   const [wireColor, setWireColor] = useState(WIRE_COLORS[0]);
   const runner = useRunner();
   const examples = useExamples();
@@ -113,6 +120,7 @@ export function App() {
   const { load } = runner;
   const applyLoaded = useCallback(
     async (l: Loaded) => {
+      schOrder.current = [];
       setProject(l.project);
       setFitKey((k) => k + 1);
       setSelected(null);
@@ -143,6 +151,7 @@ export function App() {
   const confirmReplace = () => !dirty || window.confirm("지금 배선을 바꿀까요? 저장하지 않은 내용은 사라집니다.");
   const onNew = () => {
     if (!confirmReplace()) return;
+    schOrder.current = [];
     setProject(defaultProject());
     setProjectName("새 프로젝트");
     setSelected(null);
@@ -309,7 +318,11 @@ export function App() {
     }
     return m;
   }, [netlist]);
-  const schematic = useMemo(() => buildSchematic(project, netlist), [project, netlist]);
+  const schematic = useMemo(() => {
+    const s = buildSchematic(project, netlist, { allPins, order: schOrder.current });
+    schOrder.current = s.symbols.filter((x) => x.shape !== "mcu").map((x) => x.part);
+    return s;
+  }, [project, netlist, allPins]);
   const netOf = useCallback((p: PinRef) => netIndex.get(pinKey(p)) ?? new Set([pinKey(p)]), [netIndex]);
 
   // Nets that join two or more parts (breadboards excluded), with Nucleo pins
@@ -331,6 +344,85 @@ export function App() {
   }, [netlist, project.parts]);
 
   const taken = () => new Set([...project.parts.map((p) => p.id), ...project.wires.map((w) => w.id)]);
+
+  // ------------------------------------------------ wiring on the schematic
+  /** How a pin end is called in messages: nucleo.PA5, r1.2. */
+  const endLabel = (e: SchEnd) => {
+    const kind = project.parts.find((p) => p.id === e.part)?.kind;
+    return `${e.part}.${kind === "nucleo-f401re" ? (nucleoSignal(e.ids[0]) ?? e.ids[0]) : e.ids.join("/")}`;
+  };
+  const netOfEnd = (e: SchEnd) =>
+    schematic.symbols.find((s) => s.part === e.part)?.pins.find((p) => p.ids.join("/") === e.ids.join("/"))?.net ?? null;
+
+  /** A wire drawn on the schematic: a real wire between the two pins, so it
+   * is on the breadboard too, routed with square bends. */
+  const connectEnds = (a: SchEnd, b: SchEnd) => {
+    const pa = project.parts.find((p) => p.id === a.part);
+    const pb = project.parts.find((p) => p.id === b.part);
+    if (!pa || !pb) return;
+    const same = a.ids.some((x) => b.ids.some((y) => netOf({ part: a.part, pin: x }).has(pinKey({ part: b.part, pin: y }))));
+    if (same) {
+      const n = netOfEnd(a);
+      setNotice(
+        `${josa(endLabel(a), "와/과")} ${endLabel(b)}는 이미 같은 넷${n ? `(${n})` : ""}에 연결되어 있어 와이어를 더하지 않았습니다.`,
+      );
+      return;
+    }
+    const used = new Set(project.wires.flatMap((w) => [pinKey(w.a), pinKey(w.b)]));
+    const options = (part: typeof pa, ids: string[]) =>
+      ids.flatMap((id) => {
+        const at = pinPosition(part, id);
+        return at ? [{ id, at, used: used.has(pinKey({ part: part.id, pin: id })) }] : [];
+      });
+    const optA = options(pa, a.ids);
+    const optB = options(pb, b.ids);
+    if (!optA.length || !optB.length) return;
+    // Each end on the pin of its terminal nearest the other end.
+    const ca = choosePin(optA, optB[0].at)!;
+    const cb = choosePin(optB, ca.at)!;
+    // A lane of its own beside the board's other wires (four, then again).
+    const onBoard = (r: PinRef) => project.parts.find((q) => q.id === r.part)?.kind === "nucleo-f401re";
+    const lane = project.wires.filter((w) => onBoard(w.a) || onBoard(w.b)).length % 4;
+    const exit = (part: typeof pa, y: number) => {
+      const def = PART_BY_KIND[part.kind];
+      return part.kind === "nucleo-f401re" && def ? boardExit(y, { y: part.y, h: def.h }, lane) : undefined;
+    };
+    const points = routePoints(ca.at, cb.at, exit(pa, ca.at.y), exit(pb, cb.at.y));
+    setProject((p) => {
+      const wire = {
+        id: newId("w", new Set([...p.parts.map((q) => q.id), ...p.wires.map((w) => w.id)])),
+        a: { part: pa.id, pin: ca.id },
+        b: { part: pb.id, pin: cb.id },
+        color: wireColor,
+        ...(points.length ? { points } : {}),
+      };
+      return { ...p, wires: [...p.wires, wire] };
+    });
+  };
+
+  /** "연결 끊기" on the schematic: the wires on that pin go. What still joins
+   * it is the breadboard (a row, or pins on one point): moved there. */
+  const disconnectEnd = (e: SchEnd) => {
+    const keys = new Set(e.ids.map((id) => pinKey({ part: e.part, pin: id })));
+    const removed = project.wires.filter((w) => keys.has(pinKey(w.a)) || keys.has(pinKey(w.b)));
+    const next = { ...project, wires: project.wires.filter((w) => !removed.includes(w)) };
+    const nl = sim ? sim.setCircuit(toCircuit(next)) : { nets: [] };
+    const still = buildSchematic(next, nl, { allPins, order: schOrder.current })
+      .symbols.find((s) => s.part === e.part)
+      ?.pins.find((p) => p.ids.join("/") === e.ids.join("/"))?.net;
+    const name = endLabel(e);
+    if (removed.length) {
+      setProject(next);
+      if (removed.some((w) => w.id === selected)) setSelected(null);
+    }
+    if (still) {
+      setNotice(
+        `${removed.length ? `와이어 ${removed.length}개를 지웠지만 ` : ""}${josa(name, "은/는")} 아직 브레드보드(같은 줄이나 같은 구멍)를 통해 ${still}에 연결되어 있습니다. 브레드보드 보기에서 부품을 옮겨 연결을 끊으세요.`,
+      );
+    } else {
+      setNotice(removed.length ? `${name}에서 와이어 ${removed.length}개를 지웠습니다.` : `${name}에는 연결된 와이어가 없습니다.`);
+    }
+  };
 
   const addPart = (kind: string) => {
     const def = PART_BY_KIND[kind];
@@ -455,7 +547,7 @@ export function App() {
         </section>
       </aside>
 
-      <main>
+      <main className={view === "schematic" ? "schematic-on" : undefined}>
         <div className="view-toggle" role="group" aria-label="보기">
           <button className={view === "board" ? "on" : ""} onClick={() => setView("board")}>
             브레드보드
@@ -473,6 +565,10 @@ export function App() {
             onSelect={setSelected}
             parts={project.parts}
             onAction={onPartAction}
+            allPins={allPins}
+            onAllPins={setAllPins}
+            onConnect={connectEnds}
+            onDisconnect={disconnectEnd}
           />
         )}
         <div className="view-board" hidden={view !== "board"}>
@@ -661,6 +757,8 @@ export function App() {
             부품이나 와이어를 선택하세요.
             <br />
             배선: 핀을 클릭한 뒤 다른 핀을 클릭하거나, 핀에서 끌어다 놓기. 가는 길에 빈 곳을 클릭하면 꺾는 점.
+            <br />
+            회로도에서도 배선: 핀 끝에서 다른 핀 끝으로 끌어 놓기. 핀 끝을 클릭해 고르면 연결 끊기.
             <br />
             Delete 삭제 · 휠/＋−로 확대·축소 · 빈 곳 끌기로 이동
           </p>

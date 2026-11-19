@@ -237,3 +237,23 @@ test("breathing on the DHT22 raises humidity and temperature", async ({ page }) 
   await expect.poll(hum, { timeout: 30000 }).toBe(48.3);
   expect(await num(page, "[data-id=dht] [data-temp]", "data-temp")).toBe(22.5);
 });
+
+test("a second finger cannot take over a held touch", async ({ page }) => {
+  test.setTimeout(60000);
+  await loadExampleProject(page, "hal-adc-servo");
+  await expect(consoleOut(page)).toContainText("TMP36 24.9 C", { timeout: 5000 });
+  const temp = () => num(page, "[data-id=tmp] [data-temp]", "data-temp");
+  const body = page.locator("[data-id=tmp] .to92");
+  const knob = page.locator("[data-id=pot] [data-drag=knob]");
+  // Finger 1 holds the TMP36 until it is clearly warmer…
+  await body.dispatchEvent("pointerdown", { bubbles: true, pointerId: 1, buttons: 1 });
+  await expect.poll(temp, { timeout: 10000 }).toBeGreaterThan(27);
+  // …finger 2 lands on the pot knob meanwhile, then both lift.
+  await knob.dispatchEvent("pointerdown", { bubbles: true, pointerId: 2, buttons: 1 });
+  await page.locator(".canvas").dispatchEvent("pointerup", { bubbles: true, pointerId: 1, buttons: 0 });
+  await page.locator(".canvas").dispatchEvent("pointerup", { bubbles: true, pointerId: 2, buttons: 0 });
+  // The sensor was let go: it cools instead of warming on forever.
+  const lifted = await temp();
+  await page.waitForTimeout(2500);
+  expect(await temp()).toBeLessThan(lifted - 0.5);
+});

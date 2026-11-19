@@ -103,6 +103,8 @@ export function Canvas({
   const svgRef = useRef<SVGSVGElement>(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: BASE_SCALE });
   const [drag, setDrag] = useState<Drag | null>(null);
+  /** The pointer the current drag follows (one gesture at a time). */
+  const dragPointer = useRef<number | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [mouse, setMouse] = useState({ x: 0, y: 0 });
   const [hover, setHover] = useState<{ pin: PinRef; label: string } | null>(null);
@@ -408,6 +410,7 @@ export function Canvas({
   /** Route all pointer events to the canvas until the button is released,
    * even outside it, so a drag always ends (#3). */
   const startDrag = (e: RPointerEvent, d: Drag) => {
+    dragPointer.current = e.pointerId;
     try {
       svgRef.current?.setPointerCapture(e.pointerId);
     } catch {
@@ -418,9 +421,14 @@ export function Canvas({
   /** The drag is over without a release we saw: let go of a control too. */
   const dropDrag = (e: { clientX: number; clientY: number }) => {
     if (drag?.kind === "control") releaseControl(drag.key, e);
+    dragPointer.current = null;
     setDrag(null);
   };
+  /** Another finger while one drag is on: the drag belongs to the first. */
+  const otherPointer = (e: RPointerEvent) => dragPointer.current !== null && e.pointerId !== dragPointer.current;
   const endDrag = (e: RPointerEvent) => {
+    if (otherPointer(e)) return;
+    dragPointer.current = null;
     if (drag?.kind === "control") releaseControl(drag.key, e);
     if (svgRef.current?.hasPointerCapture(e.pointerId)) svgRef.current.releasePointerCapture(e.pointerId);
     if (drag?.kind === "end") {
@@ -439,6 +447,7 @@ export function Canvas({
   };
 
   const onPointerMove = (e: RPointerEvent) => {
+    if (otherPointer(e)) return;
     if (drag && e.buttons === 0) {
       // The release happened somewhere we could not see it.
       dropDrag(e);
@@ -608,6 +617,11 @@ export function Canvas({
           }
           onSelect(null);
           startDrag(e, { kind: "pan", sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y });
+        }}
+        onPointerDownCapture={(e) => {
+          // One gesture at a time: a second finger cannot start another
+          // drag (it would take over the first one's release).
+          if (otherPointer(e)) e.stopPropagation();
         }}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}

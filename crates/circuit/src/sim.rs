@@ -25,6 +25,8 @@ use crate::devices::{
     Mpu6050, NeoPixel, Relay, SdCard, Sonar, Ssd1306,
 };
 
+use crate::tier8::{Bmp280, Hc595, Pir, Tm1637, PIR_VMIN};
+
 use crate::netlist::{build_netlist, BusCatalog, Circuit, PartCatalog, PartInstance, PinRef, Wire};
 
 /// Simulated time in core clock cycles.
@@ -236,6 +238,34 @@ pub struct PartVisual {
     /// Relay: COM is on NO (else on NC).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub closed: Option<bool>,
+    /// 74HC595: its shift and storage registers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub register: Option<ShiftView>,
+    /// TM1637: the digits it shows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digits: Option<DigitsView>,
+}
+
+/// What a 74HC595 holds.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct ShiftView {
+    /// Shift register, bit n = stage n.
+    pub shift: u8,
+    /// Storage register (Q0 = bit 0), driven while `enabled`.
+    pub latch: u8,
+    /// OE is low: Q0–Q7 drive their levels (else high impedance).
+    pub enabled: bool,
+}
+
+/// What a TM1637 4-digit display shows.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct DigitsView {
+    /// Segment byte per digit, left first (bit 0 = a … bit 6 = g, bit 7
+    /// = the colon on digit 1).
+    pub segments: Vec<u8>,
+    /// Pulse width setting 0–7.
+    pub brightness: u8,
+    pub on: bool,
 }
 
 /// What a chain of MAX7219 8×8 matrices shows.
@@ -320,6 +350,8 @@ struct Solution {
     over: Vec<bool>,
     /// Level seen by each watched MCU pin; `None` = floating.
     inputs: Vec<Option<bool>>,
+    /// Nodes connected to some source (else floating).
+    driven: Vec<bool>,
     warnings: Vec<String>,
 }
 
@@ -364,6 +396,14 @@ pub struct CircuitSim {
     /// Relay modules; their contact states follow the device outputs in
     /// the drive key.
     relay_parts: Vec<RelayPart>,
+    /// 74HC595 shift registers, TM1637 displays and PIR sensors.
+    shift_parts: Vec<ShiftPart>,
+    tm_parts: Vec<TmPart>,
+    pir_parts: Vec<PirPart>,
+    /// NeoPixel parts: (id, DIN, DOUT), for chains.
+    pixel_parts: Vec<(String, usize, usize)>,
+    /// Re-solves in progress (device outputs that changed on what they saw).
+    depth: u32,
     /// Last level each single-wire part saw on its line.
     line_levels: HashMap<String, bool>,
     /// The device addressed on each I2C bus (by SCL pin).
@@ -413,6 +453,42 @@ pub struct UartLink {
     pub rxd: Vec<(u8, u8)>,
     pub txd: Vec<(u8, u8)>,
 }
+
+/// A 74HC595: supply, inputs and the serial output Q7'.
+#[derive(Debug, Clone)]
+struct ShiftPart {
+    id: String,
+    vcc: usize,
+    gnd: usize,
+    ds: usize,
+    shcp: usize,
+    stcp: usize,
+    oe: usize,
+    mr: usize,
+    q7s: usize,
+}
+
+/// A TM1637 display module (10 kΩ pull-ups on CLK and DIO).
+#[derive(Debug, Clone)]
+struct TmPart {
+    id: String,
+    vcc: usize,
+    gnd: usize,
+    clk: usize,
+    dio: usize,
+}
+
+/// A PIR motion sensor's supply.
+#[derive(Debug, Clone)]
+struct PirPart {
+    id: String,
+    vcc: usize,
+    gnd: usize,
+}
+
+/// Lowest supply of a 74HC595 (2–6 V) and of a TM1637 module.
+const HC595_VMIN: f64 = 2.0;
+const TM1637_VMIN: f64 = 3.0;
 
 /// Lowest supply of an HC-05 board (3.6–6 V).
 const HC05_VMIN: f64 = 3.5;
@@ -527,6 +603,11 @@ impl CircuitSim {
             dev_outputs: Vec::new(),
             uart_parts: Vec::new(),
             relay_parts: Vec::new(),
+            shift_parts: Vec::new(),
+            tm_parts: Vec::new(),
+            pir_parts: Vec::new(),
+            pixel_parts: Vec::new(),
+            depth: 0,
             line_levels: HashMap::new(),
             devices: HashMap::new(),
             i2c_active: HashMap::new(),
@@ -573,6 +654,10 @@ impl CircuitSim {
                     b.to_mcu.clear();
                 }
                 Device::Relay(r) => *r = Relay::default(),
+                Device::Shift(x) => *x = Hc595::default(),
+                Device::Tm(x) => **x = Tm1637::new(),
+                Device::Pir(x) => *x = Pir::new(x.retrigger, x.delay, x.warmup),
+                Device::Baro(x) => **x = Bmp280::new(x.address, x.temp, x.pressure),
             }
         }
         self.i2c_active.clear();
@@ -738,6 +823,13 @@ impl CircuitSim {
                     b: PinRef::new(&p.id, "GND"),
                 });
             }
+            // Joystick: the stick pressed down closes SW to GND.
+            if p.kind == "joystick" && p.props.get("sw").is_some_and(truthy) {
+                wires.push(Wire {
+                    a: PinRef::new(&p.id, "SW"),
+                    b: PinRef::new(&p.id, "GND"),
+                });
+            }
             // Keypad: a pressed key joins its row and column ("kp:5").
             if p.kind == "keypad-4x4" {
                 for (r, row) in KEYPAD.iter().enumerate() {
@@ -796,6 +888,10 @@ impl CircuitSim {
         let mut dev_outputs = Vec::new();
         let mut uart_parts = Vec::new();
         let mut relay_parts = Vec::new();
+        let mut shift_parts = Vec::new();
+        let mut tm_parts = Vec::new();
+        let mut pir_parts = Vec::new();
+        let mut pixel_parts = Vec::new();
         let now_s = self.seconds_at(self.last_time);
         let mut map = std::mem::take(&mut self.pin_nodes);
         let mut add_visual = |id: &str, kind: VisualKind, channels: usize| {
@@ -1371,6 +1467,8 @@ impl CircuitSim {
                         data: din,
                         vmin: 3.5,
                     });
+                    // What goes past its own LEDs leaves on DOUT.
+                    pixel_parts.push((p.id.clone(), din, node(pin("DOUT"), &mut map)));
                     let count = prop_f64(p, "count", 8.0).clamp(1.0, 256.0) as usize;
                     let keep = matches!(self.devices.get(&p.id), Some(Device::Pixels(n)) if n.leds.len() == count);
                     if !keep {
@@ -1408,6 +1506,140 @@ impl CircuitSim {
                     if !matches!(self.devices.get(&p.id), Some(Device::Ir(_))) {
                         self.devices
                             .insert(p.id.clone(), Device::Ir(IrRemote::default()));
+                    }
+                }
+                "joystick" => {
+                    // KY-023: two 10 kΩ pots between GND and +5V, wipers on
+                    // VRx and VRy; the push switch closes SW to GND (no
+                    // pull-up on the module).
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("+5V"), &mut map), node(pin("GND"), &mut map));
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: 1.0,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    node(pin("SW"), &mut map);
+                    for (axis, wiper) in [("x", "VRx"), ("y", "VRy")] {
+                        let pos = prop_f64(p, axis, 0.5).clamp(0.0, 1.0);
+                        let w = node(pin(wiper), &mut map);
+                        elements.push(Element::Resistor {
+                            a: gnd,
+                            b: w,
+                            r: (10_000.0 * pos).max(1.0),
+                        });
+                        elements.push(Element::Resistor {
+                            a: w,
+                            b: vcc,
+                            r: (10_000.0 * (1.0 - pos)).max(1.0),
+                        });
+                    }
+                }
+                "hc595" => {
+                    // 74HC595 in DIP-16: Q0–Q7 and Q7' are push-pull
+                    // outputs of the chip (device outputs 0–7 and 8).
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: HC595_VMIN,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    for i in 0..8 {
+                        let q = node(pin(&format!("Q{i}")), &mut map);
+                        dev_outputs.push((p.id.clone(), q, i));
+                    }
+                    let q7s = node(pin("Q7S"), &mut map);
+                    dev_outputs.push((p.id.clone(), q7s, 8));
+                    shift_parts.push(ShiftPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        ds: node(pin("DS"), &mut map),
+                        shcp: node(pin("SHCP"), &mut map),
+                        stcp: node(pin("STCP"), &mut map),
+                        oe: node(pin("OE"), &mut map),
+                        mr: node(pin("MR"), &mut map),
+                        q7s,
+                    });
+                    if !matches!(self.devices.get(&p.id), Some(Device::Shift(_))) {
+                        self.devices
+                            .insert(p.id.clone(), Device::Shift(Hc595::default()));
+                    }
+                }
+                "tm1637" => {
+                    // 4-digit module: 10 kΩ pull-ups on CLK and DIO; the
+                    // chip pulls DIO low for each ACK.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    let (clk, dio) = (node(pin("CLK"), &mut map), node(pin("DIO"), &mut map));
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: TM1637_VMIN,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    for line in [clk, dio] {
+                        elements.push(Element::Resistor {
+                            a: vcc,
+                            b: line,
+                            r: 10_000.0,
+                        });
+                    }
+                    dev_outputs.push((p.id.clone(), dio, 0));
+                    tm_parts.push(TmPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        clk,
+                        dio,
+                    });
+                    if !matches!(self.devices.get(&p.id), Some(Device::Tm(_))) {
+                        self.devices
+                            .insert(p.id.clone(), Device::Tm(Box::new(Tm1637::new())));
+                    }
+                }
+                "pir" => {
+                    // HC-SR501: regulator for 4.5–20 V, OUT a 3.3 V output.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: PIR_VMIN,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    dev_outputs.push((p.id.clone(), node(pin("OUT"), &mut map), 0));
+                    pir_parts.push(PirPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                    });
+                    let retrigger = prop_str(p, "mode", "H") != "L";
+                    let delay = prop_f64(p, "delay", 3.0).clamp(0.3, 300.0);
+                    let warmup = prop_f64(p, "warmup", 3.0).clamp(0.0, 60.0);
+                    let motion = p.props.get("motion").is_some_and(truthy);
+                    match self.devices.get_mut(&p.id) {
+                        Some(Device::Pir(x)) => x.configure(now_s, retrigger, delay, warmup),
+                        _ => {
+                            self.devices.insert(
+                                p.id.clone(),
+                                Device::Pir(Pir::new(retrigger, delay, warmup)),
+                            );
+                        }
+                    }
+                    if let Some(Device::Pir(x)) = self.devices.get_mut(&p.id) {
+                        x.set_motion(now_s, motion);
                     }
                 }
                 "max7219" => {
@@ -1505,7 +1737,7 @@ impl CircuitSim {
                         self.devices.insert(p.id.clone(), fresh);
                     }
                 }
-                "oled-ssd1306" | "rtc-ds3231" | "aht20" | "lcd-i2c" | "mpu6050" => {
+                "oled-ssd1306" | "rtc-ds3231" | "aht20" | "lcd-i2c" | "mpu6050" | "bmp280" => {
                     // Breakout module: the chip plus 4.7 kΩ pull-ups from
                     // its VCC to SCL and SDA.
                     let vis = add_visual(&p.id, VisualKind::Sensor, 1);
@@ -1561,6 +1793,15 @@ impl CircuitSim {
                             };
                             Device::Imu(Box::new(Mpu6050::new(addr)))
                         }
+                        "bmp280" => {
+                            // SDO high: 0x77.
+                            let addr = if prop_str(p, "address", "0x76") == "0x77" {
+                                0x77
+                            } else {
+                                0x76
+                            };
+                            Device::Baro(Box::new(Bmp280::new(addr, temp, 101_325.0)))
+                        }
                         _ => Device::Aht(Aht20::new(temp, prop_f64(p, "humidity", 50.0))),
                     };
                     let keep = self.devices.get(&p.id).is_some_and(|d| {
@@ -1584,6 +1825,10 @@ impl CircuitSim {
                             m.gyro = ["gx", "gy", "gz"].map(|k| prop_f64(p, k, 0.0));
                             // A shake: acceleration on top of gravity (g).
                             m.extra = ["ax", "ay", "az"].map(|k| prop_f64(p, k, 0.0));
+                        }
+                        Some(Device::Baro(b)) => {
+                            b.temp = temp;
+                            b.pressure = prop_f64(p, "pressure", 1013.25) * 100.0;
                         }
                         _ => {}
                     }
@@ -1648,6 +1893,9 @@ impl CircuitSim {
             .chain(wire_parts.iter().map(|b: &WirePart| b.id.as_str()))
             .chain(uart_parts.iter().map(|b: &UartPart| b.id.as_str()))
             .chain(relay_parts.iter().map(|b: &RelayPart| b.id.as_str()))
+            .chain(shift_parts.iter().map(|b: &ShiftPart| b.id.as_str()))
+            .chain(tm_parts.iter().map(|b: &TmPart| b.id.as_str()))
+            .chain(pir_parts.iter().map(|b: &PirPart| b.id.as_str()))
             .chain(encoders)
             .collect();
         self.devices.retain(|id, _| ids.contains(id.as_str()));
@@ -1664,6 +1912,10 @@ impl CircuitSim {
         self.dev_outputs = dev_outputs;
         self.uart_parts = uart_parts;
         self.relay_parts = relay_parts;
+        self.shift_parts = shift_parts;
+        self.tm_parts = tm_parts;
+        self.pir_parts = pir_parts;
+        self.pixel_parts = pixel_parts;
         self.nodes = nodes;
         self.elements = elements;
         self.visuals = visuals;
@@ -1823,6 +2075,7 @@ impl CircuitSim {
             level,
             over,
             inputs,
+            driven: comp,
             warnings,
         }
     }
@@ -1985,10 +2238,16 @@ impl CircuitSim {
     /// input level of every pin of [`CircuitSim::mcu_pins`] if any of them
     /// may have changed.
     pub fn update(&mut self, time: Cycles, drives: &[Drive]) -> Option<Vec<Option<bool>>> {
-        // Devices that drive a line on their own schedule (DHT) come after
-        // the MCU's pins in the drive list, so they are part of the cache key.
-        let now_s = self.seconds_at(time);
-        let mut key = drives.to_vec();
+        let old = self.current.clone();
+        self.update_inner(time, drives);
+        let sol = self.current.clone()?;
+        changed_inputs(&old, &sol)
+    }
+
+    /// What the devices drive and where the relay contacts are, after the
+    /// MCU's pins in the drive key.
+    fn device_key(&mut self, now_s: f64) -> Vec<Drive> {
+        let mut key = Vec::new();
         for (id, _, idx) in &self.dev_outputs {
             let out = self.devices.get_mut(id).and_then(|d| {
                 d.advance(now_s);
@@ -2011,9 +2270,19 @@ impl CircuitSim {
             };
             key.push(if closed { Drive::High } else { Drive::Low });
         }
+        key
+    }
+
+    fn update_inner(&mut self, time: Cycles, drives: &[Drive]) {
+        // Devices that drive a line on their own schedule (DHT) come after
+        // the MCU's pins in the drive list, so they are part of the cache key.
+        let now_s = self.seconds_at(time);
+        let mcu = drives.len();
+        let mut key = drives.to_vec();
+        key.extend(self.device_key(now_s));
         let drives = &key[..];
         if self.drives.as_deref() == Some(drives) {
-            return None;
+            return;
         }
         self.integrate(time);
         let sol = match self.cache.get(drives) {
@@ -2116,14 +2385,18 @@ impl CircuitSim {
         self.observe_lines(now_s, &sol);
         self.observe_matrices(&sol);
         self.observe_relays(now_s, &sol);
-        // A module that powered up or down drives its outputs differently:
-        // solve again with them.
-        if self.observe_uart_parts(&sol) {
-            let mcu = self.mcu.len();
-            let again = self.update(time, &drives[..mcu]);
-            return again.or_else(|| changed_inputs(&old, &sol));
+        self.observe_shift_registers(&sol);
+        self.observe_tm1637(now_s, &sol);
+        self.observe_pirs(now_s, &sol);
+        // A module that powered up or down, a register that latched, a
+        // chip that acknowledged: its outputs differ from what was solved
+        // with, so solve again with them (the MCU sees the result now).
+        let powered = self.observe_uart_parts(&sol);
+        if (powered || self.device_key(now_s) != key[mcu..]) && self.depth < 8 {
+            self.depth += 1;
+            self.update_inner(time, &key[..mcu]);
+            self.depth -= 1;
         }
-        changed_inputs(&old, &sol)
     }
 
     /// Relay coils follow their input; the contacts follow the coil after
@@ -2145,6 +2418,109 @@ impl CircuitSim {
             }
             if let Some(Device::Relay(r)) = self.devices.get_mut(&part.id) {
                 r.set_coil(now, supply >= RELAY_PULL_IN && drive);
+            }
+        }
+    }
+
+    /// 74HC595s watch SHCP and STCP: bit-banged bits shift in on SHCP
+    /// rising edges, the outputs take them on STCP rising edges.
+    fn observe_shift_registers(&mut self, sol: &Solution) {
+        let high = |n: usize| sol.v[n] > VDD / 2.0;
+        // Every chip samples DS as it was before this edge (a chip chained
+        // on Q7' takes the bit that left the one before it).
+        for part in &self.shift_parts {
+            let Some(Device::Shift(x)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            let powered = sol.v[part.vcc] - sol.v[part.gnd] >= HC595_VMIN;
+            if !powered {
+                *x = Hc595::default();
+                continue;
+            }
+            x.powered = true;
+            let (oe_float, mr_float) = (!sol.driven[part.oe], !sol.driven[part.mr]);
+            if oe_float {
+                self.warnings.insert(format!(
+                    "{}: OE is not connected — the outputs are off (high impedance); tie OE to GND to enable them",
+                    part.id
+                ));
+            }
+            if mr_float {
+                self.warnings.insert(format!(
+                    "{}: MR is not connected — the register stays cleared; tie MR to VCC (it is active low)",
+                    part.id
+                ));
+            }
+            x.enabled = !oe_float && !high(part.oe);
+            let mr = !mr_float && high(part.mr);
+            x.pins(high(part.shcp), high(part.stcp), high(part.ds), mr);
+        }
+    }
+
+    /// TM1637 modules watch CLK and DIO; their warnings are the firmware's.
+    fn observe_tm1637(&mut self, now: f64, sol: &Solution) {
+        for part in &self.tm_parts {
+            let Some(Device::Tm(x)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            if sol.v[part.vcc] - sol.v[part.gnd] < TM1637_VMIN {
+                if x.bytes > 0 || x.ack {
+                    **x = Tm1637::new();
+                }
+                continue;
+            }
+            let high = |n: usize| sol.v[n] > VDD / 2.0;
+            x.pins(now, high(part.clk), high(part.dio));
+            if let Some(w) = x.warning.take() {
+                self.warnings.insert(format!("{}: {w}", part.id));
+            }
+        }
+    }
+
+    /// PIR sensors notice their supply (the warm-up starts at power-up).
+    fn observe_pirs(&mut self, now: f64, sol: &Solution) {
+        for part in &self.pir_parts {
+            let supply = sol.v[part.vcc] - sol.v[part.gnd];
+            if supply > 1.0 && supply < PIR_VMIN {
+                self.warnings.insert(format!(
+                    "{}: VCC is {supply:.1} V — the HC-SR501 needs 4.5–20 V (connect VCC to 5V); it detects nothing",
+                    part.id
+                ));
+            }
+            if let Some(Device::Pir(x)) = self.devices.get_mut(&part.id) {
+                x.power(now, supply >= PIR_VMIN);
+            }
+        }
+    }
+
+    /// NeoPixels pass what went past their own LEDs to the part on their
+    /// DOUT, down the chain.
+    fn forward_pixels(&mut self, id: &str) {
+        let mut queue = vec![id.to_string()];
+        let mut seen: BTreeSet<String> = queue.iter().cloned().collect();
+        while let Some(id) = queue.pop() {
+            let bits = match self.devices.get_mut(&id) {
+                Some(Device::Pixels(n)) if !n.spill.is_empty() => std::mem::take(&mut n.spill),
+                _ => continue,
+            };
+            let Some(&(_, _, dout)) = self.pixel_parts.iter().find(|p| p.0 == id) else {
+                continue;
+            };
+            let next: Vec<String> = self
+                .pixel_parts
+                .iter()
+                .filter(|p| p.1 == dout && !seen.contains(&p.0))
+                .map(|p| p.0.clone())
+                .collect();
+            for next in next {
+                let powered = self.wire_parts.iter().any(|w| {
+                    w.id == next && self.node_voltage(w.vcc) - self.node_voltage(w.gnd) >= w.vmin
+                });
+                if let (true, Some(Device::Pixels(m))) = (powered, self.devices.get_mut(&next)) {
+                    m.receive(bits.clone());
+                    seen.insert(next.clone());
+                    queue.push(next);
+                }
             }
         }
     }
@@ -2202,6 +2578,7 @@ impl CircuitSim {
     /// Close the display frame at `time`; `seconds` is its simulated length.
     pub fn end_frame(&mut self, time: Cycles, seconds: f64) -> Vec<PartVisual> {
         self.integrate(time);
+        let mut spilled = Vec::new();
         let span = time.saturating_sub(self.frame_start) as f64;
         let cur = self.current.clone();
         let mut out = Vec::new();
@@ -2363,7 +2740,54 @@ impl CircuitSim {
                             } else {
                                 *n = NeoPixel::new(n.leds.len());
                             }
+                            if !n.spill.is_empty() {
+                                spilled.push(slot.id.clone());
+                            }
                             v.leds = n.leds.clone();
+                        }
+                        Some(Device::Shift(x)) => {
+                            v.register = Some(ShiftView {
+                                shift: x.shift,
+                                latch: x.latch,
+                                enabled: x.enabled,
+                            });
+                        }
+                        Some(Device::Tm(x)) => {
+                            v.digits = Some(DigitsView {
+                                segments: x.ram[..4].to_vec(),
+                                brightness: x.brightness(),
+                                on: powered_now && x.on(),
+                            });
+                        }
+                        Some(Device::Pir(x)) => {
+                            let t =
+                                self.clock.1 + (time as f64 - self.clock.0 as f64) / self.clock.2;
+                            x.advance(t);
+                            v.on = Some(if x.out { 1.0 } else { 0.0 });
+                            v.text = Some(
+                                if !x.powered() {
+                                    "off"
+                                } else if x.out {
+                                    "high"
+                                } else if x.warming(t) {
+                                    "warmup"
+                                } else if x.blocked(t) {
+                                    "block"
+                                } else {
+                                    "ready"
+                                }
+                                .into(),
+                            );
+                        }
+                        Some(Device::Baro(b)) => {
+                            v.text = Some(
+                                match b.ctrl_meas & 3 {
+                                    0 => "sleep",
+                                    3 => "normal",
+                                    _ => "forced",
+                                }
+                                .into(),
+                            );
                         }
                         Some(Device::Sd(sd)) => {
                             if !powered_now {
@@ -2387,12 +2811,24 @@ impl CircuitSim {
             out.push(v);
         }
         self.frame_start = time;
+        if !spilled.is_empty() {
+            for id in spilled {
+                self.forward_pixels(&id);
+            }
+            // The chained parts show what they took now, not next frame.
+            for v in &mut out {
+                if let Some(Device::Pixels(n)) = self.devices.get(&v.id) {
+                    v.leds = n.leds.clone();
+                }
+            }
+        }
         out
     }
 
     /// Single-wire devices watch their data line: a DHT notices the host's
     /// start signal, a NeoPixel chain decodes pulses.
     fn observe_lines(&mut self, now: f64, sol: &Solution) {
+        let mut latched = Vec::new();
         for part in &self.wire_parts {
             let powered = sol.v[part.vcc] - sol.v[part.gnd] >= part.vmin;
             let high = sol.v[part.data] > VDD / 2.0;
@@ -2441,9 +2877,15 @@ impl CircuitSim {
                             part.id
                         ));
                     }
+                    if !n.spill.is_empty() {
+                        latched.push(part.id.clone());
+                    }
                 }
                 _ => {}
             }
+        }
+        for id in latched {
+            self.forward_pixels(&id);
         }
     }
 
@@ -2598,7 +3040,14 @@ impl CircuitSim {
         if let Some(d) = self.i2c_device(scl).and_then(|d| d.i2c()) {
             d.stop(now);
         }
-        self.i2c_active.remove(&scl);
+        // What the transfer did wrong (a BMP280 read in sleep mode).
+        if let Some(id) = self.i2c_active.remove(&scl) {
+            if let Some(Device::Baro(b)) = self.devices.get_mut(&id) {
+                if let Some(w) = b.warning.take() {
+                    self.warnings.insert(format!("{id}: {w}"));
+                }
+            }
+        }
     }
 
     /// One byte on the SPI bus whose SCK and MOSI are the MCU pins `sck` and
@@ -2668,7 +3117,42 @@ impl CircuitSim {
             ));
         }
         self.forward_matrix_chain(kn, overflow);
+        self.spi_shift_registers(kn, mn, out);
         reply
+    }
+
+    /// Hardware SPI into 74HC595s: SCK on SHCP, MOSI on DS (they have no
+    /// chip select: every byte goes in). What leaves Q7' goes on, as a
+    /// byte, into a chip whose DS is on that Q7' and whose SHCP is SCK.
+    fn spi_shift_registers(&mut self, sck: usize, mosi: usize, out: u8) {
+        let v = |s: &Self, n: usize| s.node_voltage(n);
+        let mut queue: Vec<(usize, u8)> = Vec::new();
+        let mut fed = BTreeSet::new();
+        for (i, part) in self.shift_parts.iter().enumerate() {
+            if part.shcp == sck && part.ds == mosi {
+                queue.push((i, out));
+            }
+        }
+        while let Some((i, byte)) = queue.pop() {
+            if !fed.insert(i) {
+                continue;
+            }
+            let part = self.shift_parts[i].clone();
+            let powered = v(self, part.vcc) - v(self, part.gnd) >= HC595_VMIN;
+            let mr = v(self, part.mr) > VDD / 2.0;
+            let Some(Device::Shift(x)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            if !powered || !mr {
+                continue;
+            }
+            let spill = x.byte(byte);
+            for (j, next) in self.shift_parts.iter().enumerate() {
+                if next.ds == part.q7s && next.shcp == sck && !fed.contains(&j) {
+                    queue.push((j, spill));
+                }
+            }
+        }
     }
 
     /// Hardware SPI moves whole bytes without clock edges on the nets, so a
@@ -2761,6 +3245,16 @@ impl CircuitSim {
     pub fn voltage(&self, pin: &PinRef) -> Option<f64> {
         let node = *self.pin_nodes.get(&self.canonical(pin))?;
         Some(self.current.as_ref().map_or(0.0, |s| s.v[node]))
+    }
+}
+
+/// A prop that means "on": `true`, a non-zero number, or "1"/"true".
+fn truthy(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Bool(b) => *b,
+        serde_json::Value::Number(n) => n.as_f64().is_some_and(|x| x != 0.0),
+        serde_json::Value::String(s) => matches!(s.trim(), "1" | "true" | "on"),
+        _ => false,
     }
 }
 
@@ -3885,5 +4379,384 @@ mod tests {
         let v = s.end_frame(100_000, 0.1);
         assert_eq!(visual(&v, "ir").text.as_deref(), Some("0x40"));
         assert_eq!(s.next_event(), None, "released before the repeat");
+    }
+
+    // ------------------------------------------------------------- M19
+
+    /// Drives the listed MCU pins (`Some(level)` push-pull, `None` released
+    /// open-drain), the rest float.
+    fn pins(s: &mut CircuitSim, t: Cycles, levels: &[((u8, u8), Option<bool>)]) {
+        let d = drives(s, |p| match levels.iter().find(|(q, _)| *q == p) {
+            Some((_, Some(true))) => Drive::High,
+            Some((_, Some(false))) => Drive::Low,
+            _ => Drive::Float,
+        });
+        s.update(t, &d);
+    }
+
+    /// Eight LEDs (with 330 Ω each) on Q0–Q7 of `sr`, named `{sr}l0`….
+    fn led_bar(sr: &str, parts: &mut Vec<PartInstance>, wires: &mut Vec<Wire>) {
+        for i in 0..8 {
+            let (r, l) = (format!("{sr}r{i}"), format!("{sr}l{i}"));
+            parts.push(part(&r, "resistor", &[("ohms", "330")]));
+            parts.push(part(&l, "led-5mm", &[("color", "red")]));
+            wires.push(wire((sr, &format!("Q{i}")), (&r, "1")));
+            wires.push(wire((&r, "2"), (&l, "A")));
+            wires.push(wire((&l, "K"), ("mcu", "GND")));
+        }
+    }
+
+    fn lit(v: &[PartVisual], sr: &str) -> u8 {
+        (0..8).fold(0, |a, i| {
+            let b = visual(v, &format!("{sr}l{i}")).brightness[0];
+            a | ((b > 0.5) as u8) << i
+        })
+    }
+
+    fn hc595_circuit(oe: Option<&str>) -> CircuitSim {
+        let mut parts = vec![part("sa", "hc595", &[]), part("sb", "hc595", &[])];
+        let mut wires = Vec::new();
+        for sr in ["sa", "sb"] {
+            wires.push(wire((sr, "VCC"), ("mcu", "3V3")));
+            wires.push(wire((sr, "GND"), ("mcu", "GND")));
+            wires.push(wire((sr, "MR"), ("mcu", "3V3")));
+            wires.push(wire((sr, "SHCP"), ("mcu", "PA5")));
+            wires.push(wire((sr, "STCP"), ("mcu", "PB6")));
+            if let Some(oe) = oe {
+                wires.push(wire((sr, "OE"), ("mcu", oe)));
+            }
+            led_bar(sr, &mut parts, &mut wires);
+        }
+        wires.push(wire(("sa", "DS"), ("mcu", "PA7")));
+        // Cascade: sb's DS on sa's Q7'.
+        wires.push(wire(("sa", "Q7S"), ("sb", "DS")));
+        sim(parts, wires)
+    }
+
+    const SCK: (u8, u8) = (0, 5);
+    const MOSI: (u8, u8) = (0, 7);
+    const LATCH: (u8, u8) = (1, 6);
+
+    #[test]
+    fn hc595_bit_banged_chain_lights_leds_through_resistors() {
+        let mut s = hc595_circuit(Some("GND"));
+        let mut t = 0;
+        let put = |s: &mut CircuitSim, t: &mut Cycles, clk, ds, st| {
+            pins(
+                s,
+                *t,
+                &[(SCK, Some(clk)), (MOSI, Some(ds)), (LATCH, Some(st))],
+            );
+            *t += 10;
+        };
+        put(&mut s, &mut t, false, false, false);
+        // 16 bits, MSB first: 0x81 for the far chip, then 0x3C for the near.
+        for w in [0x81u8, 0x3C] {
+            for i in (0..8).rev() {
+                let b = w >> i & 1 != 0;
+                put(&mut s, &mut t, false, b, false);
+                put(&mut s, &mut t, true, b, false);
+            }
+        }
+        put(&mut s, &mut t, false, false, false);
+        let v = s.end_frame(t, 0.01);
+        assert_eq!((lit(&v, "sa"), lit(&v, "sb")), (0, 0), "not latched yet");
+        put(&mut s, &mut t, false, false, true);
+        // The outputs stay lit while the MCU does nothing more.
+        let v = s.end_frame(t + 100_000, 0.01);
+        let v2 = s.end_frame(t + 200_000, 0.01);
+        assert_eq!((lit(&v2, "sa"), lit(&v2, "sb")), (0x3C, 0x81));
+        let reg = visual(&v, "sa").register.clone().unwrap();
+        assert_eq!((reg.shift, reg.latch, reg.enabled), (0x3C, 0x3C, true));
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    }
+
+    #[test]
+    fn hc595_takes_hardware_spi_bytes_down_the_chain() {
+        let mut s = hc595_circuit(Some("PA8"));
+        // OE on a GPIO: low enables.
+        let idle = |s: &mut CircuitSim, t, st, oe| {
+            pins(
+                s,
+                t,
+                &[
+                    (SCK, Some(false)),
+                    (MOSI, Some(false)),
+                    (LATCH, Some(st)),
+                    ((0, 8), Some(oe)),
+                ],
+            );
+        };
+        idle(&mut s, 0, false, false);
+        s.spi(10, SCK, MOSI, None, 0x0F);
+        s.spi(20, SCK, MOSI, None, 0xA5);
+        idle(&mut s, 30, true, false);
+        let v = s.end_frame(1000, 0.01);
+        assert_eq!((lit(&v, "sa"), lit(&v, "sb")), (0xA5, 0x0F));
+        // OE high: every LED goes dark, the register keeps its contents.
+        idle(&mut s, 3000, true, true);
+        s.end_frame(3001, 0.01);
+        let v = s.end_frame(4000, 0.01);
+        assert_eq!((lit(&v, "sa"), lit(&v, "sb")), (0, 0));
+        assert_eq!(visual(&v, "sb").register.clone().unwrap().latch, 0x0F);
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    }
+
+    #[test]
+    fn hc595_with_oe_floating_warns_and_keeps_the_outputs_off() {
+        let mut s = hc595_circuit(None);
+        pins(
+            &mut s,
+            0,
+            &[
+                (SCK, Some(false)),
+                (MOSI, Some(false)),
+                (LATCH, Some(false)),
+            ],
+        );
+        s.spi(10, SCK, MOSI, None, 0xFF);
+        pins(
+            &mut s,
+            20,
+            &[(SCK, Some(false)), (MOSI, Some(false)), (LATCH, Some(true))],
+        );
+        s.end_frame(21, 0.01);
+        let v = s.end_frame(1000, 0.01);
+        assert_eq!(lit(&v, "sa"), 0);
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.contains("sa: OE is not connected")),
+            "{:?}",
+            s.warnings
+        );
+    }
+
+    #[test]
+    fn tm1637_acks_on_dio_and_shows_the_digits() {
+        let mut s = sim(
+            vec![part("tm", "tm1637", &[])],
+            vec![
+                wire(("tm", "VCC"), ("mcu", "3V3")),
+                wire(("tm", "GND"), ("mcu", "GND")),
+                wire(("tm", "CLK"), ("mcu", "PA10")),
+                wire(("tm", "DIO"), ("mcu", "PB3")),
+            ],
+        );
+        s.set_clock(0, 0.0, 1e9); // one cycle per ns
+        let (clk, dio) = ((0u8, 10u8), (1u8, 3u8));
+        let mut t = 0;
+        // Open drain: low or released (the module pulls up).
+        let mut put = |s: &mut CircuitSim, c: bool, d: bool| -> Option<bool> {
+            t += 5_000;
+            let d = s.update(
+                t,
+                &drives(s, |p| match p {
+                    p if p == clk && !c => Drive::Low,
+                    p if p == dio && !d => Drive::Low,
+                    _ => Drive::Float,
+                }),
+            );
+            let _ = d;
+            s.mcu_voltage(1, 3).map(|v| v > VDD / 2.0)
+        };
+        let mut acks = Vec::new();
+        let mut transfer = |s: &mut CircuitSim, bytes: &[u8], acks: &mut Vec<bool>| {
+            put(s, true, true);
+            put(s, true, false);
+            for &b in bytes {
+                for i in 0..8 {
+                    put(s, false, b >> i & 1 != 0);
+                    put(s, true, b >> i & 1 != 0);
+                }
+                // Released for the ACK: the chip holds DIO low.
+                acks.push(put(s, false, true) == Some(false));
+                put(s, true, true);
+                put(s, false, false);
+            }
+            put(s, true, false);
+            put(s, true, true);
+        };
+        transfer(&mut s, &[0x40], &mut acks);
+        transfer(&mut s, &[0xC0, 0x3F, 0x86, 0x5B, 0x4F], &mut acks);
+        transfer(&mut s, &[0x8F], &mut acks);
+        assert_eq!(acks, [true; 7]);
+        let v = s.end_frame(1_000_000_000, 0.01);
+        let d = visual(&v, "tm").digits.clone().unwrap();
+        assert_eq!(d.segments, [0x3F, 0x86, 0x5B, 0x4F]);
+        assert_eq!((d.brightness, d.on), (7, true));
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    }
+
+    fn pir_sim(supply: &str, props: &[(&str, &str)]) -> CircuitSim {
+        let mut s = sim(
+            vec![part("pir", "pir", props)],
+            vec![
+                wire(("pir", "VCC"), ("mcu", supply)),
+                wire(("pir", "GND"), ("mcu", "GND")),
+                wire(("pir", "OUT"), ("mcu", "PA8")),
+            ],
+        );
+        s.set_clock(0, 0.0, 1000.0); // one cycle per ms
+        s
+    }
+
+    fn set_props(s: &mut CircuitSim, id: &str, props: &[(&str, &str)], t: Cycles) {
+        let mut c = s.circuit.clone();
+        let p = c.parts.iter_mut().find(|p| p.id == id).unwrap();
+        for (k, v) in props {
+            p.props
+                .insert(k.to_string(), serde_json::Value::String(v.to_string()));
+        }
+        s.set_circuit(&c, t);
+    }
+
+    #[test]
+    fn pir_output_follows_motion_after_the_warm_up() {
+        let mut s = pir_sim("5V", &[("delay", "2"), ("warmup", "1")]);
+        let input = |s: &CircuitSim| s.mcu_voltage(0, 8).unwrap() > VDD / 2.0;
+        let d = drives(&s, |_| Drive::Float);
+        s.update(0, &d);
+        set_props(&mut s, "pir", &[("motion", "1")], 500);
+        run_to(&mut s, 900, &d);
+        assert!(!input(&s), "warming up");
+        run_to(&mut s, 1000, &d);
+        assert!(input(&s), "OUT high at 3.3 V");
+        assert!((s.mcu_voltage(0, 8).unwrap() - VDD).abs() < 0.05);
+        set_props(&mut s, "pir", &[("motion", "0")], 1500);
+        run_to(&mut s, 3400, &d);
+        assert!(input(&s), "retrigger: 2 s after the motion ended");
+        run_to(&mut s, 3600, &d);
+        assert!(!input(&s));
+        let v = s.end_frame(3700, 0.01);
+        assert_eq!(visual(&v, "pir").text.as_deref(), Some("block"));
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    }
+
+    #[test]
+    fn pir_on_3v3_warns_and_detects_nothing() {
+        let mut s = pir_sim("3V3", &[("warmup", "0"), ("motion", "1")]);
+        let d = drives(&s, |_| Drive::PullDown);
+        run_to(&mut s, 2000, &d);
+        assert!(s.mcu_voltage(0, 8).unwrap() < 0.5);
+        assert!(
+            s.warnings.iter().any(|w| w.contains("4.5–20 V")),
+            "{:?}",
+            s.warnings
+        );
+    }
+
+    #[test]
+    fn joystick_pots_divide_the_supply_and_the_switch_pulls_sw_low() {
+        let mk = |props: &[(&str, &str)]| {
+            sim(
+                vec![part("js", "joystick", props)],
+                vec![
+                    wire(("js", "+5V"), ("mcu", "3V3")),
+                    wire(("js", "GND"), ("mcu", "GND")),
+                    wire(("js", "VRx"), ("mcu", "PA0")),
+                    wire(("js", "VRy"), ("mcu", "PA1")),
+                    wire(("js", "SW"), ("mcu", "PA8")),
+                ],
+            )
+        };
+        let mut s = mk(&[("x", "0.25"), ("y", "1")]);
+        let d = drives(&s, |p| {
+            if p == (0, 8) {
+                Drive::PullUp
+            } else {
+                Drive::Float
+            }
+        });
+        let inputs = s.update(0, &d).unwrap();
+        assert!((s.mcu_voltage(0, 0).unwrap() - 0.825).abs() < 0.01);
+        assert!((s.mcu_voltage(0, 1).unwrap() - VDD).abs() < 0.01);
+        let sw = s.mcu_pins().iter().position(|&p| p == (0, 8)).unwrap();
+        assert_eq!(inputs[sw], Some(true));
+        let mut s = mk(&[("sw", "1")]);
+        let inputs = s.update(0, &d).unwrap();
+        assert_eq!(inputs[sw], Some(false), "pressed: SW to GND");
+        assert!((s.mcu_voltage(0, 0).unwrap() - VDD / 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn bmp280_answers_on_its_sdo_address() {
+        let mut s = sim(
+            vec![part(
+                "baro",
+                "bmp280",
+                &[("address", "0x77"), ("pressure", "900")],
+            )],
+            vec![
+                wire(("baro", "VCC"), ("mcu", "3V3")),
+                wire(("baro", "GND"), ("mcu", "GND")),
+                wire(("baro", "SCL"), ("mcu", "PB8")),
+                wire(("baro", "SDA"), ("mcu", "PB9")),
+            ],
+        );
+        settle(&mut s);
+        let (scl, sda) = ((1, 8), (1, 9));
+        assert!(!s.i2c_start(0, scl, sda, 0x76, false));
+        assert!(s.i2c_start(0, scl, sda, 0x77, false));
+        s.i2c_write(0, scl, 0xD0);
+        assert!(s.i2c_start(0, scl, sda, 0x77, true));
+        assert_eq!(s.i2c_read(0, scl), 0x58);
+        s.i2c_stop(0, scl);
+        match s.devices.get("baro") {
+            Some(Device::Baro(b)) => assert_eq!(b.pressure, 90_000.0),
+            _ => panic!("no BMP280"),
+        }
+        // Reading the data in sleep mode warns.
+        s.i2c_start(0, scl, sda, 0x77, false);
+        s.i2c_write(0, scl, 0xF7);
+        s.i2c_start(0, scl, sda, 0x77, true);
+        assert_eq!(s.i2c_read(0, scl), 0x80);
+        s.i2c_stop(0, scl);
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.contains("baro: BMP280: data read before")),
+            "{:?}",
+            s.warnings
+        );
+    }
+
+    #[test]
+    fn neopixel_bits_past_a_strip_go_to_the_part_on_its_dout() {
+        let mut s = sim(
+            vec![
+                part("strip", "neopixel-strip", &[("count", "2")]),
+                part("ring", "neopixel-ring", &[("count", "3")]),
+            ],
+            vec![
+                wire(("strip", "VCC"), ("mcu", "5V")),
+                wire(("strip", "GND"), ("mcu", "GND")),
+                wire(("strip", "DIN"), ("mcu", "PA8")),
+                wire(("ring", "VCC"), ("mcu", "5V")),
+                wire(("ring", "GND"), ("mcu", "GND")),
+                wire(("strip", "DOUT"), ("ring", "DIN")),
+            ],
+        );
+        s.set_clock(0, 0.0, 1e9);
+        let mut t = 1_000;
+        let level = |s: &mut CircuitSim, t: Cycles, h: bool| {
+            let d = drives(s, |_| if h { Drive::High } else { Drive::Low });
+            s.update(t, &d);
+        };
+        level(&mut s, 0, false);
+        // Five LEDs' worth of GRB: two for the strip, three for the ring.
+        let colours = [0x00FF00u32, 0x0000FF, 0xFF0000, 0x101010, 0x0000AA];
+        for c in colours {
+            for i in (0..24).rev() {
+                let one = c >> i & 1 != 0;
+                level(&mut s, t, true);
+                level(&mut s, t + if one { 800 } else { 400 }, false);
+                t += 1250;
+            }
+        }
+        let v = s.end_frame(t + 100_000, 0.01);
+        assert_eq!(visual(&v, "strip").leds, [0xFF0000, 0x0000FF]);
+        assert_eq!(visual(&v, "ring").leds, [0x00FF00, 0x101010, 0x0000AA]);
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
     }
 }

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas } from "./editor/Canvas";
+import { buildSchematic } from "./schematic/layout";
+import { SchematicView } from "./schematic/SchematicView";
 import { defaultProject, newId, pinKey, toCircuit, type PinRef, type Project } from "./editor/model";
 import { PARTS, PART_BY_KIND } from "./parts";
 import { nucleoSignal } from "./parts/nucleo";
@@ -85,6 +87,8 @@ export function App() {
   const [simError, setSimError] = useState<string | null>(null);
   const [project, setProject] = useState<Project>(defaultProject);
   const [selected, setSelected] = useState<string | null>(null);
+  // Breadboard (where wires go) or schematic (what connects to what).
+  const [view, setView] = useState<"board" | "schematic">("board");
   const [wireColor, setWireColor] = useState(WIRE_COLORS[0]);
   const runner = useRunner();
   const examples = useExamples();
@@ -232,6 +236,7 @@ export function App() {
     }
     return m;
   }, [netlist]);
+  const schematic = useMemo(() => buildSchematic(project, netlist), [project, netlist]);
   const netOf = useCallback((p: PinRef) => netIndex.get(pinKey(p)) ?? new Set([pinKey(p)]), [netIndex]);
 
   // Nets that join two or more parts (breadboards excluded), with Nucleo pins
@@ -370,41 +375,62 @@ export function App() {
       </aside>
 
       <main>
-        <Canvas
-          project={project}
-          netOf={netOf}
-          selected={selected}
-          onSelect={setSelected}
-          onMovePart={(id, x, y) =>
-            setProject((p) => ({ ...p, parts: p.parts.map((q) => (q.id === id ? { ...q, x, y } : q)) }))
-          }
-          visuals={visuals}
-          onPartAction={onPartAction}
-          fitKey={fitKey}
-          onViewCenter={(p) => (viewCenter.current = p)}
-          reveal={reveal}
-          onAddWire={(a, b, points) =>
-            setProject((p) => {
-              // Both ends must exist when the wire is made (#2).
-              const exists = (r: PinRef) => p.parts.some((q) => q.id === r.part);
-              if (!exists(a) || !exists(b)) return p;
-              const wire = { id: newId("w", taken()), a, b, color: wireColor, ...(points.length ? { points } : {}) };
-              return { ...p, wires: [...p.wires, wire] };
-            })
-          }
-          onPropChange={(id, key, value) =>
-            setProject((p) => ({
-              ...p,
-              parts: p.parts.map((q) => (q.id === id ? { ...q, props: { ...q.props, [key]: value } } : q)),
-            }))
-          }
-          onMoveWireEnd={(id, end, pin) =>
-            setProject((p) => ({ ...p, wires: p.wires.map((w) => (w.id === id ? { ...w, [end]: pin } : w)) }))
-          }
-          onUpdateWire={(id, points) =>
-            setProject((p) => ({ ...p, wires: p.wires.map((w) => (w.id === id ? { ...w, points } : w)) }))
-          }
-        />
+        <div className="view-toggle" role="group" aria-label="보기">
+          <button className={view === "board" ? "on" : ""} onClick={() => setView("board")}>
+            브레드보드
+          </button>
+          <button className={view === "schematic" ? "on" : ""} onClick={() => setView("schematic")}>
+            회로도
+          </button>
+        </div>
+        {view === "schematic" && (
+          <SchematicView
+            schematic={schematic}
+            pins={runner.frame?.pins}
+            visuals={visuals}
+            selected={selected}
+            onSelect={setSelected}
+            parts={project.parts}
+            onAction={onPartAction}
+          />
+        )}
+        <div className="view-board" hidden={view !== "board"}>
+          <Canvas
+            project={project}
+            netOf={netOf}
+            selected={selected}
+            onSelect={setSelected}
+            onMovePart={(id, x, y) =>
+              setProject((p) => ({ ...p, parts: p.parts.map((q) => (q.id === id ? { ...q, x, y } : q)) }))
+            }
+            visuals={visuals}
+            onPartAction={onPartAction}
+            fitKey={fitKey}
+            onViewCenter={(p) => (viewCenter.current = p)}
+            reveal={reveal}
+            onAddWire={(a, b, points) =>
+              setProject((p) => {
+                // Both ends must exist when the wire is made (#2).
+                const exists = (r: PinRef) => p.parts.some((q) => q.id === r.part);
+                if (!exists(a) || !exists(b)) return p;
+                const wire = { id: newId("w", taken()), a, b, color: wireColor, ...(points.length ? { points } : {}) };
+                return { ...p, wires: [...p.wires, wire] };
+              })
+            }
+            onPropChange={(id, key, value) =>
+              setProject((p) => ({
+                ...p,
+                parts: p.parts.map((q) => (q.id === id ? { ...q, props: { ...q.props, [key]: value } } : q)),
+              }))
+            }
+            onMoveWireEnd={(id, end, pin) =>
+              setProject((p) => ({ ...p, wires: p.wires.map((w) => (w.id === id ? { ...w, [end]: pin } : w)) }))
+            }
+            onUpdateWire={(id, points) =>
+              setProject((p) => ({ ...p, wires: p.wires.map((w) => (w.id === id ? { ...w, points } : w)) }))
+            }
+          />
+        </div>
         {runner.frame?.stopped && (
           <div className="diagnosis" role="alert">
             <b>펌웨어가 멈췄습니다.</b> {runner.frame.stopped}

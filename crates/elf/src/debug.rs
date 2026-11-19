@@ -91,7 +91,24 @@ pub struct Value {
 pub(crate) enum Src {
     Addr(u32),
     Bytes(Vec<u8>),
+    /// All of one register: its DWARF number (so it can be written) and
+    /// value.
+    Reg(u16, u32),
 }
+
+/// What setting a variable changes in the target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Write {
+    /// Bytes at an address (little-endian).
+    Memory { addr: u32, bytes: Vec<u8> },
+    /// A register by DWARF number (r0–r15 are 0–15, s0–s31 are 64–95) in
+    /// the frame the value lives in.
+    Register { reg: u16, value: u32 },
+}
+
+/// A struct member: its byte offset, its type, and for a bit field its
+/// first bit (from the start of the struct) and width.
+pub(crate) type Member = (u32, Option<UnitOffset<usize>>, Option<(u32, u32)>);
 
 pub struct DebugInfo {
     sections: gimli::DwarfSections<Vec<u8>>,
@@ -554,6 +571,30 @@ impl DebugInfo {
         crate::expr::Evaluator::new(self, self.dwarf(), frame, read).value(expr)
     }
 
+    /// Where `target` (an expression naming an object) is in memory: its
+    /// address and size in bytes.
+    pub fn address_of(
+        &self,
+        target: &str,
+        frame: &Frame,
+        read: ReadMem<'_>,
+    ) -> Result<(u32, u32), String> {
+        crate::expr::Evaluator::new(self, self.dwarf(), frame, read).address(target)
+    }
+
+    /// What setting `target` (an expression naming a number, enum or
+    /// pointer: a variable, member, element or dereference) to the value
+    /// of `value` writes.
+    pub fn assignment(
+        &self,
+        target: &str,
+        value: &str,
+        frame: &Frame,
+        read: ReadMem<'_>,
+    ) -> Result<Write, String> {
+        crate::expr::Evaluator::new(self, self.dwarf(), frame, read).assign(target, value)
+    }
+
     /// Evaluate a breakpoint condition: true when non-zero.
     pub fn condition(&self, expr: &str, frame: &Frame, read: ReadMem<'_>) -> Result<bool, String> {
         crate::expr::Evaluator::new(self, self.dwarf(), frame, read).truth(expr)
@@ -674,7 +715,7 @@ impl DebugInfo {
         unit: &Unit<'_>,
         off: UnitOffset<usize>,
         name: &str,
-    ) -> Option<(u32, Option<UnitOffset<usize>>)> {
+    ) -> Option<Member> {
         let mut tree = unit.entries_tree(Some(off)).ok()?;
         let root = tree.root().ok()?;
         let mut ch = root.children();
@@ -687,10 +728,43 @@ impl DebugInfo {
                     .flatten()
                     .and_then(attr_u64)
                     .unwrap_or(0) as u32;
-                return Some((moff, type_of(e)));
+                // A bit field: its first bit from the start of the struct.
+                let bits = e
+                    .attr_value(gimli::DW_AT_bit_size)
+                    .ok()
+                    .flatten()
+                    .and_then(attr_u64)
+                    .map(|width| (self.bit_start(unit, e, moff, width) as u32, width as u32));
+                return Some((moff, type_of(e), bits));
             }
         }
         None
+    }
+
+    /// First bit of bit-field member `e` (`width` bits, byte offset
+    /// `moff`), counted from the start of the struct: DWARF 5's
+    /// `DW_AT_data_bit_offset`, or DWARF 4's `DW_AT_bit_offset` (from the
+    /// most significant bit of the storage unit).
+    fn bit_start(
+        &self,
+        unit: &Unit<'_>,
+        e: &gimli::DebuggingInformationEntry<'_, '_, R<'_>>,
+        moff: u32,
+        width: u64,
+    ) -> u64 {
+        let attr = |a| e.attr_value(a).ok().flatten().and_then(attr_u64);
+        if let Some(start) = attr(gimli::DW_AT_data_bit_offset) {
+            return start;
+        }
+        match attr(gimli::DW_AT_bit_offset) {
+            Some(from_msb) => {
+                let unit_bytes = attr(gimli::DW_AT_byte_size)
+                    .or_else(|| self.byte_size(unit, type_of(e)).map(u64::from))
+                    .unwrap_or(4);
+                legacy_bit_start(moff, unit_bytes, from_msb, width)
+            }
+            None => moff as u64 * 8,
+        }
     }
 
     pub(crate) fn render_value(
@@ -911,6 +985,9 @@ impl DebugInfo {
                     let Some(v) = v else {
                         return Some(Err("<optimized out>"));
                     };
+                    if pieces.len() == 1 {
+                        return Some(Ok(Src::Reg(register.0, v)));
+                    }
                     bytes.extend(&v.to_le_bytes()[..size.min(4)]);
                 }
                 Location::Value { value } => {
@@ -1081,10 +1158,12 @@ impl DebugInfo {
         for i in 0..n.min(32) {
             let sub = match &src {
                 Src::Addr(a) => Src::Addr(a + i * esize),
-                Src::Bytes(_) => match self.bytes(&src, i * esize, esize as usize, read) {
-                    Some(b) => Src::Bytes(b),
-                    None => break,
-                },
+                Src::Bytes(_) | Src::Reg(..) => {
+                    match self.bytes(&src, i * esize, esize as usize, read) {
+                        Some(b) => Src::Bytes(b),
+                        None => break,
+                    }
+                }
             };
             let mut c = if rest.is_empty() {
                 self.render(dwarf, unit, elem, sub, read, depth + 1)
@@ -1111,6 +1190,10 @@ impl DebugInfo {
             Src::Bytes(b) => {
                 let s = offset as usize;
                 (s + len <= b.len()).then(|| b[s..s + len].to_vec())
+            }
+            Src::Reg(_, v) => {
+                let s = offset as usize;
+                (s + len <= 4).then(|| v.to_le_bytes()[s..s + len].to_vec())
             }
         }
     }
@@ -1340,7 +1423,7 @@ impl DebugInfo {
                     let mty = type_of(ce);
                     let sub = match &src {
                         Src::Addr(a) => Src::Addr(a + moff),
-                        Src::Bytes(_) => match self.bytes(
+                        Src::Bytes(_) | Src::Reg(..) => match self.bytes(
                             &src,
                             moff,
                             self.byte_size(unit, mty).unwrap_or(4) as usize,
@@ -1358,12 +1441,7 @@ impl DebugInfo {
                         .flatten()
                         .and_then(attr_u64)
                     {
-                        let start = ce
-                            .attr_value(gimli::DW_AT_data_bit_offset)
-                            .ok()
-                            .flatten()
-                            .and_then(attr_u64)
-                            .unwrap_or(moff as u64 * 8);
+                        let start = self.bit_start(unit, ce, moff, bits);
                         if let Some(b) = self.bytes(
                             &src,
                             (start / 8) as u32,
@@ -1382,6 +1460,13 @@ impl DebugInfo {
         }
         v
     }
+}
+
+/// DWARF 4 bit field position to a bit offset from the start of the struct
+/// (little-endian): the storage unit of `unit_bytes` at byte `moff`, the
+/// field `width` bits wide, `from_msb` bits below the unit's top.
+fn legacy_bit_start(moff: u32, unit_bytes: u64, from_msb: u64, width: u64) -> u64 {
+    (moff as u64 * 8 + unit_bytes * 8).saturating_sub(from_msb + width)
 }
 
 fn format_float(f: f64) -> String {
@@ -1405,4 +1490,20 @@ fn normalize(p: &str) -> String {
         }
     }
     parts.join("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::legacy_bit_start;
+
+    #[test]
+    fn dwarf4_bit_offsets() {
+        // `struct { unsigned a:3; unsigned b:5; unsigned c:24; }`: GCC's
+        // DWARF 4 gives bit offsets 29, 24 and 0 in a 4-byte unit.
+        assert_eq!(legacy_bit_start(0, 4, 29, 3), 0);
+        assert_eq!(legacy_bit_start(0, 4, 24, 5), 3);
+        assert_eq!(legacy_bit_start(0, 4, 0, 24), 8);
+        // A unit further into the struct.
+        assert_eq!(legacy_bit_start(4, 2, 12, 4), 32);
+    }
 }

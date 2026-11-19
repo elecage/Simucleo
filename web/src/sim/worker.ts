@@ -41,7 +41,7 @@ function tick() {
     }
     if (sim.atBreakpoint()) {
       running = false;
-      post({ type: "paused", reason: "breakpoint" });
+      post({ type: "paused", reason: sim.pauseReason() });
       break;
     }
   }
@@ -145,6 +145,19 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     case "evaluate": {
       const s = sim;
       post({ type: "watch", values: m.exprs.map((e) => JSON.parse(s.evaluate(e, m.frame))) });
+      break;
+    }
+    case "selectTask":
+      sim.selectTask(m.tcb ?? -1);
+      break;
+    case "watchpoints":
+      post({ type: "watchpoints", placed: JSON.parse(sim.setWatchpoints(JSON.stringify(m.list), m.frame)) });
+      break;
+    case "setVariable": {
+      const result = JSON.parse(sim.setVariable(m.target, m.value, m.frame));
+      post({ type: "assigned", target: m.target, result });
+      // Pins, LEDs and registers may show the change.
+      sendFrame();
       break;
     }
     case "debugState":

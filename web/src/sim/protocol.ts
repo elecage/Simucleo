@@ -108,6 +108,9 @@ export type ToWorker =
   | { type: "debugState"; frame: number; globalsFile: number }
   | { type: "disassemble"; addr: number | null }
   | { type: "evaluate"; exprs: string[]; frame: number }
+  | { type: "setVariable"; target: string; value: string; frame: number }
+  | { type: "watchpoints"; list: WatchpointSpec[]; frame: number }
+  | { type: "selectTask"; tcb: number | null }
   | { type: "sdLoad"; part: string; bytes: ArrayBuffer };
 
 export type FromWorker =
@@ -129,6 +132,10 @@ export type FromWorker =
   | { type: "debugState"; state: DebugState }
   | { type: "disasm"; rows: DisasmRow[] }
   | { type: "watch"; values: WatchValue[] }
+  /** The outcome of setting a variable (its new value, or why not). */
+  | { type: "assigned"; target: string; result: WatchValue }
+  /** Where each watchpoint landed in memory, or why it could not be set. */
+  | { type: "watchpoints"; placed: WatchpointPlaced[] }
   /** Execution paused by the debugger (breakpoint, step done, …). */
   | { type: "paused"; reason: string };
 
@@ -163,6 +170,14 @@ export interface BreakpointSpec {
   line: number;
   condition?: string;
 }
+
+/** A data watchpoint on the memory an expression names. */
+export interface WatchpointSpec {
+  expr: string;
+  kind: "write" | "read" | "access";
+}
+
+export type WatchpointPlaced = { addr: number; len: number } | { error: string };
 
 /** A watch expression's value, or why it has none. */
 export type WatchValue = DebugValue | { error: string };

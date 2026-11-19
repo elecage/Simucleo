@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use gimli::{AttributeValue, UnitOffset};
 
-use crate::debug::{DebugInfo, Frame, ReadMem, Src, Value};
+use crate::debug::{DebugInfo, Frame, ReadMem, Src, Value, Write};
 
 type Dwarf<'a> = gimli::Dwarf<gimli::EndianSlice<'a, gimli::LittleEndian>>;
 type Unit<'a> = gimli::Unit<gimli::EndianSlice<'a, gimli::LittleEndian>>;
@@ -93,6 +93,8 @@ enum Val {
         ty: Option<UnitOffset<usize>>,
         src: Src,
         skip: usize,
+        /// A bit field: its first bit (counted from `src`) and width.
+        bits: Option<(u32, u32)>,
     },
 }
 
@@ -158,11 +160,31 @@ impl<'a, 'r> Evaluator<'a, 'r> {
                 value: f.to_string(),
                 ..Default::default()
             },
+            Val::Obj { bits: Some(_), .. } => {
+                // A bit field: its type's name, the extracted number.
+                let Val::Obj { unit, ty, .. } = v.clone() else {
+                    unreachable!()
+                };
+                let n = self.scalar(v)?;
+                let u = self.unit(unit)?;
+                let mut out =
+                    self.info
+                        .render_value(&self.dwarf, &u, ty, Src::Bytes(vec![0; 8]), self.read);
+                out.children.clear();
+                out.value = match n {
+                    Val::Int(i) => i.to_string(),
+                    Val::Float(f) => f.to_string(),
+                    Val::Obj { .. } => unreachable!(),
+                };
+                out.name = expr.to_string();
+                out
+            }
             Val::Obj {
                 unit,
                 ty,
                 src,
                 skip,
+                bits: None,
             } => {
                 let u = self.unit(unit)?;
                 let mut out = if skip > 0 {
@@ -175,6 +197,147 @@ impl<'a, 'r> Evaluator<'a, 'r> {
                 out
             }
         })
+    }
+
+    /// Where `target` is in memory: its address and size in bytes.
+    pub(crate) fn address(&mut self, target: &str) -> Result<(u32, u32), String> {
+        let Val::Obj {
+            unit,
+            ty,
+            src,
+            skip,
+            bits,
+        } = self.parse_all(target)?
+        else {
+            return Err(format!("{target} is not a variable"));
+        };
+        let Src::Addr(addr) = src else {
+            return Err(format!(
+                "{target} is not in memory (it is in a register or computed)"
+            ));
+        };
+        if let Some((first, width)) = bits {
+            return Ok((addr, (first + width).div_ceil(8)));
+        }
+        let u = self.unit(unit)?;
+        let (_, off) = self.resolve(unit, ty)?.ok_or("void value")?;
+        let total = self.info.size_of(&u, Some(off)).ok_or("unknown size")?;
+        // Indexed dimensions of a multi-dimensional array.
+        let done: u32 = self.info.dims_of(&u, off).iter().take(skip).product();
+        Ok((addr, total / done.max(1)))
+    }
+
+    /// What setting `target` to `value` writes.
+    pub(crate) fn assign(&mut self, target: &str, value: &str) -> Result<Write, String> {
+        let lhs = self.parse_all(target)?;
+        let rhs = self.parse_all(value)?;
+        let rhs = self.scalar(rhs)?;
+        let Val::Obj {
+            unit,
+            ty,
+            src,
+            skip,
+            bits,
+        } = lhs
+        else {
+            return Err(format!("{target} is not a variable"));
+        };
+        let (tag, off) = self.resolve(unit, ty)?.ok_or("void value")?;
+        if skip > 0
+            || !matches!(
+                tag,
+                gimli::DW_TAG_base_type
+                    | gimli::DW_TAG_enumeration_type
+                    | gimli::DW_TAG_pointer_type
+            )
+        {
+            return Err(
+                "only numbers, enums and pointers can be set (pick an element or member)".into(),
+            );
+        }
+        let u = self.unit(unit)?;
+        let e = u.entry(off).map_err(|e| e.to_string())?;
+        let enc = e.attr_value(gimli::DW_AT_encoding).ok().flatten();
+        let float = matches!(enc, Some(AttributeValue::Encoding(gimli::DW_ATE_float)));
+        let signed = matches!(
+            enc,
+            Some(AttributeValue::Encoding(
+                gimli::DW_ATE_signed | gimli::DW_ATE_signed_char
+            ))
+        );
+        let size = self.info.size_of(&u, Some(off)).unwrap_or(4) as usize;
+        // An integer that fits in `width` bits of this type.
+        let fits = |width: u32| -> Result<u64, String> {
+            let n = match rhs {
+                Val::Int(i) => i,
+                Val::Float(f) if f == f.trunc() => f as i64,
+                Val::Float(f) => return Err(format!("{f} is not a whole number")),
+                Val::Obj { .. } => unreachable!(),
+            };
+            let ok = width >= 64
+                || if signed {
+                    // Signed: its range; also the bit pattern written as
+                    // unsigned (0xFF for a signed char).
+                    (-(1i64 << (width - 1))..(1i64 << width)).contains(&n)
+                } else {
+                    (0..(1i64 << width)).contains(&n) || (n < 0 && n >= -(1i64 << (width - 1)))
+                };
+            if ok {
+                Ok(n as u64
+                    & if width >= 64 {
+                        u64::MAX
+                    } else {
+                        (1u64 << width) - 1
+                    })
+            } else {
+                Err(format!("{n} does not fit in {width} bits"))
+            }
+        };
+        if let Some((first, width)) = bits {
+            let Src::Addr(addr) = src else {
+                return Err("bit field not in memory".into());
+            };
+            let n = (first + width).div_ceil(8) as usize;
+            let old = self.bytes(&src, n)?;
+            let raw = old.iter().rev().fold(0u64, |a, &x| a << 8 | x as u64);
+            let mask = ((1u64 << width) - 1) << first;
+            let new = (raw & !mask) | (fits(width)? << first);
+            return Ok(Write::Memory {
+                addr,
+                bytes: new.to_le_bytes()[..n].to_vec(),
+            });
+        }
+        let raw = if float {
+            let f = match rhs {
+                Val::Int(i) => i as f64,
+                Val::Float(f) => f,
+                Val::Obj { .. } => unreachable!(),
+            };
+            if size == 4 {
+                (f as f32).to_bits() as u64
+            } else {
+                f.to_bits()
+            }
+        } else {
+            fits(8 * size.min(8) as u32)?
+        };
+        let bytes = raw.to_le_bytes()[..size.min(8)].to_vec();
+        match src {
+            Src::Addr(addr) => Ok(Write::Memory { addr, bytes }),
+            Src::Reg(reg, _) if size <= 4 => {
+                // Registers hold small integers extended to 32 bits.
+                let value = if signed && !float {
+                    let s = 64 - 8 * size as u32;
+                    (((raw << s) as i64) >> s) as u32
+                } else {
+                    raw as u32
+                };
+                Ok(Write::Register { reg, value })
+            }
+            _ => Err(format!(
+                "{target} has no storage here: the compiler keeps it as a constant or a computed value"
+            )),
+        }
     }
 
     /// Evaluate as a condition (non-zero = true).
@@ -410,6 +573,7 @@ impl<'a, 'r> Evaluator<'a, 'r> {
                 ty,
                 src: src.map_err(|e| format!("{name}: {e}"))?,
                 skip: 0,
+                bits: None,
             });
         }
         if let Some((unit, ty, addr)) = self.info.find_global(name) {
@@ -418,6 +582,7 @@ impl<'a, 'r> Evaluator<'a, 'r> {
                 ty,
                 src: Src::Addr(addr),
                 skip: 0,
+                bits: None,
             });
         }
         if let Some(v) = self.info.find_enumerator(&self.dwarf, name) {
@@ -472,6 +637,11 @@ impl<'a, 'r> Evaluator<'a, 'r> {
                 .get(..len)
                 .map(|s| s.to_vec())
                 .ok_or_else(|| "value unavailable".to_string()),
+            Src::Reg(_, v) => v
+                .to_le_bytes()
+                .get(..len)
+                .map(|s| s.to_vec())
+                .ok_or_else(|| "value larger than a register".to_string()),
         }
     }
 
@@ -482,6 +652,7 @@ impl<'a, 'r> Evaluator<'a, 'r> {
             ty,
             src,
             skip,
+            bits,
         } = v
         else {
             return Ok(v);
@@ -497,11 +668,28 @@ impl<'a, 'r> Evaluator<'a, 'r> {
             };
         }
         let u = self.unit(unit)?;
+        let e = u.entry(off).map_err(|e| e.to_string())?;
+        let enc = e.attr_value(gimli::DW_AT_encoding).ok().flatten();
+        if let Some((first, width)) = bits {
+            let b = self.bytes(&src, (first + width).div_ceil(8) as usize)?;
+            let raw = b.iter().rev().fold(0u64, |a, &x| a << 8 | x as u64);
+            let v = (raw >> first) & ((1u64 << width) - 1);
+            let signed = matches!(
+                enc,
+                Some(AttributeValue::Encoding(
+                    gimli::DW_ATE_signed | gimli::DW_ATE_signed_char
+                ))
+            );
+            let s = 64 - width;
+            return Ok(Val::Int(if signed {
+                ((v << s) as i64) >> s
+            } else {
+                v as i64
+            }));
+        }
         let size = self.info.size_of(&u, Some(off)).unwrap_or(4) as usize;
         let b = self.bytes(&src, size)?;
         let raw = b.iter().rev().fold(0u64, |a, &x| a << 8 | x as u64);
-        let e = u.entry(off).map_err(|e| e.to_string())?;
-        let enc = e.attr_value(gimli::DW_AT_encoding).ok().flatten();
         let shift = 64 - 8 * size.min(8) as u32;
         Ok(match (tag, enc) {
             (gimli::DW_TAG_base_type, Some(AttributeValue::Encoding(gimli::DW_ATE_float))) => {
@@ -549,6 +737,7 @@ impl<'a, 'r> Evaluator<'a, 'r> {
             ty: target,
             src: Src::Addr((p + index * size) as u32),
             skip: 0,
+            bits: None,
         })
     }
 
@@ -558,6 +747,7 @@ impl<'a, 'r> Evaluator<'a, 'r> {
             ty,
             src,
             skip,
+            ..
         } = v.clone()
         else {
             return Err("cannot index a number".into());
@@ -579,7 +769,7 @@ impl<'a, 'r> Evaluator<'a, 'r> {
         let esize = self.info.size_of(&u, elem).unwrap_or(1) * rest.iter().product::<u32>();
         let addr = match src {
             Src::Addr(a) => a + i as u32 * esize,
-            Src::Bytes(_) => return Err("array without an address".into()),
+            _ => return Err("array without an address".into()),
         };
         Ok(if rest.is_empty() {
             Val::Obj {
@@ -587,6 +777,7 @@ impl<'a, 'r> Evaluator<'a, 'r> {
                 ty: elem,
                 src: Src::Addr(addr),
                 skip: 0,
+                bits: None,
             }
         } else {
             // The array type itself (past typedefs and qualifiers).
@@ -595,6 +786,7 @@ impl<'a, 'r> Evaluator<'a, 'r> {
                 ty: Some(off),
                 src: Src::Addr(addr),
                 skip: skip + 1,
+                bits: None,
             }
         })
     }
@@ -608,19 +800,28 @@ impl<'a, 'r> Evaluator<'a, 'r> {
             return Err(format!("not a struct (member {name})"));
         }
         let u = self.unit(unit)?;
-        let (moff, mty) = self
+        let (moff, mty, bitfield) = self
             .info
             .member_of(&self.dwarf, &u, off, name)
             .ok_or_else(|| format!("no member named {name}"))?;
+        // A bit field is addressed from its first whole byte.
+        let (moff, bits) = match bitfield {
+            Some((start, width)) => (start / 8, Some((start % 8, width))),
+            None => (moff, None),
+        };
         let src = match src {
             Src::Addr(a) => Src::Addr(a + moff),
             Src::Bytes(b) => Src::Bytes(b.get(moff as usize..).unwrap_or(&[]).to_vec()),
+            Src::Reg(_, v) => {
+                Src::Bytes(v.to_le_bytes().get(moff as usize..).unwrap_or(&[]).to_vec())
+            }
         };
         Ok(Val::Obj {
             unit,
             ty: mty,
             src,
             skip: 0,
+            bits,
         })
     }
 }

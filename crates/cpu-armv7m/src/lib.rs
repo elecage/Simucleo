@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 
 use simucleo_core::bus::{AccessSize, Bus, BusError};
 use simucleo_core::cortexm::{control, exc, psr, CortexM, Fault, Lockup};
-use simucleo_core::cpu::{CpuBackend, Registers, RunResult, StopReason};
+use simucleo_core::cpu::{CpuBackend, Registers, RunResult, StopReason, Watchpoint};
 use simucleo_core::Cycles;
 
 /// Cycles for exception entry and return (Cortex-M4: 12 each, without FP).
@@ -80,6 +80,10 @@ pub struct ArmV7M {
     breakpoints: BTreeSet<u32>,
     /// Breakpoint address we stopped at; it is skipped once on resume.
     resume_from_bp: Option<u32>,
+    watchpoints: Vec<Watchpoint>,
+    /// A data access that hit a watchpoint: (address, write). The core
+    /// stops once the instruction is done.
+    watch_hit: Option<(u32, bool)>,
 
     // Per-instruction scratch.
     next_pc: u32,
@@ -311,9 +315,26 @@ impl ArmV7M {
         if addr >= 0x4000_0000 {
             self.periph_touched = true;
         }
-        ctx.bus
+        let v = ctx
+            .bus
             .read(addr, size)
-            .map_err(|_| Trap::Fault(Fault::PreciseBus { addr }))
+            .map_err(|_| Trap::Fault(Fault::PreciseBus { addr }))?;
+        if !self.watchpoints.is_empty() {
+            self.check_watch(addr, size, false);
+        }
+        Ok(v)
+    }
+
+    /// Note a data access that hits a watchpoint (the first one counts).
+    fn check_watch(&mut self, addr: u32, size: AccessSize, write: bool) {
+        if self.watch_hit.is_none()
+            && self
+                .watchpoints
+                .iter()
+                .any(|w| w.hits(addr, size.bytes(), write))
+        {
+            self.watch_hit = Some((addr, write));
+        }
     }
 
     #[inline]
@@ -331,7 +352,11 @@ impl ArmV7M {
         }
         ctx.bus
             .write(addr, size, value)
-            .map_err(|_| Trap::Fault(Fault::PreciseBus { addr }))
+            .map_err(|_| Trap::Fault(Fault::PreciseBus { addr }))?;
+        if !self.watchpoints.is_empty() {
+            self.check_watch(addr, size, true);
+        }
+        Ok(())
     }
 
     /// Unaligned word/halfword accesses are allowed unless CCR.UNALIGN_TRP.
@@ -514,9 +539,12 @@ impl CpuBackend for ArmV7M {
         sys.reset();
         let msp = bus.read(sys.vtor, AccessSize::Word)?;
         let reset_vector = bus.read(sys.vtor + 4, AccessSize::Word)?;
+        // Debugger state survives a reset of the core.
         let bps = std::mem::take(&mut self.breakpoints);
+        let wps = std::mem::take(&mut self.watchpoints);
         *self = Self::new();
         self.breakpoints = bps;
+        self.watchpoints = wps;
         self.r[13] = msp & !3;
         self.r[14] = 0xFFFF_FFFF;
         self.pc = reset_vector & !1;
@@ -536,6 +564,10 @@ impl CpuBackend for ArmV7M {
         };
 
         loop {
+            // A watchpoint hit by the last instruction (or exception entry).
+            if let Some((addr, write)) = self.watch_hit.take() {
+                return result(&ctx, StopReason::Watchpoint { addr, write });
+            }
             if ctx.sys.cycles >= end {
                 return result(&ctx, StopReason::BudgetExhausted);
             }
@@ -697,6 +729,11 @@ impl CpuBackend for ArmV7M {
 
     fn remove_breakpoint(&mut self, addr: u32) {
         self.breakpoints.remove(&(addr & !1));
+    }
+
+    fn set_watchpoints(&mut self, watchpoints: &[Watchpoint]) {
+        self.watchpoints = watchpoints.to_vec();
+        self.watch_hit = None;
     }
 }
 

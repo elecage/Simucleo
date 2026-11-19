@@ -1,6 +1,17 @@
 // React hook around the simulation worker.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BreakpointSpec, DebugFile, DebugState, DisasmRow, FromWorker, SimFrame, ToWorker, WatchValue } from "./protocol";
+import type {
+  BreakpointSpec,
+  DebugFile,
+  DebugState,
+  DisasmRow,
+  FromWorker,
+  SimFrame,
+  ToWorker,
+  WatchpointPlaced,
+  WatchpointSpec,
+  WatchValue,
+} from "./protocol";
 import type { CircuitJson } from "../editor/model";
 import { boardSignals, busCatalog } from "../parts";
 
@@ -53,6 +64,14 @@ export interface Runner {
   /** Values of watch expressions, in the order asked. */
   watch: WatchValue[];
   requestWatch(exprs: string[], frame: number): void;
+  /** Set a variable; the outcome arrives in `assigned` (bumped each time). */
+  setVariable(target: string, value: string, frame: number): void;
+  /** Data watchpoints, resolved in call-stack frame `frame`. */
+  setWatchpoints(list: WatchpointSpec[], frame: number): void;
+  watchpoints: WatchpointPlaced[];
+  /** Look at an RTOS task's call stack (null: the running code). */
+  selectTask(tcb: number | null): void;
+  assigned: { n: number; target: string; result: WatchValue | null };
 }
 
 export function useRunner(): Runner {
@@ -74,6 +93,12 @@ export function useRunner(): Runner {
   const [debugState, setDebugState] = useState<DebugState | null>(null);
   const [disasm, setDisasm] = useState<DisasmRow[]>([]);
   const [watch, setWatch] = useState<WatchValue[]>([]);
+  const [watchpoints, setWatchpointsPlaced] = useState<WatchpointPlaced[]>([]);
+  const [assigned, setAssigned] = useState<{ n: number; target: string; result: WatchValue | null }>({
+    n: 0,
+    target: "",
+    result: null,
+  });
 
   useEffect(() => {
     const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
@@ -91,6 +116,7 @@ export function useRunner(): Runner {
           setDebugState(null);
           setPlaced([]);
           setWatch([]);
+          setWatchpointsPlaced([]);
           w.postMessage({ type: "debugFiles" } satisfies ToWorker);
           break;
         case "debugFiles":
@@ -110,6 +136,12 @@ export function useRunner(): Runner {
           break;
         case "watch":
           setWatch(m.values);
+          break;
+        case "watchpoints":
+          setWatchpointsPlaced(m.placed);
+          break;
+        case "assigned":
+          setAssigned((a) => ({ n: a.n + 1, target: m.target, result: m.result }));
           break;
         case "frame":
           setFrame(m.frame);
@@ -162,12 +194,16 @@ export function useRunner(): Runner {
       requestDebugState: (frame: number, globalsFile: number) => send({ type: "debugState", frame, globalsFile }),
       requestDisasm: (addr: number | null) => send({ type: "disassemble", addr }),
       requestWatch: (exprs: string[], frame: number) => send({ type: "evaluate", exprs, frame }),
+      setWatchpoints: (list: WatchpointSpec[], frame: number) => send({ type: "watchpoints", list, frame }),
+      selectTask: (tcb: number | null) => send({ type: "selectTask", tcb }),
+      setVariable: (target: string, value: string, frame: number) =>
+        send({ type: "setVariable", target, value, frame }),
     }),
     [send],
   );
 
   return {
     ready, firmware, firmwareBytes, firmwareExample, loadError, running, speed, frame, console: consoleText, memory,
-    debugFiles, breakpoints, pauseEvent, debugState, disasm, watch, ...actions,
+    debugFiles, breakpoints, pauseEvent, debugState, disasm, watch, assigned, watchpoints, ...actions,
   };
 }

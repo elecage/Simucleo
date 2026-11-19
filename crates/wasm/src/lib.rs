@@ -40,6 +40,8 @@ pub struct Simulator {
     rtos_current: Option<u32>,
     /// The last run stopped at a breakpoint.
     at_breakpoint: bool,
+    /// The access that hit a watchpoint in the last run: (address, write).
+    watch_hit: Option<(u32, bool)>,
 }
 
 /// Most context switches reported per frame.
@@ -67,6 +69,7 @@ impl Simulator {
             probes: Vec::new(),
             rtos_current: None,
             at_breakpoint: false,
+            watch_hit: None,
         }
     }
 
@@ -123,7 +126,15 @@ impl Simulator {
             return why.clone();
         }
         let r = self.board.run_for_ns_debug(ms * 1e6);
-        self.at_breakpoint = matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_));
+        self.at_breakpoint = matches!(
+            r.stop,
+            simucleo_core::cpu::StopReason::Breakpoint(_)
+                | simucleo_core::cpu::StopReason::Watchpoint { .. }
+        );
+        self.watch_hit = match r.stop {
+            simucleo_core::cpu::StopReason::Watchpoint { addr, write } => Some((addr, write)),
+            _ => None,
+        };
         match self.board.diagnose(&r) {
             Some(d) => {
                 let why = d.to_string();
@@ -134,10 +145,58 @@ impl Simulator {
         }
     }
 
-    /// The last `runForMs` stopped at a breakpoint (the caller pauses).
+    /// The last `runForMs` stopped at a breakpoint or watchpoint (the
+    /// caller pauses).
     #[wasm_bindgen(js_name = atBreakpoint)]
     pub fn at_breakpoint(&self) -> bool {
         self.at_breakpoint
+    }
+
+    /// Why the last `runForMs` paused: `"breakpoint"`, or
+    /// `"watchpoint"` with the access (`"watchpoint write 0x20000010"`).
+    #[wasm_bindgen(js_name = pauseReason)]
+    pub fn pause_reason(&self) -> String {
+        match self.watch_hit {
+            Some((addr, write)) => {
+                format!(
+                    "watchpoint {} 0x{addr:08x}",
+                    if write { "write" } else { "read" }
+                )
+            }
+            None => "breakpoint".into(),
+        }
+    }
+
+    /// Set the data watchpoints from JSON `[{expr, kind}]` (`kind`:
+    /// `"write"`, `"read"` or `"access"`), each expression naming memory
+    /// as seen from frame `frame`. Returns `[{addr, len} | {error}]`.
+    #[wasm_bindgen(js_name = setWatchpoints)]
+    pub fn set_watchpoints(&mut self, json: &str, frame: usize) -> Result<String, JsError> {
+        use simucleo_core::cpu::{WatchKind, Watchpoint};
+        #[derive(serde::Deserialize)]
+        struct W {
+            expr: String,
+            kind: String,
+        }
+        let list: Vec<W> = serde_json::from_str(json)?;
+        let mut set = Vec::new();
+        let out: Vec<serde_json::Value> = list
+            .iter()
+            .map(|w| match self.board.address_of(&w.expr, frame) {
+                Ok((addr, len)) => {
+                    let kind = match w.kind.as_str() {
+                        "read" => WatchKind::Read,
+                        "access" => WatchKind::Access,
+                        _ => WatchKind::Write,
+                    };
+                    set.push(Watchpoint { addr, len, kind });
+                    serde_json::json!({ "addr": addr, "len": len })
+                }
+                Err(e) => serde_json::json!({ "error": e }),
+            })
+            .collect();
+        self.board.set_watchpoints(&set);
+        Ok(serde_json::to_string(&out)?)
     }
 
     /// Source files with code, as JSON `[{index, path, lines: [n, …]}]`
@@ -207,6 +266,12 @@ impl Simulator {
         match self.board.step(kind) {
             StepEnd::Done => "done".into(),
             StepEnd::Breakpoint => "breakpoint".into(),
+            StepEnd::Watchpoint { addr, write } => {
+                format!(
+                    "watchpoint {} 0x{addr:08x}",
+                    if write { "write" } else { "read" }
+                )
+            }
             StepEnd::Limit => "limit".into(),
             StepEnd::Stopped(stop) => {
                 let r = simucleo_core::cpu::RunResult { cycles: 0, stop };
@@ -222,10 +287,28 @@ impl Simulator {
         }
     }
 
+    /// Look at FreeRTOS task `tcb`'s call stack in `debugState`, locals,
+    /// evaluation and setting variables (−1: the code the CPU is running).
+    #[wasm_bindgen(js_name = selectTask)]
+    pub fn select_task(&mut self, tcb: f64) {
+        self.board.select_task((tcb >= 0.0).then_some(tcb as u32));
+    }
+
     /// Evaluate a C expression in call-stack frame `frame`: JSON
     /// `{name, type, value, children}` or `{error}`.
     pub fn evaluate(&self, expr: &str, frame: usize) -> String {
         match self.board.evaluate(expr, frame) {
+            Ok(v) => serde_json::to_string(&v).unwrap_or_default(),
+            Err(e) => serde_json::json!({ "error": e }).to_string(),
+        }
+    }
+
+    /// Set a variable (or member, element, `*pointer`) seen from frame
+    /// `frame` to the value of the expression `value`. Returns its new value
+    /// as JSON, or `{error}`.
+    #[wasm_bindgen(js_name = setVariable)]
+    pub fn set_variable(&mut self, target: &str, value: &str, frame: usize) -> String {
+        match self.board.set_variable(target, value, frame) {
             Ok(v) => serde_json::to_string(&v).unwrap_or_default(),
             Err(e) => serde_json::json!({ "error": e }).to_string(),
         }
@@ -255,7 +338,7 @@ impl Simulator {
             return serde_json::json!({"pc": pc, "frames": []}).to_string();
         };
         let loc = info.location(pc);
-        let frames = self.board.call_stack();
+        let frames = self.board.viewed_stack();
         let locals = self.board.locals(frame);
         let globals = if globals_file >= 0 {
             self.board.globals(&[globals_file as u32])

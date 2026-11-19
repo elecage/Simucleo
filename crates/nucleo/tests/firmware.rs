@@ -494,6 +494,57 @@ fn freertos_tasks_run_and_are_visible() {
     let free = task("Count").stack_free_min.unwrap();
     assert!(free > 0 && free < 1024, "{free}");
 
+    // Each waiting task's call stack, from the context saved on its stack:
+    // where it waits, called from its task function.
+    let stack = |b: &Nucleo, n: &str| -> Vec<String> {
+        b.task_call_stack(task(n).tcb)
+            .iter()
+            .map(|f| f.function.clone().unwrap_or_default())
+            .collect()
+    };
+    for (name, wait, func) in [
+        ("Blink", "osDelay", "BlinkTask"),
+        ("Count", "osDelay", "CountTask"),
+        ("Button", "osSemaphoreAcquire", "ButtonTask"),
+        ("Flags", "osThreadFlagsWait", "FlagsTask"),
+    ] {
+        let s = stack(&board, name);
+        let w = s.iter().position(|f| f == wait);
+        let t = s.iter().position(|f| f == func);
+        assert!(
+            matches!((w, t), (Some(w), Some(t)) if w + 1 == t),
+            "{name}: {s:?}"
+        );
+        assert_eq!(
+            s.last().map(String::as_str),
+            Some(func),
+            "ends at the task function: {s:?}"
+        );
+    }
+    // The running task's stack is the CPU's.
+    let pcs = |f: Vec<simucleo_elf::debug::Frame>| f.iter().map(|f| f.pc).collect::<Vec<_>>();
+    assert_eq!(
+        pcs(board.task_call_stack(task("IDLE").tcb)),
+        pcs(board.call_stack())
+    );
+    // Looking at a task: its locals and expressions in its frames.
+    board.select_task(Some(task("Count").tcb));
+    let frames = board.viewed_stack();
+    let i = frames
+        .iter()
+        .position(|f| f.function.as_deref() == Some("CountTask"))
+        .unwrap();
+    let n = board.locals(i).into_iter().find(|v| v.name == "n").unwrap();
+    assert_eq!(n.value, "3", "count 0, 1 and 2 printed");
+    assert_eq!(board.evaluate("n * 10", i).unwrap().value, "30");
+    // Its registers are saved, not live: they cannot be set.
+    assert!(board
+        .set_variable("n", "7", i)
+        .unwrap_err()
+        .contains("task switch"));
+    board.select_task(None);
+    assert_eq!(pcs(board.viewed_stack()), pcs(board.call_stack()));
+
     // Context switches are logged: Blink runs every 500 ms at least.
     let switches = board.take_task_switches();
     let blink = task("Blink").tcb;
@@ -1280,6 +1331,79 @@ fn breakpoints_steps_call_stack_and_variables() {
     assert!(ev("0 && (1 +").is_err(), "syntax errors still count");
     drop(info);
 
+    // Setting variables: a local, a struct member, a peripheral register
+    // through a pointer, an array element; the program sees the change.
+    // Here `value` is a known constant: nothing to write to.
+    assert!(board
+        .set_variable("value", "1234", 0)
+        .unwrap_err()
+        .contains("no storage"));
+    assert_eq!(
+        board
+            .set_variable("htim10.Init.Period", "499", 0)
+            .unwrap()
+            .value,
+        "499"
+    );
+    // (A smaller ARR than the counter would make the timer count all the
+    // way round, as on the chip: go up, then back.)
+    assert_eq!(
+        board
+            .set_variable("htim10.Instance->ARR", "1999", 0)
+            .unwrap()
+            .value,
+        "1999"
+    );
+    assert_eq!(
+        board.peek_byte(0x4001_442C),
+        Some(0xCF),
+        "TIM10 ARR low byte"
+    );
+    assert_eq!(
+        board
+            .set_variable("htim10.Instance->ARR", "999", 0)
+            .unwrap()
+            .value,
+        "999"
+    );
+    assert_eq!(
+        board.set_variable("digits[2]", "FONT[8]", 0).unwrap().value,
+        "127"
+    );
+    assert!(board
+        .set_variable("digits[0]", "300", 0)
+        .unwrap_err()
+        .contains("does not fit"));
+    assert!(board.set_variable("htim10", "1", 0).is_err());
+    assert!(board.set_variable("1 + 2", "3", 0).is_err());
+
+    // A parameter in a register: show_number(n, len) at its entry has n in
+    // r0. Setting it changes what the function shows.
+    let show = board
+        .debug_info()
+        .unwrap()
+        .functions
+        .iter()
+        .find(|f| f.name == "show_number")
+        .unwrap()
+        .low;
+    board.set_breakpoints(&[show]);
+    let r = board.run_for_ns(10e6);
+    assert!(
+        matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_)),
+        "{r:?}"
+    );
+    assert_eq!(info_write_kind(&board, "n"), "register");
+    assert_eq!(board.set_variable("n", "4321", 0).unwrap().value, "4321");
+    assert_eq!(board.cpu.registers().r[0], 4321);
+    assert_eq!(board.set_variable("len", "4", 0).unwrap().value, "4");
+    board.set_breakpoints(&[]);
+    board.step(Step::Out);
+    let digits = board.evaluate("digits", 0).unwrap();
+    let shown: Vec<&str> = digits.children.iter().map(|c| c.value.as_str()).collect();
+    // FONT[4], FONT[3], FONT[2], FONT[1] (102, 79, 91, 6), left to right.
+    assert_eq!(shown, ["102", "79", "91", "6"], "{digits:?}");
+
     // A breakpoint inside the timer interrupt shows the interrupted code.
     board.set_breakpoints(&[]);
     let cb = board
@@ -1305,6 +1429,88 @@ fn breakpoints_steps_call_stack_and_variables() {
         stack.iter().any(|f| f.function.as_deref() == Some("main")),
         "{stack:?}"
     );
+    // Data watchpoints: writes to `current` happen only in the callback,
+    // right after it computes the next digit.
+    board.set_breakpoints(&[]);
+    use simucleo_core::cpu::{WatchKind, Watchpoint};
+    let (addr, len) = board.address_of("current", 0).unwrap();
+    assert_eq!(len, 4);
+    assert_eq!(board.address_of("digits[2]", 0).unwrap().1, 1);
+    assert_eq!(board.address_of("KEYS[1]", 0).unwrap().1, 4);
+    assert_eq!(board.address_of("htim10.Init", 0).unwrap().1, 24);
+    assert!(board.address_of("1 + 2", 0).is_err());
+    board.set_watchpoints(&[Watchpoint {
+        addr,
+        len,
+        kind: WatchKind::Write,
+    }]);
+    let before = board
+        .evaluate("current", 0)
+        .unwrap()
+        .value
+        .parse::<i64>()
+        .unwrap();
+    let r = board.run_for_ns_debug(10e6);
+    assert_eq!(
+        r.stop,
+        simucleo_core::cpu::StopReason::Watchpoint { addr, write: true }
+    );
+    assert_eq!(
+        func(&board).as_deref(),
+        Some("HAL_TIM_PeriodElapsedCallback")
+    );
+    assert_eq!(line(&board), Some(47), "stopped after the store on line 46");
+    let after = board
+        .evaluate("current", 0)
+        .unwrap()
+        .value
+        .parse::<i64>()
+        .unwrap();
+    assert_eq!(after, (before + 1) & 3);
+    // A read watchpoint on the digit patterns: line 47 reads one.
+    let (daddr, dlen) = board.address_of("digits", 0).unwrap();
+    board.set_watchpoints(&[Watchpoint {
+        addr: daddr,
+        len: dlen,
+        kind: WatchKind::Read,
+    }]);
+    let r = board.run_for_ns_debug(10e6);
+    assert!(
+        matches!(r.stop, simucleo_core::cpu::StopReason::Watchpoint { addr: a, write: false } if (daddr..daddr + 4).contains(&a)),
+        "{r:?}"
+    );
+    // Stepping: the rest of this callback no longer writes `current`;
+    // stepping over line 46 next time does.
+    board.set_watchpoints(&[Watchpoint {
+        addr,
+        len,
+        kind: WatchKind::Write,
+    }]);
+    assert_eq!(board.step(Step::Out), StepEnd::Done);
+    board.set_watchpoints(&[]);
+    let (_, l46) = board
+        .debug_info()
+        .unwrap()
+        .breakpoint_addresses(main_c, 46)
+        .unwrap();
+    board.set_breakpoints(&l46);
+    let r = board.run_for_ns_debug(10e6);
+    assert!(
+        matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_)),
+        "{r:?}"
+    );
+    board.set_breakpoints(&[]);
+    board.set_watchpoints(&[Watchpoint {
+        addr,
+        len,
+        kind: WatchKind::Write,
+    }]);
+    assert_eq!(
+        board.step(Step::Over),
+        StepEnd::Watchpoint { addr, write: true }
+    );
+    board.set_watchpoints(&[]);
+
     // Conditional breakpoints: the timer callback runs every millisecond
     // and steps `current` through 0..3; stop only where it is 2.
     let bp = |c: &str| [(cb, Some(c.to_string()))];
@@ -1374,4 +1580,35 @@ fn breakpoints_steps_call_stack_and_variables() {
         matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_)),
         "{r:?}"
     );
+
+    // Watchpoints survive a reset: the startup code's .bss clear writes
+    // `current` again.
+    board.set_conditional_breakpoints(&[]);
+    let (addr, len) = board.address_of("current", 0).unwrap();
+    board.set_watchpoints(&[Watchpoint {
+        addr,
+        len,
+        kind: WatchKind::Write,
+    }]);
+    board.reset().unwrap();
+    let r = board.run_for_ns(10e6);
+    assert_eq!(
+        r.stop,
+        simucleo_core::cpu::StopReason::Watchpoint { addr, write: true }
+    );
+    assert_eq!(func(&board).as_deref(), Some("Reset_Handler"));
+}
+
+/// Whether a variable is set in memory or in a register (for the log).
+fn info_write_kind(board: &Nucleo, name: &str) -> &'static str {
+    let info = board.debug_info().unwrap();
+    let frame = board.call_stack()[0].clone();
+    let read = |a: u32, n: usize| -> Option<Vec<u8>> {
+        (0..n as u32).map(|i| board.peek_byte(a + i)).collect()
+    };
+    match info.assignment(name, "0", &frame, &read) {
+        Ok(simucleo_elf::debug::Write::Memory { .. }) => "memory",
+        Ok(simucleo_elf::debug::Write::Register { .. }) => "register",
+        Err(_) => "neither",
+    }
 }

@@ -147,7 +147,11 @@ export function LessonPanel({ runner, project, netlist, onStart, onSetProp, onRe
     if (!(await onStart(l))) return;
     setActiveId(l.id);
     setMessage(null);
-    setProgress((all) => (all[l.id] ? all : { ...all, [l.id]: { id: l.id, title: l.title, startedAt: now(), attempts: 0, checks: {} } }));
+    // Starting over clears the last results (attempts and the first completion stay).
+    setProgress((all) => ({
+      ...all,
+      [l.id]: all[l.id] ? { ...all[l.id], checks: {} } : { id: l.id, title: l.title, startedAt: now(), attempts: 0, checks: {} },
+    }));
   };
 
   // ------------------------------------------------------------- grading

@@ -12,6 +12,9 @@ use simucleo_circuit::sim::parse_mcu_pin;
 use simucleo_core::cortexm::exc;
 use simucleo_nucleo::{Nucleo, Step, StepEnd};
 
+pub mod scope;
+use scope::Scope;
+
 /// Level history of one GPIO pin within the current display frame.
 #[derive(Debug, Clone, Copy, Default)]
 struct PinTrace {
@@ -36,6 +39,14 @@ pub struct Simulator {
     frame_start_ns: f64,
     /// Probed pins with their level at the start of the frame.
     probes: Vec<((u8, u8), bool)>,
+    /// Edges of each probed pin in this frame (ms, level), capped at
+    /// `PROBE_EDGES_MAX`, and whether some did not fit.
+    probe_edges: Vec<(Vec<(f64, bool)>, bool)>,
+    /// Trigger and capture over the probed pins.
+    scope: Scope,
+    /// The last run stopped because a capture completed with "pause on
+    /// trigger" set.
+    trigger_paused: bool,
     /// RTOS task running at the start of the frame (TCB address).
     rtos_current: Option<u32>,
     /// The last run stopped at a breakpoint.
@@ -67,6 +78,9 @@ impl Simulator {
             pins: BTreeMap::new(),
             frame_start_ns: 0.0,
             probes: Vec::new(),
+            probe_edges: Vec::new(),
+            scope: Scope::new(),
+            trigger_paused: false,
             rtos_current: None,
             at_breakpoint: false,
             watch_hit: None,
@@ -103,6 +117,12 @@ impl Simulator {
         for (pin, level) in &mut self.probes {
             *level = self.board.pin((b'A' + pin.0) as char, pin.1);
         }
+        for e in &mut self.probe_edges {
+            *e = (Vec::new(), false);
+        }
+        let levels: Vec<bool> = self.probes.iter().map(|p| p.1).collect();
+        self.scope.reset(&levels);
+        self.trigger_paused = false;
         // Start a fresh display frame for the parts as well.
         self.board.circuit_frame(0.0);
         self.board.take_task_switches();
@@ -125,24 +145,95 @@ impl Simulator {
         if let Some(why) = &self.stopped {
             return why.clone();
         }
-        let r = self.board.run_for_ns_debug(ms * 1e6);
-        self.at_breakpoint = matches!(
-            r.stop,
-            simucleo_core::cpu::StopReason::Breakpoint(_)
-                | simucleo_core::cpu::StopReason::Watchpoint { .. }
-        );
-        self.watch_hit = match r.stop {
-            simucleo_core::cpu::StopReason::Watchpoint { addr, write } => Some((addr, write)),
-            _ => None,
-        };
-        match self.board.diagnose(&r) {
-            Some(d) => {
+        self.trigger_paused = false;
+        let end = self.board.time_ns() + ms * 1e6;
+        loop {
+            let now = self.board.time_ns();
+            // With "pause on trigger", short steps: the run stops soon after
+            // the capture's end.
+            let mut ns = end - now;
+            if self.scope.watching_for_pause() {
+                ns = ns.min(self.scope.step_ns(now));
+            }
+            let r = self.board.run_for_ns_debug(ns);
+            self.feed_scope();
+            self.at_breakpoint = matches!(
+                r.stop,
+                simucleo_core::cpu::StopReason::Breakpoint(_)
+                    | simucleo_core::cpu::StopReason::Watchpoint { .. }
+            );
+            self.watch_hit = match r.stop {
+                simucleo_core::cpu::StopReason::Watchpoint { addr, write } => Some((addr, write)),
+                _ => None,
+            };
+            if let Some(d) = self.board.diagnose(&r) {
                 let why = d.to_string();
                 self.stopped = Some(why.clone());
-                why
+                return why;
             }
-            None => String::new(),
+            if self.scope.take_pause_hit() {
+                self.trigger_paused = true;
+                break;
+            }
+            let t = self.board.time_ns();
+            if self.at_breakpoint || t >= end || t <= now {
+                break;
+            }
         }
+        String::new()
+    }
+
+    /// Move the probed pins' level changes from the bus to this frame's
+    /// edge lists and to the trigger.
+    fn feed_scope(&mut self) {
+        let events = std::mem::take(&mut self.board.bus.level_events);
+        for e in &events {
+            let Some(ch) = self.probes.iter().position(|p| p.0 == (e.port, e.pin)) else {
+                continue;
+            };
+            let t = self.board.ns_at(e.time);
+            let level = e.level == Some(true);
+            self.scope.push(ch, t, level);
+            if let Some((edges, dense)) = self.probe_edges.get_mut(ch) {
+                if edges.len() >= PROBE_EDGES_MAX {
+                    *dense = true;
+                } else {
+                    edges.push((t / 1e6, level));
+                }
+            }
+        }
+        // Keep the allocation.
+        self.board.bus.level_events = events;
+        self.board.bus.level_events.clear();
+        self.scope.advance(self.board.time_ns());
+    }
+
+    /// The last `runForMs` paused because a capture completed with "pause
+    /// on trigger" set.
+    #[wasm_bindgen(js_name = triggerPaused)]
+    pub fn trigger_paused(&self) -> bool {
+        self.trigger_paused
+    }
+
+    /// Set the oscilloscope trigger from JSON `{source, edge, mode,
+    /// windowNs, pre, width?: {cmp, ns}, pause}` (`edge`: `"rising"`,
+    /// `"falling"`, `"either"`; `mode`: `"auto"`, `"normal"`, `"single"`;
+    /// `cmp`: `"lt"`, `"gt"`), or clear it with `""`. Re-arms.
+    #[wasm_bindgen(js_name = setTrigger)]
+    pub fn set_trigger(&mut self, json: &str) -> Result<(), JsError> {
+        let config = if json.is_empty() {
+            None
+        } else {
+            Some(serde_json::from_str(json)?)
+        };
+        self.scope.configure(config);
+        Ok(())
+    }
+
+    /// Wait for the next trigger (Single mode's re-arm).
+    #[wasm_bindgen(js_name = armTrigger)]
+    pub fn arm_trigger(&mut self) {
+        self.scope.arm();
     }
 
     /// The last `runForMs` stopped at a breakpoint or watchpoint (the
@@ -378,29 +469,41 @@ impl Simulator {
             p.since_ns = t;
         }
         // Probes: level changes of the probed pins within the frame.
-        let level_events = std::mem::take(&mut self.board.bus.level_events);
+        self.feed_scope();
         let mut probes = Vec::new();
-        for (pin, level0) in &mut self.probes {
-            let mut edges = Vec::new();
-            let mut dense = false;
-            for e in level_events.iter().filter(|e| (e.port, e.pin) == *pin) {
-                if edges.len() >= PROBE_EDGES_MAX {
-                    dense = true;
-                    continue;
-                }
-                edges.push(json!([
-                    self.board.ns_at(e.time) / 1e6,
-                    e.level == Some(true)
-                ]));
-            }
+        for ((pin, level0), (edges, dense)) in self.probes.iter_mut().zip(&mut self.probe_edges) {
             probes.push(json!({
                 "name": format!("P{}{}", (b'A' + pin.0) as char, pin.1),
                 "level0": *level0,
-                "edges": edges,
-                "dense": dense,
+                "edges": std::mem::take(edges),
+                "dense": std::mem::take(dense),
             }));
             *level0 = self.board.pin((b'A' + pin.0) as char, pin.1);
         }
+        let capture = self.scope.take_capture().map(|c| {
+            let channels: Vec<_> = c
+                .channels
+                .into_iter()
+                .map(|ch| {
+                    json!({
+                        "name": ch.name,
+                        "level0": ch.level0,
+                        "edges": ch.edges,
+                        "fromNs": ch.from_ns,
+                        "toNs": ch.to_ns,
+                    })
+                })
+                .collect();
+            json!({
+                "seq": c.seq,
+                "source": c.source,
+                "triggerMs": c.trigger_ns / 1e6,
+                "startNs": c.start_ns,
+                "endNs": c.end_ns,
+                "channels": channels,
+            })
+        });
+        let scope = json!({ "state": self.scope.status().name(), "capture": capture });
 
         let span = (now - self.frame_start_ns).max(1e-9);
         let mut pins = Vec::new();
@@ -469,6 +572,7 @@ impl Simulator {
             "parts": parts,
             "circuitWarnings": self.board.circuit_warnings(),
             "probes": probes,
+            "scope": scope,
             "rtos": rtos,
             "bluetooth": self.board.bluetooth(),
         })
@@ -626,14 +730,26 @@ impl Simulator {
     #[wasm_bindgen(js_name = setProbes)]
     pub fn set_probes(&mut self, pins_json: &str) -> Result<(), JsError> {
         let names: Vec<String> = serde_json::from_str(pins_json)?;
+        // Edges of the pins probed so far go to their lists first.
+        self.feed_scope();
         let mut mask = [0u16; 8];
         self.probes.clear();
         for (port, pin) in names.iter().filter_map(|n| parse_mcu_pin(n)) {
+            if mask[port as usize] & (1 << pin) != 0 {
+                continue;
+            }
             mask[port as usize] |= 1 << pin;
             let level = self.board.pin((b'A' + port) as char, pin);
             self.probes.push(((port, pin), level));
         }
         self.board.bus.probe_mask = mask;
+        self.probe_edges = vec![(Vec::new(), false); self.probes.len()];
+        self.scope.set_channels(
+            self.probes
+                .iter()
+                .map(|&((port, pin), level)| (format!("P{}{pin}", (b'A' + port) as char), level))
+                .collect(),
+        );
         Ok(())
     }
 

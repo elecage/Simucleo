@@ -99,6 +99,14 @@ function ValueTree({
   );
 }
 
+const TASK_STATE: Record<string, string> = {
+  running: "실행 중",
+  ready: "준비",
+  blocked: "대기",
+  suspended: "일시중단",
+  deleted: "삭제됨",
+};
+
 const KIND_TEXT = { write: "쓰기", read: "읽기", access: "읽기·쓰기" } as const;
 
 /** Why execution paused, for the status line. */
@@ -129,6 +137,9 @@ export function SourceView({ runner }: { runner: Runner }) {
   const [newWatch, setNewWatch] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
   const [watchpoints, setWatchpoints] = useState<WatchpointSpec[]>([]);
+  // The RTOS task whose call stack is shown (null: the running code).
+  const [task, setTask] = useState<number | null>(null);
+  const tasks = runner.frame?.rtos?.snapshot.tasks ?? [];
   const [newWp, setNewWp] = useState<WatchpointSpec>({ expr: "", kind: "write" });
   const codeRef = useRef<HTMLDivElement>(null);
   const upload = useRef<HTMLInputElement>(null);
@@ -186,6 +197,9 @@ export function SourceView({ runner }: { runner: Runner }) {
     if (pause.n === 0) return;
     setFrame(0);
     setEditError(null);
+    // A new stop: back to the code that runs.
+    setTask(null);
+    runner.selectTask(null);
     requestDebugState(0, fileIdx ?? -1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pause.n]);
@@ -487,6 +501,27 @@ export function SourceView({ runner }: { runner: Runner }) {
           </p>
         )}
         <h4>호출 스택</h4>
+        {paused && tasks.length > 0 && (
+          <select
+            aria-label="태스크"
+            className="task-select"
+            value={task ?? ""}
+            onChange={(e) => {
+              const tcb = e.target.value === "" ? null : Number(e.target.value);
+              setTask(tcb);
+              runner.selectTask(tcb);
+              setFrame(0);
+              requestDebugState(0, fileIdx ?? -1);
+            }}
+          >
+            <option value="">실행 중인 코드</option>
+            {tasks.map((t) => (
+              <option key={t.tcb} value={t.tcb}>
+                {t.name} ({TASK_STATE[t.state] ?? t.state})
+              </option>
+            ))}
+          </select>
+        )}
         <ol className="frames">
           {(paused ? debugState!.frames : []).map((f, i) => (
             <li

@@ -287,6 +287,13 @@ impl Simulator {
         }
     }
 
+    /// Look at FreeRTOS task `tcb`'s call stack in `debugState`, locals,
+    /// evaluation and setting variables (−1: the code the CPU is running).
+    #[wasm_bindgen(js_name = selectTask)]
+    pub fn select_task(&mut self, tcb: f64) {
+        self.board.select_task((tcb >= 0.0).then_some(tcb as u32));
+    }
+
     /// Evaluate a C expression in call-stack frame `frame`: JSON
     /// `{name, type, value, children}` or `{error}`.
     pub fn evaluate(&self, expr: &str, frame: usize) -> String {
@@ -331,7 +338,7 @@ impl Simulator {
             return serde_json::json!({"pc": pc, "frames": []}).to_string();
         };
         let loc = info.location(pc);
-        let frames = self.board.call_stack();
+        let frames = self.board.viewed_stack();
         let locals = self.board.locals(frame);
         let globals = if globals_file >= 0 {
             self.board.globals(&[globals_file as u32])

@@ -69,6 +69,8 @@ export interface Runner {
   /** Data watchpoints, resolved in call-stack frame `frame`. */
   setWatchpoints(list: WatchpointSpec[], frame: number): void;
   watchpoints: WatchpointPlaced[];
+  /** Look at an RTOS task's call stack (null: the running code). */
+  selectTask(tcb: number | null): void;
   assigned: { n: number; target: string; result: WatchValue | null };
 }
 
@@ -193,6 +195,7 @@ export function useRunner(): Runner {
       requestDisasm: (addr: number | null) => send({ type: "disassemble", addr }),
       requestWatch: (exprs: string[], frame: number) => send({ type: "evaluate", exprs, frame }),
       setWatchpoints: (list: WatchpointSpec[], frame: number) => send({ type: "watchpoints", list, frame }),
+      selectTask: (tcb: number | null) => send({ type: "selectTask", tcb }),
       setVariable: (target: string, value: string, frame: number) =>
         send({ type: "setVariable", target, value, frame }),
     }),

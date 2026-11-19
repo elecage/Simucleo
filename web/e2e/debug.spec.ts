@@ -146,3 +146,35 @@ test("a data watchpoint stops right after the variable is written", async ({ pag
   await page.locator(".source-bar").getByRole("button", { name: "▶ 계속" }).click();
   await expect(page.getByTestId("debug-status")).toContainText("실행 중");
 });
+
+test("RTOS: each task's call stack and locals", async ({ page }) => {
+  await page.goto("/");
+  await expect(status(page)).toContainText("예제를");
+  await page.getByLabel("예제 펌웨어").selectOption("freertos-two-tasks.elf");
+  await expect(status(page)).toContainText("freertos-two-tasks");
+  await page.getByRole("button", { name: "▶ 실행" }).click();
+  // Count prints every second; let it print a few times.
+  await page.getByRole("button", { name: "가상 콘솔 (USART2)" }).click();
+  await expect(page.locator(".console")).toContainText("count 2", { timeout: 10000 });
+  await page.getByRole("button", { name: "⏸ 일시정지" }).click();
+  await page.getByRole("button", { name: "소스 (디버그)" }).click();
+  await expect(page.getByTestId("debug-status")).toContainText("일시정지");
+
+  // Count waits in osDelay, called from CountTask.
+  const select = page.getByLabel("태스크");
+  await select.selectOption({ label: "Count (대기)" });
+  const frames = page.locator(".frames li");
+  await expect(frames.filter({ hasText: "osDelay" })).toHaveCount(1);
+  // The task function is the bottom of its stack.
+  await expect(frames.last()).toContainText("CountTask");
+  await frames.filter({ hasText: "CountTask" }).click();
+  await expect(page.locator(".src-line.here")).toContainText("osDelay(1000);");
+  await expect(page.getByTestId("locals")).toContainText("n");
+  await expect(page.getByTestId("locals").locator(".var-value[data-var='n']")).toHaveText(/^[3-9]\d*$/);
+  await page.screenshot({ path: "test-results/m11-rtos-stack.png" });
+
+  // The button task waits on its semaphore.
+  await select.selectOption({ label: "Button (대기)" });
+  await expect(frames.filter({ hasText: "osSemaphoreAcquire" })).toHaveCount(1);
+  await expect(frames.filter({ hasText: "ButtonTask" })).toHaveCount(1);
+});

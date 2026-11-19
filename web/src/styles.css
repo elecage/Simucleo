@@ -306,3 +306,4 @@ main { position: relative; }
 .var-value.editable { cursor: text; border-bottom: 1px dotted #9ca3af; }
 .var-edit { font: 12px ui-monospace, monospace; width: 9em; padding: 0 2px; }
 .edit-error { color: #b91c1c; margin: 4px 0; }
+.task-select { width: 100%; margin-bottom: 2px; font-size: 12px; }

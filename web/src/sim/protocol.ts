@@ -110,6 +110,7 @@ export type ToWorker =
   | { type: "evaluate"; exprs: string[]; frame: number }
   | { type: "setVariable"; target: string; value: string; frame: number }
   | { type: "watchpoints"; list: WatchpointSpec[]; frame: number }
+  | { type: "selectTask"; tcb: number | null }
   | { type: "sdLoad"; part: string; bytes: ArrayBuffer };
 
 export type FromWorker =

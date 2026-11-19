@@ -49,6 +49,9 @@ pub(crate) struct DebugState {
     pub info: std::cell::OnceCell<Option<std::rc::Rc<DebugInfo>>>,
     /// User breakpoint addresses.
     pub breakpoints: BTreeSet<u32>,
+    /// The FreeRTOS task (TCB) whose call stack locals, evaluation and
+    /// setting variables use; `None`: the code the CPU is running.
+    pub task: Option<u32>,
     /// Conditions of conditional breakpoints, by address (several
     /// breakpoints may share one: it stops when any condition holds).
     pub conditions: HashMap<u32, Vec<String>>,
@@ -58,6 +61,7 @@ impl DebugState {
     pub fn new_firmware(&mut self, bytes: &[u8]) {
         self.elf = Some(std::rc::Rc::new(bytes.to_vec()));
         self.info = std::cell::OnceCell::new();
+        self.task = None;
     }
 
     fn get(&self) -> Option<std::rc::Rc<DebugInfo>> {
@@ -125,6 +129,83 @@ impl Nucleo {
         }
     }
 
+    /// The FreeRTOS task currently running (`pxCurrentTCB`).
+    fn running_task(&self) -> Option<u32> {
+        let rtos = self.rtos.as_ref()?;
+        let b = self.read_mem(rtos.current_tcb, 4)?;
+        Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+
+    /// Look at FreeRTOS task `tcb`'s call stack (its locals, evaluation,
+    /// setting variables); `None` for the code the CPU is running.
+    pub fn select_task(&mut self, tcb: Option<u32>) {
+        self.debug.task = tcb;
+    }
+
+    /// Whether the viewed stack is the CPU's own.
+    fn viewing_live(&self) -> bool {
+        match self.debug.task {
+            None => true,
+            Some(t) => self.running_task() == Some(t),
+        }
+    }
+
+    /// The call stack being looked at (see `select_task`).
+    pub fn viewed_stack(&self) -> Vec<Frame> {
+        match self.debug.task {
+            Some(t) if !self.viewing_live() => self.task_call_stack(t),
+            _ => self.call_stack(),
+        }
+    }
+
+    /// The call stack of FreeRTOS task `tcb`: the running task's is the
+    /// CPU's; a switched-out task's starts from the context the port saved
+    /// on its stack (r4–r11 and EXC_RETURN, s16–s31 when it used the FPU,
+    /// then the exception frame).
+    pub fn task_call_stack(&self, tcb: u32) -> Vec<Frame> {
+        if self.running_task() == Some(tcb) {
+            return self.call_stack();
+        }
+        let Some(info) = self.debug.get() else {
+            return Vec::new();
+        };
+        let word = |a: u32| {
+            self.read_mem(a, 4)
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        };
+        let Some(top) = word(tcb) else {
+            return Vec::new();
+        };
+        let mut regs = [0u32; 16];
+        for i in 0..8 {
+            match word(top + 4 * i as u32) {
+                Some(v) => regs[4 + i] = v,
+                None => return Vec::new(),
+            }
+        }
+        let Some(exc_return) = word(top + 32) else {
+            return Vec::new();
+        };
+        let fp = exc_return & 0x10 == 0;
+        let frame = top + 36 + if fp { 64 } else { 0 };
+        let hw: Option<Vec<u32>> = (0..8).map(|i| word(frame + 4 * i)).collect();
+        let Some(hw) = hw else {
+            return Vec::new();
+        };
+        regs[0..4].copy_from_slice(&hw[0..4]);
+        regs[12] = hw[4];
+        regs[14] = hw[5];
+        regs[15] = hw[6];
+        let xpsr = hw[7];
+        // Past the exception frame (with the FP part and the alignment
+        // padding the core may have added).
+        let sp = frame + if fp { 104 } else { 32 } + if xpsr & (1 << 9) != 0 { 4 } else { 0 };
+        regs[13] = sp;
+        let r = self.cpu.registers();
+        let read = |a: u32, n: usize| self.read_mem(a, n);
+        self.task_root(info.unwind(regs, r.msp, sp, &read))
+    }
+
     /// Replace the data watchpoints.
     pub fn set_watchpoints(&mut self, watchpoints: &[Watchpoint]) {
         self.cpu.set_watchpoints(watchpoints);
@@ -134,7 +215,7 @@ impl Nucleo {
     /// from frame `frame` occupies: address and size, for a watchpoint.
     pub fn address_of(&self, target: &str, frame: usize) -> Result<(u32, u32), String> {
         let info = self.debug.get().ok_or("no debug information")?;
-        let frames = self.call_stack();
+        let frames = self.viewed_stack();
         let f = frames.get(frame).ok_or("no such frame")?;
         let read = |a: u32, n: usize| self.read_mem(a, n);
         info.address_of(target, f, &read)
@@ -144,7 +225,7 @@ impl Nucleo {
     /// comparisons) in call-stack frame `frame`.
     pub fn evaluate(&self, expr: &str, frame: usize) -> Result<Value, String> {
         let info = self.debug.get().ok_or("no debug information")?;
-        let frames = self.call_stack();
+        let frames = self.viewed_stack();
         let f = frames.get(frame).ok_or("no such frame")?;
         let read = |a: u32, n: usize| self.read_mem(a, n);
         info.evaluate(expr, f, &read)
@@ -160,7 +241,7 @@ impl Nucleo {
         frame: usize,
     ) -> Result<Value, String> {
         let info = self.debug.get().ok_or("no debug information")?;
-        let frames = self.call_stack();
+        let frames = self.viewed_stack();
         let f = frames.get(frame).ok_or("no such frame")?;
         let read = |a: u32, n: usize| self.read_mem(a, n);
         match info.assignment(target, value, f, &read)? {
@@ -171,9 +252,17 @@ impl Nucleo {
             }
             Write::Register { reg, value } => {
                 // An outer frame's registers may be saved on the stack by
-                // the calls since: only the innermost frame's are live.
+                // the calls since (or the task is switched out): only the
+                // running code's innermost frame's are live.
+                if !self.viewing_live() {
+                    return Err(format!(
+                        "{target} is in a register the task switch saved: set it while the task runs"
+                    ));
+                }
                 if frame != 0 {
-                    return Err(format!("{target} is in a register of a calling function: set it from the innermost frame"));
+                    return Err(format!(
+                        "{target} is in a register of a calling function: set it from the innermost frame"
+                    ));
                 }
                 let mut r = self.cpu.registers();
                 match reg {
@@ -249,7 +338,24 @@ impl Nucleo {
         };
         let r = self.cpu.registers();
         let read = |a: u32, n: usize| self.read_mem(a, n);
-        info.unwind(r.r, r.msp, r.psp, &read)
+        self.task_root(info.unwind(r.r, r.msp, r.psp, &read))
+    }
+
+    /// Cut a stack at a FreeRTOS task's entry: its function "returns" to
+    /// `prvTaskExitError` (the port's initial LR), and nothing beyond is a
+    /// caller.
+    fn task_root(&self, mut frames: Vec<Frame>) -> Vec<Frame> {
+        let exit = self
+            .firmware
+            .as_ref()
+            .and_then(|f| f.symbol("prvTaskExitError"))
+            .map(|a| a & !1);
+        if let Some(exit) = exit {
+            if let Some(i) = frames.iter().skip(1).position(|f| f.pc == exit) {
+                frames.truncate(i + 1);
+            }
+        }
+        frames
     }
 
     /// Parameters and local variables of call-stack frame `frame`.
@@ -257,7 +363,7 @@ impl Nucleo {
         let Some(info) = self.debug.get() else {
             return Vec::new();
         };
-        let frames = self.call_stack();
+        let frames = self.viewed_stack();
         let Some(f) = frames.get(frame) else {
             return Vec::new();
         };

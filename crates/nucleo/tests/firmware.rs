@@ -494,6 +494,57 @@ fn freertos_tasks_run_and_are_visible() {
     let free = task("Count").stack_free_min.unwrap();
     assert!(free > 0 && free < 1024, "{free}");
 
+    // Each waiting task's call stack, from the context saved on its stack:
+    // where it waits, called from its task function.
+    let stack = |b: &Nucleo, n: &str| -> Vec<String> {
+        b.task_call_stack(task(n).tcb)
+            .iter()
+            .map(|f| f.function.clone().unwrap_or_default())
+            .collect()
+    };
+    for (name, wait, func) in [
+        ("Blink", "osDelay", "BlinkTask"),
+        ("Count", "osDelay", "CountTask"),
+        ("Button", "osSemaphoreAcquire", "ButtonTask"),
+        ("Flags", "osThreadFlagsWait", "FlagsTask"),
+    ] {
+        let s = stack(&board, name);
+        let w = s.iter().position(|f| f == wait);
+        let t = s.iter().position(|f| f == func);
+        assert!(
+            matches!((w, t), (Some(w), Some(t)) if w + 1 == t),
+            "{name}: {s:?}"
+        );
+        assert_eq!(
+            s.last().map(String::as_str),
+            Some(func),
+            "ends at the task function: {s:?}"
+        );
+    }
+    // The running task's stack is the CPU's.
+    let pcs = |f: Vec<simucleo_elf::debug::Frame>| f.iter().map(|f| f.pc).collect::<Vec<_>>();
+    assert_eq!(
+        pcs(board.task_call_stack(task("IDLE").tcb)),
+        pcs(board.call_stack())
+    );
+    // Looking at a task: its locals and expressions in its frames.
+    board.select_task(Some(task("Count").tcb));
+    let frames = board.viewed_stack();
+    let i = frames
+        .iter()
+        .position(|f| f.function.as_deref() == Some("CountTask"))
+        .unwrap();
+    let n = board.locals(i).into_iter().find(|v| v.name == "n").unwrap();
+    assert_eq!(n.value, "3", "count 0, 1 and 2 printed");
+    assert_eq!(board.evaluate("n * 10", i).unwrap().value, "30");
+    // Its registers are saved, not live: they cannot be set.
+    assert!(board
+        .set_variable("n", "7", i)
+        .unwrap_err()
+        .contains("task switch"));
+    board.select_task(None);
+    assert_eq!(pcs(board.viewed_stack()), pcs(board.call_stack()));
+
     // Context switches are logged: Blink runs every 500 ms at least.
     let switches = board.take_task_switches();
     let blink = task("Blink").tcb;

@@ -15,6 +15,9 @@ import { useSdPersistence } from "./sim/sdStore";
 import { unlockAudio, useBuzzerAudio } from "./sim/audio";
 import type { VisualState } from "./parts/types";
 import { colorCode, eSeries, formatOhms, parseOhms, type BandCount } from "./parts/ohms";
+import { LessonPanel } from "./lessons/LessonPanel";
+import { ACTIVE_KEY, BACKUP_KEY } from "./lessons/progress";
+import type { Lesson } from "./lessons/types";
 
 const WIRE_COLORS = ["#e53935", "#1e88e5", "#43a047", "#fdd835", "#fb8c00", "#8e24aa", "#212121"];
 const CATEGORY_LABEL: Record<string, string> = {
@@ -144,6 +147,65 @@ export function App() {
     setProjectName("새 프로젝트");
     setSelected(null);
   };
+  // ------------------------------------------------------------ lessons
+  const [lessonOpen, setLessonOpen] = useState(false);
+  const [hasBackup, setHasBackup] = useState(false);
+  useEffect(() => {
+    void idbGet<string>(ACTIVE_KEY).then((a) => a && setLessonOpen(true));
+    void idbGet<string>(BACKUP_KEY).then((b) => setHasBackup(!!b));
+  }, []);
+  const startLesson = async (lesson: Lesson): Promise<boolean> => {
+    if (
+      dirty &&
+      !window.confirm(
+        `실습 '${lesson.title}'을(를) 시작하면 지금 회로가 실습의 시작 회로로 바뀝니다.\n` +
+          "지금 프로젝트는 백업해 두며, 실습 목록의 '실습 전 프로젝트 되돌리기'로 다시 열 수 있습니다. " +
+          "파일로 남기려면 취소하고 먼저 '저장'하세요.",
+      )
+    ) {
+      return false;
+    }
+    if (dirty) {
+      const fw = firmware ? { name: firmware, example: firmwareExample ?? undefined, data: firmwareBytes ? toBase64(firmwareBytes) : undefined } : undefined;
+      await idbSet(BACKUP_KEY, serialize(project, projectName, fw));
+      setHasBackup(true);
+    }
+    let loaded: Loaded;
+    try {
+      const st = lesson.start;
+      if (st === "empty") loaded = { project: defaultProject(), notes: [] };
+      else if ("example" in st) {
+        const r = await fetch(`./examples/${st.example}`);
+        if (!r.ok) throw new Error(`${st.example}을(를) 찾지 못했습니다`);
+        loaded = parse(await r.text());
+      } else loaded = parse(JSON.stringify(st.project));
+    } catch (e) {
+      setNotice(`실습을 시작하지 못했습니다: ${(e as Error).message}`);
+      return false;
+    }
+    const fw = lesson.firmware;
+    loaded = {
+      ...loaded,
+      name: `실습: ${lesson.title}`,
+      firmware: fw && fw !== "upload" ? { name: fw.example.replace(/\.elf$/, ""), example: fw.example } : undefined,
+    };
+    await applyLoaded(loaded);
+    return true;
+  };
+  const restoreBackup = async () => {
+    const text = await idbGet<string>(BACKUP_KEY);
+    if (!text || !confirmReplace()) return;
+    openText(text);
+  };
+  const setPartProp = useCallback(
+    (kind: string, prop: string, value: number | string) =>
+      setProject((p) => {
+        const id = p.parts.find((q) => q.kind === kind)?.id;
+        return id ? { ...p, parts: p.parts.map((q) => (q.id === id ? { ...q, props: { ...q.props, [prop]: value } } : q)) } : p;
+      }),
+    [],
+  );
+
   const onExampleProject = async (ex: Example) => {
     if (!confirmReplace()) return;
     const r = await fetch(`./examples/${ex.project}`);
@@ -332,7 +394,7 @@ export function App() {
   const categories = [...new Set(PARTS.map((p) => p.category))];
 
   return (
-    <div className="app">
+    <div className={lessonOpen ? "app with-lesson" : "app"}>
       <header className="toolbar">
         <strong>Simucleo</strong>
         <input
@@ -343,6 +405,14 @@ export function App() {
         />
         <ProjectMenu project={project} name={projectName} runner={runner} onNew={onNew} onOpenText={openText} />
         <RunControls runner={runner} examples={examples} onExampleProject={onExampleProject} />
+        <button
+          className={lessonOpen ? "lesson-toggle on" : "lesson-toggle"}
+          onClick={() => setLessonOpen((o) => !o)}
+          aria-pressed={lessonOpen}
+          title="단계별 실습과 자동 채점"
+        >
+          📝 실습
+        </button>
         <label className="sound-toggle" title="부저 소리 (브라우저 정책상 클릭으로 켜야 합니다)">
           <input
             type="checkbox"
@@ -466,6 +536,19 @@ export function App() {
       </main>
 
       <BottomPanel runner={runner} />
+
+      {lessonOpen && (
+        <LessonPanel
+          runner={runner}
+          project={project}
+          netlist={netlist}
+          onStart={startLesson}
+          onSetProp={setPartProp}
+          onRestoreBackup={() => void restoreBackup()}
+          hasBackup={hasBackup}
+          onClose={() => setLessonOpen(false)}
+        />
+      )}
 
       <aside className="inspector">
         <h3>속성</h3>

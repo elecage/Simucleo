@@ -1,0 +1,60 @@
+{
+  "id": "pwm-rgb",
+  "order": 3,
+  "title": "PWM으로 RGB LED 밝기 조절",
+  "level": "초급",
+  "goal": "타이머 PWM(TIM2/TIM3, 1 kHz)으로 RGB LED의 세 색을 각각 0–100% 밝기로 바꿔 색상환을 돌립니다.",
+  "start": "empty",
+  "firmware": { "example": "hal-pwm-led.elf" },
+  "grade": { "ms": 3000 },
+  "steps": [
+    {
+      "title": "RGB LED와 저항 세 개",
+      "text": [
+        "**RGB LED** 하나와 **저항** 세 개를 추가하세요. 색마다 저항이 하나씩 필요합니다.",
+        "",
+        "RGB LED의 다리: `R`, `COM`(공통, 가장 긴 다리), `G`, `B`. 기본값은 **공통 캐소드**이므로 COM은 GND에 연결합니다."
+      ],
+      "checks": [
+        { "type": "part", "kind": "rgb-led" },
+        { "type": "part", "kind": "resistor", "count": 3 }
+      ]
+    },
+    {
+      "title": "색마다 PWM 핀 → 저항 → LED",
+      "text": [
+        "hal-pwm-led 펌웨어가 쓰는 핀:",
+        "",
+        "- 빨강 R: **D3** (`PB3`, TIM2_CH2)",
+        "- 초록 G: **D5** (`PB4`, TIM3_CH1)",
+        "- 파랑 B: **D6** (`PB10`, TIM2_CH3)",
+        "",
+        "각 핀에서 저항을 거쳐 RGB LED의 해당 다리로, COM은 GND로 연결하세요."
+      ],
+      "checks": [
+        { "type": "series", "from": "PB3", "to": "GND", "through": ["resistor", "rgb-led:R"] },
+        { "type": "series", "from": "PB4", "to": "GND", "through": ["resistor", "rgb-led:G"] },
+        { "type": "series", "from": "PB10", "to": "GND", "through": ["resistor", "rgb-led:B"] }
+      ]
+    },
+    {
+      "title": "듀티비 확인하고 채점하기",
+      "text": [
+        "**▶ 실행**하면 색이 천천히 바뀝니다. PWM **듀티비**(한 주기 중 HIGH인 비율)가 밝기를 정합니다: `__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, duty)`에서 duty 0–1000이 0–100%입니다.",
+        "",
+        "'파형 (프로브)' 탭에 `PB3`를 추가하면 1 kHz 펄스의 폭이 변하는 것이 보입니다. 보드의 LD2(`PA5`)는 숨 쉬듯 밝아졌다 어두워집니다.",
+        "",
+        "**채점**은 3초 동안 실행하며 각 핀의 듀티비와 LED 색별 밝기를 잽니다."
+      ],
+      "checks": [
+        { "type": "running" },
+        { "type": "duty", "pin": "PB3", "min": 0.9, "max": 1, "label": "R(PB3) 듀티 90% 이상인 순간" },
+        { "type": "duty", "pin": "PB3", "min": 0, "max": 0.1, "label": "R(PB3) 듀티 10% 이하인 순간" },
+        { "type": "duty", "pin": "PA5", "min": 0.4, "max": 0.6, "label": "LD2(PA5) 듀티 40–60%를 지나감 (숨쉬기)" },
+        { "type": "brightness", "kind": "rgb-led", "channel": 0, "above": 0.5, "below": 0.1, "label": "빨강이 켜졌다 꺼짐" },
+        { "type": "brightness", "kind": "rgb-led", "channel": 1, "above": 0.5, "below": 0.1, "label": "초록이 켜졌다 꺼짐" },
+        { "type": "brightness", "kind": "rgb-led", "channel": 2, "above": 0.5, "below": 0.1, "label": "파랑이 켜졌다 꺼짐" }
+      ]
+    }
+  ]
+}

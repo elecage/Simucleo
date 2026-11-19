@@ -52,3 +52,17 @@ void USART2_IRQHandler(void)
 {
   HAL_UART_IRQHandler(&huart2);
 }
+
+/* USART1 and USART6, for projects that define huart1 / huart6. */
+__attribute__((weak)) UART_HandleTypeDef huart1;
+__attribute__((weak)) UART_HandleTypeDef huart6;
+
+void USART1_IRQHandler(void)
+{
+  HAL_UART_IRQHandler(&huart1);
+}
+
+void USART6_IRQHandler(void)
+{
+  HAL_UART_IRQHandler(&huart6);
+}

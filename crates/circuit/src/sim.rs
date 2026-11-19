@@ -213,6 +213,9 @@ pub struct PartVisual {
     /// NeoPixel colours, 0xRRGGBB per LED.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub leds: Vec<u32>,
+    /// SD card: moves whenever the contents change (to save them).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation: Option<u32>,
     /// Character LCD contents.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lcd: Option<LcdView>,
@@ -2072,6 +2075,7 @@ impl CircuitSim {
                             v.on = Some(if busy { 1.0 } else { 0.0 });
                             sd.reads = 0;
                             sd.writes = 0;
+                            v.generation = Some(sd.generation);
                         }
                         _ => {}
                     }
@@ -2402,6 +2406,34 @@ impl CircuitSim {
         match self.devices.get(id) {
             Some(Device::Sd(sd)) => Some(sd.image()),
             _ => None,
+        }
+    }
+
+    /// The SD card in part `id` as just its blocks in use
+    /// ([`SdCard::sparse`]): what the UI keeps between sessions.
+    pub fn sd_snapshot(&self, id: &str) -> Option<Vec<u8>> {
+        match self.devices.get(id) {
+            Some(Device::Sd(sd)) => Some(sd.sparse()),
+            _ => None,
+        }
+    }
+
+    /// Put back what [`CircuitSim::sd_snapshot`] gave.
+    pub fn sd_restore(&mut self, id: &str, snapshot: &[u8]) -> bool {
+        match self.devices.get_mut(id) {
+            Some(Device::Sd(sd)) => sd.load_sparse(snapshot),
+            _ => false,
+        }
+    }
+
+    /// Erase the SD card in part `id` (all zeros, no file system).
+    pub fn sd_wipe(&mut self, id: &str) -> bool {
+        match self.devices.get_mut(id) {
+            Some(Device::Sd(sd)) => {
+                sd.wipe();
+                true
+            }
+            _ => false,
         }
     }
 

@@ -11,6 +11,7 @@ import { ProjectMenu } from "./run/ProjectMenu";
 import { fromBase64, idbGet, idbSet, parse, serialize, toBase64, type Loaded } from "./editor/project";
 import { createSimulator, type Netlist, type SimHandle } from "./sim/simulator";
 import { useRunner } from "./sim/useRunner";
+import { useSdPersistence } from "./sim/sdStore";
 import { unlockAudio, useBuzzerAudio } from "./sim/audio";
 import type { VisualState } from "./parts/types";
 import { colorCode, eSeries, formatOhms, parseOhms, type BandCount } from "./parts/ohms";
@@ -164,6 +165,8 @@ export function App() {
       }
     });
   }, [runner.ready, applyLoaded]);
+  // SD cards keep what the firmware wrote, per project (IndexedDB).
+  const sdCards = useSdPersistence(runner, project, projectName);
   const { firmware, firmwareBytes, firmwareExample } = runner;
   useEffect(() => {
     if (!restored.current) return;
@@ -536,7 +539,7 @@ export function App() {
                 </label>
               );
             })}
-            {selectedPart.kind === "sd-card" && <SdImageButtons part={selectedPart.id} runner={runner} />}
+            {selectedPart.kind === "sd-card" && <SdImageButtons part={selectedPart.id} runner={runner} onWipe={sdCards.wipe} />}
             <button onClick={deleteSelected}>삭제</button>
           </>
         ) : selectedWire ? (
@@ -590,7 +593,15 @@ export function App() {
 }
 
 /** Download or replace the contents of a simulated SD card. */
-function SdImageButtons({ part, runner }: { part: string; runner: ReturnType<typeof useRunner> }) {
+function SdImageButtons({
+  part,
+  runner,
+  onWipe,
+}: {
+  part: string;
+  runner: ReturnType<typeof useRunner>;
+  onWipe: (part: string) => void;
+}) {
   const input = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState<string | null>(null);
   return (
@@ -612,7 +623,16 @@ function SdImageButtons({ part, runner }: { part: string; runner: ReturnType<typ
         >
           이미지 내려받기
         </button>{" "}
-        <button onClick={() => input.current?.click()}>이미지 넣기</button>
+        <button onClick={() => input.current?.click()}>이미지 넣기</button>{" "}
+        <button
+          onClick={() => {
+            if (!window.confirm("카드의 내용을 모두 지울까요? 파일 시스템도 지워져 빈 카드가 됩니다.")) return;
+            onWipe(part);
+            setMsg("카드를 비웠습니다.");
+          }}
+        >
+          카드 비우기
+        </button>
         <input
           ref={input}
           type="file"
@@ -628,6 +648,7 @@ function SdImageButtons({ part, runner }: { part: string; runner: ReturnType<typ
           }}
         />
       </div>
+      <span className="hint">카드 내용은 이 브라우저에 프로젝트별로 저장되어, 다시 열면 그대로 들어 있습니다.</span>
       {msg && <span className="hint">{msg}</span>}
     </div>
   );

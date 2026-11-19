@@ -572,6 +572,25 @@ impl Simulator {
         self.board.sd_image(id).unwrap_or_default()
     }
 
+    /// The SD card of part `id` as just its blocks in use (small enough to
+    /// keep in IndexedDB; empty if there is no such card).
+    #[wasm_bindgen(js_name = sdSnapshot)]
+    pub fn sd_snapshot(&self, id: &str) -> Vec<u8> {
+        self.board.sd_snapshot(id).unwrap_or_default()
+    }
+
+    /// Put back what `sdSnapshot` gave.
+    #[wasm_bindgen(js_name = sdRestore)]
+    pub fn sd_restore(&mut self, id: &str, snapshot: &[u8]) -> bool {
+        self.board.sd_restore(id, snapshot)
+    }
+
+    /// Erase the SD card of part `id`.
+    #[wasm_bindgen(js_name = sdWipe)]
+    pub fn sd_wipe(&mut self, id: &str) -> bool {
+        self.board.sd_wipe(id)
+    }
+
     /// Insert a disk image into the SD card of part `id`.
     #[wasm_bindgen(js_name = sdLoad)]
     pub fn sd_load(&mut self, id: &str, image: &[u8]) -> bool {

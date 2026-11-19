@@ -587,6 +587,9 @@ enum SdWrite {
 /// SDHC card in SPI mode: CMD0/8/55/ACMD41/58 initialisation, CSD/CID,
 /// single and multiple block reads and writes. Blocks never written read
 /// as zeros; storage is sparse.
+/// Header of [`SdCard::sparse`].
+const SPARSE_MAGIC: &[u8; 4] = b"SDS1";
+
 #[derive(Debug, Clone)]
 pub struct SdCard {
     pub blocks: u32,
@@ -606,6 +609,9 @@ pub struct SdCard {
     pub writes: u32,
     /// Contents changed since the image was last exported.
     pub dirty: bool,
+    /// Moves on every change of the contents (a block written, an image
+    /// put in, the card wiped): the UI saves the card when it moves.
+    pub generation: u32,
 }
 
 impl SdCard {
@@ -624,6 +630,7 @@ impl SdCard {
             reads: 0,
             writes: 0,
             dirty: false,
+            generation: 0,
         }
     }
 
@@ -634,6 +641,7 @@ impl SdCard {
         fresh.nominal_mb = self.nominal_mb;
         fresh.data = std::mem::take(&mut self.data);
         fresh.dirty = self.dirty;
+        fresh.generation = self.generation;
         *self = fresh;
     }
 
@@ -650,6 +658,55 @@ impl SdCard {
             self.data.insert(block, Box::new(b));
         }
         self.dirty = true;
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// Every block back to zeros (no file system any more); the size stays.
+    pub fn wipe(&mut self) {
+        self.data.clear();
+        self.dirty = true;
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// The contents as just the blocks in use, to keep them small: "SDS1",
+    /// the card's size in blocks, then each block that is not all zeros as
+    /// its number and its 512 bytes, in block order (numbers u32 LE).
+    pub fn sparse(&self) -> Vec<u8> {
+        let mut used: Vec<u32> = self.data.keys().copied().collect();
+        used.sort_unstable();
+        let mut out = Vec::with_capacity(8 + used.len() * (4 + SD_BLOCK));
+        out.extend_from_slice(SPARSE_MAGIC);
+        out.extend_from_slice(&self.blocks.to_le_bytes());
+        for n in used {
+            out.extend_from_slice(&n.to_le_bytes());
+            out.extend_from_slice(&self.data[&n][..]);
+        }
+        out
+    }
+
+    /// Replace the contents with what [`SdCard::sparse`] gave (the card
+    /// takes its size too). False, with nothing changed, if `bytes` is not
+    /// in that form.
+    pub fn load_sparse(&mut self, bytes: &[u8]) -> bool {
+        let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+        if bytes.len() < 8
+            || &bytes[..4] != SPARSE_MAGIC
+            || !(bytes.len() - 8).is_multiple_of(4 + SD_BLOCK)
+        {
+            return false;
+        }
+        let blocks = word(4);
+        let entries = (8..bytes.len()).step_by(4 + SD_BLOCK);
+        if blocks == 0 || entries.clone().any(|at| word(at) >= blocks) {
+            return false;
+        }
+        self.data.clear();
+        self.blocks = blocks;
+        for at in entries {
+            self.write_block(word(at), &bytes[at + 4..at + 4 + SD_BLOCK]);
+        }
+        self.dirty = false;
+        true
     }
 
     /// The whole card as a disk image.
@@ -2327,6 +2384,39 @@ mod tests {
         for _ in 0..3 {
             sd.exchange(0xFF);
         }
+    }
+
+    #[test]
+    fn sd_card_snapshot_keeps_only_used_blocks_and_counts_changes() {
+        let mut sd = SdCard::new(32);
+        assert_eq!(sd.generation, 0);
+        sd.write_block(0, &[0xEB, 0x3C, 0x90]);
+        sd.write_block(40_000, b"time,temp_c\n");
+        assert_eq!(sd.generation, 2);
+        let snap = sd.sparse();
+        // Two blocks of 512 bytes, not a 32 MB image.
+        assert_eq!(snap.len(), 8 + 2 * (4 + SD_BLOCK));
+        assert_eq!(&snap[..4], b"SDS1");
+        let image = sd.image();
+        // Power cycles keep the contents and the count.
+        sd.power_cycle();
+        assert_eq!(sd.generation, 2);
+        sd.wipe();
+        assert_eq!((sd.read_block(0)[0], sd.generation), (0, 3));
+        assert_eq!(sd.blocks, 32 * 2048, "the size stays");
+        // Back from the snapshot: the same image.
+        let mut back = SdCard::new(1);
+        assert!(back.load_sparse(&snap));
+        assert_eq!(back.blocks, 32 * 2048);
+        assert_eq!(&back.read_block(40_000)[..12], b"time,temp_c\n");
+        assert!(back.image() == image);
+        // Not a snapshot (a raw image, a truncated one): nothing changes.
+        assert!(!back.load_sparse(&[0u8; 1024]));
+        assert!(!back.load_sparse(&snap[..snap.len() - 1]));
+        let mut beyond = snap.clone();
+        beyond[4..8].copy_from_slice(&100u32.to_le_bytes());
+        assert!(!back.load_sparse(&beyond));
+        assert_eq!(back.read_block(0)[0], 0xEB);
     }
 
     #[test]

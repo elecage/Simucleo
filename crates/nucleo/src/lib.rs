@@ -271,6 +271,21 @@ impl Nucleo {
         self.circuit.borrow().sd_image(id)
     }
 
+    /// The SD card of part `id` as just its blocks in use.
+    pub fn sd_snapshot(&self, id: &str) -> Option<Vec<u8>> {
+        self.circuit.borrow().sd_snapshot(id)
+    }
+
+    /// Put back what [`Nucleo::sd_snapshot`] gave.
+    pub fn sd_restore(&mut self, id: &str, snapshot: &[u8]) -> bool {
+        self.circuit.borrow_mut().sd_restore(id, snapshot)
+    }
+
+    /// Erase the SD card of part `id`.
+    pub fn sd_wipe(&mut self, id: &str) -> bool {
+        self.circuit.borrow_mut().sd_wipe(id)
+    }
+
     /// Insert a disk image into the SD card of part `id`.
     pub fn sd_load(&mut self, id: &str, image: &[u8]) -> bool {
         self.circuit.borrow_mut().sd_load(id, image)

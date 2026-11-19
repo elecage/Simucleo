@@ -1,0 +1,53 @@
+{
+  "id": "led-blink",
+  "order": 1,
+  "title": "LED 깜빡이 배선",
+  "level": "입문",
+  "goal": "D13(PA5)에 저항과 LED를 직렬로 연결하고, 예제 펌웨어 hal-blinky로 1초 주기로 깜빡이게 합니다.",
+  "start": "empty",
+  "firmware": { "example": "hal-blinky.elf" },
+  "steps": [
+    {
+      "title": "LED와 저항 놓기",
+      "text": [
+        "왼쪽 부품 목록에서 **LED 5mm**와 **저항**을 하나씩 추가하세요.",
+        "",
+        "- 저항은 LED에 흐르는 전류를 제한합니다. 기본값 220 Ω이면 충분합니다.",
+        "- LED는 다리 길이가 다릅니다: 긴 다리 **A**(애노드, +), 짧은 다리 **K**(캐소드, −)."
+      ],
+      "checks": [
+        { "type": "part", "kind": "led-5mm" },
+        { "type": "part", "kind": "resistor" }
+      ]
+    },
+    {
+      "title": "D13 → 저항 → LED → GND",
+      "text": [
+        "보드의 **D13**은 MCU의 `PA5` 핀입니다 (보드 위 초록 LED LD2와 같은 핀).",
+        "",
+        "1. D13에서 저항의 한쪽 다리로 와이어를 연결합니다.",
+        "2. 저항의 다른 쪽 다리를 LED의 **A**(긴 다리)에 연결합니다.",
+        "3. LED의 **K**(짧은 다리)를 보드의 **GND**에 연결합니다.",
+        "",
+        "브레드보드의 같은 세로줄(a–e 또는 f–j)에 꽂힌 다리끼리는 서로 연결됩니다. 오른쪽 '넷리스트'에서 연결을 확인할 수 있습니다."
+      ],
+      "checks": [
+        { "type": "series", "from": "PA5", "to": "GND", "through": ["resistor", "led-5mm"] }
+      ]
+    },
+    {
+      "title": "실행하고 채점하기",
+      "text": [
+        "**▶ 실행**을 눌러 LED가 깜빡이는지 보세요. hal-blinky는 `HAL_Delay(500)`마다 `PA5`를 토글하므로 켜짐 0.5 s + 꺼짐 0.5 s = **주기 1 s**입니다.",
+        "",
+        "확인했으면 아래 **채점** 버튼을 누르세요. 펌웨어를 리셋하고 약 4초 동안 실행하면서 주기와 LED 밝기를 잽니다."
+      ],
+      "checks": [
+        { "type": "running" },
+        { "type": "period", "pin": "PA5", "ms": 1000, "tolerance": 0.05 },
+        { "type": "brightness", "kind": "led-5mm", "above": 0.5, "below": 0.1, "label": "LED가 켜졌다 꺼짐 (밝기 50% 초과, 10% 미만)" },
+        { "type": "noWarnings" }
+      ]
+    }
+  ]
+}

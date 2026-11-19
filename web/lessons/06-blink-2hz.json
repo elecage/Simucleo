@@ -1,0 +1,44 @@
+{
+  "id": "blink-2hz",
+  "order": 6,
+  "title": "내 펌웨어 올리기: 2 Hz 깜빡이",
+  "level": "중급",
+  "goal": "STM32CubeIDE(또는 arm-none-eabi-gcc)로 직접 만든 펌웨어를 올려, PA5(LD2)를 2 Hz(주기 500 ms)로 깜빡이게 합니다.",
+  "start": "empty",
+  "firmware": "upload",
+  "steps": [
+    {
+      "title": "펌웨어 만들기",
+      "text": [
+        "STM32CubeIDE에서 **NUCLEO-F401RE** 보드로 새 프로젝트를 만들면 `PA5`가 `LD2`(출력)로 설정되어 있습니다.",
+        "",
+        "**2 Hz**는 1초에 두 번 깜빡인다는 뜻입니다: 켜짐 + 꺼짐 = **500 ms**. 한 번 토글할 때마다 그 절반을 기다립니다.",
+        "",
+        "`main.c`의 `while (1)` 안에 다음을 넣으세요 (`LD2_Pin`이 `PA5`, `HAL_Delay`의 단위는 ms):",
+        "",
+        "```",
+        "while (1)",
+        "{",
+        "  HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);",
+        "  HAL_Delay(250);",
+        "}",
+        "```",
+        "",
+        "빌드하면 `Debug/<프로젝트이름>.elf`가 만들어집니다."
+      ],
+      "checks": []
+    },
+    {
+      "title": "ELF 올리고 채점하기",
+      "text": [
+        "툴바의 **ELF 업로드**로 만든 `.elf` 파일을 올리고 **▶ 실행**해 LD2가 빠르게 깜빡이는지 보세요.",
+        "",
+        "**채점**은 펌웨어를 리셋하고 약 2초 동안 `PA5`의 주기를 잽니다. 목표는 **500 ms ± 5%** (475–525 ms)입니다."
+      ],
+      "checks": [
+        { "type": "running" },
+        { "type": "period", "pin": "PA5", "ms": 500, "tolerance": 0.05 }
+      ]
+    }
+  ]
+}

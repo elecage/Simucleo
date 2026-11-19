@@ -1,0 +1,71 @@
+{
+  "id": "i2c-oled",
+  "order": 5,
+  "title": "I2C OLED 시계",
+  "level": "중급",
+  "goal": "SSD1306 OLED를 I2C 버스(D15 SCL, D14 SDA)에 연결해 RTC의 시각과 온습도를 화면에 띄웁니다.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "oled", "kind": "oled-ssd1306", "x": 46, "y": 4, "props": { "address": "0x3C" } },
+        { "id": "rtc", "kind": "rtc-ds3231", "x": 46, "y": 20, "props": { "temp": 25 } },
+        { "id": "aht", "kind": "aht20", "x": 58, "y": 21, "props": { "temp": 23.5, "humidity": 45 } }
+      ],
+      "wires": [
+        { "id": "w1", "a": { "part": "nucleo", "pin": "CN7_16" }, "b": { "part": "rtc", "pin": "VCC" }, "color": "#e53935" },
+        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_P1" }, "b": { "part": "rtc", "pin": "GND" }, "color": "#212121" },
+        { "id": "w3", "a": { "part": "nucleo", "pin": "CN10_3" }, "b": { "part": "rtc", "pin": "SCL" }, "color": "#fdd835" },
+        { "id": "w4", "a": { "part": "nucleo", "pin": "CN10_5" }, "b": { "part": "rtc", "pin": "SDA" }, "color": "#1e88e5" },
+        { "id": "w5", "a": { "part": "rtc", "pin": "VCC" }, "b": { "part": "aht", "pin": "VCC" }, "color": "#e53935" },
+        { "id": "w6", "a": { "part": "rtc", "pin": "GND" }, "b": { "part": "aht", "pin": "GND" }, "color": "#212121" },
+        { "id": "w7", "a": { "part": "rtc", "pin": "SCL" }, "b": { "part": "aht", "pin": "SCL" }, "color": "#fdd835" },
+        { "id": "w8", "a": { "part": "rtc", "pin": "SDA" }, "b": { "part": "aht", "pin": "SDA" }, "color": "#1e88e5" }
+      ]
+    }
+  },
+  "firmware": { "example": "hal-i2c-oled.elf" },
+  "grade": { "ms": 2500 },
+  "steps": [
+    {
+      "title": "OLED 전원: VCC → 3V3, GND → GND",
+      "text": [
+        "RTC(DS3231)와 온습도 센서(AHT20)는 이미 I2C 버스에 연결되어 있습니다. 이제 OLED를 같은 버스에 붙입니다.",
+        "",
+        "OLED의 `VCC`를 보드의 **3V3**에, `GND`를 **GND**에 연결하세요. RTC의 같은 이름 핀에 연결해도 됩니다."
+      ],
+      "checks": [
+        { "type": "connected", "kind": "oled-ssd1306", "pin": "VCC", "to": "3V3" },
+        { "type": "connected", "kind": "oled-ssd1306", "pin": "GND", "to": "GND" }
+      ]
+    },
+    {
+      "title": "I2C 신호: SCL → D15, SDA → D14",
+      "text": [
+        "I2C는 두 선을 여러 장치가 함께 씁니다. 장치마다 **주소**가 달라(OLED `0x3C`, RTC `0x68`, AHT20 `0x38`) 구분됩니다.",
+        "",
+        "- `SCL`(클럭) → **D15** (`PB8`, I2C1_SCL)",
+        "- `SDA`(데이터) → **D14** (`PB9`, I2C1_SDA)",
+        "",
+        "두 선을 바꿔 꽂으면 OLED가 응답하지 않아 펌웨어가 `Error_Handler()`로 멈춥니다."
+      ],
+      "checks": [
+        { "type": "connected", "kind": "oled-ssd1306", "pin": "SCL", "to": "PB8", "label": "OLED SCL → D15 (PB8)" },
+        { "type": "connected", "kind": "oled-ssd1306", "pin": "SDA", "to": "PB9", "label": "OLED SDA → D14 (PB9)" }
+      ]
+    },
+    {
+      "title": "화면 확인하고 채점하기",
+      "text": [
+        "**▶ 실행**하면 콘솔에 버스 검색 결과 `scan: 0x38 0x3C 0x68`이 나오고, OLED에 날짜·시각·온도·습도가 1초마다 그려집니다.",
+        "",
+        "**채점**은 2.5초 동안 실행하며 펌웨어가 멈추지 않는지, 버스 검색에 OLED가 보이는지, 화면에 무언가 그려지는지 확인합니다."
+      ],
+      "checks": [
+        { "type": "running", "hint": "펌웨어가 멈췄습니다. OLED가 I2C에 응답하지 않으면 Error_Handler()가 불립니다. SDA·SCL과 전원 배선을 확인하세요." },
+        { "type": "console", "pattern": "scan:.*0x3C", "label": "버스 검색에서 OLED(0x3C) 발견" },
+        { "type": "display", "kind": "oled-ssd1306", "minPixels": 50, "label": "OLED에 글자가 그려짐" }
+      ]
+    }
+  ]
+}

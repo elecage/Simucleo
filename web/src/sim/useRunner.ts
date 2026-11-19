@@ -35,11 +35,22 @@ export interface Runner {
   run(): void;
   pause(): void;
   reset(): void;
+  /** Reset, tagging the frames that follow with `epoch` (see `onFrame`). */
+  resetEpoch(epoch: number): void;
+  /**
+   * Called with every frame as it arrives (none is skipped, unlike the
+   * `frame` state, which React may batch). Returns the unsubscribe.
+   */
+  onFrame(listener: FrameListener): () => void;
   setSpeed(v: number): void;
+  /** Cap the speed (Infinity lifts it), e.g. while grading times button presses. */
+  setSpeedCap(v: number): void;
   /** Press or release a switch: a tact-switch part id, or "B1". */
   press(part: string, pressed: boolean): void;
   setWiring(circuit: CircuitJson): void;
-  setProbes(pins: string[]): void;
+  /** Pins whose edges the frames report; each `owner` (default: the
+   * waveform view) keeps its own list and the union is probed. */
+  setProbes(pins: string[], owner?: string): void;
   sendConsole(text: string): void;
   clearConsole(): void;
   readMemory(addr: number, len: number): void;
@@ -80,7 +91,18 @@ export interface Runner {
   assigned: { n: number; target: string; result: WatchValue | null };
 }
 
+/** A frame as delivered by the worker, with the console text it brought. */
+export interface FrameEvent {
+  frame: SimFrame;
+  console: string;
+  running: boolean;
+  epoch: number;
+}
+export type FrameListener = (e: FrameEvent) => void;
+
 export function useRunner(): Runner {
+  const listeners = useRef(new Set<FrameListener>());
+  const probeOwners = useRef(new Map<string, string[]>());
   const worker = useRef<Worker | null>(null);
   const [ready, setReady] = useState(false);
   const [firmware, setFirmware] = useState<string | null>(null);
@@ -151,6 +173,7 @@ export function useRunner(): Runner {
           setAssigned((a) => ({ n: a.n + 1, target: m.target, result: m.result }));
           break;
         case "frame":
+          for (const l of listeners.current) l({ frame: m.frame, console: m.console, running: m.running, epoch: m.epoch });
           setFrame(m.frame);
           setRunning(m.running);
           setSpeedState(m.speed);
@@ -184,11 +207,20 @@ export function useRunner(): Runner {
       run: () => send({ type: "run" }),
       pause: () => send({ type: "pause" }),
       reset: () => send({ type: "reset" }),
+      resetEpoch: (epoch: number) => send({ type: "reset", epoch }),
+      onFrame: (l: FrameListener) => {
+        listeners.current.add(l);
+        return () => void listeners.current.delete(l);
+      },
       setSpeed: (value: number) => send({ type: "speed", value }),
+      setSpeedCap: (value: number) => send({ type: "speedCap", value }),
       press: (part: string, pressed: boolean) => send({ type: "press", part, pressed }),
       setWiring: (circuit: CircuitJson) =>
         send({ type: "wiring", circuit: JSON.stringify(circuit), catalog: CATALOG, signals: SIGNALS }),
-      setProbes: (pins: string[]) => send({ type: "probes", pins }),
+      setProbes: (pins: string[], owner = "waveform") => {
+        probeOwners.current.set(owner, pins);
+        send({ type: "probes", pins: [...new Set([...probeOwners.current.values()].flat())] });
+      },
       sendConsole: (text: string) => send({ type: "console", text }),
       clearConsole: () => setConsole(""),
       readMemory: (addr: number, len: number) => send({ type: "readMemory", addr, len }),

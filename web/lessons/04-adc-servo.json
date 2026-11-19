@@ -1,0 +1,74 @@
+{
+  "id": "adc-servo",
+  "order": 4,
+  "title": "가변저항(ADC)으로 서보 돌리기",
+  "level": "중급",
+  "goal": "가변저항을 A0(PA0)에 연결해 ADC로 읽고, 그 값으로 D9(PC7)의 서보 각도를 바꿉니다.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+        { "id": "pot", "kind": "potentiometer", "x": 46, "y": 28, "props": { "ohms": "10k", "position": 0.5 } },
+        { "id": "sv", "kind": "servo", "x": 62, "y": 27, "props": {} }
+      ],
+      "wires": [
+        { "id": "w1", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "bb1", "pin": "tp1" }, "color": "#e53935" },
+        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_P1" }, "b": { "part": "bb1", "pin": "tn1" }, "color": "#212121" },
+        { "id": "w3", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "bb1", "pin": "bp1" }, "color": "#fb8c00" },
+        { "id": "w4", "a": { "part": "nucleo", "pin": "GND_P2" }, "b": { "part": "bb1", "pin": "bn1" }, "color": "#212121" }
+      ]
+    }
+  },
+  "firmware": { "example": "hal-adc-servo.elf" },
+  "grade": {
+    "ms": 3000,
+    "stimuli": [
+      { "at": 300, "set": { "kind": "potentiometer", "prop": "position", "value": 0.1 } },
+      { "at": 1500, "set": { "kind": "potentiometer", "prop": "position", "value": 0.9 } }
+    ]
+  },
+  "steps": [
+    {
+      "title": "가변저항: 3V3 — 가변저항 — GND, 가운데는 A0",
+      "text": [
+        "브레드보드 위쪽 레일은 **3V3**(+, 빨강)과 **GND**(−, 파랑), 아래쪽 레일은 **5V**와 GND에 이미 연결해 두었습니다.",
+        "",
+        "- 가변저항의 양 끝(`1`, `2`)을 위쪽 레일의 3V3과 GND에 하나씩,",
+        "- 가운데 와이퍼 `W`를 보드의 **A0** (`PA0`, ADC1_IN0)에 연결하세요.",
+        "",
+        "손잡이를 돌리면 W의 전압이 0–3.3 V로 바뀌고, 12비트 ADC가 0–4095로 읽습니다."
+      ],
+      "checks": [
+        { "type": "series", "from": "3V3", "to": "GND", "through": ["potentiometer"], "label": "가변저항 양 끝 → 3V3, GND" },
+        { "type": "connected", "kind": "potentiometer", "pin": "W", "to": "PA0", "label": "와이퍼 W → A0 (PA0)" }
+      ]
+    },
+    {
+      "title": "서보: 5V, GND, 신호는 D9",
+      "text": [
+        "서보는 5 V로 움직입니다. `V+`(빨강)는 아래쪽 레일의 **5V**, `GND`(갈색)는 GND, `SIG`(주황)는 **D9** (`PC7`, TIM3_CH2)에 연결하세요.",
+        "",
+        "펌웨어는 50 Hz PWM의 펄스 폭을 `500 + pot × 2000 / 4095` µs로 정합니다 (0.5–2.5 ms → 0–180°)."
+      ],
+      "checks": [
+        { "type": "connected", "kind": "servo", "pin": "V+", "to": "5V" },
+        { "type": "connected", "kind": "servo", "pin": "GND", "to": "GND" },
+        { "type": "connected", "kind": "servo", "pin": "SIG", "to": "PC7", "label": "서보 SIG → D9 (PC7)" }
+      ]
+    },
+    {
+      "title": "손잡이를 돌려 보고 채점하기",
+      "text": [
+        "**▶ 실행**한 뒤 캔버스에서 가변저항의 **손잡이를 끌어 돌리거나** 휠을 굴려 보세요. 서보 팔이 따라 움직이고, 콘솔에는 0.5초마다 `pot 2048 servo 1500 us | …`처럼 값이 나옵니다.",
+        "",
+        "**채점**은 손잡이를 자동으로 10% → 90%로 돌리고, 콘솔의 pot 값과 서보 각도가 충분히 바뀌는지 봅니다."
+      ],
+      "checks": [
+        { "type": "running" },
+        { "type": "consoleValues", "pattern": "pot\\s+(\\d+)", "minSpread": 2000, "label": "콘솔의 pot 값이 2000 이상 변함" },
+        { "type": "motion", "kind": "servo", "field": "angle", "minSpread": 90 }
+      ]
+    }
+  ]
+}

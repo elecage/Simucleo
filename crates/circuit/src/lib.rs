@@ -11,3 +11,4 @@ pub mod models;
 pub mod netlist;
 pub mod sim;
 pub mod tier8;
+pub mod tier9;

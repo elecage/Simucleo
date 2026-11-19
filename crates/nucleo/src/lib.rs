@@ -30,7 +30,7 @@ use thiserror::Error;
 pub use diagnose::{Diagnosis, FaultInfo};
 pub use rtos::{RtosSnapshot, TaskInfo, TaskState};
 pub use simucleo_circuit::netlist::{BusCatalog, Circuit};
-pub use simucleo_circuit::sim::{CircuitSim, Drive, PartVisual, UartLink};
+pub use simucleo_circuit::sim::{CircuitSim, Drive, MotorView, PartVisual, UartLink};
 pub use simucleo_periph_stm32f4::gpio::PinEvent;
 pub use simucleo_periph_stm32f4::usart::TerminalByte;
 pub use simucleo_periph_stm32f4::Warning;

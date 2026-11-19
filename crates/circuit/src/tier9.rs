@@ -706,6 +706,15 @@ impl Esc {
         if now < self.time {
             return;
         }
+        // Signal lost during this interval: up to the deadline the motor
+        // still runs on the old throttle, after it on none.
+        let deadline = self.last_pulse + FAILSAFE;
+        if matches!(self.state, EscState::Armed | EscState::Arming)
+            && self.time < deadline
+            && now > deadline
+        {
+            self.advance(deadline);
+        }
         let dt = now - self.time;
         self.time = now;
         match self.state {
@@ -722,7 +731,7 @@ impl Esc {
             _ => self.throttle = 0.0,
         }
         if matches!(self.state, EscState::Armed | EscState::Arming)
-            && now - self.last_pulse > FAILSAFE
+            && now > self.last_pulse + FAILSAFE
         {
             if self.state == EscState::Armed {
                 self.warning.get_or_insert(
@@ -946,6 +955,8 @@ impl HallBldc {
         let mut crossed = false;
         while left > 0.0 {
             if self.omega == 0.0 && self.idle() {
+                // Standing and nothing can drive it: no current either.
+                self.current = [0.0; 3];
                 break;
             }
             let dt = left.min(DT);
@@ -1434,6 +1445,49 @@ mod tests {
         m.load = 0.05;
         run_bldc(&mut m, 1.0, |c| c, false);
         assert!(m.rpm() > 500.0 && m.rpm() < 2500.0, "{}", m.rpm());
+    }
+
+    #[test]
+    fn esc_signal_loss_splits_the_interval_at_the_deadline() {
+        // Full throttle, then the pulses stop: the result after 0.6 s must
+        // not depend on how often the ESC is brought up to date.
+        let run = |step: f64| {
+            let mut e = Esc::new(1000.0);
+            let mut t = 0.0;
+            e.power(t, 11.1);
+            pulses(&mut e, &mut t, 1.2, 1000.0);
+            pulses(&mut e, &mut t, 1.0, 2000.0);
+            let end = t + 0.6;
+            while t < end - 1e-12 {
+                t = (t + step).min(end);
+                e.advance(t);
+            }
+            assert_eq!(e.state, EscState::Failsafe);
+            e.rpm
+        };
+        let (coarse, fine) = (run(0.6), run(0.001));
+        assert!((coarse - fine).abs() < 0.01 * fine, "{coarse} vs {fine}");
+    }
+
+    #[test]
+    fn bldc_currents_stop_when_the_bridge_lets_go() {
+        // Rotor held by the brake while two phases are driven, then every
+        // phase floats: no current is left over, and it is not stalled.
+        let mut m = HallBldc::new();
+        m.powered = true;
+        m.load = 1.0;
+        m.set_drive(
+            0.0,
+            [PhaseDrive::High, PhaseDrive::Low, PhaseDrive::Float],
+            12.0,
+        );
+        m.advance(0.5);
+        assert!(m.current.iter().any(|i| i.abs() > 0.5), "{:?}", m.current);
+        m.set_drive(0.5, [PhaseDrive::Float; 3], 12.0);
+        m.advance(1.0);
+        m.advance(1.5);
+        assert_eq!(m.current, [0.0; 3]);
+        assert!(!m.stalled);
     }
 
     #[test]

@@ -189,6 +189,23 @@ fn hal_blinky_runs_at_84mhz_with_500ms_period() {
 }
 
 #[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/lesson-blink-2hz"]
+fn lesson_blink_2hz_solution_toggles_every_250ms() {
+    // The solution firmware of the "upload your own" lesson (M16): the web
+    // grader expects a 500 ms period ± 5 % on PA5.
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("lesson-blink-2hz", "lesson-blink-2hz"))
+        .unwrap();
+    let r = board.run_for_ns(2.2e9);
+    assert!(board.diagnose(&r).is_none(), "{:?}", board.diagnose(&r));
+    let t = ld2_toggles_ms(&mut board);
+    assert!(t.len() >= 8, "{t:?}");
+    // HAL_Delay(250) waits 251 ticks of 1 ms.
+    assert!(periods(&t).iter().all(|p| (p - 251.0).abs() < 0.5), "{t:?}");
+}
+
+#[test]
 #[ignore = "needs arm-none-eabi-gcc build of firmware/hal-blinky (make variants)"]
 fn hse_without_bypass_ends_in_error_handler() {
     let mut board = Nucleo::new();

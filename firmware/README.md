@@ -20,9 +20,10 @@ CI builds every project here and runs it through `simucleo` as a regression test
 | `hal-ir-remote` | CubeMX HAL | TIM2_CH2 input capture of falling edges at 1 µs: NEC leader, bits, check bytes and repeat codes; LD2 blinks the digit | M13 ✅ |
 | `freertos-two-tasks` | CubeMX + FreeRTOS (CMSIS-RTOS v2) | Blink/Count/Button/Flags threads, mutex, B1 EXTI → semaphore → thread flags; SVC/PendSV/SysTick, PSP, BASEPRI, HAL tick on TIM11 | M4 ✅ |
 | `freertos-queue-uart` | CubeMX + FreeRTOS (CMSIS-RTOS v2) | UART RX ISR → message queue → echo task; producer/consumer queue; heap and stack statistics | M4 ✅ |
+| `lesson-blink-2hz` | CubeMX HAL | solution to the "upload your own firmware" lesson (PA5 at 2 Hz); used only by the tests, not bundled with the site | M16 ✅ |
 
 ```sh
-for d in bare-blinky exceptions difftest hal-uart-printf hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture hal-7seg-keypad hal-encoder-stepper-lcd hal-sonar-onewire hal-imu-matrix hal-ir-remote freertos-two-tasks freertos-queue-uart; do make -C firmware/$d; done
+for d in bare-blinky exceptions difftest hal-uart-printf hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture hal-7seg-keypad hal-encoder-stepper-lcd hal-sonar-onewire hal-imu-matrix hal-ir-remote freertos-two-tasks freertos-queue-uart lesson-blink-2hz; do make -C firmware/$d; done
 make -C firmware/hal-blinky variants
 cargo run --release -p simucleo-cli -- run firmware/bare-blinky/build/bare-blinky.elf --ms 2000
 cargo test --release -p simucleo-nucleo --test firmware -- --include-ignored

@@ -218,6 +218,19 @@ impl Simulator {
         }
     }
 
+    /// Machine code around `addr` (default: the pc) as JSON
+    /// `[{addr, bytes, text, file, line}]`.
+    pub fn disassemble(&self, addr: Option<u32>, before: usize, after: usize) -> String {
+        let addr = addr.unwrap_or_else(|| self.board.cpu.registers().pc());
+        let rows: Vec<serde_json::Value> = self
+            .board
+            .disassemble_around(addr, before, after)
+            .into_iter()
+            .map(|(i, loc)| serde_json::json!({"addr": i.addr, "bytes": i.bytes, "text": i.text, "file": loc.map(|l| l.0), "line": loc.map(|l| l.1)}))
+            .collect();
+        serde_json::to_string(&rows).unwrap_or_default()
+    }
+
     /// Where the program is and what it holds, as JSON: `{ pc, file,
     /// line, frames: [{pc, function, file, line, exception}], locals,
     /// globals }`; locals are those of call-stack frame `frame`, globals

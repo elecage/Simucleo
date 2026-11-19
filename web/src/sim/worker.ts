@@ -139,6 +139,9 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       post({ type: "paused", reason: r });
       break;
     }
+    case "disassemble":
+      post({ type: "disasm", rows: JSON.parse(sim.disassemble(m.addr ?? undefined, 12, 24)) });
+      break;
     case "debugState":
       post({ type: "debugState", state: JSON.parse(sim.debugState(m.frame, m.globalsFile)) });
       break;

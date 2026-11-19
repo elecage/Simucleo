@@ -122,6 +122,51 @@ impl Nucleo {
         info.globals(files, &read)
     }
 
+    /// Machine code around `addr`: up to `before` instructions before it
+    /// and `after` from it, decoded from the start of the function so the
+    /// instruction boundaries are right. Each comes with its source line.
+    pub fn disassemble_around(
+        &self,
+        addr: u32,
+        before: usize,
+        after: usize,
+    ) -> Vec<(simucleo_elf::disasm::Insn, Option<(u32, u32)>)> {
+        let info = self.debug.get();
+        let addr = addr & !1;
+        let start = info
+            .as_ref()
+            .and_then(|i| i.function_at(addr).map(|f| f.low))
+            .or_else(|| {
+                self.firmware
+                    .as_ref()
+                    .and_then(|f| f.symbols.range(..=addr).next_back().map(|(a, _)| *a))
+            })
+            .filter(|s| addr - s < 0x4000)
+            .unwrap_or(addr);
+        let read = |a: u32, n: usize| self.read_mem(a, n);
+        let symbols = self.firmware.as_ref().map(|f| &f.symbols);
+        let symbol = |a: u32| symbols.and_then(|m| m.get(&(a & !1)).cloned());
+        // From the function start to the address, then `after` more.
+        let mut insns = Vec::new();
+        let mut pc = start;
+        while pc < addr {
+            let Some(i) = simucleo_elf::disasm::disassemble(&read, pc, 1, &symbol).pop() else {
+                break;
+            };
+            pc = i.addr + i.bytes.split(' ').count() as u32 * 2;
+            insns.push(i);
+        }
+        let skip = insns.len().saturating_sub(before);
+        let mut out: Vec<_> = insns.split_off(skip);
+        out.extend(simucleo_elf::disasm::disassemble(&read, pc, after, &symbol));
+        out.into_iter()
+            .map(|i| {
+                let loc = info.as_ref().and_then(|d| d.location(i.addr));
+                (i, loc)
+            })
+            .collect()
+    }
+
     fn pc(&self) -> u32 {
         self.cpu.registers().pc()
     }

@@ -24,6 +24,13 @@ test("breakpoint, step over/into/out, call stack and variables", async ({ page }
   await expect(page.getByTestId("debug-status")).toContainText("중단점", { timeout: 5000 });
   await expect(page.locator(".src-line.here")).toHaveAttribute("data-line", "92");
 
+  // Machine code: the current instruction is the call on line 92.
+  await page.getByLabel("기계어").check();
+  await expect(page.getByTestId("disassembly").locator(".asm-row.here")).toContainText("bl");
+  await expect(page.getByTestId("disassembly").locator(".asm-row.here")).toContainText("<SystemClock_Config>");
+  await expect(page.getByTestId("disassembly")).toContainText("main.c:92");
+  await page.getByLabel("기계어").uncheck();
+
   // Step over, then into MX_GPIO_Init and out again.
   await page.getByRole("button", { name: "⤼ 한 줄" }).click();
   await expect(page.locator(".src-line.here")).toHaveAttribute("data-line", "93");

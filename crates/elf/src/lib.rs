@@ -3,6 +3,7 @@
 //! bare-metal startup code).
 
 pub mod debug;
+pub mod disasm;
 
 use std::collections::{BTreeMap, HashMap};
 

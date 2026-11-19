@@ -1,6 +1,6 @@
 // React hook around the simulation worker.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DebugFile, DebugState, FromWorker, SimFrame, ToWorker } from "./protocol";
+import type { DebugFile, DebugState, DisasmRow, FromWorker, SimFrame, ToWorker } from "./protocol";
 import type { CircuitJson } from "../editor/model";
 import { boardSignals, busCatalog } from "../parts";
 
@@ -47,6 +47,9 @@ export interface Runner {
   pauseEvent: { n: number; reason: string };
   debugState: DebugState | null;
   requestDebugState(frame: number, globalsFile: number): void;
+  /** Machine code around an address (null: the pc). */
+  disasm: DisasmRow[];
+  requestDisasm(addr: number | null): void;
 }
 
 export function useRunner(): Runner {
@@ -66,6 +69,7 @@ export function useRunner(): Runner {
   const [breakpoints, setPlaced] = useState<{ file: number; line: number }[]>([]);
   const [pauseEvent, setPause] = useState({ n: 0, reason: "" });
   const [debugState, setDebugState] = useState<DebugState | null>(null);
+  const [disasm, setDisasm] = useState<DisasmRow[]>([]);
 
   useEffect(() => {
     const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
@@ -95,6 +99,9 @@ export function useRunner(): Runner {
           break;
         case "debugState":
           setDebugState(m.state);
+          break;
+        case "disasm":
+          setDisasm(m.rows);
           break;
         case "frame":
           setFrame(m.frame);
@@ -145,12 +152,13 @@ export function useRunner(): Runner {
       setBreakpoints: (list: { file: number; line: number }[]) => send({ type: "breakpoints", list }),
       step: (kind: "instruction" | "into" | "over" | "out") => send({ type: "step", kind }),
       requestDebugState: (frame: number, globalsFile: number) => send({ type: "debugState", frame, globalsFile }),
+      requestDisasm: (addr: number | null) => send({ type: "disassemble", addr }),
     }),
     [send],
   );
 
   return {
     ready, firmware, firmwareBytes, firmwareExample, loadError, running, speed, frame, console: consoleText, memory,
-    debugFiles, breakpoints, pauseEvent, debugState, ...actions,
+    debugFiles, breakpoints, pauseEvent, debugState, disasm, ...actions,
   };
 }

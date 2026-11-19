@@ -56,6 +56,7 @@ export function SourceView({ runner }: { runner: Runner }) {
   const [available, setAvailable] = useState<Set<string>>(new Set());
   const [fileIdx, setFileIdx] = useState<number | null>(null);
   const [frame, setFrame] = useState(0);
+  const [showAsm, setShowAsm] = useState(false);
   const [wanted, setWanted] = useState<{ file: number; line: number }[]>([]);
   const codeRef = useRef<HTMLDivElement>(null);
   const upload = useRef<HTMLInputElement>(null);
@@ -116,6 +117,11 @@ export function SourceView({ runner }: { runner: Runner }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileIdx]);
   const shownFrame = debugState?.frames[frame];
+  // Machine code around the shown frame's pc.
+  const { requestDisasm } = runner;
+  useEffect(() => {
+    if (showAsm && paused && shownFrame) requestDisasm(shownFrame.pc);
+  }, [showAsm, paused, shownFrame, requestDisasm]);
   useEffect(() => {
     const f = debugState?.frames[frame];
     if (f?.file != null && files.some((x) => x.index === f.file)) setFileIdx(f.file);
@@ -170,6 +176,9 @@ export function SourceView({ runner }: { runner: Runner }) {
           <button onClick={() => runner.step("instruction")} disabled={running} title="기계어 명령 하나">
             명령 1개
           </button>
+          <label className="asm-toggle">
+            <input type="checkbox" checked={showAsm} onChange={(e) => setShowAsm(e.target.checked)} /> 기계어
+          </label>
           <button onClick={() => upload.current?.click()}>소스 추가…</button>
           <input
             ref={upload}
@@ -218,6 +227,34 @@ export function SourceView({ runner }: { runner: Runner }) {
             </p>
           )}
         </div>
+        {showAsm && (
+          <div className="asm-view" data-testid="disassembly">
+            {paused ? (
+              runner.disasm.map((r, i) => {
+                const prev = runner.disasm[i - 1];
+                const newLine = r.line !== null && (!prev || prev.line !== r.line || prev.file !== r.file);
+                const src = r.file !== null ? files.find((f) => f.index === r.file) : undefined;
+                return (
+                  <div key={r.addr}>
+                    {newLine && (
+                      <div className="asm-src">
+                        {src ? baseName(src.path) : "?"}:{r.line}
+                        {r.file === fileIdx && lines?.[r.line! - 1] ? `  ${lines[r.line! - 1].trim()}` : ""}
+                      </div>
+                    )}
+                    <div className={`asm-row${r.addr === shownFrame?.pc ? " here" : ""}`} data-addr={r.addr}>
+                      <span className="asm-addr">{r.addr.toString(16).padStart(8, "0")}</span>
+                      <span className="asm-bytes">{r.bytes}</span>
+                      <span className="asm-text">{r.text}</span>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <p className="hint">멈추면 현재 위치의 기계어가 보입니다.</p>
+            )}
+          </div>
+        )}
       </div>
       <aside className="debug-side">
         <h4>호출 스택</h4>

@@ -2929,7 +2929,7 @@ impl CircuitSim {
         let due = self
             .phase_state
             .values()
-            .any(|st| st.next_change().is_some_and(|t| t <= now));
+            .any(|st| st.next_change().is_some_and(|t| t <= now + 1e-9));
         if !due {
             return;
         }
@@ -6631,5 +6631,50 @@ mod tests {
             after > 0.0 && after < before,
             "coasting down: {before} → {after}"
         );
+    }
+
+    #[test]
+    fn a_bridge_whose_pwm_stops_wakes_the_simulation_to_let_go() {
+        // Only a bridge: nothing else would look at it again.
+        let mut s = sim(
+            vec![
+                part("br", "bridge-3ph", &[]),
+                part("bat", "battery", &[("voltage", "12")]),
+            ],
+            vec![
+                wire(("bat", "+"), ("br", "PVDD")),
+                wire(("bat", "-"), ("mcu", "GND")),
+                wire(("br", "GND"), ("mcu", "GND")),
+                wire(("mcu", "PB0"), ("br", "INHA")),
+            ],
+        );
+        let level = |s: &CircuitSim, on: bool| {
+            drives(s, |p| match p {
+                (1, 0) if on => Drive::High,
+                (1, 0) => Drive::Low,
+                _ => Drive::Float,
+            })
+        };
+        let mut t = 0.01;
+        for _ in 0..4 {
+            let on = level(&s, true);
+            s.update(at(t), &on);
+            let off = level(&s, false);
+            s.update(at(t + 15e-6), &off);
+            t += 50e-6;
+        }
+        let duty = |s: &CircuitSim| match s.phase_out["br"].0[0] {
+            PhaseDrive::Duty(d) => d,
+            d => panic!("{d:?}"),
+        };
+        assert!((299..=301).contains(&duty(&s)), "{}", duty(&s));
+        // No more edges: a wake-up just after the next one is overdue.
+        let wake = s.next_event().expect("a wake-up for the stopped PWM");
+        assert!(wake > at(t) && wake <= at(t + 20e-6), "{wake} vs {}", at(t));
+        assert!((299..=301).contains(&duty(&s)));
+        let off = level(&s, false);
+        s.update(wake, &off);
+        assert_eq!(s.phase_out["br"].0[0], PhaseDrive::Float);
+        assert_eq!(s.next_event(), None);
     }
 }

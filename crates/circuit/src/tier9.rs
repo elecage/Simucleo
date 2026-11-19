@@ -971,16 +971,12 @@ impl PhaseBridge {
             if h + l <= 0.0 || (h >= 1.0 && l >= 1.0) {
                 return PhaseDrive::Float;
             }
-            // Between the switch's on times the current goes on through
-            // the other switch's diode: high side chopping averages to its
-            // duty, low side chopping to 1 − its duty.
-            let f = if l <= 0.0 {
-                h
-            } else if h <= 0.0 {
-                1.0 - l
-            } else {
-                h / (h + l)
-            };
+            // Between the high side's on times the motor current goes on
+            // through the low side (switched on as the complement, or its
+            // diode during the dead time): the phase averages to the high
+            // side's duty. A low side chopping alone averages to 1 − its
+            // duty (the current goes on through the high side's diode).
+            let f = if h > 0.0 { h } else { 1.0 - l };
             PhaseDrive::Duty((f * 1000.0).round() as u16)
         })
     }
@@ -991,7 +987,9 @@ impl PhaseBridge {
             .iter()
             .flatten()
             .filter_map(|m| m.stale_at())
-            .filter(|&t| t > self.since)
+            // (Within a nanosecond is now: the wake-up went through core
+            // cycles and may land a hair early.)
+            .filter(|&t| t > self.since + 1e-9)
             .reduce(f64::min)
     }
 
@@ -1754,5 +1752,61 @@ mod tests {
             let low = code >> k & 1 == 0;
             assert_eq!(m.hall_output(k), low.then_some(false));
         }
+    }
+
+    #[test]
+    fn phase_bridge_measures_duties_and_falls_back_to_static_levels() {
+        // Drive phase A's inputs (INH, INL) through `periods` of 50 µs:
+        // INH on for `h`, then INL on for `l` after a gap.
+        fn run(b: &mut PhaseBridge, t: &mut f64, periods: usize, h: f64, l: f64) {
+            let p = 50e-6;
+            for _ in 0..periods {
+                let pts = [
+                    (0.0, true, false),
+                    (h * p, false, false),
+                    (p - l * p, false, l > 0.0),
+                ];
+                for (dt, hi, lo) in pts {
+                    if dt == 0.0 && !hi {
+                        continue;
+                    }
+                    b.inputs(
+                        *t + dt,
+                        [(hi && h > 0.0, lo), (false, true), (false, false)],
+                    );
+                }
+                *t += p;
+            }
+        }
+        let mut b = PhaseBridge::new(0.0);
+        let mut t = 0.0;
+        // High side 30 %, its complement 60 % (5 % dead time each side).
+        run(&mut b, &mut t, 4, 0.3, 0.6);
+        let d = b.drive(t);
+        assert_eq!(d[0], PhaseDrive::Duty(300));
+        assert_eq!(d[1], PhaseDrive::Low, "a static low side");
+        assert_eq!(d[2], PhaseDrive::Float);
+        // The high side alone (diode freewheeling): its duty too.
+        run(&mut b, &mut t, 4, 0.7, 0.0);
+        assert_eq!(b.drive(t)[0], PhaseDrive::Duty(700));
+        // Stops: still the duty within a period, static after it, and it
+        // asks to be looked at then.
+        b.inputs(t, [(false, false), (false, true), (false, false)]);
+        assert_eq!(b.drive(t + 10e-6)[0], PhaseDrive::Duty(700));
+        let stale = b.next_change().expect("a look when the PWM is overdue");
+        assert!(stale > t && stale < t + 60e-6, "{stale} vs {t}");
+        assert_eq!(b.drive(stale)[0], PhaseDrive::Float);
+        // Looked at a hair early (the wake-up went through core cycles):
+        // done, no wake-up again at the same moment.
+        let levels = b.levels();
+        b.inputs(stale - 1e-12, levels);
+        assert_eq!(b.next_change(), None);
+        // Slower than 2 kHz is not PWM: the levels as they are.
+        let mut b = PhaseBridge::new(0.0);
+        b.inputs(0.0, [(true, false), (false, true), (false, false)]);
+        b.inputs(1e-3, [(false, false), (false, true), (false, false)]);
+        b.inputs(2e-3, [(true, false), (false, true), (false, false)]);
+        assert_eq!(b.drive(2e-3)[0], PhaseDrive::High);
+        assert_eq!(b.next_change(), None);
     }
 }

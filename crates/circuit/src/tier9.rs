@@ -894,6 +894,9 @@ pub struct PhaseBridge {
     pub meters: [[PwmMeter; 2]; 3],
     /// Since when both switches of a phase are on.
     both: [Option<Seconds>; 3],
+    /// When each phase last had both switches on at once (the module
+    /// then cuts the phase off for that PWM period).
+    cut: [Option<Seconds>; 3],
     /// Shoot-through seen in this frame.
     pub shoot: bool,
     /// On time per switch in this frame, and since when.
@@ -947,6 +950,9 @@ impl PhaseBridge {
                 }
             };
             shoot[k] = early || long;
+            if shoot[k] {
+                self.cut[k] = Some(now);
+            }
             self.shoot |= shoot[k];
             self.meters[k][0].set(now, h);
             self.meters[k][1].set(now, l);
@@ -966,6 +972,13 @@ impl PhaseBridge {
                     (false, true) => PhaseDrive::Low,
                     _ => PhaseDrive::Float,
                 };
+            }
+            // Both switches were on at once within the last period (say
+            // the same PWM on both): the module cuts the phase off, as it
+            // does for both inputs on statically, rather than averaging.
+            let period = mh.period.into_iter().chain(ml.period).fold(0.0, f64::max);
+            if self.cut[k].is_some_and(|t| now - t <= period * 1.05 + 1e-7) {
+                return PhaseDrive::Float;
             }
             let (h, l) = (mh.duty(now), ml.duty(now));
             if h + l <= 0.0 || (h >= 1.0 && l >= 1.0) {
@@ -1761,10 +1774,13 @@ mod tests {
         fn run(b: &mut PhaseBridge, t: &mut f64, periods: usize, h: f64, l: f64) {
             let p = 50e-6;
             for _ in 0..periods {
+                // INL from 5 % after INH turns off, for `l` (so 5 % or
+                // more dead time before INH's next turn-on too).
                 let pts = [
                     (0.0, true, false),
                     (h * p, false, false),
-                    (p - l * p, false, l > 0.0),
+                    ((h + 0.05) * p, false, l > 0.0),
+                    ((h + 0.05 + l) * p, false, false),
                 ];
                 for (dt, hi, lo) in pts {
                     if dt == 0.0 && !hi {
@@ -1782,6 +1798,7 @@ mod tests {
         let mut t = 0.0;
         // High side 30 %, its complement 60 % (5 % dead time each side).
         run(&mut b, &mut t, 4, 0.3, 0.6);
+        assert!(!b.shoot, "dead time on both sides");
         let d = b.drive(t);
         assert_eq!(d[0], PhaseDrive::Duty(300));
         assert_eq!(d[1], PhaseDrive::Low, "a static low side");
@@ -1801,6 +1818,18 @@ mod tests {
         let levels = b.levels();
         b.inputs(stale - 1e-12, levels);
         assert_eq!(b.next_change(), None);
+        // The same PWM on both inputs: a shoot-through every period, and
+        // the phase is cut off instead of averaged to the duty.
+        let mut b = PhaseBridge::new(0.0);
+        let mut t = 0.0;
+        for _ in 0..4 {
+            b.inputs(t, [(true, true), (false, true), (false, false)]);
+            b.inputs(t + 25e-6, [(false, false), (false, true), (false, false)]);
+            t += 50e-6;
+        }
+        assert!(b.shoot);
+        assert_eq!(b.drive(t)[0], PhaseDrive::Float);
+        assert_eq!(b.drive(t)[1], PhaseDrive::Low);
         // Slower than 2 kHz is not PWM: the levels as they are.
         let mut b = PhaseBridge::new(0.0);
         b.inputs(0.0, [(true, false), (false, true), (false, false)]);

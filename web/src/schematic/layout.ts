@@ -88,7 +88,7 @@ const TWO_TERMINALS: Record<string, [string[], string[]]> = {
 };
 
 /** Pin ids drawn under another name (74HC595 Q7' is the pin `Q7S`). */
-const PIN_NAME: Record<string, string> = { Q7S: "Q7'" };
+const PIN_NAME: Record<string, string> = { Q7S: "Q7'", "A-": "A−", "B-": "B−", "-": "−" };
 
 /**
  * Box symbols laid out by hand: supply pins on the left, signals on the
@@ -154,6 +154,42 @@ const BOX_LAYOUT: Record<
       },
     ]),
   ),
+  // M21 motors: supplies on the left, signals / coils on the right.
+  battery: {
+    left: ["-"],
+    right: ["+"],
+    subtitle: (p) => `DC 전원 ${p.voltage ?? 12} V`,
+  },
+  "stepper-nema17": {
+    left: [],
+    right: ["A+", "A-", "B+", "B-"],
+    subtitle: () => "스테퍼 NEMA17 (바이폴라, 200스텝)",
+  },
+  a4988: {
+    left: ["VMOT", "GND", "VDD", "STEP", "DIR", "EN", "MS1", "MS2", "MS3", "RST", "SLP"],
+    right: ["1A", "1B", "2A", "2B"],
+    subtitle: (p) => `스텝 드라이버 (${p.model ?? "A4988"})`,
+  },
+  l298n: {
+    left: ["12V", "GND", "5V", "ENA", "IN1", "IN2", "IN3", "IN4", "ENB"],
+    right: ["OUT1", "OUT2", "OUT3", "OUT4"],
+    subtitle: (p) => `H-브리지 (L298N) · EN 점퍼 ${p.jumpers === "off" ? "없음" : "있음"}`,
+  },
+  "esc-bldc": {
+    left: ["BAT+", "GND"],
+    right: ["SIG"],
+    subtitle: (p) => `ESC + BLDC ${p.kv ?? 1000} KV`,
+  },
+  "bldc-hall": {
+    left: ["VCC", "GND"],
+    right: ["U", "V", "W", "HA", "HB", "HC"],
+    subtitle: () => "BLDC (홀 센서 A/B/C)",
+  },
+  "bridge-3ph": {
+    left: ["PVDD", "GND", "INHA", "INLA", "INHB", "INLB", "INHC", "INLC"],
+    right: ["OUTA", "OUTB", "OUTC"],
+    subtitle: () => "3상 브리지 (DRV8302 형)",
+  },
   // Only the receiver is wired: the remote's buttons are not pins.
   "ir-receiver": {
     left: ["VCC", "GND"],
@@ -360,7 +396,7 @@ export function buildSchematic(project: Project, netlist: Netlist, opts: Schemat
         h,
         pins: groups.map((ids, i) => ({
           ids,
-          name: ids.map((id) => PIN_NAME[id] ?? id).join("/"),
+          name: [...new Set(ids.map((id) => PIN_NAME[id] ?? (id === "GND2" ? "GND" : id)))].join("/"),
           net: ids.map((id) => netName({ part: part.id, pin: id })).find((x) => x !== null) ?? null,
           side: i < left ? ("left" as const) : ("right" as const),
           x: 0,

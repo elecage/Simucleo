@@ -26,6 +26,9 @@ use crate::devices::{
 };
 
 use crate::tier8::{Bmp280, Hc595, Pir, Tm1637, PIR_VMIN};
+use crate::tier9::{
+    l298n_bridge, BipolarStepper, CoilDrive, Esc, EscState, HallBldc, PhaseDrive, StepDriver,
+};
 
 use crate::netlist::{build_netlist, BusCatalog, Circuit, PartCatalog, PartInstance, PinRef, Wire};
 
@@ -178,6 +181,14 @@ enum Element {
         relay: usize,
         when: bool,
     },
+    /// A floating voltage source `v` from `n` to `p` (battery, adapter),
+    /// with internal resistance `r`.
+    Battery {
+        p: usize,
+        n: usize,
+        v: f64,
+        r: f64,
+    },
     /// High-impedance input a part reads as a logic level: `a` − `b` above
     /// `threshold` (servo signal, motor driver inputs, supply detection).
     Sense {
@@ -244,6 +255,32 @@ pub struct PartVisual {
     /// TM1637: the digits it shows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub digits: Option<DigitsView>,
+    /// Motors and their drivers (M21).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub motor: Option<MotorView>,
+}
+
+/// What a motor or a motor driver shows (M21).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct MotorView {
+    /// Stepper: rotor position in full steps from the drivers' home
+    /// position; driver: STEP edges taken.
+    pub steps: f64,
+    /// Stepper: full steps lost so far.
+    pub lost: u64,
+    /// Coil currents (stepper: A, B; driver: its two outputs), units of
+    /// the rated current, signed.
+    pub coils: Vec<f64>,
+    /// Lost steps or a jittering rotor just now.
+    pub stalled: bool,
+    /// Driver: "on", "disabled" (EN high), "sleep", "reset", "no-vmot",
+    /// "no-vdd"; ESC: its state ("arming", "armed", …).
+    pub state: String,
+    /// Driver: microstep resolution (1/n steps).
+    pub micro: u32,
+    /// ESC: throttle 0–1 and the beeps so far.
+    pub throttle: f64,
+    pub beeps: u32,
 }
 
 /// What a 74HC595 holds.
@@ -306,6 +343,8 @@ enum VisualKind {
     Sensor,
     /// Channels 0–3 = IN1–IN4 (coil driven), 4 = supply present.
     Stepper,
+    /// M21 motors and drivers: their state lives in the motor maps.
+    Motion,
 }
 
 #[derive(Debug, Clone)]
@@ -402,6 +441,20 @@ pub struct CircuitSim {
     pir_parts: Vec<PirPart>,
     /// NeoPixel parts: (id, DIN, DOUT), for chains.
     pixel_parts: Vec<(String, usize, usize)>,
+    /// M21: bipolar steppers, step drivers, L298N modules and ESCs, with
+    /// their state by part id.
+    stepper_parts: Vec<StepperPart>,
+    driver_parts: Vec<DriverPart>,
+    bridge_parts: Vec<BridgePart>,
+    esc_parts: Vec<EscPart>,
+    bldc_parts: Vec<BldcPart>,
+    phase_bridges: Vec<PhaseBridgePart>,
+    /// What each 3-phase bridge does with its outputs, and its supply.
+    phase_out: HashMap<String, ([PhaseDrive; 3], f64)>,
+    steppers: HashMap<String, BipolarStepper>,
+    drivers: HashMap<String, DriverState>,
+    bridges: HashMap<String, BridgeState>,
+    escs: HashMap<String, (Esc, Option<bool>)>,
     /// Re-solves in progress (device outputs that changed on what they saw).
     depth: u32,
     /// Last level each single-wire part saw on its line.
@@ -485,6 +538,117 @@ struct PirPart {
     vcc: usize,
     gnd: usize,
 }
+
+/// Where the current in a stepper coil comes from: output pair `bridge`
+/// (0 or 1) of driver part `driver`, `sign` = +1 when the coil's + end is
+/// on the bridge's first output.
+#[derive(Debug, Clone, PartialEq)]
+struct CoilLink {
+    driver: String,
+    bridge: usize,
+    sign: f64,
+}
+
+/// A bipolar stepper: its coils (+ end, − end) and what drives them.
+#[derive(Debug, Clone)]
+struct StepperPart {
+    id: String,
+    coils: [(usize, usize); 2],
+    links: [Option<CoilLink>; 2],
+}
+
+/// An A4988 / DRV8825 carrier board.
+#[derive(Debug, Clone)]
+struct DriverPart {
+    id: String,
+    step: usize,
+    dir: usize,
+    en: usize,
+    ms: [usize; 3],
+    rst: usize,
+    slp: usize,
+    vmot: usize,
+    vdd: usize,
+    gnd: usize,
+    /// 1A/1B and 2A/2B.
+    out: [(usize, usize); 2],
+    /// Current limit (Vref pot) as a share of the motor's rated current.
+    current: f64,
+}
+
+/// What a step driver is doing.
+#[derive(Debug, Clone)]
+struct DriverState {
+    drv: StepDriver,
+    /// Its outputs: target current and drive, per bridge.
+    out: [(f64, CoilDrive); 2],
+    state: &'static str,
+    vmot: f64,
+}
+
+/// An L298N dual H-bridge module.
+#[derive(Debug, Clone)]
+struct BridgePart {
+    id: String,
+    inp: [usize; 4],
+    en: [usize; 2],
+    vs: usize,
+    gnd: usize,
+    v5: usize,
+    out: [(usize, usize); 2],
+    /// ENA/ENB jumpers on: the bridges are always enabled.
+    jumpers: bool,
+}
+
+/// An L298N's outputs now and averaged over the display frame.
+#[derive(Debug, Clone, Default)]
+struct BridgeState {
+    out: [(f64, CoilDrive); 2],
+    acc: [f64; 2],
+    since: f64,
+    frame_start: f64,
+    powered: bool,
+}
+
+/// An ESC with its motor: signal, signal ground, battery.
+#[derive(Debug, Clone)]
+struct EscPart {
+    id: String,
+    sig: usize,
+    gnd: usize,
+    bat: usize,
+}
+
+/// A BLDC with hall sensors: phases U, V, W (and the bridge output each
+/// sits on: part id, output), the halls' supply and outputs.
+#[derive(Debug, Clone)]
+struct BldcPart {
+    id: String,
+    phases: [usize; 3],
+    links: [Option<(String, usize)>; 3],
+    vcc: usize,
+    gnd: usize,
+    halls: [usize; 3],
+}
+
+/// A 3-phase bridge module (DRV8302 class): INH/INL per phase.
+#[derive(Debug, Clone)]
+struct PhaseBridgePart {
+    id: String,
+    inh: [usize; 3],
+    inl: [usize; 3],
+    pvdd: usize,
+    gnd: usize,
+    out: [usize; 3],
+}
+
+/// Lowest supply of the hall sensors and of the 3-phase bridge.
+const HALL_VMIN: f64 = 3.0;
+const PHASE_BRIDGE_VMIN: f64 = 6.0;
+
+/// Lowest motor supply of an A4988 (8–35 V) and logic supply (3–5.5 V).
+const VMOT_MIN: f64 = 8.0;
+const DRIVER_VDD_MIN: f64 = 3.0;
 
 /// Lowest supply of a 74HC595 (2–6 V) and of a TM1637 module.
 const HC595_VMIN: f64 = 2.0;
@@ -607,6 +771,17 @@ impl CircuitSim {
             tm_parts: Vec::new(),
             pir_parts: Vec::new(),
             pixel_parts: Vec::new(),
+            stepper_parts: Vec::new(),
+            driver_parts: Vec::new(),
+            bridge_parts: Vec::new(),
+            esc_parts: Vec::new(),
+            bldc_parts: Vec::new(),
+            phase_bridges: Vec::new(),
+            phase_out: HashMap::new(),
+            steppers: HashMap::new(),
+            drivers: HashMap::new(),
+            bridges: HashMap::new(),
+            escs: HashMap::new(),
             depth: 0,
             line_levels: HashMap::new(),
             devices: HashMap::new(),
@@ -658,9 +833,26 @@ impl CircuitSim {
                 Device::Tm(x) => **x = Tm1637::new(),
                 Device::Pir(x) => *x = Pir::new(x.retrigger, x.delay, x.warmup),
                 Device::Baro(x) => **x = Bmp280::new(x.address, x.temp, x.pressure),
+                // The shaft stays where it is; the clock starts again.
+                Device::Bldc(x) => x.rebase(0.0),
             }
         }
         self.i2c_active.clear();
+        // Simulated time starts again from 0 s: the motors keep where their
+        // shafts are; the drivers start from home, the ESCs from scratch.
+        for m in self.steppers.values_mut() {
+            m.rebase(0.0);
+        }
+        for d in self.drivers.values_mut() {
+            d.drv = StepDriver::new(d.drv.drv8825);
+        }
+        for b in self.bridges.values_mut() {
+            *b = BridgeState::default();
+        }
+        for (e, last) in self.escs.values_mut() {
+            e.rebase(0.0);
+            *last = None;
+        }
         self.clock = (time, 0.0, self.clock.2);
         self.drives = None;
         self.current = None;
@@ -892,6 +1084,12 @@ impl CircuitSim {
         let mut tm_parts = Vec::new();
         let mut pir_parts = Vec::new();
         let mut pixel_parts = Vec::new();
+        let mut stepper_parts: Vec<StepperPart> = Vec::new();
+        let mut driver_parts: Vec<DriverPart> = Vec::new();
+        let mut bridge_parts: Vec<BridgePart> = Vec::new();
+        let mut esc_parts: Vec<EscPart> = Vec::new();
+        let mut bldc_parts: Vec<BldcPart> = Vec::new();
+        let mut phase_bridges: Vec<PhaseBridgePart> = Vec::new();
         let now_s = self.seconds_at(self.last_time);
         let mut map = std::mem::take(&mut self.pin_nodes);
         let mut add_visual = |id: &str, kind: VisualKind, channels: usize| {
@@ -1508,6 +1706,226 @@ impl CircuitSim {
                             .insert(p.id.clone(), Device::Ir(IrRemote::default()));
                     }
                 }
+                "battery" => {
+                    // A DC supply that floats: a 12 V adapter, a LiPo pack.
+                    let v = prop_f64(p, "voltage", 12.0).clamp(0.0, 60.0);
+                    elements.push(Element::Battery {
+                        p: node(PinRef::new(&p.id, "+"), &mut map),
+                        n: node(PinRef::new(&p.id, "-"), &mut map),
+                        v,
+                        r: R_SUPPLY,
+                    });
+                }
+                "stepper-nema17" => {
+                    // Bipolar stepper: two coils, driven through the nets by
+                    // a driver module (see `link_steppers`).
+                    add_visual(&p.id, VisualKind::Motion, 0);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let coils = [
+                        (node(pin("A+"), &mut map), node(pin("A-"), &mut map)),
+                        (node(pin("B+"), &mut map), node(pin("B-"), &mut map)),
+                    ];
+                    stepper_parts.push(StepperPart {
+                        id: p.id.clone(),
+                        coils,
+                        links: [None, None],
+                    });
+                    let load = prop_f64(p, "load", 0.0).clamp(0.0, 100.0) / 100.0;
+                    let inertia = prop_f64(p, "inertia", 0.0).clamp(0.0, 5000.0) * 1e-7;
+                    let turn = prop_f64(p, "turn", 0.0);
+                    let m = self.steppers.entry(p.id.clone()).or_insert_with(|| {
+                        let mut m = BipolarStepper::new();
+                        m.rebase(now_s);
+                        m.turned = turn;
+                        m
+                    });
+                    m.advance(now_s);
+                    m.load = load;
+                    m.inertia = crate::tier9::ROTOR_INERTIA + inertia;
+                    if turn != m.turned {
+                        m.turn_by_hand(now_s, turn - m.turned);
+                        m.turned = turn;
+                    }
+                }
+                "a4988" => {
+                    // Pololu-style carrier: MS1–MS3 and EN pulled down
+                    // (100 kΩ), SLEEP pulled up (10 kΩ to VDD), RESET floats.
+                    add_visual(&p.id, VisualKind::Motion, 0);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let gnd = node(pin("GND"), &mut map);
+                    let vdd = node(pin("VDD"), &mut map);
+                    let ms = [
+                        node(pin("MS1"), &mut map),
+                        node(pin("MS2"), &mut map),
+                        node(pin("MS3"), &mut map),
+                    ];
+                    let en = node(pin("EN"), &mut map);
+                    for n in ms.into_iter().chain([en]) {
+                        elements.push(Element::Resistor {
+                            a: n,
+                            b: gnd,
+                            r: 100_000.0,
+                        });
+                    }
+                    let slp = node(pin("SLP"), &mut map);
+                    elements.push(Element::Resistor {
+                        a: vdd,
+                        b: slp,
+                        r: 10_000.0,
+                    });
+                    let drv8825 = prop_str(p, "model", "A4988") == "DRV8825";
+                    driver_parts.push(DriverPart {
+                        id: p.id.clone(),
+                        step: node(pin("STEP"), &mut map),
+                        dir: node(pin("DIR"), &mut map),
+                        en,
+                        ms,
+                        rst: node(pin("RST"), &mut map),
+                        slp,
+                        vmot: node(pin("VMOT"), &mut map),
+                        vdd,
+                        gnd,
+                        out: [
+                            (node(pin("1A"), &mut map), node(pin("1B"), &mut map)),
+                            (node(pin("2A"), &mut map), node(pin("2B"), &mut map)),
+                        ],
+                        current: prop_f64(p, "current", 100.0).clamp(10.0, 100.0) / 100.0,
+                    });
+                    match self.drivers.get_mut(&p.id) {
+                        Some(d) if d.drv.drv8825 == drv8825 => {}
+                        _ => {
+                            self.drivers.insert(
+                                p.id.clone(),
+                                DriverState {
+                                    drv: StepDriver::new(drv8825),
+                                    out: [(0.0, CoilDrive::Off); 2],
+                                    state: "no-vmot",
+                                    vmot: 0.0,
+                                },
+                            );
+                        }
+                    }
+                }
+                "l298n" => {
+                    // Dual H-bridge module; the inputs have no pull resistors.
+                    add_visual(&p.id, VisualKind::Motion, 0);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    bridge_parts.push(BridgePart {
+                        id: p.id.clone(),
+                        inp: [
+                            node(pin("IN1"), &mut map),
+                            node(pin("IN2"), &mut map),
+                            node(pin("IN3"), &mut map),
+                            node(pin("IN4"), &mut map),
+                        ],
+                        en: [node(pin("ENA"), &mut map), node(pin("ENB"), &mut map)],
+                        vs: node(pin("12V"), &mut map),
+                        gnd: node(pin("GND"), &mut map),
+                        v5: node(pin("5V"), &mut map),
+                        out: [
+                            (node(pin("OUT1"), &mut map), node(pin("OUT2"), &mut map)),
+                            (node(pin("OUT3"), &mut map), node(pin("OUT4"), &mut map)),
+                        ],
+                        jumpers: prop_str(p, "jumpers", "on") != "off",
+                    });
+                    self.bridges
+                        .entry(p.id.clone())
+                        .or_insert_with(|| BridgeState {
+                            since: now_s,
+                            frame_start: now_s,
+                            ..Default::default()
+                        });
+                }
+                "esc-bldc" => {
+                    // ESC (BLHeli class) with a brushless outrunner and a
+                    // propeller; the signal cable's GND is the battery's −.
+                    add_visual(&p.id, VisualKind::Motion, 0);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    esc_parts.push(EscPart {
+                        id: p.id.clone(),
+                        sig: node(pin("SIG"), &mut map),
+                        gnd: node(pin("GND"), &mut map),
+                        bat: node(pin("BAT+"), &mut map),
+                    });
+                    let kv = prop_f64(p, "kv", 1000.0).clamp(100.0, 5000.0);
+                    let load = prop_f64(p, "load", 0.0).clamp(0.0, 100.0) / 100.0;
+                    let (e, _) = self.escs.entry(p.id.clone()).or_insert_with(|| {
+                        let mut e = Esc::new(kv);
+                        e.rebase(now_s);
+                        (e, None)
+                    });
+                    e.advance(now_s);
+                    e.kv = kv;
+                    e.load = load;
+                }
+                "bldc-hall" => {
+                    // 3-phase BLDC (star) with three open-collector hall
+                    // sensors (device outputs 0–2: A, B, C).
+                    add_visual(&p.id, VisualKind::Motion, 0);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let halls = [
+                        node(pin("HA"), &mut map),
+                        node(pin("HB"), &mut map),
+                        node(pin("HC"), &mut map),
+                    ];
+                    for (i, &h) in halls.iter().enumerate() {
+                        dev_outputs.push((p.id.clone(), h, i));
+                    }
+                    bldc_parts.push(BldcPart {
+                        id: p.id.clone(),
+                        phases: [
+                            node(pin("U"), &mut map),
+                            node(pin("V"), &mut map),
+                            node(pin("W"), &mut map),
+                        ],
+                        links: [None, None, None],
+                        vcc: node(pin("VCC"), &mut map),
+                        gnd: node(pin("GND"), &mut map),
+                        halls,
+                    });
+                    let load = prop_f64(p, "load", 0.0).clamp(0.0, 100.0) / 100.0;
+                    match self.devices.get_mut(&p.id) {
+                        Some(Device::Bldc(b)) => {
+                            b.advance(now_s);
+                            b.load = load;
+                        }
+                        _ => {
+                            let mut b = HallBldc::new();
+                            b.rebase(now_s);
+                            b.load = load;
+                            self.devices.insert(p.id.clone(), Device::Bldc(Box::new(b)));
+                        }
+                    }
+                }
+                "bridge-3ph" => {
+                    // INH/INL inputs pulled down on the module (100 kΩ).
+                    add_visual(&p.id, VisualKind::Motion, 0);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let gnd = node(pin("GND"), &mut map);
+                    let mut inh = [0; 3];
+                    let mut inl = [0; 3];
+                    let mut out = [0; 3];
+                    for (k, ph) in ["A", "B", "C"].iter().enumerate() {
+                        inh[k] = node(pin(&format!("INH{ph}")), &mut map);
+                        inl[k] = node(pin(&format!("INL{ph}")), &mut map);
+                        out[k] = node(pin(&format!("OUT{ph}")), &mut map);
+                        for n in [inh[k], inl[k]] {
+                            elements.push(Element::Resistor {
+                                a: n,
+                                b: gnd,
+                                r: 100_000.0,
+                            });
+                        }
+                    }
+                    phase_bridges.push(PhaseBridgePart {
+                        id: p.id.clone(),
+                        inh,
+                        inl,
+                        pvdd: node(pin("PVDD"), &mut map),
+                        gnd,
+                        out,
+                    });
+                }
                 "joystick" => {
                     // KY-023: two 10 kΩ pots between GND and +5V, wipers on
                     // VRx and VRy; the push switch closes SW to GND (no
@@ -1896,6 +2314,7 @@ impl CircuitSim {
             .chain(shift_parts.iter().map(|b: &ShiftPart| b.id.as_str()))
             .chain(tm_parts.iter().map(|b: &TmPart| b.id.as_str()))
             .chain(pir_parts.iter().map(|b: &PirPart| b.id.as_str()))
+            .chain(bldc_parts.iter().map(|b: &BldcPart| b.id.as_str()))
             .chain(encoders)
             .collect();
         self.devices.retain(|id, _| ids.contains(id.as_str()));
@@ -1916,6 +2335,27 @@ impl CircuitSim {
         self.tm_parts = tm_parts;
         self.pir_parts = pir_parts;
         self.pixel_parts = pixel_parts;
+        // Motors: which driver outputs each coil sits across.
+        let mut link_warnings = link_steppers(&mut stepper_parts, &driver_parts, &bridge_parts);
+        link_warnings.extend(link_bldcs(&mut bldc_parts, &phase_bridges));
+        self.warnings.extend(link_warnings.iter().cloned());
+        self.value_warnings.extend(link_warnings);
+        let ids: Vec<String> = stepper_parts.iter().map(|m| m.id.clone()).collect();
+        self.steppers.retain(|id, _| ids.contains(id));
+        let ids: Vec<String> = driver_parts.iter().map(|m| m.id.clone()).collect();
+        self.drivers.retain(|id, _| ids.contains(id));
+        let ids: Vec<String> = bridge_parts.iter().map(|m| m.id.clone()).collect();
+        self.bridges.retain(|id, _| ids.contains(id));
+        let ids: Vec<String> = esc_parts.iter().map(|m| m.id.clone()).collect();
+        self.escs.retain(|id, _| ids.contains(id));
+        self.stepper_parts = stepper_parts;
+        self.driver_parts = driver_parts;
+        self.bridge_parts = bridge_parts;
+        self.esc_parts = esc_parts;
+        self.phase_out
+            .retain(|id, _| phase_bridges.iter().any(|b| &b.id == id));
+        self.bldc_parts = bldc_parts;
+        self.phase_bridges = phase_bridges;
         self.nodes = nodes;
         self.elements = elements;
         self.visuals = visuals;
@@ -2022,6 +2462,14 @@ impl CircuitSim {
                         ));
                     }
                 }
+                Element::Battery { p, n, v: vb, r } => {
+                    let cur = (vb - (v[p] - v[n])) / r;
+                    if cur > 5.0 {
+                        warnings.push(format!(
+                            "short circuit: the {vb:.0} V supply's + is connected to its − (or to a lower voltage)"
+                        ));
+                    }
+                }
                 Element::Supply { n, v: vs, name } => {
                     let cur = (vs - v[n]) / R_SUPPLY;
                     if cur > 0.5 {
@@ -2108,6 +2556,7 @@ impl CircuitSim {
                 Element::Resistor { a, b, .. } | Element::Load { a, b, .. } => {
                     union(&mut parent, a, b)
                 }
+                Element::Battery { p, n, .. } => union(&mut parent, p, n),
                 Element::Led { a, k, .. } if on[i] => union(&mut parent, a, k),
                 Element::Sensor { out, gnd, .. } if on[i] => union(&mut parent, out, gnd),
                 Element::Contact { a, b, relay, when } if self.contact(drives, relay) == when => {
@@ -2119,7 +2568,7 @@ impl CircuitSim {
         let mut sourced = vec![false; n];
         sourced[find(&mut parent, 0)] = true;
         for e in &self.elements {
-            if let Element::Supply { n, .. } = *e {
+            if let Element::Supply { n, .. } | Element::Battery { p: n, .. } = *e {
                 let r = find(&mut parent, n);
                 sourced[r] = true;
             }
@@ -2185,6 +2634,17 @@ impl CircuitSim {
                     }
                 }
                 Element::Supply { n, v, .. } => source(&mut g, &mut rhs, n, v, R_SUPPLY),
+                Element::Battery { p, n, v, r } => {
+                    // Norton: v/r from n into p, with r across.
+                    let c = 1.0 / r;
+                    stamp(&mut g, p, n, c);
+                    if p > 0 {
+                        rhs[p - 1] += v * c;
+                    }
+                    if n > 0 {
+                        rhs[n - 1] -= v * c;
+                    }
+                }
                 Element::Contact { a, b, relay, when } if self.contact(drives, relay) == when => {
                     stamp(&mut g, a, b, 1.0 / R_CONTACT)
                 }
@@ -2388,6 +2848,7 @@ impl CircuitSim {
         self.observe_shift_registers(&sol);
         self.observe_tm1637(now_s, &sol);
         self.observe_pirs(now_s, &sol);
+        self.observe_motors(now_s, &sol);
         // A module that powered up or down, a register that latched, a
         // chip that acknowledged: its outputs differ from what was solved
         // with, so solve again with them (the MCU sees the result now).
@@ -2489,6 +2950,204 @@ impl CircuitSim {
             }
             if let Some(Device::Pir(x)) = self.devices.get_mut(&part.id) {
                 x.power(now, supply >= PIR_VMIN);
+            }
+        }
+    }
+
+    /// M21: step drivers and L298N bridges take their inputs, the steppers
+    /// get the currents of the outputs their coils sit on, ESCs watch
+    /// their signal and battery.
+    fn observe_motors(&mut self, now: f64, sol: &Solution) {
+        let v = |n: usize| sol.v[n];
+        for part in &self.driver_parts {
+            let Some(d) = self.drivers.get_mut(&part.id) else {
+                continue;
+            };
+            let id = &part.id;
+            let name = d.drv.name();
+            let rel = |n: usize| v(n) - v(part.gnd);
+            let vdd = rel(part.vdd);
+            let vmot = rel(part.vmot);
+            d.vmot = vmot;
+            // The DRV8825 makes its logic supply from VMOT.
+            let logic = if d.drv.drv8825 {
+                vmot >= VMOT_MIN
+            } else {
+                vdd >= DRIVER_VDD_MIN
+            };
+            let vih = if d.drv.drv8825 { 2.2 } else { 0.7 * vdd };
+            let high = |n: usize| rel(n) > vih;
+            let step_v = rel(part.step);
+            if logic && !d.drv.drv8825 && step_v > 0.3 * vdd && step_v < vih {
+                self.warnings.insert(format!(
+                    "{id}: STEP at {step_v:.1} V is not a valid high — with VDD at {vdd:.1} V the {name} needs {vih:.1} V (power VDD from 3V3 when the MCU's outputs are 3.3 V)"
+                ));
+            }
+            let rst_float = !sol.driven[part.rst];
+            if rst_float && logic {
+                self.warnings.insert(format!(
+                    "{id}: RST is not connected — it floats and holds the {name} in reset (no steps); connect RST to SLP (or to VDD)"
+                ));
+            }
+            let reset = rst_float || !high(part.rst);
+            let asleep = !high(part.slp);
+            let active = logic && !reset && !asleep;
+            if !logic {
+                d.drv.home();
+            }
+            let ms = part.ms.map(high);
+            let stepped = d.drv.pins(now, high(part.step), high(part.dir), ms, active);
+            if let Some(w) = d.drv.warning.take() {
+                self.warnings.insert(format!("{id}: {w}"));
+            }
+            if reset {
+                d.drv.home();
+            }
+            let disabled = high(part.en);
+            let powered = vmot >= VMOT_MIN;
+            if stepped && !powered {
+                self.warnings.insert(format!(
+                    "{id}: VMOT is {vmot:.1} V — the {name} needs an 8–35 V motor supply on VMOT (connect a 12 V supply's + to VMOT and its − to GND); the motor does not move"
+                ));
+            }
+            if vmot > if d.drv.drv8825 { 45.0 } else { 35.0 } {
+                self.warnings.insert(format!(
+                    "{id}: VMOT is {vmot:.1} V, more than the {name}'s maximum"
+                ));
+            }
+            d.state = if !logic {
+                if d.drv.drv8825 {
+                    "no-vmot"
+                } else {
+                    "no-vdd"
+                }
+            } else if reset {
+                "reset"
+            } else if asleep {
+                "sleep"
+            } else if disabled {
+                "disabled"
+            } else if !powered {
+                "no-vmot"
+            } else {
+                "on"
+            };
+            d.out = if d.state == "on" {
+                let c = d.drv.currents();
+                [0, 1].map(|k| (c[k] * part.current, CoilDrive::Chopper { vmot }))
+            } else {
+                [(0.0, CoilDrive::Off); 2]
+            };
+        }
+        for part in &self.bridge_parts {
+            let Some(b) = self.bridges.get_mut(&part.id) else {
+                continue;
+            };
+            let rel = |n: usize| v(n) - v(part.gnd);
+            let vs = rel(part.vs);
+            // The on-board 78M05 makes 5 V from 7 V up; else 5V is an input.
+            b.powered = vs >= 7.0 || rel(part.v5) >= 4.5;
+            let high = |n: usize| rel(n) > 2.3;
+            let mut out = [(0.0, CoilDrive::Off); 2];
+            for (k, o) in out.iter_mut().enumerate() {
+                if part.jumpers && self.mcu.iter().any(|&(_, n)| n == part.en[k]) {
+                    self.warnings.insert(format!(
+                        "{}: the {} jumper is on, so the {} pin is ignored (the bridge is always enabled) — set jumpers off to use it for PWM",
+                        part.id,
+                        ["ENA", "ENB"][k],
+                        ["ENA", "ENB"][k]
+                    ));
+                }
+                let en = part.jumpers || high(part.en[k]);
+                if b.powered {
+                    *o = l298n_bridge(high(part.inp[2 * k]), high(part.inp[2 * k + 1]), en, vs);
+                }
+            }
+            // Averaged for the display.
+            for k in 0..2 {
+                b.acc[k] += b.out[k].0 * (now - b.since).max(0.0);
+            }
+            b.since = now;
+            b.out = out;
+        }
+        for part in &mut self.stepper_parts {
+            let Some(m) = self.steppers.get_mut(&part.id) else {
+                continue;
+            };
+            let mut target = [0.0; 2];
+            let mut drive = [CoilDrive::Off; 2];
+            for k in 0..2 {
+                let Some(l) = &part.links[k] else {
+                    continue;
+                };
+                let out = self
+                    .drivers
+                    .get(&l.driver)
+                    .map(|d| d.out[l.bridge])
+                    .or_else(|| self.bridges.get(&l.driver).map(|b| b.out[l.bridge]));
+                if let Some((t, d)) = out {
+                    target[k] = l.sign * t;
+                    drive[k] = d;
+                }
+            }
+            m.set_drive(now, target, drive);
+            stepper_warnings(&part.id, m, &mut self.warnings);
+        }
+        for part in &self.phase_bridges {
+            let rel = |n: usize| v(n) - v(part.gnd);
+            let supply = rel(part.pvdd);
+            let high = |n: usize| rel(n) > 2.0;
+            let mut out = [PhaseDrive::Float; 3];
+            if supply >= PHASE_BRIDGE_VMIN {
+                for (k, o) in out.iter_mut().enumerate() {
+                    *o = match (high(part.inh[k]), high(part.inl[k])) {
+                        (true, true) => {
+                            self.warnings.insert(format!(
+                                "{}: INH{ph} and INL{ph} are both high — shoot-through: both switches of phase {ph} would short the supply (the module turns the phase off)",
+                                part.id,
+                                ph = ["A", "B", "C"][k]
+                            ));
+                            PhaseDrive::Float
+                        }
+                        (true, false) => PhaseDrive::High,
+                        (false, true) => PhaseDrive::Low,
+                        _ => PhaseDrive::Float,
+                    };
+                }
+            }
+            self.phase_out.insert(part.id.clone(), (out, supply));
+        }
+        for part in &self.bldc_parts {
+            let Some(Device::Bldc(b)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            let mut drive = [PhaseDrive::Float; 3];
+            let mut supply: f64 = 0.0;
+            for k in 0..3 {
+                if let Some((id, o)) = &part.links[k] {
+                    if let Some((out, s)) = self.phase_out.get(id) {
+                        drive[k] = out[*o];
+                        supply = supply.max(*s);
+                    }
+                }
+            }
+            b.powered = v(part.vcc) - v(part.gnd) >= HALL_VMIN;
+            b.set_drive(now, drive, supply);
+            hall_pull_ups(part, b, now, sol, &self.mcu, &mut self.warnings);
+            bldc_warnings(&part.id, b, &mut self.warnings);
+        }
+        for part in &self.esc_parts {
+            let Some((e, last)) = self.escs.get_mut(&part.id) else {
+                continue;
+            };
+            e.power(now, v(part.bat) - v(part.gnd));
+            let high = v(part.sig) - v(part.gnd) > 1.5;
+            if last.is_some() && *last != Some(high) {
+                e.edge(now, high);
+            }
+            *last = Some(high);
+            if let Some(w) = e.warning.take() {
+                self.warnings.insert(format!("{}: {w}", part.id));
             }
         }
     }
@@ -2652,6 +3311,112 @@ impl CircuitSim {
                     v.unpowered = avg.get(4).copied().unwrap_or(0.0) < 0.5;
                     v.brightness = avg[..4].to_vec();
                     v.angle = Some(slot.angle);
+                }
+                VisualKind::Motion => {
+                    let now = self.clock.1 + (time as f64 - self.clock.0 as f64) / self.clock.2;
+                    if let Some(m) = self.steppers.get_mut(&slot.id) {
+                        m.advance(now);
+                        stepper_warnings(&slot.id, m, &mut self.warnings);
+                        // Speed over the frame (prev_angle holds the rotor
+                        // angle at the last frame).
+                        if seconds > 0.0 && span > 0.0 {
+                            slot.rpm =
+                                (m.theta - slot.prev_angle) / std::f64::consts::TAU / seconds
+                                    * 60.0;
+                        }
+                        slot.prev_angle = m.theta;
+                        v.angle = Some(m.degrees());
+                        v.rpm = Some(slot.rpm);
+                        v.motor = Some(MotorView {
+                            steps: (m.steps() * 100.0).round() / 100.0,
+                            lost: m.lost(),
+                            coils: m.current.to_vec(),
+                            stalled: m.stalled(now),
+                            ..Default::default()
+                        });
+                    } else if let Some(d) = self.drivers.get(&slot.id) {
+                        v.unpowered = matches!(d.state, "no-vmot" | "no-vdd");
+                        v.text = Some(format!("1/{}", d.drv.div));
+                        v.motor = Some(MotorView {
+                            steps: d.drv.steps as f64,
+                            coils: d.out.iter().map(|o| o.0).collect(),
+                            state: d.state.into(),
+                            micro: d.drv.div,
+                            ..Default::default()
+                        });
+                    } else if let Some(b) = self.bridges.get_mut(&slot.id) {
+                        for k in 0..2 {
+                            b.acc[k] += b.out[k].0 * (now - b.since).max(0.0);
+                        }
+                        b.since = now;
+                        let len = now - b.frame_start;
+                        let coils = (0..2)
+                            .map(|k| {
+                                if len > 0.0 {
+                                    b.acc[k] / len
+                                } else {
+                                    b.out[k].0
+                                }
+                            })
+                            .collect();
+                        b.acc = [0.0; 2];
+                        b.frame_start = now;
+                        v.unpowered = !b.powered;
+                        v.motor = Some(MotorView {
+                            coils,
+                            state: if b.powered { "on" } else { "no-power" }.into(),
+                            ..Default::default()
+                        });
+                    } else if let Some(Device::Bldc(b)) = self.devices.get_mut(&slot.id) {
+                        b.advance(now);
+                        bldc_warnings(&slot.id, b, &mut self.warnings);
+                        let part = self.bldc_parts.iter().find(|p| p.id == slot.id);
+                        if let (Some(part), Some(sol)) = (part, &cur) {
+                            hall_pull_ups(part, b, now, sol, &self.mcu, &mut self.warnings);
+                        }
+                        v.angle = Some(b.degrees());
+                        v.rpm = Some(b.rpm());
+                        v.unpowered = !b.powered;
+                        let h = b.hall();
+                        v.text = Some(format!("{}{}{}", h & 1, h >> 1 & 1, h >> 2 & 1));
+                        v.motor = Some(MotorView {
+                            coils: b.current.iter().map(|i| i / 6.0).collect(),
+                            stalled: b.stalled,
+                            state: if b.powered { "on" } else { "off" }.into(),
+                            ..Default::default()
+                        });
+                    } else if let Some((out, supply)) = self.phase_out.get(&slot.id) {
+                        v.unpowered = *supply < PHASE_BRIDGE_VMIN;
+                        v.motor = Some(MotorView {
+                            coils: out
+                                .iter()
+                                .map(|d| match d {
+                                    PhaseDrive::High => 1.0,
+                                    PhaseDrive::Low => -1.0,
+                                    PhaseDrive::Float => 0.0,
+                                })
+                                .collect(),
+                            state: if v.unpowered { "no-power" } else { "on" }.into(),
+                            ..Default::default()
+                        });
+                    } else if let Some((e, _)) = self.escs.get_mut(&slot.id) {
+                        e.advance(now);
+                        if let Some(w) = e.warning.take() {
+                            self.warnings.insert(format!("{}: {w}", slot.id));
+                        }
+                        v.angle = Some(e.angle);
+                        v.rpm = Some(e.rpm);
+                        v.unpowered = e.state == EscState::Off;
+                        v.motor = Some(MotorView {
+                            state: e.state.name().into(),
+                            throttle: e.throttle,
+                            beeps: e.beeps,
+                            stalled: e.state == EscState::Armed
+                                && e.throttle > 0.05
+                                && e.load >= 0.95,
+                            ..Default::default()
+                        });
+                    }
                 }
                 VisualKind::Sensor => {
                     v.unpowered = avg.first().copied().unwrap_or(0.0) < 0.5;
@@ -3265,6 +4030,146 @@ impl CircuitSim {
 }
 
 /// A prop that means "on": `true`, a non-zero number, or "1"/"true".
+/// Hall lines the sensor lets go of must be pulled up (open collector):
+/// warn about one that floats for a while (every pin floats for a moment
+/// after reset, until the firmware sets it up).
+fn hall_pull_ups(
+    part: &BldcPart,
+    b: &mut HallBldc,
+    now: f64,
+    sol: &Solution,
+    mcu: &[((u8, u8), usize)],
+    warnings: &mut BTreeSet<String>,
+) {
+    for (k, &h) in part.halls.iter().enumerate() {
+        let floats = b.powered
+            && b.hall_output(k).is_none()
+            && !sol.driven[h]
+            && mcu.iter().any(|&(_, n)| n == h);
+        let since = &mut b.float_since[k];
+        if !floats {
+            *since = None;
+        } else if now - *since.get_or_insert(now) > 0.1 {
+            warnings.insert(format!(
+                "{}: hall output H{} floats when high — the sensors are open collector: enable the pin's pull-up (GPIO_PULLUP) or add 10 kΩ to 3V3",
+                part.id,
+                ["A", "B", "C"][k]
+            ));
+        }
+    }
+}
+
+/// Report a BLDC that stalled since the last look.
+fn bldc_warnings(id: &str, b: &mut HallBldc, warnings: &mut BTreeSet<String>) {
+    if std::mem::take(&mut b.stall_new) {
+        warnings.insert(format!(
+            "{id}: the motor has current but does not turn — the commutation does not match the hall sensors (check the table and which hall and phase goes where), or the load is more than its torque"
+        ));
+    }
+}
+
+/// Which 3-phase bridge output each BLDC phase sits on. Returns wiring
+/// warnings.
+fn link_bldcs(motors: &mut [BldcPart], bridges: &[PhaseBridgePart]) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for m in motors {
+        for k in 0..3 {
+            m.links[k] = bridges.iter().find_map(|b| {
+                b.out
+                    .iter()
+                    .position(|&o| o == m.phases[k])
+                    .map(|o| (b.id.clone(), o))
+            });
+        }
+        let linked = m.links.iter().filter(|l| l.is_some()).count();
+        if linked > 0 && linked < 3 {
+            warnings.push(format!(
+                "{}: only {linked} of the phases U, V, W go to a bridge output — connect all three (OUTA, OUTB, OUTC)",
+                m.id
+            ));
+        }
+    }
+    warnings
+}
+
+/// Report what a stepper did wrong since the last look.
+fn stepper_warnings(id: &str, m: &mut BipolarStepper, warnings: &mut BTreeSet<String>) {
+    if std::mem::take(&mut m.slipped) {
+        warnings.insert(format!(
+            "{id}: lost steps — the rotor fell a whole cycle behind the field (stepping faster than it can follow from rest: ramp the step rate up; or the load is more than its torque)"
+        ));
+    }
+    if std::mem::take(&mut m.jitter) {
+        warnings.insert(format!(
+            "{id}: the coil field jumped by 180° from one step to the next — the rotor cannot tell which way to turn and jitters (check the step sequence and which pins drive which coil)"
+        ));
+    }
+}
+
+/// A driver's output pair: (part id, bridge, (first, second) node, pin names).
+type OutputPair<'a> = (&'a str, usize, (usize, usize), [&'a str; 2]);
+
+/// Find, for every coil of every bipolar stepper, the driver output pair
+/// its two ends sit on (through the nets). Returns wiring warnings.
+fn link_steppers(
+    motors: &mut [StepperPart],
+    drivers: &[DriverPart],
+    bridges: &[BridgePart],
+) -> Vec<String> {
+    let pairs: Vec<OutputPair> = drivers
+        .iter()
+        .flat_map(|d| {
+            [(0, ["1A", "1B"]), (1, ["2A", "2B"])]
+                .map(|(k, names)| (d.id.as_str(), k, d.out[k], names))
+        })
+        .chain(bridges.iter().flat_map(|b| {
+            [(0, ["OUT1", "OUT2"]), (1, ["OUT3", "OUT4"])]
+                .map(|(k, names)| (b.id.as_str(), k, b.out[k], names))
+        }))
+        .collect();
+    let mut warnings = Vec::new();
+    for m in motors {
+        for (k, coil) in ["A", "B"].iter().enumerate() {
+            let (plus, minus) = m.coils[k];
+            m.links[k] = pairs.iter().find_map(|&(id, bridge, (o1, o2), _)| {
+                let sign = if (o1, o2) == (plus, minus) {
+                    1.0
+                } else if (o1, o2) == (minus, plus) {
+                    -1.0
+                } else {
+                    return None;
+                };
+                Some(CoilLink {
+                    driver: id.to_string(),
+                    bridge,
+                    sign,
+                })
+            });
+            if m.links[k].is_some() || plus == minus {
+                continue;
+            }
+            // One end on a driver output but the other elsewhere.
+            let touched: Vec<String> = pairs
+                .iter()
+                .flat_map(|&(id, _, (o1, o2), names)| {
+                    [(o1, names[0]), (o2, names[1])]
+                        .into_iter()
+                        .filter(|&(o, _)| o == plus || o == minus)
+                        .map(move |(_, n)| format!("{id}.{n}"))
+                })
+                .collect();
+            if !touched.is_empty() {
+                warnings.push(format!(
+                    "{}: coil {coil} ({coil}+/{coil}−) is not across one output pair (it is on {}) — put both ends of a coil on 1A/1B or 2A/2B (OUT1/OUT2 or OUT3/OUT4)",
+                    m.id,
+                    touched.join(", ")
+                ));
+            }
+        }
+    }
+    warnings
+}
+
 fn truthy(v: &serde_json::Value) -> bool {
     match v {
         serde_json::Value::Bool(b) => *b,
@@ -4832,5 +5737,555 @@ mod tests {
         assert_eq!(visual(&v, "strip").leds, [0xFF0000, 0x0000FF]);
         assert_eq!(visual(&v, "ring").leds, [0x00FF00, 0x101010, 0x0000AA]);
         assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    }
+
+    // ------------------------------------------------------------ M21
+
+    const MHZ: f64 = 16e6;
+
+    fn at(t: f64) -> Cycles {
+        (t * MHZ) as Cycles
+    }
+
+    /// An A4988 on PA0 (STEP), PA1 (DIR), PA4 (EN) with RST on SLP, VDD
+    /// from 3V3, a 12 V supply on VMOT and a NEMA17 on its outputs
+    /// (`swap_a`: coil A the other way round; `vmot`: wire the supply).
+    fn a4988_sim(swap_a: bool, vmot: bool, props: &[(&str, &str)]) -> CircuitSim {
+        let (ap, am) = if swap_a { ("A-", "A+") } else { ("A+", "A-") };
+        let mut wires = vec![
+            wire(("mcu", "PA0"), ("drv", "STEP")),
+            wire(("mcu", "PA1"), ("drv", "DIR")),
+            wire(("mcu", "PA4"), ("drv", "EN")),
+            wire(("drv", "RST"), ("drv", "SLP")),
+            wire(("mcu", "3V3"), ("drv", "VDD")),
+            wire(("mcu", "GND"), ("drv", "GND")),
+            wire(("bat", "-"), ("mcu", "GND")),
+            wire(("drv", "1A"), ("mot", ap)),
+            wire(("drv", "1B"), ("mot", am)),
+            wire(("drv", "2A"), ("mot", "B+")),
+            wire(("drv", "2B"), ("mot", "B-")),
+        ];
+        if vmot {
+            wires.push(wire(("bat", "+"), ("drv", "VMOT")));
+        }
+        sim(
+            vec![
+                part("drv", "a4988", props),
+                part("mot", "stepper-nema17", &[]),
+                part("bat", "battery", &[("voltage", "12")]),
+            ],
+            wires,
+        )
+    }
+
+    /// `n` STEP pulses (2 µs high) every `period` s from `t`; DIR, EN as given.
+    fn step_pulses(s: &mut CircuitSim, t: &mut f64, n: u32, period: f64, dir: bool, en: bool) {
+        for _ in 0..n {
+            let lv = |step: bool| {
+                [
+                    ((0, 0), Some(step)),
+                    ((0, 1), Some(dir)),
+                    ((0, 4), Some(en)),
+                ]
+            };
+            pins(s, at(*t), &lv(true));
+            pins(s, at(*t + 2e-6), &lv(false));
+            *t += period;
+        }
+    }
+
+    fn motor(s: &mut CircuitSim, t: f64, id: &str) -> PartVisual {
+        visual(&s.end_frame(at(t), 0.02), id).clone()
+    }
+
+    #[test]
+    fn a4988_steps_the_nema17_through_the_nets() {
+        let mut s = a4988_sim(false, true, &[]);
+        let mut t = 0.01;
+        step_pulses(&mut s, &mut t, 1, 0.01, true, false);
+        t += 0.2;
+        let start = motor(&mut s, t, "mot").motor.unwrap().steps;
+        // 100 full steps (MS pins pulled low) at 400 steps/s.
+        step_pulses(&mut s, &mut t, 100, 1.0 / 400.0, true, false);
+        t += 0.2;
+        let mv = motor(&mut s, t, "mot").motor.unwrap();
+        assert!(
+            (mv.steps - start - 100.0).abs() < 0.05,
+            "{}",
+            mv.steps - start
+        );
+        assert_eq!(mv.lost, 0);
+        let d = motor(&mut s, t, "drv").motor.unwrap();
+        assert_eq!(d.state, "on");
+        assert_eq!(d.micro, 1);
+        assert_eq!(d.steps, 101.0);
+        // Both coils at 70.7 % on the full-step (45°) positions.
+        assert!((mv.coils[0].abs() - 0.707).abs() < 0.01, "{:?}", mv.coils);
+        // DIR low: back.
+        step_pulses(&mut s, &mut t, 40, 1.0 / 400.0, false, false);
+        t += 0.2;
+        assert!((motor(&mut s, t, "mot").motor.unwrap().steps - start - 60.0).abs() < 0.05);
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    }
+
+    #[test]
+    fn a_swapped_coil_turns_the_stepper_the_other_way() {
+        let mut s = a4988_sim(true, true, &[]);
+        let mut t = 0.01;
+        step_pulses(&mut s, &mut t, 1, 0.01, true, false);
+        t += 0.2;
+        let start = motor(&mut s, t, "mot").motor.unwrap().steps;
+        step_pulses(&mut s, &mut t, 100, 1.0 / 400.0, true, false);
+        t += 0.2;
+        assert!((motor(&mut s, t, "mot").motor.unwrap().steps - start - -100.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn a4988_without_vmot_or_with_en_high_does_not_move_it() {
+        let mut s = a4988_sim(false, false, &[]);
+        let mut t = 0.01;
+        step_pulses(&mut s, &mut t, 50, 1.0 / 400.0, true, false);
+        t += 0.2;
+        assert!(motor(&mut s, t, "mot").motor.unwrap().steps.abs() < 0.6);
+        assert_eq!(motor(&mut s, t, "drv").motor.unwrap().state, "no-vmot");
+        assert!(
+            s.warnings.iter().any(|w| w.starts_with("drv: VMOT is")),
+            "{:?}",
+            s.warnings
+        );
+        // EN high: the outputs are off, the shaft turns freely by hand.
+        let mut s = a4988_sim(false, true, &[]);
+        let mut t = 0.01;
+        step_pulses(&mut s, &mut t, 50, 1.0 / 400.0, true, true);
+        t += 0.2;
+        let d = motor(&mut s, t, "drv").motor.unwrap();
+        assert_eq!(d.state, "disabled");
+        assert_eq!(d.coils, [0.0, 0.0]);
+        assert!(motor(&mut s, t, "mot").motor.unwrap().steps.abs() < 0.6);
+        set_props(&mut s, "mot", &[("turn", "36")], at(t));
+        t += 0.3;
+        assert!((motor(&mut s, t, "mot").motor.unwrap().steps - 20.0).abs() < 0.6);
+        // Enabled again it holds: a turn by hand springs back.
+        let lv = [
+            ((0, 0), Some(false)),
+            ((0, 1), Some(true)),
+            ((0, 4), Some(false)),
+        ];
+        pins(&mut s, at(t), &lv);
+        t += 0.3;
+        let held = motor(&mut s, t, "mot").motor.unwrap().steps;
+        set_props(&mut s, "mot", &[("turn", "37.8")], at(t));
+        t += 0.3;
+        assert!((motor(&mut s, t, "mot").motor.unwrap().steps - held).abs() < 0.05);
+    }
+
+    #[test]
+    fn a4988_microsteps_reset_and_short_pulses() {
+        // MS1 and MS2 high: eighth steps. 80 pulses = 10 full steps.
+        let mut s = a4988_sim(false, true, &[]);
+        let mut c = s.circuit.clone();
+        c.wires.push(wire(("mcu", "3V3"), ("drv", "MS1")));
+        c.wires.push(wire(("mcu", "3V3"), ("drv", "MS2")));
+        s.set_circuit(&c, 0);
+        let mut t = 0.01;
+        step_pulses(&mut s, &mut t, 1, 0.01, true, false);
+        t += 0.2;
+        let start = motor(&mut s, t, "mot").motor.unwrap().steps;
+        step_pulses(&mut s, &mut t, 80, 1.0 / 3200.0, true, false);
+        t += 0.2;
+        assert!((motor(&mut s, t, "mot").motor.unwrap().steps - start - 10.0).abs() < 0.05);
+        assert_eq!(motor(&mut s, t, "drv").text.as_deref(), Some("1/8"));
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        // A 0.5 µs STEP pulse.
+        let lv = |step| {
+            [
+                ((0, 0), Some(step)),
+                ((0, 1), Some(true)),
+                ((0, 4), Some(false)),
+            ]
+        };
+        pins(&mut s, at(t), &lv(true));
+        pins(&mut s, at(t) + 8, &lv(false));
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.contains("STEP pulse only 0.50 µs")),
+            "{:?}",
+            s.warnings
+        );
+        // RST not connected: it floats, the driver stays in reset.
+        let mut s = a4988_sim(false, true, &[]);
+        let mut c = s.circuit.clone();
+        c.wires.retain(|w| w.a.pin != "RST");
+        s.set_circuit(&c, 0);
+        let mut t = 0.01;
+        step_pulses(&mut s, &mut t, 20, 1.0 / 400.0, true, false);
+        t += 0.2;
+        assert_eq!(motor(&mut s, t, "drv").motor.unwrap().state, "reset");
+        assert!(motor(&mut s, t, "mot").motor.unwrap().steps.abs() < 0.6);
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.contains("RST is not connected")),
+            "{:?}",
+            s.warnings
+        );
+    }
+
+    #[test]
+    fn coil_across_two_bridges_warns_and_drv8825_has_32nd_steps() {
+        let mut s = a4988_sim(false, true, &[("model", "DRV8825")]);
+        let mut c = s.circuit.clone();
+        for w in &mut c.wires {
+            if w.a.pin == "1B" {
+                w.b.pin = "B+".into();
+            } else if w.a.pin == "2A" {
+                w.b.pin = "A-".into();
+            }
+        }
+        s.set_circuit(&c, 0);
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.starts_with("mot: coil A") && w.contains("drv.1A")),
+            "{:?}",
+            s.warnings
+        );
+        // DRV8825, M0–M2 high: 1/32.
+        let mut s = a4988_sim(false, true, &[("model", "DRV8825")]);
+        let mut c = s.circuit.clone();
+        for ms in ["MS1", "MS2", "MS3"] {
+            c.wires.push(wire(("mcu", "3V3"), ("drv", ms)));
+        }
+        s.set_circuit(&c, 0);
+        let mut t = 0.01;
+        step_pulses(&mut s, &mut t, 1, 0.01, true, false);
+        t += 0.2;
+        let start = motor(&mut s, t, "mot").motor.unwrap().steps;
+        step_pulses(&mut s, &mut t, 320, 1.0 / 6400.0, true, false);
+        t += 0.2;
+        assert!((motor(&mut s, t, "mot").motor.unwrap().steps - start - 10.0).abs() < 0.05);
+        assert_eq!(motor(&mut s, t, "drv").motor.unwrap().micro, 32);
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    }
+
+    #[test]
+    fn stepping_too_fast_loses_steps_with_a_warning() {
+        let mut s = a4988_sim(false, true, &[]);
+        let mut t = 0.01;
+        step_pulses(&mut s, &mut t, 1, 0.01, true, false);
+        t += 0.2;
+        step_pulses(&mut s, &mut t, 400, 1.0 / 2000.0, true, false);
+        let m = motor(&mut s, t, "mot").motor.unwrap();
+        assert!(m.lost > 0 && m.stalled, "{m:?}");
+        assert!(
+            s.warnings.iter().any(|w| w.starts_with("mot: lost steps")),
+            "{:?}",
+            s.warnings
+        );
+    }
+
+    /// An L298N on PA0, PA1, PA4, PA6 (IN1–IN4), ENA/ENB on PB0/PB1 (or
+    /// jumpers), 12 V on 12V, a NEMA17 on OUT1–OUT4.
+    fn l298n_sim(jumpers: &str) -> CircuitSim {
+        sim(
+            vec![
+                part("br", "l298n", &[("jumpers", jumpers)]),
+                part("mot", "stepper-nema17", &[]),
+                part("bat", "battery", &[("voltage", "12")]),
+            ],
+            vec![
+                wire(("mcu", "PA0"), ("br", "IN1")),
+                wire(("mcu", "PA1"), ("br", "IN2")),
+                wire(("mcu", "PA4"), ("br", "IN3")),
+                wire(("mcu", "PA6"), ("br", "IN4")),
+                wire(("mcu", "PB0"), ("br", "ENA")),
+                wire(("mcu", "PB1"), ("br", "ENB")),
+                wire(("bat", "+"), ("br", "12V")),
+                wire(("bat", "-"), ("br", "GND")),
+                wire(("br", "GND"), ("mcu", "GND")),
+                wire(("br", "OUT1"), ("mot", "A+")),
+                wire(("br", "OUT2"), ("mot", "A-")),
+                wire(("br", "OUT3"), ("mot", "B+")),
+                wire(("br", "OUT4"), ("mot", "B-")),
+            ],
+        )
+    }
+
+    const IN_PINS: [(u8, u8); 4] = [(0, 0), (0, 1), (0, 4), (0, 6)];
+
+    /// IN1–IN4 from the bits of `pattern`, ENA/ENB as given.
+    fn coils(s: &mut CircuitSim, t: f64, pattern: u8, en: [bool; 2]) {
+        let mut lv: Vec<((u8, u8), Option<bool>)> = IN_PINS
+            .iter()
+            .enumerate()
+            .map(|(i, &p)| (p, Some(pattern >> i & 1 != 0)))
+            .collect();
+        lv.push(((1, 0), Some(en[0])));
+        lv.push(((1, 1), Some(en[1])));
+        pins(s, at(t), &lv);
+    }
+
+    #[test]
+    fn l298n_half_steps_turn_the_stepper_and_a_wrong_order_jitters() {
+        // Half steps A+, A+B+, B+, A−B+, A−, A−B−, B−, A+B− (IN1 = bit 0).
+        const HALF: [u8; 8] = [
+            0b0001, 0b0101, 0b0100, 0b0110, 0b0010, 0b1010, 0b1000, 0b1001,
+        ];
+        let mut s = l298n_sim("off");
+        let mut t = 0.01;
+        coils(&mut s, t, HALF[0], [true; 2]);
+        t += 0.2;
+        let start = motor(&mut s, t, "mot").motor.unwrap().steps;
+        for k in 1..=80 {
+            coils(&mut s, t, HALF[k % 8], [true; 2]);
+            t += 0.004;
+        }
+        t += 0.2;
+        let m = motor(&mut s, t, "mot").motor.unwrap();
+        assert!(
+            (m.steps - start - 40.0).abs() < 0.05,
+            "80 half steps: {}",
+            m.steps - start
+        );
+        assert_eq!(m.lost, 0);
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        // 50 % PWM on ENA/ENB: the coil current averages to about half.
+        for _ in 0..200 {
+            coils(&mut s, t, HALF[0], [true; 2]);
+            coils(&mut s, t + 0.0001, HALF[0], [false; 2]);
+            t += 0.0002;
+        }
+        let m = motor(&mut s, t, "mot").motor.unwrap();
+        assert!((m.coils[0] - 0.5).abs() < 0.1, "{:?}", m.coils);
+        // IN1, IN2, IN3, IN4 one after the other (A+, A−, B+, B−): the field
+        // jumps 180° and the rotor jitters.
+        let wrong = [0b0001, 0b0010, 0b0100, 0b1000];
+        let start = motor(&mut s, t, "mot").motor.unwrap().steps;
+        for k in 0..40 {
+            coils(&mut s, t, wrong[k % 4], [true; 2]);
+            t += 0.01;
+        }
+        let m = motor(&mut s, t, "mot").motor.unwrap();
+        assert!((m.steps - start).abs() < 20.0, "{}", m.steps - start);
+        assert!(
+            s.warnings.iter().any(|w| w.contains("jumped by 180°")),
+            "{:?}",
+            s.warnings
+        );
+    }
+
+    #[test]
+    fn l298n_jumpers_enable_the_bridges_and_ignore_ena() {
+        let mut s = l298n_sim("on");
+        coils(&mut s, 0.01, 0b0001, [false; 2]);
+        let m = motor(&mut s, 0.3, "mot").motor.unwrap();
+        assert!((m.coils[0] - 1.0).abs() < 0.01, "{:?}", m.coils);
+        assert!(
+            s.warnings.iter().any(|w| w.contains("ENA jumper is on")),
+            "{:?}",
+            s.warnings
+        );
+    }
+
+    fn esc_sim(volts: &str) -> CircuitSim {
+        sim(
+            vec![
+                part("esc", "esc-bldc", &[("kv", "1000")]),
+                part("bat", "battery", &[("voltage", volts)]),
+            ],
+            vec![
+                wire(("mcu", "PA0"), ("esc", "SIG")),
+                wire(("esc", "GND"), ("mcu", "GND")),
+                wire(("bat", "+"), ("esc", "BAT+")),
+                wire(("bat", "-"), ("esc", "GND")),
+            ],
+        )
+    }
+
+    fn servo_pulses(s: &mut CircuitSim, t: &mut f64, secs: f64, us: f64) {
+        let end = *t + secs;
+        while *t < end {
+            pins(s, at(*t), &[((0, 0), Some(true))]);
+            pins(s, at(*t + us * 1e-6), &[((0, 0), Some(false))]);
+            *t += 0.02;
+        }
+    }
+
+    #[test]
+    fn esc_arms_on_minimum_throttle_and_spins_up() {
+        let mut s = esc_sim("11.1");
+        let mut t = 0.01;
+        servo_pulses(&mut s, &mut t, 0.5, 1000.0);
+        assert_eq!(motor(&mut s, t, "esc").motor.unwrap().state, "arming");
+        servo_pulses(&mut s, &mut t, 0.7, 1000.0);
+        let v = motor(&mut s, t, "esc");
+        assert_eq!(v.motor.as_ref().unwrap().state, "armed");
+        assert_eq!(v.motor.unwrap().beeps, 2);
+        servo_pulses(&mut s, &mut t, 2.5, 1600.0);
+        let v = motor(&mut s, t, "esc");
+        assert!((v.rpm.unwrap() - 0.6 * 11100.0).abs() < 50.0, "{:?}", v.rpm);
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        // Signal lost.
+        t += 0.6;
+        assert_eq!(motor(&mut s, t, "esc").motor.unwrap().state, "failsafe");
+        assert!(s.warnings.iter().any(|w| w.contains("failsafe")));
+        // Without a battery (here: 3 V) it is off.
+        let mut s = esc_sim("3");
+        let mut t = 0.01;
+        servo_pulses(&mut s, &mut t, 1.5, 1000.0);
+        let v = motor(&mut s, t, "esc");
+        assert!(v.unpowered);
+        assert_eq!(v.motor.unwrap().state, "off");
+    }
+
+    /// A BLDC on a 3-phase bridge: INHA/INLA/INHB/INLB/INHC/INLC on
+    /// PB0–PB5, halls A/B/C on PA8/PA9/PA10 (pull-ups from the MCU), 12 V.
+    fn bldc_sim() -> CircuitSim {
+        let mut wires = vec![
+            wire(("bat", "+"), ("br", "PVDD")),
+            wire(("bat", "-"), ("mcu", "GND")),
+            wire(("br", "GND"), ("mcu", "GND")),
+            wire(("mot", "GND"), ("mcu", "GND")),
+            wire(("mcu", "5V"), ("mot", "VCC")),
+            wire(("br", "OUTA"), ("mot", "U")),
+            wire(("br", "OUTB"), ("mot", "V")),
+            wire(("br", "OUTC"), ("mot", "W")),
+            wire(("mot", "HA"), ("mcu", "PA8")),
+            wire(("mot", "HB"), ("mcu", "PA9")),
+            wire(("mot", "HC"), ("mcu", "PA10")),
+        ];
+        for (i, n) in ["INHA", "INLA", "INHB", "INLB", "INHC", "INLC"]
+            .iter()
+            .enumerate()
+        {
+            wires.push(wire(("mcu", &format!("PB{i}")), ("br", n)));
+        }
+        sim(
+            vec![
+                part("br", "bridge-3ph", &[]),
+                part("mot", "bldc-hall", &[]),
+                part("bat", "battery", &[("voltage", "12")]),
+            ],
+            wires,
+        )
+    }
+
+    /// Run a six-step controller against the circuit for `secs`: on every
+    /// circuit event it reads the halls and drives the bridge from the
+    /// table; `pull_up`: the hall pins have their pull-ups.
+    fn commutate(s: &mut CircuitSim, t: &mut f64, secs: f64, swap_ab: bool, pull_up: bool) {
+        use crate::tier9::COMMUTATION;
+        let end = *t + secs;
+        let mut now = at(*t);
+        let hall = |s: &CircuitSim, pin: u8| s.mcu_voltage(0, pin).is_some_and(|v| v > VDD / 2.0);
+        let code_of = |s: &CircuitSim| {
+            let (a, b, c) = (hall(s, 8), hall(s, 9), hall(s, 10));
+            let (a, b) = if swap_ab { (b, a) } else { (a, b) };
+            a as u8 | (b as u8) << 1 | (c as u8) << 2
+        };
+        let mut last: Option<Vec<Drive>> = None;
+        loop {
+            // The halls as they are now (an edge may be due), then the
+            // bridge from the table, until they agree.
+            let last = last.get_or_insert_with(|| {
+                drives(s, |p| match p {
+                    (0, 8..=10) if pull_up => Drive::PullUp,
+                    _ => Drive::Float,
+                })
+            });
+            s.update(now, last);
+            for _ in 0..3 {
+                let code = code_of(s);
+                let mut on = [false; 6];
+                if let Some(&(_, (h, l))) = COMMUTATION.iter().find(|x| x.0 == code) {
+                    on[2 * h] = true;
+                    on[2 * l + 1] = true;
+                }
+                let d = drives(s, |p| match p {
+                    (1, i @ 0..=5) => {
+                        if on[i as usize] {
+                            Drive::High
+                        } else {
+                            Drive::Low
+                        }
+                    }
+                    (0, 8..=10) if pull_up => Drive::PullUp,
+                    _ => Drive::Float,
+                });
+                s.update(now, &d);
+                *last = d;
+                if code_of(s) == code {
+                    break;
+                }
+            }
+            // The next hall edge, or a look every millisecond; a few µs of
+            // interrupt latency.
+            let next = s
+                .next_event()
+                .map_or(now + at(1e-3), |e| e + 50)
+                .min(now + at(1e-3));
+            if next > at(end) {
+                break;
+            }
+            now = next.max(now + 1);
+        }
+        *t = end;
+    }
+
+    #[test]
+    fn bldc_on_a_3_phase_bridge_follows_its_hall_sensors() {
+        let mut s = bldc_sim();
+        let mut t = 0.01;
+        commutate(&mut s, &mut t, 1.0, false, true);
+        let v = motor(&mut s, t, "mot");
+        let rpm = v.rpm.unwrap();
+        assert!(rpm > 3000.0 && rpm < 3600.0, "{rpm}");
+        assert!(!v.motor.unwrap().stalled);
+        assert_eq!(v.text.as_deref().map(str::len), Some(3));
+        let br = motor(&mut s, t, "br").motor.unwrap();
+        assert_eq!(
+            br.coils.iter().filter(|c| c.abs() > 0.5).count(),
+            2,
+            "{:?}",
+            br.coils
+        );
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    }
+
+    #[test]
+    fn bldc_with_halls_mixed_up_stalls_and_without_pull_ups_warns() {
+        let mut s = bldc_sim();
+        let mut t = 0.01;
+        commutate(&mut s, &mut t, 1.0, true, true);
+        let v = motor(&mut s, t, "mot");
+        assert!(v.rpm.unwrap().abs() < 300.0, "{:?}", v.rpm);
+        assert!(v.motor.unwrap().stalled);
+        assert!(
+            s.warnings.iter().any(|w| w.contains("does not turn")),
+            "{:?}",
+            s.warnings
+        );
+        let mut s = bldc_sim();
+        let mut t = 0.01;
+        commutate(&mut s, &mut t, 0.05, false, false);
+        motor(&mut s, t, "mot");
+        motor(&mut s, t + 0.2, "mot");
+        assert!(
+            s.warnings.iter().any(|w| w.contains("floats when high")),
+            "{:?}",
+            s.warnings
+        );
+        // Both switches of a phase on: shoot-through.
+        let d = drives(&s, |p| match p {
+            (1, 0) | (1, 1) => Drive::High,
+            _ => Drive::Float,
+        });
+        s.update(at(0.2), &d);
+        assert!(
+            s.warnings.iter().any(|w| w.contains("shoot-through")),
+            "{:?}",
+            s.warnings
+        );
     }
 }

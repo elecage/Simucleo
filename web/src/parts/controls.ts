@@ -393,3 +393,43 @@ export const waveControl: PartControl = {
     };
   },
 };
+
+// ------------------------------------------------------ shaft (M21)
+
+/**
+ * A motor shaft centred at (cx, cy) turned by hand: the angle the pointer
+ * sweeps around it adds to `prop` (degrees, unbounded; clockwise
+ * positive). The simulator turns the rotor by the difference — a driver
+ * that holds the motor pulls it back, a free one stays where it is put.
+ */
+export function shaftTurn(prop: string, cx: number, cy: number): PartControl {
+  const angleAt = (p: ControlPointer) => {
+    const dx = p.x - cx,
+      dy = p.y - cy;
+    return Math.hypot(dx, dy) < 1.5 ? null : (Math.atan2(dx, -dy) * 180) / Math.PI;
+  };
+  return {
+    hint: "축을 잡고 돌리세요 — 드라이버가 꺼져 있으면(EN High) 손으로 돌아가고, 켜져 있으면 홀딩 토크가 되돌립니다. 마우스 휠로 1.8°씩.",
+    start(p, props) {
+      let value = num(props[prop]);
+      let prev = angleAt(p);
+      return {
+        move(q) {
+          const a = angleAt(q);
+          if (a === null) return;
+          if (prev === null) {
+            prev = a;
+            return;
+          }
+          const d = ((a - prev + 540) % 360) - 180;
+          prev = a;
+          value += d;
+          return { [prop]: tidy(value, 0.1) };
+        },
+      };
+    },
+    wheel(deltaY, props) {
+      return { [prop]: tidy(num(props[prop]) + (deltaY > 0 ? 1.8 : -1.8), 0.1) };
+    },
+  };
+}

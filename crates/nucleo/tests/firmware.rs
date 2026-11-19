@@ -2719,3 +2719,361 @@ fn neopixel_strip_on_the_ring_dout_takes_leds_12_to_19() {
         board.circuit_warnings()
     );
 }
+
+// ---------------------------------------------------------- motors (M21)
+
+/// Board pin → signal for the M21 examples.
+fn m21_signals() -> std::collections::HashMap<String, String> {
+    let mut s = m19_signals();
+    for (a, b) in [("D8", "PA9"), ("D9", "PC7")] {
+        s.insert(a.to_string(), b.to_string());
+    }
+    s
+}
+
+fn motor_view(v: &[simucleo_nucleo::PartVisual], id: &str) -> simucleo_nucleo::MotorView {
+    part_visual(v, id).motor.unwrap()
+}
+
+/// The A4988 example's circuit (`load`: brake on the shaft, N·cm).
+fn a4988_circuit(load: f64) -> simucleo_nucleo::Circuit {
+    let n = "nucleo";
+    m19_circuit(
+        serde_json::json!([
+            {"id": "drv", "kind": "a4988"},
+            {"id": "mot", "kind": "stepper-nema17", "props": {"load": load}},
+            {"id": "bat", "kind": "battery", "props": {"voltage": 12}}
+        ]),
+        &[
+            ((n, "D3"), ("drv", "STEP")),
+            ((n, "D4"), ("drv", "DIR")),
+            ((n, "D7"), ("drv", "EN")),
+            ((n, "D8"), ("drv", "MS1")),
+            ((n, "D9"), ("drv", "MS2")),
+            ((n, "D10"), ("drv", "MS3")),
+            (("drv", "RST"), ("drv", "SLP")),
+            ((n, "3V3"), ("drv", "VDD")),
+            (("drv", "GND"), (n, "GND")),
+            (("bat", "+"), ("drv", "VMOT")),
+            (("bat", "-"), (n, "GND")),
+            (("drv", "1A"), ("mot", "A+")),
+            (("drv", "1B"), ("mot", "A-")),
+            (("drv", "2A"), ("mot", "B+")),
+            (("drv", "2B"), ("mot", "B-")),
+        ],
+    )
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-stepper-a4988"]
+fn a4988_ramps_one_revolution_each_way_in_eighth_steps() {
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-stepper-a4988", "hal-stepper-a4988"))
+        .unwrap();
+    board.set_circuit(
+        &a4988_circuit(0.0),
+        &simucleo_nucleo::BusCatalog::default(),
+        &m21_signals(),
+    );
+    // Energised at the driver's home position, before the first move.
+    board.run_for_ns(80e6);
+    let start = motor_view(&board.circuit_frame(0.08), "mot").steps;
+    assert!(start.abs() < 0.05, "{start}");
+    // Frames of 20 ms: the rotor turns one way, then back, at up to 300 rpm.
+    let mut fastest: f64 = 0.0;
+    let mut turns = Vec::new();
+    for _ in 0..100 {
+        board.run_for_ns(20e6);
+        let v = board.circuit_frame(0.02);
+        let m = part_visual(&v, "mot");
+        fastest = fastest.max(m.rpm.unwrap().abs());
+        turns.push(m.motor.unwrap().steps - start);
+    }
+    let text = console_text(&mut board);
+    assert!(text.contains("1/8 steps"), "{text}");
+    assert!(
+        text.contains("rev 1 CW : position 1600 microsteps = 360.0 deg"),
+        "{text}"
+    );
+    assert!(
+        text.contains("rev 2 CCW: position 0 microsteps = 0.0 deg"),
+        "{text}"
+    );
+    // Out to 200 full steps and back to 0, nothing lost.
+    let max = turns.iter().cloned().fold(f64::MIN, f64::max);
+    assert!((max - 200.0).abs() < 0.2, "{max} {turns:?}");
+    assert!(turns.iter().any(|s| s.abs() < 0.2), "{turns:?}");
+    assert!(fastest > 200.0 && fastest < 330.0, "{fastest} rpm");
+    let d = motor_view(&board.circuit_frame(0.0), "drv");
+    assert_eq!((d.micro, d.state.as_str()), (8, "on"));
+    assert_eq!(motor_view(&board.circuit_frame(0.0), "mot").lost, 0);
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+    // B1: the driver lets go (EN high) after the move in progress.
+    board.set_user_button(true);
+    board.run_for_ns(30e6);
+    board.set_user_button(false);
+    board.run_for_ns(1500e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("driver off (EN high)"), "{text}");
+    let v = board.circuit_frame(1.5);
+    assert_eq!(motor_view(&v, "drv").state, "disabled");
+    assert!(motor_view(&v, "mot").coils.iter().all(|c| c.abs() < 1e-6));
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-stepper-a4988"]
+fn a4988_with_a_brake_on_the_shaft_loses_steps() {
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-stepper-a4988", "hal-stepper-a4988"))
+        .unwrap();
+    // 35 N·cm against 40 N·cm of holding torque: it cannot keep up.
+    board.set_circuit(
+        &a4988_circuit(35.0),
+        &simucleo_nucleo::BusCatalog::default(),
+        &m21_signals(),
+    );
+    board.run_for_ns(1500e6);
+    let m = motor_view(&board.circuit_frame(1.5), "mot");
+    assert!(m.lost > 0, "{m:?}");
+    assert!(
+        board
+            .circuit_warnings()
+            .iter()
+            .any(|w| w.starts_with("mot: lost steps")),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-stepper-l298n"]
+fn l298n_half_steps_one_revolution_each_way() {
+    let n = "nucleo";
+    let circuit = m19_circuit(
+        serde_json::json!([
+            {"id": "br", "kind": "l298n", "props": {"jumpers": "off"}},
+            {"id": "mot", "kind": "stepper-nema17"},
+            {"id": "bat", "kind": "battery", "props": {"voltage": 12}}
+        ]),
+        &[
+            ((n, "D7"), ("br", "IN1")),
+            ((n, "D8"), ("br", "IN2")),
+            ((n, "D2"), ("br", "IN3")),
+            ((n, "D12"), ("br", "IN4")),
+            ((n, "D5"), ("br", "ENA")),
+            ((n, "D9"), ("br", "ENB")),
+            (("bat", "+"), ("br", "12V")),
+            (("bat", "-"), ("br", "GND")),
+            (("br", "GND"), (n, "GND")),
+            (("br", "OUT1"), ("mot", "A+")),
+            (("br", "OUT2"), ("mot", "A-")),
+            (("br", "OUT3"), ("mot", "B+")),
+            (("br", "OUT4"), ("mot", "B-")),
+        ],
+    );
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-stepper-l298n", "hal-stepper-l298n"))
+        .unwrap();
+    board.set_circuit(
+        &circuit,
+        &simucleo_nucleo::BusCatalog::default(),
+        &m21_signals(),
+    );
+    board.run_for_ns(150e6);
+    let start = motor_view(&board.circuit_frame(0.15), "mot").steps;
+    let mut seen = Vec::new();
+    let mut rpm: f64 = 0.0;
+    for _ in 0..60 {
+        board.run_for_ns(50e6);
+        let v = board.circuit_frame(0.05);
+        rpm = rpm.max(part_visual(&v, "mot").rpm.unwrap());
+        seen.push(motor_view(&v, "mot").steps - start);
+        // 80 % PWM on ENA/ENB: the bridge outputs average to 80 % or less.
+        let b = motor_view(&v, "br");
+        assert!(b.coils.iter().all(|c| c.abs() <= 0.81), "{:?}", b.coils);
+    }
+    let text = console_text(&mut board);
+    assert!(
+        text.contains("rev 1 CW : position 400 half steps = 360 deg"),
+        "{text}"
+    );
+    assert!(
+        text.contains("rev 2 CCW: position 0 half steps = 0 deg"),
+        "{text}"
+    );
+    let max = seen.iter().cloned().fold(f64::MIN, f64::max);
+    assert!((max - 200.0).abs() < 0.5, "{max} {seen:?}");
+    assert!((rpm - 60.0).abs() < 6.0, "{rpm}");
+    assert_eq!(motor_view(&board.circuit_frame(0.0), "mot").lost, 0);
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-esc-bldc"]
+fn esc_arms_then_follows_the_pot_and_fails_safe_without_signal() {
+    let n = "nucleo";
+    let mut circuit = m19_circuit(
+        serde_json::json!([
+            {"id": "esc", "kind": "esc-bldc", "props": {"kv": 1000}},
+            {"id": "bat", "kind": "battery", "props": {"voltage": 11.1}},
+            {"id": "pot", "kind": "potentiometer", "props": {"position": 0.5}}
+        ]),
+        &[
+            ((n, "D5"), ("esc", "SIG")),
+            (("esc", "GND"), (n, "GND")),
+            (("bat", "+"), ("esc", "BAT+")),
+            (("bat", "-"), ("esc", "GND")),
+            ((n, "3V3"), ("pot", "1")),
+            (("pot", "W"), (n, "A0")),
+            (("pot", "2"), (n, "GND")),
+        ],
+    );
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-esc-bldc", "hal-esc-bldc"))
+        .unwrap();
+    let signals = m21_signals();
+    board.set_circuit(&circuit, &simucleo_nucleo::BusCatalog::default(), &signals);
+    board.run_for_ns(500e6);
+    assert_eq!(motor_view(&board.circuit_frame(0.5), "esc").state, "arming");
+    board.run_for_ns(1000e6);
+    assert_eq!(motor_view(&board.circuit_frame(1.0), "esc").state, "armed");
+    // The pot at the middle: about 50 % of 1000 KV × 11.1 V.
+    board.run_for_ns(2500e6);
+    let rpm = part_visual(&board.circuit_frame(2.5), "esc").rpm.unwrap();
+    assert!((rpm - 5550.0).abs() < 300.0, "{rpm}");
+    let text = console_text(&mut board);
+    assert!(
+        text.contains("armed - throttle from the pot on A0"),
+        "{text}"
+    );
+    assert!(
+        text.contains("throttle  49 %") || text.contains("throttle  50 %"),
+        "{text}"
+    );
+    // Pot turned towards 3V3 (pin 1): faster.
+    set_part_props(
+        &mut board,
+        &mut circuit,
+        "pot",
+        serde_json::json!({"position": 0.1}),
+        &signals,
+    );
+    board.run_for_ns(2000e6);
+    let rpm = part_visual(&board.circuit_frame(2.0), "esc").rpm.unwrap();
+    assert!((rpm - 0.9 * 11100.0).abs() < 400.0, "{rpm}");
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+    // B1: no more pulses — failsafe, the motor runs down.
+    board.set_user_button(true);
+    board.run_for_ns(30e6);
+    board.set_user_button(false);
+    board.run_for_ns(2000e6);
+    let v = board.circuit_frame(2.0);
+    assert_eq!(motor_view(&v, "esc").state, "failsafe");
+    assert!(part_visual(&v, "esc").rpm.unwrap() < 1000.0);
+    assert!(board
+        .circuit_warnings()
+        .iter()
+        .any(|w| w.contains("failsafe")));
+    // B1 again: arming, then running.
+    board.set_user_button(true);
+    board.run_for_ns(30e6);
+    board.set_user_button(false);
+    board.run_for_ns(4000e6);
+    let v = board.circuit_frame(4.0);
+    assert_eq!(motor_view(&v, "esc").state, "armed");
+    assert!(part_visual(&v, "esc").rpm.unwrap() > 8000.0);
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-bldc-hall"]
+fn bldc_is_commutated_from_its_hall_interrupts() {
+    let n = "nucleo";
+    let circuit = m19_circuit(
+        serde_json::json!([
+            {"id": "br", "kind": "bridge-3ph"},
+            {"id": "mot", "kind": "bldc-hall"},
+            {"id": "bat", "kind": "battery", "props": {"voltage": 12}}
+        ]),
+        &[
+            ((n, "D2"), ("mot", "HA")),
+            ((n, "D7"), ("mot", "HB")),
+            ((n, "D8"), ("mot", "HC")),
+            ((n, "5V"), ("mot", "VCC")),
+            (("mot", "GND"), (n, "GND")),
+            ((n, "D3"), ("br", "INHA")),
+            ((n, "D5"), ("br", "INLA")),
+            ((n, "D6"), ("br", "INHB")),
+            ((n, "D10"), ("br", "INLB")),
+            ((n, "D15"), ("br", "INHC")),
+            ((n, "D14"), ("br", "INLC")),
+            (("bat", "+"), ("br", "PVDD")),
+            (("bat", "-"), (n, "GND")),
+            (("br", "GND"), (n, "GND")),
+            (("br", "OUTA"), ("mot", "U")),
+            (("br", "OUTB"), ("mot", "V")),
+            (("br", "OUTC"), ("mot", "W")),
+        ],
+    );
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-bldc-hall", "hal-bldc-hall"))
+        .unwrap();
+    board.set_circuit(
+        &circuit,
+        &simucleo_nucleo::BusCatalog::default(),
+        &m21_signals(),
+    );
+    board.run_for_ns(1500e6);
+    let v = board.circuit_frame(1.5);
+    let rpm = part_visual(&v, "mot").rpm.unwrap();
+    assert!(rpm > 3000.0 && rpm < 3600.0, "{rpm}");
+    let text = console_text(&mut board);
+    let last = text
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("halls ABC"))
+        .unwrap();
+    let said: f64 = last.rsplit(' ').next().unwrap().parse().unwrap();
+    assert!((said - rpm).abs() < 150.0, "{last} vs {rpm}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+    // B1: halls A and B swapped in the firmware — the motor stalls.
+    board.set_user_button(true);
+    board.run_for_ns(30e6);
+    board.set_user_button(false);
+    board.run_for_ns(1500e6);
+    let v = board.circuit_frame(1.5);
+    assert!(part_visual(&v, "mot").rpm.unwrap().abs() < 300.0);
+    assert!(motor_view(&v, "mot").stalled);
+    assert!(console_text(&mut board).contains("wrong commutation"));
+    assert!(
+        board
+            .circuit_warnings()
+            .iter()
+            .any(|w| w.starts_with("mot: the motor has current but does not turn")),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}

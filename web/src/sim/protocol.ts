@@ -34,6 +34,7 @@ export interface PartFrame {
   closed?: boolean;
   register?: import("../parts/types").ShiftView;
   digits?: import("../parts/types").DigitsView;
+  motor?: import("../parts/types").MotorView;
 }
 
 /** An HC-05 module and what its phone received this frame (`simucleo_nucleo::BluetoothStatus`). */

@@ -169,6 +169,10 @@ export interface MotorView {
   /** ESC: throttle 0–1 and beeps so far. */
   throttle: number;
   beeps: number;
+  /** 3-phase bridge (M23): on fraction of each switch over the frame, INH A–C then INL A–C. */
+  duty?: number[];
+  /** 3-phase bridge: both switches of a phase were on together in the frame. */
+  shoot_through?: boolean;
 }
 
 /** What a TM1637 shows (`simucleo_circuit::sim::DigitsView`). */

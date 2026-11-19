@@ -599,6 +599,11 @@ main.schematic-on .notice { top: 44px; }
 .switch-led { fill: #134e4a; stroke: #042f2e; stroke-width: 0.3; }
 .switch-led.on { fill: #ef4444; }
 .switch-led.low { fill: #3b82f6; }
+.duty-track { fill: #042f2e; }
+.duty-fill { fill: #ef4444; }
+.duty-fill.low { fill: #3b82f6; }
+.shoot-badge { fill: #dc2626; stroke: #7f1d1d; stroke-width: 0.4; }
+.shoot-text { fill: #fff; font-weight: bold; }
 .silk.stall { fill: #b45309; }
 .silk.stall.on { fill: #dc2626; font-weight: bold; }
 /* M22: analog channels, decoder lanes, decoded tables */

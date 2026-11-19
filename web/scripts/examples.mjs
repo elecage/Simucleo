@@ -40,6 +40,7 @@ const EXAMPLES = [
   ["hal-stepper-l298n", "hal-stepper-l298n.elf", "HAL: NEMA17 stepper on an L298N H-bridge — the half-step sequence on IN1–IN4 from a TIM4 interrupt, ENA/ENB 80 % PWM"],
   ["hal-esc-bldc", "hal-esc-bldc.elf", "HAL: brushless motor on a hobby ESC — 50 Hz servo pulses, arming at minimum throttle, then a pot on A0 sets the throttle; B1 cuts the signal (failsafe)"],
   ["hal-bldc-hall", "hal-bldc-hall.elf", "HAL: BLDC with hall sensors — EXTI on the halls commutates a 3-phase bridge six-step; B1 swaps two halls (wrong commutation: it stalls)"],
+  ["hal-bldc-pwm", "hal-bldc-pwm.elf", "HAL: BLDC on TIM1 complementary PWM — CH1–CH3 and CH1N–CH3N with 500 ns dead time, six-step by COM events from the hall interrupts, a pot on A0 sets the duty; B1 breaks (EGR.BG) and resumes"],
   ["freertos-two-tasks", "freertos-two-tasks.elf", "FreeRTOS (CMSIS-RTOS v2): Blink, Count and Button threads; B1 releases a semaphore — see the RTOS tab"],
   ["freertos-queue-uart", "freertos-queue-uart.elf", "FreeRTOS: UART RX ISR → queue → echo task; sensor → queue → logger with heap/stack stats"],
   ["bare-blinky", "bare-blinky.elf", "Bare metal: toggle PA5 with register writes"],

@@ -519,7 +519,7 @@ export const bridge3ph: PartDef = {
   name: "3상 브리지 모듈 (DRV8302 형)",
   category: "module",
   description:
-    "BLDC용 3상 하프 브리지 모듈. 상마다 하이사이드(INHx: 출력을 PVDD에)와 로사이드(INLx: 출력을 GND에) 스위치 입력이 있고, 둘 다 Low면 출력이 떠 있습니다. 한 상의 INH와 INL을 동시에 High로 하면 전원이 단락(관통 전류, shoot-through)되므로 모듈이 그 상을 끄고 경고합니다. 입력은 보드에서 풀다운, High는 2 V 이상. PVDD에 6–60 V 모터 전원(DC 전원 부품), GND는 Nucleo와 공통. 이 시뮬레이터의 TIM1 상보 출력(CHxN)은 아직 구현되지 않아 예제는 GPIO 6개로 스위치를 켭니다.",
+    "BLDC용 3상 하프 브리지 모듈. 상마다 하이사이드(INHx: 출력을 PVDD에)와 로사이드(INLx: 출력을 GND에) 스위치 입력이 있고, 둘 다 Low면 출력이 떠 있습니다. 한 상의 INH와 INL을 동시에 High로 하면 전원이 단락(관통 전류, shoot-through)되므로 모듈이 그 상을 끄고 경고합니다. 스위치(MOSFET)가 꺼지는 데 150 ns쯤 걸리므로, 한쪽이 꺼진 뒤 그보다 빨리 다른 쪽이 켜져도 관통 전류입니다 — TIM1 상보 출력(CHx/CHxN)에 데드타임(BDTR.DTG)을 넣는 이유. 입력을 2 kHz 이상 PWM으로 켜고 끄면 주기마다 듀티를 재어 상 전압을 평균(듀티 × PVDD)으로 모터에 주므로 듀티가 곧 토크·속도입니다. 정적인 GPIO로 켜도 됩니다. 막대: 스위치마다 켜져 있던 비율. 입력은 보드에서 풀다운, High는 2 V 이상. PVDD에 6–60 V 모터 전원(DC 전원 부품), GND는 Nucleo와 공통.",
   w: 8,
   h: 9,
   pins: [
@@ -532,8 +532,14 @@ export const bridge3ph: PartDef = {
   ],
   render: (_props, visual) => {
     const out = visual.motor?.coils ?? [0, 0, 0];
+    const duty = visual.motor?.duty ?? [];
+    const shoot = visual.motor?.shoot_through ?? false;
     return (
-      <g data-outputs={out.map((o) => (o > 0.5 ? "H" : o < -0.5 ? "L" : "Z")).join("")}>
+      <g
+        data-outputs={out.map((o) => (o > 0.5 ? "H" : o < -0.5 ? "L" : "Z")).join("")}
+        data-duty={duty.map((d) => d.toFixed(3)).join(",")}
+        data-shoot={shoot ? "1" : "0"}
+      >
         <rect x={0.4 * P} y={0.3 * P} width={7.2 * P} height={8.2 * P} rx={0.8} className="drv-pcb bridge3" />
         {PH_IN.map((n, i) => (
           <text key={n} x={0.8 * P} y={(1.25 + i) * P} className="silk tiny drv-label">
@@ -546,6 +552,17 @@ export const bridge3ph: PartDef = {
             <g key={ph} data-phase={ph} data-switch={s > 0.5 ? "H" : s < -0.5 ? "L" : "Z"}>
               <rect x={(4 + i * 1.1) * P} y={1 * P} width={0.8 * P} height={0.8 * P} className={s > 0.5 ? "switch-led on" : "switch-led"} />
               <rect x={(4 + i * 1.1) * P} y={3.4 * P} width={0.8 * P} height={0.8 * P} className={s < -0.5 ? "switch-led low" : "switch-led"} />
+              {/* Duty bars: how long each switch was on over the frame. */}
+              {[0, 1].map((side) => {
+                const d = Math.max(0, Math.min(1, duty[3 * side + i] ?? 0));
+                const y = (side === 0 ? 1.9 : 4.3) * P;
+                return (
+                  <g key={side} data-duty-bar={`${side === 0 ? "H" : "L"}${ph}`} data-value={d.toFixed(3)}>
+                    <rect x={(4 + i * 1.1) * P} y={y} width={0.8 * P} height={0.22 * P} className="duty-track" />
+                    <rect x={(4 + i * 1.1) * P} y={y} width={0.8 * P * d} height={0.22 * P} className={side === 0 ? "duty-fill" : "duty-fill low"} />
+                  </g>
+                );
+              })}
               <text x={(4.4 + i * 1.1) * P} y={2.95 * P} textAnchor="middle" className="silk tiny drv-label">
                 {ph}
               </text>
@@ -553,7 +570,7 @@ export const bridge3ph: PartDef = {
           );
         })}
         <text x={7.2 * P} y={5.4 * P} textAnchor="end" className="silk tiny drv-label">
-          H: 위 · L: 아래
+          H 위 · L 아래 · 막대 듀티
         </text>
         <rect x={2.6 * P} y={6} width={2.4 * P} height={1.6 * P} className="chip" transform={`translate(0 ${5.8 * P - 6})`} />
         <text x={3.8 * P} y={6.8 * P} textAnchor="middle" className="silk chip-label">
@@ -565,6 +582,14 @@ export const bridge3ph: PartDef = {
           </text>
         ))}
         {visual.unpowered && <NoPower x={4 * P} y={-0.5 * P} text="PVDD 없음" />}
+        {shoot && (
+          <g data-shoot-warning="1">
+            <rect x={0.6 * P} y={7 * P} width={1.9 * P} height={1.2 * P} rx={0.3} className="shoot-badge" />
+            <text x={1.55 * P} y={7.8 * P} textAnchor="middle" className="silk tiny shoot-text">
+              관통!
+            </text>
+          </g>
+        )}
       </g>
     );
   },

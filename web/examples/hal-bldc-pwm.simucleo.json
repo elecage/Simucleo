@@ -1,0 +1,295 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "BLDC 모터 + TIM1 상보 PWM (데드타임)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "br",
+      "kind": "bridge-3ph",
+      "x": 48,
+      "y": 8,
+      "props": {}
+    },
+    {
+      "id": "mot",
+      "kind": "bldc-hall",
+      "x": 64,
+      "y": 6,
+      "props": {
+        "load": 0
+      }
+    },
+    {
+      "id": "bat",
+      "kind": "battery",
+      "x": 48,
+      "y": 24,
+      "props": {
+        "voltage": 12
+      }
+    },
+    {
+      "id": "pot",
+      "kind": "potentiometer",
+      "x": 38,
+      "y": 24,
+      "props": {
+        "ohms": "10k",
+        "position": 0.5
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "br",
+        "pin": "INHA"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "D11"
+      },
+      "b": {
+        "part": "br",
+        "pin": "INLA"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D8"
+      },
+      "b": {
+        "part": "br",
+        "pin": "INHB"
+      },
+      "color": "#8e24aa"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "A3"
+      },
+      "b": {
+        "part": "br",
+        "pin": "INLB"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "D2"
+      },
+      "b": {
+        "part": "br",
+        "pin": "INHC"
+      },
+      "color": "#00acc1"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN10_24"
+      },
+      "b": {
+        "part": "br",
+        "pin": "INLC"
+      },
+      "color": "#fdd835"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "bat",
+        "pin": "+"
+      },
+      "b": {
+        "part": "br",
+        "pin": "PVDD"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "bat",
+        "pin": "-"
+      },
+      "b": {
+        "part": "br",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "br",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "br",
+        "pin": "OUTA"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "U"
+      },
+      "color": "#eab308"
+    },
+    {
+      "id": "w11",
+      "a": {
+        "part": "br",
+        "pin": "OUTB"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "V"
+      },
+      "color": "#16a34a"
+    },
+    {
+      "id": "w12",
+      "a": {
+        "part": "br",
+        "pin": "OUTC"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "W"
+      },
+      "color": "#2563eb"
+    },
+    {
+      "id": "w13",
+      "a": {
+        "part": "mot",
+        "pin": "HA"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "D3"
+      },
+      "color": "#9ca3af"
+    },
+    {
+      "id": "w14",
+      "a": {
+        "part": "mot",
+        "pin": "HB"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "D4"
+      },
+      "color": "#6b7280"
+    },
+    {
+      "id": "w15",
+      "a": {
+        "part": "mot",
+        "pin": "HC"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "D6"
+      },
+      "color": "#4b5563"
+    },
+    {
+      "id": "w16",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w17",
+      "a": {
+        "part": "mot",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P2"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w18",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "pot",
+        "pin": "1"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w19",
+      "a": {
+        "part": "pot",
+        "pin": "W"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "A0"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w20",
+      "a": {
+        "part": "pot",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P2"
+      },
+      "color": "#212121"
+    }
+  ],
+  "firmware": {
+    "name": "hal-bldc-pwm",
+    "example": "hal-bldc-pwm.elf"
+  }
+}

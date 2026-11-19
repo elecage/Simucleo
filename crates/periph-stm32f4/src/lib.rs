@@ -568,6 +568,19 @@ impl Stm32f401Bus {
                 }
             }
         }
+        // TIM1 complementary outputs.
+        for &(port, pin, af, ch) in timer::PIN_MAP_N {
+            let g = &self.gpio[port as usize];
+            if g.mode(pin) != gpio::PinMode::Alternate || g.af(pin) != af {
+                continue;
+            }
+            if let Some(level) = self.timers[0].output_n(ch as usize) {
+                want[port as usize].0 |= 1 << pin;
+                if level {
+                    want[port as usize].1 |= 1 << pin;
+                }
+            }
+        }
         for (port, (driven, out)) in want.into_iter().enumerate() {
             let g = &self.gpio[port];
             if g.af_driven == driven && g.af_out & driven == out {
@@ -590,7 +603,23 @@ impl Stm32f401Bus {
             }
             self.refresh_port(port, time);
         }
+        self.update_break_input(time);
         self.circuit_update(time);
+    }
+
+    /// TIM1's break input follows its pin (PA6 or PB12 in AF1).
+    fn update_break_input(&mut self, time: Cycles) {
+        let pin = timer::BKIN_PINS.iter().find(|&&(port, pin, af)| {
+            let g = &self.gpio[port as usize];
+            g.mode(pin) == gpio::PinMode::Alternate && g.af(pin) == af
+        });
+        let (routed, level) = match pin {
+            Some(&(port, pin, _)) => (true, self.gpio[port as usize].level(pin)),
+            None => (false, false),
+        };
+        if self.timers[0].set_break_input(routed, level, time) {
+            self.timer_changed(0, time);
+        }
     }
 
     /// Take the current pin levels as the reference for edge detection.
@@ -653,6 +682,12 @@ impl Stm32f401Bus {
                 t.input_edge(ch as usize, new & (1 << pin) != 0, time, other);
                 self.reschedule_timer(ti as usize);
             }
+        }
+        if timer::BKIN_PINS
+            .iter()
+            .any(|&(p, pin, _)| p as usize == port && changed & (1 << pin) != 0)
+        {
+            self.update_break_input(time);
         }
     }
 
@@ -1735,6 +1770,13 @@ impl Bus for Stm32f401Bus {
                 if t.irq_cc() {
                     sys.set_irq_pending(t.info.irq_cc);
                 }
+                // TIM1_BRK_TIM9 and TIM1_TRG_COM_TIM11.
+                if t.irq_break() {
+                    sys.set_irq_pending(24);
+                }
+                if t.irq_trg_com() {
+                    sys.set_irq_pending(26);
+                }
             } else if t.irq_any() {
                 sys.set_irq_pending(t.info.irq_update);
             }
@@ -1957,6 +1999,89 @@ mod tests {
         assert_eq!(bus.read_u32(tim2 + 0x24).unwrap(), 7);
         bus.poll(&mut sys);
         assert_eq!(sys.time_reads, before + 1);
+    }
+
+    #[test]
+    fn tim1_complementary_pair_on_pa8_pa7_with_dead_time_and_bkin_on_pa6() {
+        let mut bus = Stm32f401Bus::new();
+        let mut sys = CortexM::new();
+        let w = |bus: &mut Stm32f401Bus, a: u32, v: u32| {
+            bus.write(a, AccessSize::Word, v).unwrap();
+        };
+        w(&mut bus, map::RCC_BASE + 0x30, 1); // GPIOAEN
+        w(&mut bus, map::RCC_BASE + 0x44, 1); // TIM1EN
+                                              // PA6 (BKIN), PA7 (CH1N), PA8 (CH1): AF1.
+        w(
+            &mut bus,
+            map::GPIOA_BASE,
+            0xA800_0000 | 2 << 12 | 2 << 14 | 2 << 16,
+        );
+        w(&mut bus, map::GPIOA_BASE + 0x20, 1 << 24 | 1 << 28);
+        w(&mut bus, map::GPIOA_BASE + 0x24, 1);
+        let tim1 = map::TIM1_BASE;
+        w(&mut bus, tim1 + 0x2C, 99); // 100-cycle period at 16 MHz
+        w(&mut bus, tim1 + 0x34, 40);
+        w(&mut bus, tim1 + 0x18, 6 << 4); // PWM1
+        w(&mut bus, tim1 + 0x20, 1 | 1 << 2); // CC1E | CC1NE
+        w(&mut bus, tim1 + 0x0C, 1 << 7); // BIE
+                                          // MOE | OSSI | BKE | BKP (active high), dead time 8 cycles.
+        w(
+            &mut bus,
+            tim1 + 0x44,
+            1 << 15 | 1 << 10 | 1 << 12 | 1 << 13 | 8,
+        );
+        bus.set_external(0, 6, Some(false));
+        bus.pin_events.clear();
+        w(&mut bus, tim1, 1); // CEN
+        for t in 0..=220u64 {
+            bus.set_time(t);
+            bus.run_events(t);
+        }
+        let edges = |bus: &Stm32f401Bus, pin: u8| -> Vec<_> {
+            bus.pin_events
+                .iter()
+                .filter(|e| e.port == 0 && e.pin == pin)
+                .map(|e| (e.time, e.level))
+                .collect()
+        };
+        assert_eq!(
+            edges(&bus, 8),
+            vec![
+                (8, Some(true)),
+                (40, Some(false)),
+                (108, Some(true)),
+                (140, Some(false)),
+                (208, Some(true)),
+            ]
+        );
+        assert_eq!(
+            edges(&bus, 7),
+            vec![
+                (48, Some(true)),
+                (100, Some(false)),
+                (148, Some(true)),
+                (200, Some(false))
+            ]
+        );
+        // BKIN high: the break. Both pins go to their idle level (OIS1 =
+        // OIS1N = 0) at once and the break interrupt is pending.
+        bus.pin_events.clear();
+        bus.set_external(0, 6, Some(true));
+        assert_eq!(edges(&bus, 8), vec![(220, Some(false))]);
+        assert!(!bus.gpio[0].level(7));
+        assert_eq!(bus.read_u32(tim1 + 0x44).unwrap() & 1 << 15, 0, "MOE off");
+        assert_ne!(bus.read_u32(tim1 + 0x10).unwrap() & 1 << 7, 0, "BIF");
+        bus.poll(&mut sys);
+        assert_ne!(
+            sys.peek(0xE000_E200, AccessSize::Word) & (1 << 24),
+            0,
+            "TIM1_BRK_TIM9 interrupt pending"
+        );
+        for t in 220..=500u64 {
+            bus.set_time(t);
+            bus.run_events(t);
+        }
+        assert_eq!(edges(&bus, 8).len(), 1, "no PWM while broken");
     }
 
     #[test]

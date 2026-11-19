@@ -2193,3 +2193,529 @@ fn three_servos_on_tim3_and_tim1_follow_their_own_pulse_widths() {
         board.circuit_warnings()
     );
 }
+
+// ---------------------------------------------------- more parts (M19)
+
+/// Board pin → signal for the M19 examples (signal names pass through).
+fn m19_signals() -> std::collections::HashMap<String, String> {
+    let mut s = arduino_signals();
+    for (a, b) in [("D6", "PB10"), ("D13", "PA5"), ("D5", "PB4"), ("A1", "PA1")] {
+        s.insert(a.to_string(), b.to_string());
+    }
+    s
+}
+
+/// A wire between two (part, pin) ends.
+type WireEnds<'a> = ((&'a str, &'a str), (&'a str, &'a str));
+
+/// A circuit with the board and `parts`; `wires` as (part, pin) pairs.
+fn m19_circuit(parts: serde_json::Value, wires: &[WireEnds]) -> simucleo_nucleo::Circuit {
+    m8_circuit(parts, wires.iter().map(|&(a, b)| wire_json(a, b)).collect())
+}
+
+fn part_visual(v: &[simucleo_nucleo::PartVisual], id: &str) -> simucleo_nucleo::PartVisual {
+    v.iter().find(|p| p.id == id).unwrap().clone()
+}
+
+/// The props of part `id` changed (a slider moved): send the circuit again.
+fn set_part_props(
+    board: &mut Nucleo,
+    circuit: &mut simucleo_nucleo::Circuit,
+    id: &str,
+    props: serde_json::Value,
+    signals: &std::collections::HashMap<String, String>,
+) {
+    let p = circuit.parts.iter_mut().find(|p| p.id == id).unwrap();
+    for (k, v) in props.as_object().unwrap() {
+        p.props.insert(k.clone(), v.clone());
+    }
+    board.set_circuit(circuit, &simucleo_nucleo::BusCatalog::default(), signals);
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-shift-register"]
+fn hc595_on_spi_runs_a_knight_rider_on_eight_leds() {
+    let n = "nucleo";
+    let mut parts = vec![serde_json::json!({"id": "sr", "kind": "hc595"})];
+    let mut wires: Vec<WireEnds> = vec![
+        ((n, "3V3"), ("sr", "VCC")),
+        (("sr", "GND"), (n, "GND")),
+        ((n, "3V3"), ("sr", "MR")),
+        (("sr", "OE"), (n, "GND")),
+        ((n, "D13"), ("sr", "SHCP")),
+        ((n, "D11"), ("sr", "DS")),
+        ((n, "D10"), ("sr", "STCP")),
+    ];
+    let names: Vec<(String, String, String)> = (0..8)
+        .map(|i| (format!("Q{i}"), format!("r{i}"), format!("l{i}")))
+        .collect();
+    for (q, r, l) in &names {
+        parts.push(serde_json::json!({"id": r, "kind": "resistor", "props": {"ohms": "330"}}));
+        parts.push(serde_json::json!({"id": l, "kind": "led-5mm", "props": {"color": "red"}}));
+        wires.push((("sr", q.as_str()), (r.as_str(), "1")));
+        wires.push(((r.as_str(), "2"), (l.as_str(), "A")));
+        wires.push(((l.as_str(), "K"), (n, "GND")));
+    }
+    let circuit = m19_circuit(serde_json::Value::Array(parts), &wires);
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-shift-register", "hal-shift-register"))
+        .unwrap();
+    board.set_circuit(
+        &circuit,
+        &simucleo_nucleo::BusCatalog::default(),
+        &m19_signals(),
+    );
+    // Short frames: the lit LEDs as the eye would see them, step by step.
+    let mut seen: Vec<u8> = Vec::new();
+    for _ in 0..120 {
+        board.run_for_ns(14e6);
+        board.circuit_frame(0.014);
+        board.run_for_ns(1e6);
+        let v = board.circuit_frame(0.001);
+        let lit = (0..8).fold(0u8, |a, i| {
+            let b = part_visual(&v, &format!("l{i}")).brightness[0];
+            a | ((b > 0.5) as u8) << i
+        });
+        assert_eq!(lit.count_ones(), 1, "one LED at a time: {lit:08b}");
+        let reg = part_visual(&v, "sr").register.unwrap();
+        assert_eq!(reg.latch, lit, "the LEDs show the storage register");
+        if seen.last() != Some(&lit) {
+            seen.push(lit);
+        }
+    }
+    // Q0 → Q7 and back: each step one LED over.
+    assert!(seen.len() >= 15, "{seen:02X?}");
+    for w in seen.windows(2) {
+        assert!(w[1] == w[0] << 1 || w[1] == w[0] >> 1, "{seen:02X?}");
+    }
+    assert!(seen.contains(&0x01) && seen.contains(&0x80), "{seen:02X?}");
+    let text = console_text(&mut board);
+    assert!(text.contains("74HC595 on SPI1"), "{text}");
+    assert!(text.contains("Q0-Q7 #.......  0x01"), "{text}");
+    assert!(text.contains("Q0-Q7 .......#  0x80"), "{text}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+fn tm1637_circuit(swapped: bool) -> simucleo_nucleo::Circuit {
+    let n = "nucleo";
+    let (clk, dio) = if swapped {
+        ("DIO", "CLK")
+    } else {
+        ("CLK", "DIO")
+    };
+    m19_circuit(
+        serde_json::json!([{"id": "tm", "kind": "tm1637"}]),
+        &[
+            ((n, "3V3"), ("tm", "VCC")),
+            (("tm", "GND"), (n, "GND")),
+            ((n, "D2"), ("tm", clk)),
+            ((n, "D3"), ("tm", dio)),
+        ],
+    )
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-tm1637-clock"]
+fn tm1637_clock_is_bit_banged_with_acks() {
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-tm1637-clock", "hal-tm1637-clock"))
+        .unwrap();
+    board.set_circuit(
+        &tm1637_circuit(false),
+        &simucleo_nucleo::BusCatalog::default(),
+        &m19_signals(),
+    );
+    board.run_for_ns(3200e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("TM1637 on D2"), "{text}");
+    for t in ["00:00", "00:01", "00:02", "00:03"] {
+        assert!(text.contains(&format!("{t}\r\n")), "{text}");
+    }
+    assert!(!text.contains("no ACK"), "{text}");
+    let v = board.circuit_frame(3.2);
+    let d = part_visual(&v, "tm").digits.unwrap();
+    // 00:03 with the colon (first half of the second).
+    assert_eq!(d.segments, [0x3F, 0xBF, 0x3F, 0x4F]);
+    assert_eq!((d.brightness, d.on), (7, true));
+    // B1: the next brightness.
+    board.set_user_button(true);
+    board.run_for_ns(100e6);
+    board.set_user_button(false);
+    board.run_for_ns(100e6);
+    assert!(console_text(&mut board).contains("brightness 0"));
+    let d = part_visual(&board.circuit_frame(0.2), "tm").digits.unwrap();
+    assert_eq!((d.brightness, d.on), (0, true));
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+
+    // CLK and DIO swapped: the chip never sees a START, nobody pulls the
+    // firmware's DIO (the module's CLK pull-up) low.
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-tm1637-clock", "hal-tm1637-clock"))
+        .unwrap();
+    board.set_circuit(
+        &tm1637_circuit(true),
+        &simucleo_nucleo::BusCatalog::default(),
+        &m19_signals(),
+    );
+    board.run_for_ns(600e6);
+    assert!(console_text(&mut board).contains("TM1637: no ACK"));
+}
+
+/// The SSD1306 screen (64 rows × 128 pixels, MSB first) from base64.
+fn screen_pixels(b64: &str) -> Vec<u8> {
+    let val = |c: u8| match c {
+        b'A'..=b'Z' => c - b'A',
+        b'a'..=b'z' => c - b'a' + 26,
+        b'0'..=b'9' => c - b'0' + 52,
+        b'+' => 62,
+        _ => 63,
+    } as u32;
+    let mut out = Vec::new();
+    for ch in b64.as_bytes().chunks(4) {
+        let n = ch.iter().take_while(|&&c| c != b'=').count();
+        let v = ch[..n].iter().fold(0u32, |a, &c| a << 6 | val(c)) << (6 * (4 - n));
+        out.extend(&v.to_be_bytes()[1..n]);
+    }
+    out
+}
+
+fn lit_at(screen: &[u8], x: usize, y: usize) -> bool {
+    screen[y * 16 + x / 8] >> (7 - x % 8) & 1 != 0
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-joystick-oled"]
+fn joystick_on_the_adc_moves_the_dot_on_the_oled() {
+    let n = "nucleo";
+    let mut circuit = m19_circuit(
+        serde_json::json!([
+            {"id": "js", "kind": "joystick", "props": {"x": 0.5, "y": 0.5}},
+            {"id": "oled", "kind": "oled-ssd1306"}
+        ]),
+        &[
+            ((n, "3V3"), ("js", "+5V")),
+            (("js", "GND"), (n, "GND")),
+            ((n, "A0"), ("js", "VRx")),
+            ((n, "A1"), ("js", "VRy")),
+            ((n, "D4"), ("js", "SW")),
+            ((n, "3V3"), ("oled", "VCC")),
+            (("oled", "GND"), (n, "GND")),
+            ((n, "D15"), ("oled", "SCL")),
+            ((n, "D14"), ("oled", "SDA")),
+        ],
+    );
+    let signals = m19_signals();
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-joystick-oled", "hal-joystick-oled"))
+        .unwrap();
+    board.set_circuit(&circuit, &simucleo_nucleo::BusCatalog::default(), &signals);
+    board.run_for_ns(300e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("KY-023 joystick"), "{text}");
+    assert!(
+        text.contains("X 2047  Y 2047  SW 0") || text.contains("X 2048  Y 2048  SW 0"),
+        "{text}"
+    );
+    let screen = |board: &mut Nucleo| {
+        let v = board.circuit_frame(0.1);
+        screen_pixels(part_visual(&v, "oled").screen.as_ref().expect("display on"))
+    };
+    let s = screen(&mut board);
+    assert!(lit_at(&s, 64, 34 - 3), "the ring of the dot in the middle");
+
+    // Full right and down, then pressed.
+    set_part_props(
+        &mut board,
+        &mut circuit,
+        "js",
+        serde_json::json!({"x": 1.0, "y": 0.0}),
+        &signals,
+    );
+    board.run_for_ns(200e6);
+    assert!(console_text(&mut board).contains("X 4095  Y    0  SW 0"));
+    let s = screen(&mut board);
+    assert!(
+        lit_at(&s, 123, 59 - 3) && !lit_at(&s, 123, 59),
+        "ring at the bottom right"
+    );
+    set_part_props(
+        &mut board,
+        &mut circuit,
+        "js",
+        serde_json::json!({"sw": 1}),
+        &signals,
+    );
+    board.run_for_ns(200e6);
+    assert!(console_text(&mut board).contains("SW 1"));
+    let s = screen(&mut board);
+    assert!(lit_at(&s, 123, 59), "filled while pressed");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+fn pir_circuit(vcc: &str) -> simucleo_nucleo::Circuit {
+    let n = "nucleo";
+    m19_circuit(
+        serde_json::json!([
+            {"id": "pir", "kind": "pir", "props": {"mode": "H", "delay": 3, "warmup": 3}},
+            {"id": "r1", "kind": "resistor", "props": {"ohms": "330"}},
+            {"id": "led", "kind": "led-5mm", "props": {"color": "red"}}
+        ]),
+        &[
+            ((n, vcc), ("pir", "VCC")),
+            (("pir", "GND"), (n, "GND")),
+            ((n, "D7"), ("pir", "OUT")),
+            ((n, "D6"), ("r1", "1")),
+            (("r1", "2"), ("led", "A")),
+            (("led", "K"), (n, "GND")),
+        ],
+    )
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-pir-alarm"]
+fn pir_motion_lights_the_led_after_the_warm_up() {
+    let signals = m19_signals();
+    let mut circuit = pir_circuit("5V");
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-pir-alarm", "hal-pir-alarm"))
+        .unwrap();
+    board.set_circuit(&circuit, &simucleo_nucleo::BusCatalog::default(), &signals);
+    board.run_for_ns(1000e6);
+    // Motion during the 3 s warm-up: nothing yet.
+    set_part_props(
+        &mut board,
+        &mut circuit,
+        "pir",
+        serde_json::json!({"motion": 1}),
+        &signals,
+    );
+    board.run_for_ns(1900e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("waiting for motion"), "{text}");
+    assert!(!text.contains("motion detected"), "{text}");
+    board.run_for_ns(200e6);
+    let text = console_text(&mut board);
+    // The HAL tick starts a few µs after power-up.
+    assert!(
+        text.contains("[2.999 s] motion detected (#1) - LED on")
+            || text.contains("[3.000 s] motion detected (#1) - LED on"),
+        "{text}"
+    );
+    board.circuit_frame(2.1);
+    board.run_for_ns(100e6);
+    let v = board.circuit_frame(0.1);
+    assert!(part_visual(&v, "led").brightness[0] > 0.8);
+    assert_eq!(part_visual(&v, "pir").text.as_deref(), Some("high"));
+    // The motion stops at 4 s: high until 7 s (mode H, 3 s hold).
+    board.run_for_ns(800e6);
+    set_part_props(
+        &mut board,
+        &mut circuit,
+        "pir",
+        serde_json::json!({"motion": 0}),
+        &signals,
+    );
+    board.run_for_ns(2900e6);
+    assert!(!console_text(&mut board).contains("quiet"));
+    board.run_for_ns(200e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("quiet again after 4.0 s - LED off"), "{text}");
+    assert!(
+        text.contains("[6.999 s]") || text.contains("[7.000 s]"),
+        "{text}"
+    );
+    board.circuit_frame(3.1);
+    board.run_for_ns(100e6);
+    let v = board.circuit_frame(0.1);
+    assert!(part_visual(&v, "led").brightness[0] < 0.1);
+    assert_eq!(part_visual(&v, "pir").text.as_deref(), Some("block"));
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+
+    // On 3V3 the module does nothing, and says why.
+    let mut circuit = pir_circuit("3V3");
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-pir-alarm", "hal-pir-alarm"))
+        .unwrap();
+    board.set_circuit(&circuit, &simucleo_nucleo::BusCatalog::default(), &signals);
+    set_part_props(
+        &mut board,
+        &mut circuit,
+        "pir",
+        serde_json::json!({"motion": 1}),
+        &signals,
+    );
+    board.run_for_ns(4000e6);
+    assert!(!console_text(&mut board).contains("motion detected"));
+    assert!(
+        board
+            .circuit_warnings()
+            .iter()
+            .any(|w| w.contains("HC-SR501 needs 4.5")),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+/// The last "T … C  P … hPa  alt … m" line: (°C, hPa, m).
+fn bmp_reading(text: &str) -> (f64, f64, f64) {
+    let line = text
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("T "))
+        .expect(text);
+    let w: Vec<&str> = line.split_whitespace().collect();
+    (
+        w[1].parse().unwrap(),
+        w[4].parse().unwrap(),
+        w[7].parse().unwrap(),
+    )
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-bmp280"]
+fn bmp280_compensation_gives_back_the_set_temperature_and_pressure() {
+    let n = "nucleo";
+    let signals = m19_signals();
+    let mut circuit = m19_circuit(
+        serde_json::json!([{"id": "baro", "kind": "bmp280", "props": {"temp": 23.4, "pressure": 950}}]),
+        &[
+            ((n, "3V3"), ("baro", "VCC")),
+            (("baro", "GND"), (n, "GND")),
+            ((n, "D15"), ("baro", "SCL")),
+            ((n, "D14"), ("baro", "SDA")),
+        ],
+    );
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-bmp280", "hal-bmp280"))
+        .unwrap();
+    board.set_circuit(&circuit, &simucleo_nucleo::BusCatalog::default(), &signals);
+    board.run_for_ns(600e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("chip id 0x58 (BMP280)"), "{text}");
+    assert!(
+        text.contains("dig_T1 27504 T2 26435 T3 -1000  dig_P1 36477 P9 6000"),
+        "{text}"
+    );
+    let (t, p, alt) = bmp_reading(&text);
+    assert!((t - 23.4).abs() <= 0.02, "{text}");
+    assert!((p - 950.0).abs() <= 0.02, "{text}");
+    assert!((alt - 540.4).abs() < 1.0, "{text}");
+    // A forced conversion at ×2 / ×16 takes about 43 ms (polled every 3 ms).
+    let ms: u32 = text
+        .split("conversion ")
+        .nth(1)
+        .and_then(|r| r.split(' ').next())
+        .and_then(|v| v.parse().ok())
+        .expect(&text);
+    assert!((43..=48).contains(&ms), "{text}");
+
+    set_part_props(
+        &mut board,
+        &mut circuit,
+        "baro",
+        serde_json::json!({"temp": -5.5, "pressure": 1013.25}),
+        &signals,
+    );
+    board.run_for_ns(1100e6);
+    let (t, p, alt) = bmp_reading(&console_text(&mut board));
+    assert!(
+        (t + 5.5).abs() <= 0.02 && (p - 1013.25).abs() <= 0.02,
+        "{t} {p}"
+    );
+    assert!(alt.abs() < 0.5, "{alt}");
+    assert_eq!(
+        part_visual(&board.circuit_frame(1.0), "baro")
+            .text
+            .as_deref(),
+        Some("sleep")
+    );
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-neopixel-chain"]
+fn neopixel_strip_on_the_ring_dout_takes_leds_12_to_19() {
+    let n = "nucleo";
+    let circuit = m19_circuit(
+        serde_json::json!([
+            {"id": "ring", "kind": "neopixel-ring", "props": {"count": 12}},
+            {"id": "strip", "kind": "neopixel-strip", "props": {"count": 8}}
+        ]),
+        &[
+            ((n, "5V"), ("ring", "VCC")),
+            (("ring", "GND"), (n, "GND")),
+            ((n, "D5"), ("ring", "DIN")),
+            ((n, "5V"), ("strip", "VCC")),
+            (("strip", "GND"), (n, "GND")),
+            (("ring", "DOUT"), ("strip", "DIN")),
+        ],
+    );
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-neopixel-chain", "hal-neopixel-chain"))
+        .unwrap();
+    board.set_circuit(
+        &circuit,
+        &simucleo_nucleo::BusCatalog::default(),
+        &m19_signals(),
+    );
+    let mut heads = std::collections::BTreeSet::new();
+    for _ in 0..30 {
+        board.run_for_ns(40e6);
+        let v = board.circuit_frame(0.04);
+        let ring = part_visual(&v, "ring").leds;
+        let strip = part_visual(&v, "strip").leds;
+        assert_eq!((ring.len(), strip.len()), (12, 8));
+        assert!(ring.iter().all(|&c| c != 0), "{ring:06X?}");
+        // The comet: one bright amber LED, dimmer neighbours, the rest dark.
+        let head = strip
+            .iter()
+            .position(|&c| c == 0x201000)
+            .unwrap_or_else(|| panic!("{strip:06X?}"));
+        assert!(strip
+            .iter()
+            .enumerate()
+            .all(|(i, &c)| i.abs_diff(head) <= 1 || c == 0));
+        heads.insert(head);
+    }
+    assert!(heads.len() >= 4, "the comet moves: {heads:?}");
+    let text = console_text(&mut board);
+    assert!(text.contains("ring (12) -> DOUT -> strip (8)"), "{text}");
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}

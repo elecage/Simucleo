@@ -2780,6 +2780,11 @@ impl CircuitSim {
                             );
                         }
                         Some(Device::Baro(b)) => {
+                            // Without its supply it forgets everything but
+                            // its address and what it measures.
+                            if !powered_now {
+                                **b = Bmp280::new(b.address, b.temp, b.pressure);
+                            }
                             v.text = Some(
                                 match b.ctrl_meas & 3 {
                                     0 => "sleep",
@@ -3055,7 +3060,7 @@ impl CircuitSim {
     /// byte the one on `miso` returns comes back (0xFF: nobody drives it).
     pub fn spi(
         &mut self,
-        _time: Cycles,
+        time: Cycles,
         sck: (u8, u8),
         mosi: (u8, u8),
         miso: Option<(u8, u8)>,
@@ -3118,6 +3123,12 @@ impl CircuitSim {
         }
         self.forward_matrix_chain(kn, overflow);
         self.spi_shift_registers(kn, mn, out);
+        // A 74HC595 whose STCP is on SCK latched: its outputs changed with
+        // no pin edge, so solve again with the MCU's pins as they are.
+        if let Some(d) = self.drives.clone() {
+            let mcu = self.mcu.len();
+            self.update_inner(time, &d[..mcu]);
+        }
         reply
     }
 
@@ -3146,7 +3157,12 @@ impl CircuitSim {
             if !powered || !mr {
                 continue;
             }
-            let spill = x.byte(byte);
+            // STCP on SCK too: each clock edge also latches.
+            let spill = if part.stcp == sck {
+                x.byte_latching(byte)
+            } else {
+                x.byte(byte)
+            };
             for (j, next) in self.shift_parts.iter().enumerate() {
                 if next.ds == part.q7s && next.shcp == sck && !fed.contains(&j) {
                     queue.push((j, spill));
@@ -4503,6 +4519,30 @@ mod tests {
     }
 
     #[test]
+    fn hc595_with_stcp_on_sck_latches_hardware_spi_bytes() {
+        // One chip, SHCP and STCP both on SCK: no separate latch pin.
+        let mut parts = vec![part("sa", "hc595", &[])];
+        let mut wires = vec![
+            wire(("sa", "VCC"), ("mcu", "3V3")),
+            wire(("sa", "GND"), ("mcu", "GND")),
+            wire(("sa", "MR"), ("mcu", "3V3")),
+            wire(("sa", "OE"), ("mcu", "GND")),
+            wire(("sa", "SHCP"), ("mcu", "PA5")),
+            wire(("sa", "STCP"), ("mcu", "PA5")),
+            wire(("sa", "DS"), ("mcu", "PA7")),
+        ];
+        led_bar("sa", &mut parts, &mut wires);
+        let mut s = sim(parts, wires);
+        pins(&mut s, 0, &[(SCK, Some(false)), (MOSI, Some(false))]);
+        s.spi(10, SCK, MOSI, None, 0xF0);
+        s.spi(20, SCK, MOSI, None, 0x0F);
+        let v = s.end_frame(1000, 0.01);
+        // The outputs are one clock behind the shift register.
+        assert_eq!(visual(&v, "sa").register.clone().unwrap().shift, 0x0F);
+        assert_eq!(lit(&v, "sa"), 0x07);
+    }
+
+    #[test]
     fn hc595_with_oe_floating_warns_and_keeps_the_outputs_off() {
         let mut s = hc595_circuit(None);
         pins(
@@ -4677,6 +4717,40 @@ mod tests {
         let inputs = s.update(0, &d).unwrap();
         assert_eq!(inputs[sw], Some(false), "pressed: SW to GND");
         assert!((s.mcu_voltage(0, 0).unwrap() - VDD / 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn bmp280_forgets_its_settings_without_supply() {
+        // VCC from a GPIO, so the test can cut it.
+        let mut s = sim(
+            vec![part("baro", "bmp280", &[])],
+            vec![
+                wire(("baro", "VCC"), ("mcu", "PA0")),
+                wire(("baro", "GND"), ("mcu", "GND")),
+                wire(("baro", "SCL"), ("mcu", "PB8")),
+                wire(("baro", "SDA"), ("mcu", "PB9")),
+            ],
+        );
+        let vcc = (0, 0);
+        let (scl, sda) = ((1, 8), (1, 9));
+        let ctrl = |s: &mut CircuitSim| match s.devices.get("baro") {
+            Some(Device::Baro(b)) => b.ctrl_meas,
+            _ => panic!("no BMP280"),
+        };
+        pins(&mut s, 0, &[(vcc, Some(true))]);
+        s.end_frame(10, 0.01);
+        assert!(s.i2c_start(20, scl, sda, 0x76, false));
+        s.i2c_write(20, scl, 0xF4);
+        s.i2c_write(20, scl, 0x27); // normal mode
+        s.i2c_stop(20, scl);
+        s.end_frame(30, 0.01);
+        assert_eq!(ctrl(&mut s), 0x27);
+        // Power off for a frame, then on again: back to sleep.
+        pins(&mut s, 40, &[(vcc, Some(false))]);
+        s.end_frame(50, 0.01);
+        pins(&mut s, 60, &[(vcc, Some(true))]);
+        s.end_frame(70, 0.01);
+        assert_eq!(ctrl(&mut s), 0);
     }
 
     #[test]

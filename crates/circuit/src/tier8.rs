@@ -57,6 +57,17 @@ impl Hc595 {
         out
     }
 
+    /// [`byte`](Self::byte) with STCP tied to SHCP: every clock edge also
+    /// latches the register as it was before that shift.
+    pub fn byte_latching(&mut self, b: u8) -> u8 {
+        let mut out = 0;
+        for i in (0..8).rev() {
+            self.store();
+            out = out << 1 | self.shift_bit(b >> i & 1 != 0) as u8;
+        }
+        out
+    }
+
     /// STCP rising edge: the outputs take the shift register.
     pub fn store(&mut self) {
         self.latch = self.shift;
@@ -743,6 +754,16 @@ mod tests {
         a.store();
         b.store();
         assert_eq!((a.latch, b.latch), (0x81, 0x0F));
+    }
+
+    #[test]
+    fn hc595_spi_byte_with_tied_clocks_latches_one_bit_behind() {
+        let mut s = Hc595::default();
+        s.byte_latching(0xA5);
+        // The last edge latched the register before its own shift.
+        assert_eq!((s.shift, s.latch), (0xA5, 0xA5 >> 1));
+        s.byte_latching(0x00);
+        assert_eq!((s.shift, s.latch), (0x00, 0x80));
     }
 
     /// Bit-bangs a TM1637 transfer: START, the bytes LSB first with an

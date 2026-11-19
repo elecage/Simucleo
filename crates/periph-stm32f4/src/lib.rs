@@ -783,6 +783,7 @@ impl Stm32f401Bus {
                 };
                 out.push(WireEvent::Uart {
                     pin,
+                    tx: f.tx,
                     start: f.start,
                     bit: f.bit,
                     data: f.data,

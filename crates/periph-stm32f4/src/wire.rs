@@ -29,6 +29,9 @@ pub enum WireEvent {
     /// A UART frame on `pin`, from its start bit at `start`.
     Uart {
         pin: Pin,
+        /// Sent by the USART (logged as it starts) or received (logged
+        /// when its last bit arrived, ten bit times after the start).
+        tx: bool,
         start: Cycles,
         /// Core cycles per bit.
         bit: f64,
@@ -142,7 +145,8 @@ impl WireEvent {
     /// it ends.
     pub fn latency(&self) -> f64 {
         match self {
-            WireEvent::Uart { .. } => 0.0,
+            WireEvent::Uart { tx: true, .. } => 0.0,
+            WireEvent::Uart { bit, .. } => 10.0 * bit,
             WireEvent::Spi { start, end, .. } => (end - start) as f64,
             WireEvent::I2c { time, .. } => *time as f64 - self.start(),
         }
@@ -160,7 +164,7 @@ impl WireEvent {
                 data,
                 data_bits,
                 parity,
-                stop_halves: _,
+                ..
             } => {
                 let t0 = start as f64;
                 let mut bits: Vec<bool> = Vec::with_capacity(data_bits as usize);
@@ -319,6 +323,7 @@ mod tests {
         // 115200 baud at 84 MHz: 729.17 cycles per bit.
         WireEvent::Uart {
             pin: TX,
+            tx: true,
             start: 1000,
             bit: 84e6 / 115_200.0,
             data,
@@ -357,6 +362,21 @@ mod tests {
         let last = *ch.last().unwrap();
         assert!((last.0 - (1000.0 + 9.0 * bit)).abs() < 1e-6);
         assert!(last.1);
+    }
+
+    #[test]
+    fn received_uart_frames_are_logged_a_frame_late() {
+        // A received byte is logged when its stop bit arrived, its start
+        // backdated: the scope has to hold back that long.
+        let tx = uart(0x55, 8, Parity::None);
+        assert_eq!(tx.latency(), 0.0);
+        let mut rx = tx.clone();
+        let WireEvent::Uart { tx: dir, bit, .. } = &mut rx else {
+            unreachable!()
+        };
+        *dir = false;
+        let bit = *bit;
+        assert_eq!(rx.latency(), 10.0 * bit);
     }
 
     #[test]

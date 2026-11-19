@@ -462,12 +462,17 @@ impl Scope {
 
     /// Analog channel `ch` changed to `v` volts at `t` (ns), in time order.
     pub fn push_analog(&mut self, ch: usize, t: f64, v: f64) {
-        let Some(ring) = self.analog.get_mut(ch) else {
-            return;
-        };
-        if ring.v == v {
+        if self.analog.get(ch).is_none_or(|r| r.v == v) {
             return;
         }
+        // A capture this sample is past ends first, so the trigger re-arms
+        // from the voltage before it (the sample may be the next crossing).
+        if let State::Collecting { end, .. } = self.state {
+            if t > end {
+                self.finish();
+            }
+        }
+        let ring = &mut self.analog[ch];
         ring.v = v;
         if ring.samples.len() >= RING_SAMPLES {
             if let Some((lt, lv)) = ring.samples.pop_front() {
@@ -478,11 +483,6 @@ impl Scope {
         ring.samples.push_back((t, v));
         self.now = self.now.max(t);
 
-        if let State::Collecting { end, .. } = self.state {
-            if t > end {
-                self.finish();
-            }
-        }
         if let State::Collecting { cap, .. } = &mut self.state {
             let c = &mut cap.analog[ch];
             let rel = t - cap.trigger_ns;
@@ -1044,6 +1044,26 @@ mod tests {
         assert_eq!(a.to_ns, 500.0);
         // The digital channel is captured with it.
         assert_eq!(c.channels[0].edges, vec![(-50.0, true)]);
+    }
+
+    #[test]
+    fn level_trigger_rearms_from_the_voltage_before_the_next_crossing() {
+        // Normal mode, 100 ns window: up at 100, down at 120 (inside the
+        // capture), up again at 200, past its end — a second capture.
+        let mut s = Scope::new();
+        s.set_channels(vec![("PA0".into(), false)], f64::MIN);
+        s.set_analog(vec![("V(pot.W)".into(), 0.0)], f64::MIN);
+        let mut c = config(Edge::Rising, Mode::Normal, 100.0, 0.5);
+        c.source = "V(pot.W)".into();
+        c.level = Some(1.5);
+        s.configure(Some(c));
+        s.push_analog(0, 100.0, 3.0);
+        s.push_analog(0, 120.0, 0.0);
+        s.push_analog(0, 200.0, 3.0);
+        assert_eq!(s.take_capture().map(|c| c.trigger_ns), Some(100.0));
+        assert_eq!(s.status(), Status::Collecting);
+        s.advance(400.0);
+        assert_eq!(s.take_capture().map(|c| c.trigger_ns), Some(200.0));
     }
 
     #[test]

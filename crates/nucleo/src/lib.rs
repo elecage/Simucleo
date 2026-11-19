@@ -438,10 +438,20 @@ impl Nucleo {
     /// (phone text, AT replies) the MCU's receiver. Each USART's terminal
     /// runs at its module's baud rate, so a mismatch garbles the bytes.
     fn route_uarts(&mut self) {
-        let mut taken = [false; 3];
-        for i in 0..self.uart_links.len() {
+        let ends: Vec<_> = self.uart_links.iter().map(|l| self.usarts_of(l)).collect();
+        // What each USART transmitted, taken once: every module whose RXD
+        // is on that TX line gets its own copy (one that is unpowered or
+        // has no phone drops it without starving the others).
+        let mut sent: [Option<Vec<TerminalByte>>; 3] = Default::default();
+        for &(tx, ..) in &ends {
+            if let Some(u) = tx.filter(|&u| u != VCP) {
+                if sent[u].is_none() {
+                    sent[u] = Some(self.bus.terminal_take(u));
+                }
+            }
+        }
+        for (i, &(tx, rx, _)) in ends.iter().enumerate() {
             let link = &self.uart_links[i];
-            let (tx, rx, _) = self.usarts_of(link);
             // The terminal's baud follows the wiring alone (also before
             // the firmware routes its pins), USART2 stays the VCP's.
             let possible = |nets: &[(u8, u8)], want_tx: bool| {
@@ -461,13 +471,8 @@ impl Nucleo {
             for u in wired.into_iter().flatten() {
                 self.bus.usart[u].host_baud = baud;
             }
-            if let Some(u) = tx.filter(|&u| u != VCP) {
-                taken[u] = true;
-                if !self.bus.usart[u].terminal.is_empty() {
-                    for b in self.bus.terminal_take(u) {
-                        hc.from_mcu(b.byte, b.garbled);
-                    }
-                }
+            for b in tx.and_then(|u| sent[u].as_deref()).unwrap_or_default() {
+                hc.from_mcu(b.byte, b.garbled);
             }
             if hc.to_mcu.is_empty() {
                 continue;
@@ -482,7 +487,7 @@ impl Nucleo {
         // Nothing listens on the other USART1/USART6 lines.
         if !self.uart_links.is_empty() {
             for u in [0, 2] {
-                if !taken[u] {
+                if sent[u].is_none() {
                     self.bus.usart[u].terminal.clear();
                 }
             }
@@ -900,6 +905,58 @@ mod tests {
         assert_eq!(mcu_sends(&mut board, b"hi"), [(b'h', false), (b'i', false)]);
         assert_eq!(phone_sends(&mut board, b'k'), Some(b'k' as u32));
         assert!(board.take_console().is_empty(), "nothing on the VCP");
+    }
+
+    #[test]
+    fn every_hc05_on_one_tx_line_hears_the_mcu() {
+        // A second module's RXD on PA9 too; the first (unpowered once its
+        // VCC is gone) must not swallow what the second should get.
+        for first_powered in [true, false] {
+            let mut board = bluetooth_board("9600", 1667);
+            let mut wires = vec![
+                serde_json::json!({"a": {"part": "board", "pin": "GND"}, "b": {"part": "bt", "pin": "GND"}}),
+                serde_json::json!({"a": {"part": "board", "pin": "PA9"}, "b": {"part": "bt", "pin": "RXD"}}),
+                serde_json::json!({"a": {"part": "board", "pin": "5V"}, "b": {"part": "bt2", "pin": "VCC"}}),
+                serde_json::json!({"a": {"part": "board", "pin": "GND"}, "b": {"part": "bt2", "pin": "GND"}}),
+                serde_json::json!({"a": {"part": "board", "pin": "PA9"}, "b": {"part": "bt2", "pin": "RXD"}}),
+            ];
+            if first_powered {
+                wires.push(serde_json::json!({"a": {"part": "board", "pin": "5V"}, "b": {"part": "bt", "pin": "VCC"}}));
+            }
+            let circuit: Circuit = serde_json::from_value(serde_json::json!({
+                "parts": [
+                    {"id": "bt", "kind": "hc05", "props": {"baud": "9600"}},
+                    {"id": "bt2", "kind": "hc05", "props": {"baud": "9600"}}
+                ],
+                "wires": wires
+            }))
+            .unwrap();
+            board.set_circuit(&circuit, &BusCatalog::default(), &HashMap::new());
+            board.bluetooth_connect("bt2", true);
+            if first_powered {
+                board.bluetooth_connect("bt", true);
+            }
+            for &c in b"hi" {
+                board.bus.set_time(board.now());
+                board
+                    .bus
+                    .write(0x4001_1004, AccessSize::Word, c as u32)
+                    .unwrap();
+                board.run_for_ns(1.2e6);
+            }
+            let st = board.bluetooth();
+            let got = |id: &str| -> Vec<u8> {
+                st.iter()
+                    .find(|s| s.id == id)
+                    .unwrap()
+                    .received
+                    .iter()
+                    .map(|b| b.0)
+                    .collect()
+            };
+            assert_eq!(got("bt2"), b"hi", "first powered: {first_powered}");
+            assert_eq!(got("bt"), if first_powered { &b"hi"[..] } else { &[] });
+        }
     }
 
     #[test]

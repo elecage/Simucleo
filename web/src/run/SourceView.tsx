@@ -25,23 +25,73 @@ function bundledSources(): Promise<Set<string>> {
   return bundled;
 }
 
-function ValueTree({ v, depth = 0 }: { v: DebugValue; depth?: number }) {
+/** The C expression naming a child of the value at `path`. */
+const childPath = (path: string, name: string) => (name.startsWith("[") ? `${path}${name}` : `${path}.${name}`);
+
+/** Setting a variable: the expression naming it and the new value. */
+type OnEdit = (path: string, value: string) => void;
+
+function ValueTree({
+  v,
+  path,
+  onEdit,
+  depth = 0,
+}: {
+  v: DebugValue;
+  /** The expression for this value (null: not settable). */
+  path: string | null;
+  onEdit?: OnEdit;
+  depth?: number;
+}) {
+  const [editing, setEditing] = useState(false);
+  const leaf = !v.children?.length;
+  // Numbers, enums and pointers (not a char array shown as a string).
+  const canEdit = leaf && !v.type.endsWith("]") && path !== null && onEdit !== undefined;
+  // The number in values like "66 'B'" or "0x40014400 <TIM10>".
+  const initial = v.value.split(" ")[0];
   const row = (
     <span className="var-row">
       <span className="var-name">{v.name}</span> <span className="var-type">{v.type}</span>{" "}
-      <span className="var-value" data-var={v.name}>
-        {v.value}
-      </span>
+      {editing ? (
+        <input
+          className="var-edit"
+          aria-label={`${path} 값`}
+          autoFocus
+          defaultValue={initial}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              onEdit!(path!, e.currentTarget.value);
+              setEditing(false);
+            } else if (e.key === "Escape") setEditing(false);
+          }}
+          onBlur={() => setEditing(false)}
+        />
+      ) : (
+        <span
+          className={`var-value${canEdit ? " editable" : ""}`}
+          data-var={v.name}
+          title={canEdit ? "두 번 클릭: 값 바꾸기" : undefined}
+          onDoubleClick={canEdit ? () => setEditing(true) : undefined}
+        >
+          {v.value}
+        </span>
+      )}
     </span>
   );
-  if (!v.children?.length) return <li>{row}</li>;
+  if (leaf) return <li>{row}</li>;
   return (
     <li>
-      <details open={depth === 0 && v.children.length <= 8}>
+      <details open={depth === 0 && v.children!.length <= 8}>
         <summary>{row}</summary>
         <ul>
-          {v.children.map((c, i) => (
-            <ValueTree key={i} v={c} depth={depth + 1} />
+          {v.children!.map((c, i) => (
+            <ValueTree
+              key={i}
+              v={c}
+              path={path === null ? null : childPath(path, c.name)}
+              onEdit={onEdit}
+              depth={depth + 1}
+            />
           ))}
         </ul>
       </details>
@@ -60,6 +110,7 @@ export function SourceView({ runner }: { runner: Runner }) {
   const [wanted, setWanted] = useState<BreakpointSpec[]>([]);
   const [watches, setWatches] = useState<string[]>([]);
   const [newWatch, setNewWatch] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
   const codeRef = useRef<HTMLDivElement>(null);
   const upload = useRef<HTMLInputElement>(null);
   const { setBreakpoints, requestDebugState, debugState, pauseEvent: pause, running } = runner;
@@ -110,6 +161,7 @@ export function SourceView({ runner }: { runner: Runner }) {
   useEffect(() => {
     if (pause.n === 0) return;
     setFrame(0);
+    setEditError(null);
     requestDebugState(0, fileIdx ?? -1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pause.n]);
@@ -121,6 +173,16 @@ export function SourceView({ runner }: { runner: Runner }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileIdx]);
   const shownFrame = debugState?.frames[frame];
+  // Setting a variable: show why it failed, or refresh what is shown.
+  const { setVariable, assigned } = runner;
+  const edit: OnEdit = (path, value) => setVariable(path, value, frame);
+  useEffect(() => {
+    if (assigned.n === 0) return;
+    const r = assigned.result;
+    setEditError(r && "error" in r ? `${assigned.target}: ${r.error}` : null);
+    if (fileIdx !== null) requestDebugState(frame, fileIdx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assigned.n]);
   // Watch expressions are evaluated in the shown frame whenever it changes.
   const { requestWatch } = runner;
   useEffect(() => {
@@ -306,7 +368,7 @@ export function SourceView({ runner }: { runner: Runner }) {
                   </span>
                 ) : v ? (
                   <ul className="vars" data-watch={x}>
-                    <ValueTree v={v} />
+                    <ValueTree v={v} path={`(${x})`} onEdit={edit} />
                   </ul>
                 ) : (
                   <span className="var-name">{x}</span>
@@ -342,6 +404,11 @@ export function SourceView({ runner }: { runner: Runner }) {
           })}
         </ul>
         {wanted.length === 0 && <p className="hint">줄 번호를 클릭하면 중단점이 생깁니다. 조건을 적으면 그 식이 참일 때만 멈춥니다.</p>}
+        {editError && paused && (
+          <p className="edit-error" data-testid="edit-error">
+            {editError}
+          </p>
+        )}
         <h4>호출 스택</h4>
         <ol className="frames">
           {(paused ? debugState!.frames : []).map((f, i) => (
@@ -362,13 +429,13 @@ export function SourceView({ runner }: { runner: Runner }) {
         <h4>지역 변수</h4>
         <ul className="vars" data-testid="locals">
           {(paused ? (debugState!.locals ?? []) : []).map((v, i) => (
-            <ValueTree key={i} v={v} />
+            <ValueTree key={i} v={v} path={v.name} onEdit={edit} />
           ))}
         </ul>
         <h4>전역 변수 (이 파일)</h4>
         <ul className="vars" data-testid="globals">
           {(paused ? (debugState!.globals ?? []) : []).map((v, i) => (
-            <ValueTree key={i} v={v} />
+            <ValueTree key={i} v={v} path={v.name} onEdit={edit} />
           ))}
         </ul>
         {!paused && <p className="hint">중단점을 걸고 실행하거나 일시정지 후 스텝하면 변수가 보입니다.</p>}

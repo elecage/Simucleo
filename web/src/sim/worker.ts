@@ -147,6 +147,13 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       post({ type: "watch", values: m.exprs.map((e) => JSON.parse(s.evaluate(e, m.frame))) });
       break;
     }
+    case "setVariable": {
+      const result = JSON.parse(sim.setVariable(m.target, m.value, m.frame));
+      post({ type: "assigned", target: m.target, result });
+      // Pins, LEDs and registers may show the change.
+      sendFrame();
+      break;
+    }
     case "debugState":
       post({ type: "debugState", state: JSON.parse(sim.debugState(m.frame, m.globalsFile)) });
       break;

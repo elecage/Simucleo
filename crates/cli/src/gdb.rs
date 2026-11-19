@@ -8,7 +8,6 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
-use simucleo_core::bus::{AccessSize, Bus};
 use simucleo_core::cpu::StopReason;
 use simucleo_nucleo::{Nucleo, Step};
 
@@ -287,17 +286,7 @@ impl Server {
     }
 
     fn write_memory(&mut self, addr: u32, data: &[u8]) -> bool {
-        // Flash takes `load`'s image directly; elsewhere bytes go through
-        // the bus like the CPU's stores.
-        if (0x0800_0000..0x0808_0000).contains(&addr) {
-            return self.board.bus.load(addr, data).is_ok();
-        }
-        data.iter().enumerate().all(|(i, &b)| {
-            self.board
-                .bus
-                .write(addr + i as u32, AccessSize::Byte, b as u32)
-                .is_ok()
-        })
+        self.board.write_memory(addr, data)
     }
 
     /// Handle one packet; `None` ends the session (kill).

@@ -108,6 +108,7 @@ export type ToWorker =
   | { type: "debugState"; frame: number; globalsFile: number }
   | { type: "disassemble"; addr: number | null }
   | { type: "evaluate"; exprs: string[]; frame: number }
+  | { type: "setVariable"; target: string; value: string; frame: number }
   | { type: "sdLoad"; part: string; bytes: ArrayBuffer };
 
 export type FromWorker =
@@ -129,6 +130,8 @@ export type FromWorker =
   | { type: "debugState"; state: DebugState }
   | { type: "disasm"; rows: DisasmRow[] }
   | { type: "watch"; values: WatchValue[] }
+  /** The outcome of setting a variable (its new value, or why not). */
+  | { type: "assigned"; target: string; result: WatchValue }
   /** Execution paused by the debugger (breakpoint, step done, …). */
   | { type: "paused"; reason: string };
 

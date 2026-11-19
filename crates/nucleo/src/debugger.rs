@@ -5,7 +5,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use simucleo_core::cpu::{RunResult, StopReason};
-use simucleo_elf::debug::{DebugInfo, Frame, Value};
+use simucleo_elf::debug::{DebugInfo, Frame, Value, Write};
 
 use crate::Nucleo;
 
@@ -123,6 +123,47 @@ impl Nucleo {
         let f = frames.get(frame).ok_or("no such frame")?;
         let read = |a: u32, n: usize| self.read_mem(a, n);
         info.evaluate(expr, f, &read)
+    }
+
+    /// Set a variable (or member, element, `*pointer`) seen from call-stack
+    /// frame `frame` to the value of the expression `value`. Returns its new
+    /// value.
+    pub fn set_variable(
+        &mut self,
+        target: &str,
+        value: &str,
+        frame: usize,
+    ) -> Result<Value, String> {
+        let info = self.debug.get().ok_or("no debug information")?;
+        let frames = self.call_stack();
+        let f = frames.get(frame).ok_or("no such frame")?;
+        let read = |a: u32, n: usize| self.read_mem(a, n);
+        match info.assignment(target, value, f, &read)? {
+            Write::Memory { addr, bytes } => {
+                if !self.write_memory(addr, &bytes) {
+                    return Err(format!("cannot write 0x{addr:08x}"));
+                }
+            }
+            Write::Register { reg, value } => {
+                // An outer frame's registers may be saved on the stack by
+                // the calls since: only the innermost frame's are live.
+                if frame != 0 {
+                    return Err(format!("{target} is in a register of a calling function: set it from the innermost frame"));
+                }
+                let mut r = self.cpu.registers();
+                match reg {
+                    0..=12 | 14 => r.r[reg as usize] = value,
+                    64..=95 => r.s[reg as usize - 64] = value,
+                    _ => {
+                        return Err(format!(
+                            "{target} is in register {reg}, which cannot be set"
+                        ))
+                    }
+                }
+                self.cpu.set_registers(&r);
+            }
+        }
+        self.evaluate(target, frame)
     }
 
     /// Whether the user breakpoint at `addr`, just hit, should stop: it

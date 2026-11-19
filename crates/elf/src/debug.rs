@@ -91,7 +91,24 @@ pub struct Value {
 pub(crate) enum Src {
     Addr(u32),
     Bytes(Vec<u8>),
+    /// All of one register: its DWARF number (so it can be written) and
+    /// value.
+    Reg(u16, u32),
 }
+
+/// What setting a variable changes in the target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Write {
+    /// Bytes at an address (little-endian).
+    Memory { addr: u32, bytes: Vec<u8> },
+    /// A register by DWARF number (r0–r15 are 0–15, s0–s31 are 64–95) in
+    /// the frame the value lives in.
+    Register { reg: u16, value: u32 },
+}
+
+/// A struct member: its byte offset, its type, and for a bit field its
+/// first bit (from the start of the struct) and width.
+pub(crate) type Member = (u32, Option<UnitOffset<usize>>, Option<(u32, u32)>);
 
 pub struct DebugInfo {
     sections: gimli::DwarfSections<Vec<u8>>,
@@ -554,6 +571,19 @@ impl DebugInfo {
         crate::expr::Evaluator::new(self, self.dwarf(), frame, read).value(expr)
     }
 
+    /// What setting `target` (an expression naming a number, enum or
+    /// pointer: a variable, member, element or dereference) to the value
+    /// of `value` writes.
+    pub fn assignment(
+        &self,
+        target: &str,
+        value: &str,
+        frame: &Frame,
+        read: ReadMem<'_>,
+    ) -> Result<Write, String> {
+        crate::expr::Evaluator::new(self, self.dwarf(), frame, read).assign(target, value)
+    }
+
     /// Evaluate a breakpoint condition: true when non-zero.
     pub fn condition(&self, expr: &str, frame: &Frame, read: ReadMem<'_>) -> Result<bool, String> {
         crate::expr::Evaluator::new(self, self.dwarf(), frame, read).truth(expr)
@@ -674,7 +704,7 @@ impl DebugInfo {
         unit: &Unit<'_>,
         off: UnitOffset<usize>,
         name: &str,
-    ) -> Option<(u32, Option<UnitOffset<usize>>)> {
+    ) -> Option<Member> {
         let mut tree = unit.entries_tree(Some(off)).ok()?;
         let root = tree.root().ok()?;
         let mut ch = root.children();
@@ -687,7 +717,22 @@ impl DebugInfo {
                     .flatten()
                     .and_then(attr_u64)
                     .unwrap_or(0) as u32;
-                return Some((moff, type_of(e)));
+                // A bit field: its first bit from the start of the struct.
+                let bits = e
+                    .attr_value(gimli::DW_AT_bit_size)
+                    .ok()
+                    .flatten()
+                    .and_then(attr_u64)
+                    .map(|width| {
+                        let start = e
+                            .attr_value(gimli::DW_AT_data_bit_offset)
+                            .ok()
+                            .flatten()
+                            .and_then(attr_u64)
+                            .unwrap_or(moff as u64 * 8);
+                        (start as u32, width as u32)
+                    });
+                return Some((moff, type_of(e), bits));
             }
         }
         None
@@ -911,6 +956,9 @@ impl DebugInfo {
                     let Some(v) = v else {
                         return Some(Err("<optimized out>"));
                     };
+                    if pieces.len() == 1 {
+                        return Some(Ok(Src::Reg(register.0, v)));
+                    }
                     bytes.extend(&v.to_le_bytes()[..size.min(4)]);
                 }
                 Location::Value { value } => {
@@ -1081,10 +1129,12 @@ impl DebugInfo {
         for i in 0..n.min(32) {
             let sub = match &src {
                 Src::Addr(a) => Src::Addr(a + i * esize),
-                Src::Bytes(_) => match self.bytes(&src, i * esize, esize as usize, read) {
-                    Some(b) => Src::Bytes(b),
-                    None => break,
-                },
+                Src::Bytes(_) | Src::Reg(..) => {
+                    match self.bytes(&src, i * esize, esize as usize, read) {
+                        Some(b) => Src::Bytes(b),
+                        None => break,
+                    }
+                }
             };
             let mut c = if rest.is_empty() {
                 self.render(dwarf, unit, elem, sub, read, depth + 1)
@@ -1111,6 +1161,10 @@ impl DebugInfo {
             Src::Bytes(b) => {
                 let s = offset as usize;
                 (s + len <= b.len()).then(|| b[s..s + len].to_vec())
+            }
+            Src::Reg(_, v) => {
+                let s = offset as usize;
+                (s + len <= 4).then(|| v.to_le_bytes()[s..s + len].to_vec())
             }
         }
     }
@@ -1340,7 +1394,7 @@ impl DebugInfo {
                     let mty = type_of(ce);
                     let sub = match &src {
                         Src::Addr(a) => Src::Addr(a + moff),
-                        Src::Bytes(_) => match self.bytes(
+                        Src::Bytes(_) | Src::Reg(..) => match self.bytes(
                             &src,
                             moff,
                             self.byte_size(unit, mty).unwrap_or(4) as usize,

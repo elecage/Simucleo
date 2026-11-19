@@ -480,6 +480,30 @@ impl Nucleo {
             .map(|v| v as u8)
     }
 
+    /// Write memory as a debugger does: flash takes the bytes into its
+    /// image; elsewhere they go through the bus like the CPU's stores, a
+    /// whole aligned word or halfword at once (peripheral registers).
+    pub fn write_memory(&mut self, addr: u32, data: &[u8]) -> bool {
+        use simucleo_core::bus::{AccessSize, Bus};
+        if (0x0800_0000..0x0808_0000).contains(&addr) {
+            return self.bus.load(addr, data).is_ok();
+        }
+        let le = |b: &[u8]| b.iter().rev().fold(0u32, |a, &x| a << 8 | x as u32);
+        let (size, chunk) = match data.len() {
+            4 if addr.is_multiple_of(4) => (AccessSize::Word, 4),
+            2 if addr.is_multiple_of(2) => (AccessSize::Half, 2),
+            _ => (AccessSize::Byte, 1),
+        };
+        data.chunks(chunk).enumerate().all(|(i, c)| {
+            let a = addr + (i * chunk) as u32;
+            if a >= 0xE000_0000 {
+                self.sys.write(a, size, le(c)).is_ok()
+            } else {
+                self.bus.write(a, size, le(c)).is_ok()
+            }
+        })
+    }
+
     /// Tasks of the RTOS in the firmware (FreeRTOS), or `None` without one.
     pub fn rtos_snapshot(&self) -> Option<RtosSnapshot> {
         let r = self.rtos.as_ref()?;

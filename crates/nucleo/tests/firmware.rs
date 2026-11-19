@@ -1280,6 +1280,79 @@ fn breakpoints_steps_call_stack_and_variables() {
     assert!(ev("0 && (1 +").is_err(), "syntax errors still count");
     drop(info);
 
+    // Setting variables: a local, a struct member, a peripheral register
+    // through a pointer, an array element; the program sees the change.
+    // Here `value` is a known constant: nothing to write to.
+    assert!(board
+        .set_variable("value", "1234", 0)
+        .unwrap_err()
+        .contains("no storage"));
+    assert_eq!(
+        board
+            .set_variable("htim10.Init.Period", "499", 0)
+            .unwrap()
+            .value,
+        "499"
+    );
+    // (A smaller ARR than the counter would make the timer count all the
+    // way round, as on the chip: go up, then back.)
+    assert_eq!(
+        board
+            .set_variable("htim10.Instance->ARR", "1999", 0)
+            .unwrap()
+            .value,
+        "1999"
+    );
+    assert_eq!(
+        board.peek_byte(0x4001_442C),
+        Some(0xCF),
+        "TIM10 ARR low byte"
+    );
+    assert_eq!(
+        board
+            .set_variable("htim10.Instance->ARR", "999", 0)
+            .unwrap()
+            .value,
+        "999"
+    );
+    assert_eq!(
+        board.set_variable("digits[2]", "FONT[8]", 0).unwrap().value,
+        "127"
+    );
+    assert!(board
+        .set_variable("digits[0]", "300", 0)
+        .unwrap_err()
+        .contains("does not fit"));
+    assert!(board.set_variable("htim10", "1", 0).is_err());
+    assert!(board.set_variable("1 + 2", "3", 0).is_err());
+
+    // A parameter in a register: show_number(n, len) at its entry has n in
+    // r0. Setting it changes what the function shows.
+    let show = board
+        .debug_info()
+        .unwrap()
+        .functions
+        .iter()
+        .find(|f| f.name == "show_number")
+        .unwrap()
+        .low;
+    board.set_breakpoints(&[show]);
+    let r = board.run_for_ns(10e6);
+    assert!(
+        matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_)),
+        "{r:?}"
+    );
+    assert_eq!(info_write_kind(&board, "n"), "register");
+    assert_eq!(board.set_variable("n", "4321", 0).unwrap().value, "4321");
+    assert_eq!(board.cpu.registers().r[0], 4321);
+    assert_eq!(board.set_variable("len", "4", 0).unwrap().value, "4");
+    board.set_breakpoints(&[]);
+    board.step(Step::Out);
+    let digits = board.evaluate("digits", 0).unwrap();
+    let shown: Vec<&str> = digits.children.iter().map(|c| c.value.as_str()).collect();
+    // FONT[4], FONT[3], FONT[2], FONT[1] (102, 79, 91, 6), left to right.
+    assert_eq!(shown, ["102", "79", "91", "6"], "{digits:?}");
+
     // A breakpoint inside the timer interrupt shows the interrupted code.
     board.set_breakpoints(&[]);
     let cb = board
@@ -1374,4 +1447,18 @@ fn breakpoints_steps_call_stack_and_variables() {
         matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_)),
         "{r:?}"
     );
+}
+
+/// Whether a variable is set in memory or in a register (for the log).
+fn info_write_kind(board: &Nucleo, name: &str) -> &'static str {
+    let info = board.debug_info().unwrap();
+    let frame = board.call_stack()[0].clone();
+    let read = |a: u32, n: usize| -> Option<Vec<u8>> {
+        (0..n as u32).map(|i| board.peek_byte(a + i)).collect()
+    };
+    match info.assignment(name, "0", &frame, &read) {
+        Ok(simucleo_elf::debug::Write::Memory { .. }) => "memory",
+        Ok(simucleo_elf::debug::Write::Register { .. }) => "register",
+        Err(_) => "neither",
+    }
 }

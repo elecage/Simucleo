@@ -89,4 +89,24 @@ test("watch expressions and a conditional breakpoint", async ({ page }) => {
   await expect(page.locator(".src-line.here")).toHaveAttribute("data-line", "47");
   await expect(value("current").locator(".var-value").first()).toHaveText("3");
   await page.screenshot({ path: "test-results/m10-watch.png" });
+
+  // Set a variable: double-click its value, type, Enter.
+  await value("current").locator(".var-value").first().dblclick();
+  await page.getByLabel("(current) 값").fill("1");
+  await page.getByLabel("(current) 값").press("Enter");
+  await expect(value("current").locator(".var-value").first()).toHaveText("1");
+  await expect(value("current * 10 + 1").locator(".var-value").first()).toHaveText("11");
+  // A computed value cannot be set: the reason is shown.
+  await value("current * 10 + 1").locator(".var-value").first().dblclick();
+  await page.getByLabel("(current * 10 + 1) 값").fill("5");
+  await page.getByLabel("(current * 10 + 1) 값").press("Enter");
+  await expect(page.getByTestId("edit-error")).toContainText("not a variable");
+  // A global's element in the tree.
+  const digits = page.getByTestId("globals").locator("li", { hasText: "digits" }).first();
+  await digits.locator(".var-value[data-var='[0]']").dblclick();
+  await page.getByLabel("digits[0] 값").fill("0x3F");
+  await page.getByLabel("digits[0] 값").press("Enter");
+  await expect(digits.locator(".var-value[data-var='[0]']")).toHaveText("63");
+  await expect(page.getByTestId("edit-error")).toHaveCount(0);
+  await page.screenshot({ path: "test-results/m11-set-variable.png" });
 });

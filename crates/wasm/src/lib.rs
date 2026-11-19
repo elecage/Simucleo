@@ -231,6 +231,17 @@ impl Simulator {
         }
     }
 
+    /// Set a variable (or member, element, `*pointer`) seen from frame
+    /// `frame` to the value of the expression `value`. Returns its new value
+    /// as JSON, or `{error}`.
+    #[wasm_bindgen(js_name = setVariable)]
+    pub fn set_variable(&mut self, target: &str, value: &str, frame: usize) -> String {
+        match self.board.set_variable(target, value, frame) {
+            Ok(v) => serde_json::to_string(&v).unwrap_or_default(),
+            Err(e) => serde_json::json!({ "error": e }).to_string(),
+        }
+    }
+
     /// Machine code around `addr` (default: the pc) as JSON
     /// `[{addr, bytes, text, file, line}]`.
     pub fn disassemble(&self, addr: Option<u32>, before: usize, after: usize) -> String {

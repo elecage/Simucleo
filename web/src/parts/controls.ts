@@ -151,20 +151,66 @@ export function fingerTouch(temp: string, humidity?: string): PartControl {
   };
 }
 
+// ----------------------------------------------------------- shake
+
+/** How long a shake lasts (ms) and how fast it dies down (ms). */
+export const SHAKE_MS = 450;
+const SHAKE_TAU = 180;
+/** Back-and-forth rate of a shake (Hz). */
+const SHAKE_HZ = 5;
+const NO_SHAKE: PropValues = { ax: 0, ay: 0, az: 0 };
+
+/**
+ * The extra acceleration (g, on top of gravity) `ms` into a shake whose
+ * first jolt is `amp` (ax, ay, az): it swings back and forth and dies
+ * away; after SHAKE_MS it is all 0.
+ */
+export function shakeAt(ms: number, amp: [number, number, number]): PropValues {
+  if (ms >= SHAKE_MS || ms < 0) return { ...NO_SHAKE };
+  // A square-ish swing: every sample (the firmware reads every 100 ms) is
+  // a jolt one way or the other, not a zero crossing.
+  const swing = Math.cos(2 * Math.PI * SHAKE_HZ * (ms / 1000)) >= 0 ? 1 : -1;
+  const k = swing * Math.exp(-ms / SHAKE_TAU);
+  return { ax: tidy(amp[0] * k, 0.01), ay: tidy(amp[1] * k, 0.01), az: tidy(amp[2] * k, 0.01) };
+}
+
+/** The jolt the shake button gives (g). */
+const SHAKE_AMP: [number, number, number] = [1.5, -1.0, 0.5];
+
+/** A button on the sensor: one press shakes it (a few decaying swings). */
+export const shakeControl: PartControl = {
+  hint: "누르면 센서를 흔듭니다 — 0.5초쯤 흔들리며 중력에 가속도(ax·ay·az)가 더해집니다.",
+  start(p) {
+    const t0 = p.t;
+    let over = false;
+    return {
+      set: shakeAt(0, SHAKE_AMP),
+      tick(t) {
+        if (over) return { done: true };
+        over = t - t0 >= SHAKE_MS;
+        return { set: shakeAt(t - t0, SHAKE_AMP), done: over };
+      },
+    };
+  },
+};
+
 // ------------------------------------------------------------ tilt
 
 /** Largest tilt a drag sets (degrees). */
 const MAX_TILT = 90;
 /** The rotation rate falls back to 0 this long (ms) after the drag stops moving. */
 const GYRO_HOLD = 150;
+/** A drag that turns back faster than this (px/ms) is a flick: a shake. */
+const FLICK_SPEED = 1.2;
 
 /**
  * Tilting a motion sensor: about 1° per screen pixel, roll from horizontal
  * and pitch from vertical travel. While it moves, the angle's rate of
- * change is what the gyroscope measures.
+ * change is what the gyroscope measures. A quick back-and-forth flick
+ * shakes it as well, harder the faster the flick.
  */
 export const tiltControl: PartControl = {
-  hint: "끌어서 기울이세요 — 좌우는 roll, 위아래는 pitch. 모듈 가장자리를 끌면 옮겨집니다.",
+  hint: "끌어서 기울이세요 — 좌우는 roll, 위아래는 pitch. 빠르게 왔다 갔다 하면 흔들립니다. 모듈 가장자리를 끌면 옮겨집니다.",
   start(p, props) {
     const roll0 = num(props.roll),
       pitch0 = num(props.pitch);
@@ -174,24 +220,51 @@ export const tiltControl: PartControl = {
       spinning = false;
     const tilt = (v: number) => clamp(Math.round(v), -MAX_TILT, MAX_TILT);
     const rate = (d: number, dt: number) => clamp(Math.round(d / dt), -2000, 2000);
+    // Pointer velocity (px/ms) for spotting a reversal, and a shake running.
+    let last = { x: p.clientX, y: p.clientY, t: p.t };
+    let vel = { x: 0, y: 0 };
+    let shake: { t: number; amp: [number, number, number] } | null = null;
+    const flick = (q: ControlPointer) => {
+      const dt = q.t - last.t;
+      if (dt < 4) return;
+      const v = { x: (q.clientX - last.x) / dt, y: (q.clientY - last.y) / dt };
+      // Turned back hard on either axis: shake along it (screen x moves
+      // roll, i.e. the chip's Y axis; screen y the X axis).
+      const back = (a: number, b: number) => a * b < 0 && Math.abs(a) > FLICK_SPEED;
+      if (back(vel.x, v.x) || back(vel.y, v.y)) {
+        const g = (s: number) => clamp(s / FLICK_SPEED, 0.8, 2);
+        const sx = back(vel.x, v.x) ? Math.sign(vel.x) * g(Math.abs(vel.x)) : 0;
+        const sy = back(vel.y, v.y) ? Math.sign(vel.y) * g(Math.abs(vel.y)) : 0;
+        shake = { t: q.t, amp: [sy, sx, 0.3 * Math.hypot(sx, sy)] };
+      }
+      vel = v;
+      last = { x: q.clientX, y: q.clientY, t: q.t };
+    };
     return {
       move(q) {
+        flick(q);
+        const jolt = shake ? shakeAt(q.t - shake.t, shake.amp) : {};
         const r = tilt(roll0 + (q.clientX - p.clientX));
         const pi = tilt(pitch0 + (q.clientY - p.clientY));
-        if (r === roll && pi === pitch) return;
+        if (r === roll && pi === pitch) return shake ? jolt : undefined;
         const dt = Math.max(8, q.t - t0) / 1000;
-        const out = { roll: r, pitch: pi, gx: rate(r - roll, dt), gy: rate(pi - pitch, dt) };
+        const out = { roll: r, pitch: pi, gx: rate(r - roll, dt), gy: rate(pi - pitch, dt), ...jolt };
         [roll, pitch, t0, spinning] = [r, pi, q.t, true];
         return out;
       },
       release: () => ({ gx: 0, gy: 0 }),
       tick(t, held) {
-        if (!held) return { done: true };
-        if (spinning && t - t0 > GYRO_HOLD) {
-          spinning = false;
-          return { set: { gx: 0, gy: 0 } };
+        const set: PropValues = {};
+        if (shake) {
+          Object.assign(set, shakeAt(t - shake.t, shake.amp));
+          if (t - shake.t >= SHAKE_MS) shake = null;
         }
-        return {};
+        if (spinning && (!held || t - t0 > GYRO_HOLD)) {
+          spinning = false;
+          Object.assign(set, { gx: 0, gy: 0 });
+        }
+        const any = Object.keys(set).length > 0;
+        return { set: any ? set : undefined, done: !held && !shake };
       },
     };
   },

@@ -287,6 +287,10 @@ main { position: relative; }
 .imu-axis { stroke: #334155; stroke-width: 0.5; pointer-events: none; }
 .imu-board { fill: #1e40af; stroke: #bfdbfe; stroke-width: 0.8; opacity: 0.9; pointer-events: none; }
 .imu-ball { fill: #facc15; stroke: #713f12; stroke-width: 0.4; pointer-events: none; }
+[data-drag="shake"] { cursor: pointer; }
+.shake-button rect { fill: #fef3c7; stroke: #b45309; stroke-width: 0.5; }
+.shake-button text { font: 600 5.5px sans-serif; fill: #78350f; pointer-events: none; }
+.shake-button.held rect { fill: #fcd34d; }
 .dot-face { fill: #111; }
 .dot-led { fill: #3a0d0d; }
 .dot-led.lit { fill: #ff2a2a; }

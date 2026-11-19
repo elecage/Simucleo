@@ -1,7 +1,7 @@
 // Tier 6 parts (M13): MPU-6050 motion sensor, MAX7219 LED dot matrix and an
 // IR receiver with its NEC remote. Their models live in
 // `simucleo_circuit::devices` (Mpu6050, Max7219, IrRemote).
-import { tiltControl } from "./controls";
+import { shakeControl, tiltControl } from "./controls";
 import { PITCH, type MatrixView, type PartDef } from "./types";
 
 const P = PITCH;
@@ -46,11 +46,11 @@ export const mpu6050: PartDef = {
   name: "가속도·자이로 (MPU-6050)",
   category: "sensor",
   description:
-    "GY-521 모듈. I2C 주소 0x68 (AD0을 High로 하면 0x69). 처음엔 잠자기 상태(PWR_MGMT_1 0x6B = 0x40)라 0x6B에 0을 써서 깨워야 측정값이 나옵니다. 0x3B부터 14바이트: 가속도 X·Y·Z, 온도(°C = 값/340 + 36.53), 자이로 X·Y·Z (빅엔디언 int16). 감도: ±2 g 16384 LSB/g, ±250 °/s 131 LSB/(°/s) (0x1C, 0x1B로 범위 변경). 가운데 기판을 마우스로 끌면 기울어집니다 — 좌우는 roll, 위아래는 pitch, 끄는 동안 그 속도가 자이로 값이 됩니다. 모듈 가장자리를 끌면 옮겨집니다.",
+    "GY-521 모듈. I2C 주소 0x68 (AD0을 High로 하면 0x69). 처음엔 잠자기 상태(PWR_MGMT_1 0x6B = 0x40)라 0x6B에 0을 써서 깨워야 측정값이 나옵니다. 0x3B부터 14바이트: 가속도 X·Y·Z, 온도(°C = 값/340 + 36.53), 자이로 X·Y·Z (빅엔디언 int16). 감도: ±2 g 16384 LSB/g, ±250 °/s 131 LSB/(°/s) (0x1C, 0x1B로 범위 변경). 가운데 기판을 마우스로 끌면 기울어집니다 — 좌우는 roll, 위아래는 pitch, 끄는 동안 그 속도가 자이로 값이 됩니다. 빠르게 왔다 갔다 끌거나 '흔들기' 버튼을 누르면 흔들립니다: 0.5초쯤 잦아드는 가속도(ax·ay·az, g)가 중력에 더해집니다. 모듈 가장자리를 끌면 옮겨집니다.",
   w: 8,
   h: 9,
   pins: MPU_PINS.map((id, i) => ({ id, x: 2 + i, y: 9, label: id })),
-  props: { address: "0x68", roll: 0, pitch: 0, gx: 0, gy: 0, gz: 0, temp: 25 },
+  props: { address: "0x68", roll: 0, pitch: 0, gx: 0, gy: 0, gz: 0, ax: 0, ay: 0, az: 0, temp: 25 },
   propOptions: { address: ["0x68", "0x69"] },
   ranges: {
     roll: { min: -90, max: 90, step: 1, label: "Roll (X축 기울기)", unit: "°" },
@@ -58,12 +58,19 @@ export const mpu6050: PartDef = {
     gx: { min: -500, max: 500, step: 1, label: "자이로 X", unit: "°/s" },
     gy: { min: -500, max: 500, step: 1, label: "자이로 Y", unit: "°/s" },
     gz: { min: -500, max: 500, step: 1, label: "자이로 Z", unit: "°/s" },
+    ax: { min: -4, max: 4, step: 0.01, label: "흔들림 X (중력 외 가속도)", unit: "g" },
+    ay: { min: -4, max: 4, step: 0.01, label: "흔들림 Y", unit: "g" },
+    az: { min: -4, max: 4, step: 0.01, label: "흔들림 Z", unit: "g" },
     temp: { min: -40, max: 85, step: 0.5, label: "온도", unit: "°C" },
   },
-  controls: { tilt: tiltControl },
+  controls: { tilt: tiltControl, shake: shakeControl },
   render: (props, visual) => {
     const roll = Number(props.roll) || 0,
       pitch = Number(props.pitch) || 0;
+    // A shake jiggles the board in its dial (X is screen down, Y right).
+    const [ax, ay] = [Number(props.ax) || 0, Number(props.ay) || 0];
+    const shaking = ax !== 0 || ay !== 0 || (Number(props.az) || 0) !== 0;
+    const jiggle = `translate(${(ay * 0.6 * P).toFixed(2)} ${(ax * 0.6 * P).toFixed(2)})`;
     // Where a ball on the board would roll to (the matrix example's dot).
     const bx = 4 * P + Math.sin((roll * Math.PI) / 180) * 2.4 * P;
     const by = 4 * P + Math.sin((pitch * Math.PI) / 180) * 2.4 * P;
@@ -79,9 +86,17 @@ export const mpu6050: PartDef = {
           <circle cx={4 * P} cy={4 * P} r={3.3 * P} className="imu-dial" />
           <line x1={0.9 * P} y1={4 * P} x2={7.1 * P} y2={4 * P} className="imu-axis" />
           <line x1={4 * P} y1={0.9 * P} x2={4 * P} y2={7.1 * P} className="imu-axis" />
-          <polygon points={tiltedBoard(roll, pitch, 4 * P, 4 * P, 2.2 * P)} className="imu-board" />
-          <rect x={3.4 * P} y={3.4 * P} width={1.2 * P} height={1.2 * P} className="chip" />
-          <circle cx={bx} cy={by} r={0.45 * P} className="imu-ball" />
+          <g transform={jiggle} data-shake={shaking ? "1" : "0"}>
+            <polygon points={tiltedBoard(roll, pitch, 4 * P, 4 * P, 2.2 * P)} className="imu-board" />
+            <rect x={3.4 * P} y={3.4 * P} width={1.2 * P} height={1.2 * P} className="chip" />
+            <circle cx={bx} cy={by} r={0.45 * P} className="imu-ball" />
+          </g>
+        </g>
+        <g data-drag="shake" className={visual.control === "shake" ? "shake-button held" : "shake-button"} aria-label="흔들기">
+          <rect x={5.7 * P} y={0.25 * P} width={2.1 * P} height={1.1 * P} rx={1.5} />
+          <text x={6.75 * P} y={1.03 * P} textAnchor="middle">
+            흔들기
+          </text>
         </g>
         <text x={4 * P} y={-0.5 * P} textAnchor="middle" className="silk small value">
           roll {roll.toFixed(0)}° · pitch {pitch.toFixed(0)}°
@@ -128,13 +143,13 @@ export const max7219: PartDef = {
   name: "LED 도트 매트릭스 (MAX7219)",
   category: "display",
   description:
-    "MAX7219 + 8×8 빨간 LED (FC-16 모듈), count로 1–4개를 이어 붙입니다. CS를 Low로 하고 16비트 프레임(주소, 데이터)을 MSB부터 CLK 상승 에지마다 DIN으로 보낸 뒤 CS를 High로 하면 반영됩니다. 하드웨어 SPI(D13 SCK, D11 MOSI)든 GPIO 비트뱅잉이든 됩니다. 여러 개면 마지막 16×N비트가 남고, 먼저 보낸 프레임이 가장 먼 모듈(오른쪽)로 갑니다. 레지스터: 0x1–0x8 줄(위부터, 비트 7이 왼쪽), 0x9 디코드, 0xA 밝기(0–15), 0xB 스캔 한도, 0xC 셧다운(처음엔 꺼져 있음, 1로 켬), 0xF 디스플레이 테스트. VCC는 5V.",
+    "MAX7219 + 8×8 빨간 LED (FC-16 모듈), count로 1–4개를 이어 붙입니다. CS를 Low로 하고 16비트 프레임(주소, 데이터)을 MSB부터 CLK 상승 에지마다 DIN으로 보낸 뒤 CS를 High로 하면 반영됩니다. 하드웨어 SPI(D13 SCK, D11 MOSI)든 GPIO 비트뱅잉이든 됩니다. 여러 개면 마지막 16×N비트가 남고, 먼저 보낸 프레임이 가장 먼 모듈(오른쪽)로 갑니다. 레지스터에서 밀려난 비트는 16클럭 뒤 DOUT으로 나오므로(CLK 하강 에지에서 바뀜), 따로 놓은 다른 모듈의 DIN을 DOUT에 잇고 CLK·CS를 같이 연결해도 체인이 됩니다 — CS가 올라갈 때 모두 함께 반영됩니다. 레지스터: 0x1–0x8 줄(위부터, 비트 7이 왼쪽), 0x9 디코드, 0xA 밝기(0–15), 0xB 스캔 한도, 0xC 셧다운(처음엔 꺼져 있음, 1로 켬), 0xF 디스플레이 테스트. VCC는 5V.",
   w: 9,
   h: 9,
   pins: [
     ...["VCC", "GND", "DIN", "CS", "CLK"].map((id, i) => ({ id, x: 0, y: 2 + i, label: id === "CS" ? "CS (LOAD)" : id })),
     // On the input header too: the drawing's width follows `count`.
-    { id: "DOUT", x: 0, y: 7, label: "DOUT (체인 출력 — 여러 개는 count로)" },
+    { id: "DOUT", x: 0, y: 7, label: "DOUT (체인 출력 → 다음 모듈 DIN)" },
   ],
   props: { count: 1 },
   propOptions: { count: ["1", "2", "3", "4"] },

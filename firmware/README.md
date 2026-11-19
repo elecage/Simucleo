@@ -28,12 +28,15 @@ CI builds every project here and runs it through `simucleo` as a regression test
 | `hal-pir-alarm` | CubeMX HAL | HC-SR501 PIR on EXTI8 (both edges): LED and VCP log with the hold time | M19 ✅ |
 | `hal-bmp280` | CubeMX HAL | BMP280 on I2C1: chip id, soft reset, trimming registers, forced mode with status polling, Bosch integer compensation, altitude | M19 ✅ |
 | `hal-neopixel-chain` | CubeMX HAL | TIM3 PWM + DMA into a 12-LED ring whose DOUT feeds an 8-LED strip: one 20-LED frame | M19 ✅ |
+| `hal-stepper-a4988` | CubeMX HAL | NEMA17 on an A4988: TIM2 PWM STEP pulses with an acceleration ramp in the CC interrupt, 1/8 steps via MS1–MS3, DIR turns back every revolution; B1 switches the driver off (EN) | M21 ✅ |
+| `hal-stepper-l298n` | CubeMX HAL | NEMA17 on an L298N: half-step sequence on IN1–IN4 written at once through BSRR from a TIM4 interrupt, ENA/ENB 80 % PWM on TIM3 | M21 ✅ |
+| `hal-esc-bldc` | CubeMX HAL | Hobby ESC + brushless motor: 50 Hz servo pulses on TIM3, the arming sequence, throttle from a pot on ADC1; B1 stops the signal (failsafe) | M21 ✅ |
 | `freertos-two-tasks` | CubeMX + FreeRTOS (CMSIS-RTOS v2) | Blink/Count/Button/Flags threads, mutex, B1 EXTI → semaphore → thread flags; SVC/PendSV/SysTick, PSP, BASEPRI, HAL tick on TIM11 | M4 ✅ |
 | `freertos-queue-uart` | CubeMX + FreeRTOS (CMSIS-RTOS v2) | UART RX ISR → message queue → echo task; producer/consumer queue; heap and stack statistics | M4 ✅ |
 | `lesson-blink-2hz` | CubeMX HAL | solution to the "upload your own firmware" lesson (PA5 at 2 Hz); used only by the tests, not bundled with the site | M16 ✅ |
 
 ```sh
-for d in bare-blinky exceptions difftest hal-uart-printf hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture hal-7seg-keypad hal-encoder-stepper-lcd hal-sonar-onewire hal-imu-matrix hal-ir-remote hal-onewire-multi hal-bluetooth-led hal-relay hal-servos-multi hal-shift-register hal-tm1637-clock hal-joystick-oled hal-pir-alarm hal-bmp280 hal-neopixel-chain freertos-two-tasks freertos-queue-uart lesson-blink-2hz; do make -C firmware/$d; done
+for d in bare-blinky exceptions difftest hal-uart-printf hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture hal-7seg-keypad hal-encoder-stepper-lcd hal-sonar-onewire hal-imu-matrix hal-ir-remote hal-onewire-multi hal-bluetooth-led hal-relay hal-servos-multi hal-shift-register hal-tm1637-clock hal-joystick-oled hal-pir-alarm hal-bmp280 hal-neopixel-chain hal-stepper-a4988 hal-stepper-l298n hal-esc-bldc hal-bldc-hall freertos-two-tasks freertos-queue-uart lesson-blink-2hz; do make -C firmware/$d; done
 make -C firmware/hal-blinky variants
 cargo run --release -p simucleo-cli -- run firmware/bare-blinky/build/bare-blinky.elf --ms 2000
 cargo test --release -p simucleo-nucleo --test firmware -- --include-ignored

@@ -151,11 +151,12 @@ test("analog: the pot steers the servo through the ADC; light sets motor speed",
   await expect.poll(angle).toBeGreaterThan(85);
   expect(await angle()).toBeLessThan(95);
 
-  // Drag the knob up to the top.
+  // Turn the knob clockwise to the end (from 9 to 3 o'clock).
   const k = (await page.locator("[data-id=pot] .pot-knob").boundingBox())!;
-  await page.mouse.move(k.x + k.width / 2, k.y + k.height / 2);
+  const [kx, ky] = [k.x + k.width / 2, k.y + k.height / 2];
+  await page.mouse.move(kx, ky);
   await page.mouse.down();
-  await page.mouse.move(k.x + k.width / 2, k.y - 200, { steps: 10 });
+  for (let a = -90; a <= 90; a += 15) await page.mouse.move(kx + 40 * Math.sin((a * Math.PI) / 180), ky - 40 * Math.cos((a * Math.PI) / 180));
   await page.mouse.up();
   await expect(consoleOut(page)).toContainText("pot 4095", { timeout: 5000 });
   await expect.poll(angle).toBeGreaterThan(175);

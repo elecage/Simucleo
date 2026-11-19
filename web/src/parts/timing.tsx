@@ -1,5 +1,7 @@
 // Timing-sensitive single-wire parts (M7): NeoPixel (WS2812B) chains and
 // DHT11/DHT22 sensors. Their decoders live in `simucleo_circuit::devices`.
+import { BREATH_RH, FINGER_C, fingerTouch } from "./controls";
+import { Fingertip } from "./feedback";
 import { PITCH, type PartDef, type VisualState } from "./types";
 
 const P = PITCH;
@@ -134,7 +136,7 @@ export const dht: PartDef = {
   name: "온습도 센서 (DHT22/DHT11)",
   category: "sensor",
   description:
-    "단선 통신. MCU가 DATA를 Low로 잡았다 놓으면(DHT22 1 ms 이상, DHT11 18 ms 이상) 센서가 80 µs Low, 80 µs High 후 40비트(습도 16, 온도 16, 체크섬 8)를 보냅니다. 비트마다 50 µs Low 뒤 High가 약 27 µs면 0, 70 µs면 1. 모듈에 10 kΩ 풀업이 있습니다.",
+    `단선 통신. MCU가 DATA를 Low로 잡았다 놓으면(DHT22 1 ms 이상, DHT11 18 ms 이상) 센서가 80 µs Low, 80 µs High 후 40비트(습도 16, 온도 16, 체크섬 8)를 보냅니다. 비트마다 50 µs Low 뒤 High가 약 27 µs면 0, 70 µs면 1. 모듈에 10 kΩ 풀업이 있습니다. 센서를 누르고 있으면 손가락 체온(약 ${FINGER_C} °C)과 입김(습도 ${BREATH_RH} %)으로 값이 오르고, 떼면 원래대로 돌아옵니다.`,
   w: 4,
   h: 6,
   pins: [
@@ -148,10 +150,11 @@ export const dht: PartDef = {
     temp: { min: -40, max: 80, step: 0.1, label: "온도", unit: "°C" },
     humidity: { min: 0, max: 100, step: 0.1, label: "습도", unit: "%" },
   },
+  controls: { touch: fingerTouch("temp", "humidity") },
   render: (props, visual) => {
     const dht11 = props.model === "DHT11";
     return (
-      <g>
+      <g data-drag="touch" data-temp={Number(props.temp)} data-humidity={Number(props.humidity)}>
         <rect x={0} y={0} width={4 * P} height={5.3 * P} rx={1.5} className="module-pcb" />
         <rect x={0.5 * P} y={0.3 * P} width={3 * P} height={3.8 * P} rx={1} className={dht11 ? "dht11-body" : "dht22-body"} />
         {Array.from({ length: 5 }, (_, r) =>
@@ -165,6 +168,7 @@ export const dht: PartDef = {
         <text x={2 * P} y={4.85 * P} textAnchor="middle" className="silk module-label">
           {String(props.model)}
         </text>
+        {visual.control === "touch" && <Fingertip x={2 * P} y={2.2 * P} scale={1.2} />}
         <text x={2 * P} y={-0.5 * P} textAnchor="middle" className="silk small value">
           {Number(props.temp)} °C · {Number(props.humidity)} %
         </text>

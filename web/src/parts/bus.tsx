@@ -1,6 +1,8 @@
 // Bus modules (M6): I2C and SPI breakouts. Their protocol models live in
 // `simucleo_circuit::devices`; each module carries its own pull-ups (I2C)
 // and only answers when its VCC is powered.
+import { BREATH_RH, FINGER_C, fingerTouch } from "./controls";
+import { Fingertip } from "./feedback";
 import { PITCH, type PartDef, type VisualState } from "./types";
 
 const P = PITCH;
@@ -194,7 +196,7 @@ export const aht20: PartDef = {
   name: "온습도 센서 (AHT20)",
   category: "sensor",
   description:
-    "I2C 주소 0x38. 0xBE로 보정, 0xAC 0x33 0x00으로 측정을 시작하면 80 ms 뒤 상태 + 습도 20비트 + 온도 20비트 + CRC를 읽을 수 있습니다.",
+    `I2C 주소 0x38. 0xBE로 보정, 0xAC 0x33 0x00으로 측정을 시작하면 80 ms 뒤 상태 + 습도 20비트 + 온도 20비트 + CRC를 읽을 수 있습니다. 센서를 누르고 있으면 손가락 체온(약 ${FINGER_C} °C)과 입김(습도 ${BREATH_RH} %)으로 값이 오르고, 떼면 원래대로 돌아옵니다.`,
   w: 3,
   h: 4,
   pins: AHT_PINS.map((p) => ({ id: p.name, x: p.x, y: 4, label: p.name === "VCC" ? "VIN (VCC)" : p.name })),
@@ -203,12 +205,14 @@ export const aht20: PartDef = {
     temp: { min: -40, max: 85, step: 0.5, label: "온도", unit: "°C" },
     humidity: { min: 0, max: 100, step: 1, label: "습도", unit: "%" },
   },
+  controls: { touch: fingerTouch("temp", "humidity") },
   render: (props, visual) => (
-    <g>
+    <g data-drag="touch" data-temp={Number(props.temp)} data-humidity={Number(props.humidity)}>
       <rect x={-0.5 * P} y={0} width={4 * P} height={4 * P} rx={2} className="module-pcb" />
       <Header pins={AHT_PINS} y={4 * P} labelY={3.3 * P} />
       <rect x={0.8 * P} y={0.8 * P} width={1.4 * P} height={1.4 * P} className="chip" />
       <circle cx={1.5 * P} cy={1.5 * P} r={0.3 * P} fill="#555" />
+      {visual.control === "touch" && <Fingertip x={1.5 * P} y={1.5 * P} />}
       <text x={1.5 * P} y={-0.5 * P} textAnchor="middle" className="silk small value">
         {Number(props.temp)} °C · {Number(props.humidity)} %
       </text>

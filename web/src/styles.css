@@ -199,8 +199,12 @@ main { position: relative; }
 .error { color: #dc2626; }
 /* Analog parts (M5) */
 .pot-body { fill: #1e3a8a; stroke: #172554; }
-.pot-knob { fill: #e5e7eb; stroke: #6b7280; cursor: ns-resize; }
+.pot-knob { fill: #e5e7eb; stroke: #6b7280; }
 .pot-mark { stroke: #111827; stroke-width: 1.4; stroke-linecap: round; pointer-events: none; }
+.pot-ridge { stroke: #9ca3af; stroke-width: 0.6; pointer-events: none; }
+.pot-track { fill: none; stroke: #93c5fd55; stroke-width: 1.2; stroke-linecap: round; pointer-events: none; }
+.pot-fill { fill: none; stroke: #fbbf24; stroke-width: 1.2; stroke-linecap: round; pointer-events: none; }
+.knob.turning .pot-knob { stroke: #f59e0b; stroke-width: 1.2; }
 .ldr-body { fill: #fef3c7; stroke: #b45309; }
 .ldr-track { fill: none; stroke: #b91c1c; stroke-width: 1; }
 .to92 { fill: #1f2937; stroke: #000; }
@@ -247,7 +251,38 @@ main { position: relative; }
 .enc-turn text { font: 700 8px sans-serif; fill: #111; pointer-events: none; }
 .ntc-body { fill: #1e3a8a; stroke: #0f172a; }
 /* Tier 6 parts (M13) */
-.imu-pad { cursor: grab; }
+.imu-pad.held .imu-dial { stroke: #f59e0b; stroke-width: 1; }
+
+/* M14: operating parts by hand (data-drag controls). */
+[data-drag] { cursor: grab; }
+[data-drag]:active { cursor: grabbing; }
+[data-drag="touch"], [data-drag="cover"] { cursor: pointer; }
+[data-drag="lamp"], [data-drag="obstacle"] { cursor: ns-resize; }
+.control-hint { position: absolute; max-width: 260px; padding: 4px 8px; background: #111827e6; color: #fff; border-radius: 4px; font-size: 12px; line-height: 1.4; pointer-events: none; z-index: 5; }
+.lamp-beam { fill: #fde047; pointer-events: none; }
+.lamp-handle { fill: #374151; stroke: #111827; stroke-width: 0.5; }
+.lamp-head { fill: #6b7280; stroke: #111827; stroke-width: 0.5; }
+.lamp-lens { fill: #fef08a; }
+.lamp.held .lamp-head, .lamp.held .lamp-handle { stroke: #f59e0b; stroke-width: 1; }
+.hand-cover { fill: #f2c4a0; stroke: #b07a55; stroke-width: 0.6; opacity: 0.92; pointer-events: none; }
+.cover-button circle { fill: #fff7ed; stroke: #c2410c; stroke-width: 0.6; }
+.cover-button text { font-size: 7px; pointer-events: none; }
+.cover-button.held circle { fill: #fdba74; }
+.heat-glow { fill: #f97316; opacity: 0.35; }
+.finger-pad { fill: #f2c4a0; stroke: #b07a55; stroke-width: 0.5; opacity: 0.92; }
+.finger-ridge { fill: none; stroke: #b07a55; stroke-width: 0.35; opacity: 0.8; }
+.sonar-gap { stroke: #60a5fa; stroke-width: 0.6; stroke-dasharray: 2 2; pointer-events: none; }
+.sonar-wave { fill: none; stroke: #60a5fa; stroke-width: 0.7; opacity: 0.7; pointer-events: none; }
+.obstacle-wall { fill: #fde68a; stroke: #92400e; stroke-width: 0.6; }
+.obstacle.held .obstacle-wall { stroke: #f59e0b; stroke-width: 1.2; }
+.obstacle-label { font: 5px system-ui, sans-serif; fill: #78350f; pointer-events: none; }
+.servo-scale { fill: none; stroke: #94a3b8; stroke-width: 0.6; pointer-events: none; }
+.servo-sweep { fill: #60a5fa; opacity: 0.18; pointer-events: none; }
+.servo-tick { stroke: #64748b; stroke-width: 0.6; pointer-events: none; }
+.motor-spoke.marked { stroke: #dc2626; }
+.motor-dot { fill: #dc2626; }
+.motor-arrow { fill: none; stroke: #16a34a; stroke-width: 1.2; pointer-events: none; }
+.motor-arrow-head { fill: #16a34a; pointer-events: none; }
 .imu-dial { fill: #0f172a; stroke: #93c5fd; stroke-width: 0.5; }
 .imu-axis { stroke: #334155; stroke-width: 0.5; pointer-events: none; }
 .imu-board { fill: #1e40af; stroke: #bfdbfe; stroke-width: 0.8; opacity: 0.9; pointer-events: none; }

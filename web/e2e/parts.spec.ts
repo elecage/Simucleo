@@ -77,7 +77,7 @@ test("dragging the MPU-6050 tilts it and the dot on the MAX7219 matrix follows",
   const placed = await imu.getAttribute("transform");
 
   // Drag right 40 px and down 30 px on the sensor: roll 40°, pitch 30°.
-  const box = (await page.locator("[data-id=imu] [data-drag-tilt] .imu-dial").boundingBox())!;
+  const box = (await page.locator("[data-id=imu] [data-drag=tilt] .imu-dial").boundingBox())!;
   const [x0, y0] = [box.x + box.width / 2, box.y + box.height / 2];
   await page.mouse.move(x0, y0);
   await page.mouse.down();

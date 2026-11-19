@@ -34,8 +34,57 @@ export interface PartDef {
   ranges?: Record<string, { min: number; max: number; step: number; label: string; unit: string; log?: boolean }>;
   /** Shown in the part library and inspector. */
   description?: string;
+  /**
+   * Things on the part a student operates with the mouse or a finger (a
+   * knob, a lamp to move, a sensor to touch), by the name used in the
+   * drawing's `data-drag` attribute. They change the same props as the
+   * inspector sliders.
+   */
+  controls?: Record<string, PartControl>;
   /** Renders the body. Pin markers are drawn by the editor. */
   render: (props: Record<string, string | number>, visual: VisualState) => JSX.Element;
+}
+
+/** Prop values a control writes. */
+export type PropValues = Record<string, number>;
+
+/** Where the pointer is during a control gesture. */
+export interface ControlPointer {
+  /** In the part's own coordinates (canvas units, origin at the part origin). */
+  x: number;
+  y: number;
+  /** On screen (px): for gestures measured in screen distance. */
+  clientX: number;
+  clientY: number;
+  /** `performance.now()`. */
+  t: number;
+}
+
+/** One press-drag-release on a control. Every method may return prop values to write. */
+export interface ControlSession {
+  /** Written as the gesture starts. */
+  set?: PropValues;
+  move?(p: ControlPointer): PropValues | void;
+  release?(p: ControlPointer): PropValues | void;
+  /**
+   * Called about 10 times a second from the press on, and after the release
+   * too, until it reports `done` (a sensor warmed by a finger cools down
+   * again). `props` are the part's current values.
+   */
+  tick?(t: number, held: boolean, props: Record<string, string | number>): { set?: PropValues; done?: boolean };
+  /** Handed to the next session on the same control while this one still ticks. */
+  carry?: unknown;
+}
+
+export interface PartControl {
+  /** What to do, shown while the pointer is over it (Korean). */
+  hint: string;
+  start(p: ControlPointer, props: Record<string, string | number>, carry?: unknown): ControlSession;
+  /** The mouse wheel over the control (`deltaY` in pixels). */
+  wheel?(deltaY: number, props: Record<string, string | number>): PropValues | void;
+  /** Dragging further than a few pixels moves the part instead: a press
+   * and hold operates it, a drag moves it (sensors touched with a finger). */
+  holdOnly?: boolean;
 }
 
 /** Per-part state sampled from the simulator at ~60 Hz. */
@@ -66,6 +115,8 @@ export interface VisualState {
   lcd?: LcdView;
   /** LED dot-matrix contents (MAX7219 chain). */
   matrix?: MatrixView;
+  /** The control (`data-drag`) being operated now. */
+  control?: string;
   /** The pressable element held down now (`data-action`). */
   action?: string;
   pressed?: boolean;

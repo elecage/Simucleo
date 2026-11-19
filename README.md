@@ -8,7 +8,11 @@
 
 ![PWM으로 RGB LED와 LD2 밝기 제어](docs/images/m3-pwm-rgb.png)
 
-> **상태: M12 완료.** 브레드보드 배선에서 회로도를 자동으로 만들어, 어느 MCU 핀이 어느 부품에 이어지는지
+> **M16: 수업용 실습.** 툴바의 **📝 실습**에서 단계별 과제를 고르면 배선은 바로바로, 동작은 **채점**으로
+> 자동 검사하고 틀린 이유를 한국어로 알려 준다. 학생은 결과를 CSV/JSON으로 내보내 제출한다
+> ([선생님용 안내](docs/lessons.md)).
+>
+> **M12:** 브레드보드 배선에서 회로도를 자동으로 만들어, 어느 MCU 핀이 어느 부품에 이어지는지
 > 신호 이름으로 보여 준다. 실행 중에는 넷의 High/Low/PWM과 LED 밝기가 회로도에 나타난다.
 >
 > **M11:** 디버거에서 변수 값을 바꾸고, 변수가 바뀌는 순간 멈추는 감시점을 걸고,
@@ -43,11 +47,13 @@
 - Arduino 헤더와 **Morpho 헤더**를 모두 갖춘 Nucleo 보드, 브레드보드 드래그 앤 드롭 배선, 실행 중 배선 변경
 - PWM 밝기, 부저 소리, 모터 회전, OLED 화면 등 실제와 비슷한 표시
 - 교육용 진단: 미구현 레지스터 접근, `Error_Handler`/HardFault 원인, 저항 없는 LED 같은 전기 규칙 위반
+- 수업용 실습: 단계별 안내, 배선·동작 자동 채점, 진행 상황 저장, 결과 내보내기
 - 가상 콘솔(UART), 소스 수준 디버깅(중단점·조건부 중단점·감시점·스텝·변수 보기와 바꾸기·감시식·기계어·RTOS 태스크별 스택), GDB 원격 서버, 파형 뷰, 레지스터/메모리 뷰, RTOS 태스크 뷰
 
 ## 문서
 - [아키텍처](docs/architecture.md)
 - [로드맵](docs/roadmap.md)
+- [실습(레슨) 안내 — 선생님용](docs/lessons.md): 수업에서 쓰기, 새 실습 파일 쓰기(모든 검사 종류), 결과 제출받기
 - [외부 부품 계획](docs/parts.md)
 - ADR: [Rust+WASM](docs/adr/0001-rust-wasm-web.md) · [CPU 백엔드](docs/adr/0002-cpu-backends.md) · [펌웨어 범위](docs/adr/0003-firmware-scope.md) · [배선 편집기](docs/adr/0004-wiring-editor.md)
 
@@ -64,6 +70,7 @@ crates/
   cli/             헤드리스 실행기 (simucleo)
   wasm/            웹용 WASM 바인딩
 web/               React + SVG 배선 편집기
+web/lessons/       실습 파일 (자동 채점 레슨)
 firmware/          테스트 펌웨어 (arm-none-eabi-gcc)
 docs/              설계 문서, ADR
 ```

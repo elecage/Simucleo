@@ -107,6 +107,8 @@ export interface Runner {
   /** Pins whose edges the frames report; each `owner` (default: the
    * waveform view) keeps its own list and the union is probed. */
   setProbes(pins: string[], owner?: string): void;
+  /** Analog probes (net voltages): "PA1" or "part.pin". */
+  setAnalogProbes(specs: string[]): void;
   /** Oscilloscope trigger over the probed pins (null: none); re-arms. */
   setTrigger(config: TriggerConfig | null): void;
   /** Wait for the next trigger (after a Single capture). */
@@ -291,6 +293,7 @@ export function useRunner(): Runner {
         probeOwners.current.set(owner, pins);
         send({ type: "probes", pins: [...new Set([...probeOwners.current.values()].flat())] });
       },
+      setAnalogProbes: (specs: string[]) => send({ type: "analogProbes", specs }),
       setTrigger: (config: TriggerConfig | null) => send({ type: "trigger", config }),
       armTrigger: () => send({ type: "armTrigger" }),
       sendConsole: (text: string) => send({ type: "console", text }),

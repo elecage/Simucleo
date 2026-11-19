@@ -129,6 +129,9 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     case "probes":
       sim.setProbes(JSON.stringify(m.pins));
       break;
+    case "analogProbes":
+      sim.setAnalogProbes(JSON.stringify(m.specs));
+      break;
     case "trigger":
       sim.setTrigger(m.config ? JSON.stringify(m.config) : "");
       break;

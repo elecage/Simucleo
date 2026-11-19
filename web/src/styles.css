@@ -601,3 +601,25 @@ main.schematic-on .notice { top: 44px; }
 .switch-led.low { fill: #3b82f6; }
 .silk.stall { fill: #b45309; }
 .silk.stall.on { fill: #dc2626; font-weight: bold; }
+/* M22: analog channels, decoder lanes, decoded tables */
+.wave-label .synth { margin-left: 4px; font-size: 10px; color: #0369a1; border: 1px solid #0369a1; border-radius: 3px; padding: 0 3px; }
+.wave-label.lane-label { font-size: 11px; color: var(--muted); display: flex; align-items: center; }
+.wave-label.analog-label { font-size: 11px; display: flex; flex-direction: column; gap: 2px; }
+.wave-label.analog-label select, .wave-label.analog-label input { font: inherit; font-size: 11px; }
+.wave-label.analog-label input.num { width: 52px; }
+.wave-controls input.num.wide { width: 80px; }
+.analog-trace polyline { stroke: #ea580c; }
+.analog-trace line.adiv { stroke: var(--border); stroke-dasharray: 1 4; }
+.analog-trace line.alevel { stroke: #f59e0b; stroke-dasharray: 6 3; }
+.lane rect { fill: #dbeafe; stroke: #2563eb; }
+.lane text, .lane-dense { font-size: 10px; fill: #1e3a8a; }
+.lane .err rect { fill: #fee2e2; stroke: #dc2626; }
+.lane .err text { fill: #b91c1c; }
+.dec-mark line { stroke: #7c3aed; stroke-width: 2; }
+.dec-mark text { fill: #7c3aed; font-weight: 700; }
+.decode-table { max-height: 220px; overflow: auto; font-size: 12px; }
+.decode-table table { border-collapse: collapse; }
+.decode-table caption { text-align: left; font-weight: 600; padding: 2px 0; }
+.decode-table th, .decode-table td { padding: 1px 12px 1px 0; text-align: left; font-variant-numeric: tabular-nums; }
+.decode-table tr.err td, .decode-table .err { color: #dc2626; }
+.decode-text { font-weight: 400; font-family: ui-monospace, monospace; white-space: pre-wrap; }

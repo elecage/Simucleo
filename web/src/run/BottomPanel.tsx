@@ -9,7 +9,7 @@ type Tab = "console" | "source" | "waveform" | "rtos" | "registers" | "memory" |
 
 const hex = (v: number, w = 8) => "0x" + (v >>> 0).toString(16).toUpperCase().padStart(w, "0");
 
-export function BottomPanel({ runner }: { runner: Runner }) {
+export function BottomPanel({ runner, parts = [] }: { runner: Runner; parts?: { id: string; kind: string }[] }) {
   const [tab, setTab] = useState<Tab>("console");
   // The waveform view keeps its trigger and capture once opened.
   const [scopeOpened, setScopeOpened] = useState(false);
@@ -54,7 +54,7 @@ export function BottomPanel({ runner }: { runner: Runner }) {
         </div>
         {(tab === "waveform" || scopeOpened) && (
           <div className="tab-keep" hidden={tab !== "waveform"}>
-            <Waveform runner={runner} active={tab === "waveform"} />
+            <Waveform runner={runner} active={tab === "waveform"} parts={parts} />
           </div>
         )}
         {tab === "rtos" && <RtosView runner={runner} />}

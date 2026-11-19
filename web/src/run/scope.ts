@@ -180,3 +180,96 @@ export function clampView(view: { start: number; span: number }, min: number, ma
   const span = Math.min(view.span, max - min);
   return { start: Math.min(Math.max(view.start, min), max - span), span };
 }
+
+/** An analog channel: voltage before the first sample, then [t, volts]. */
+export interface AnalogLine {
+  v0: number;
+  samples: [number, number][];
+}
+
+function lowerBoundSamples(s: [number, number][], t: number): number {
+  let lo = 0;
+  let hi = s.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (s[mid][0] < t) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** Voltage of an analog channel just before `t`. */
+export function valueAt(ch: AnalogLine, t: number): number {
+  const i = lowerBoundSamples(ch.samples, t);
+  return i === 0 ? ch.v0 : ch.samples[i - 1][1];
+}
+
+export interface AnalogStats {
+  min: number;
+  max: number;
+  /** Time-weighted mean and RMS (the voltage holds between samples). */
+  mean: number;
+  rms: number;
+  vpp: number;
+}
+
+/** Measurements of an analog channel over [from, to]. */
+export function measureAnalog(ch: AnalogLine, from: number, to: number): AnalogStats | undefined {
+  if (!(to > from)) return undefined;
+  let v = valueAt(ch, from);
+  let last = from;
+  let min = v;
+  let max = v;
+  let sum = 0;
+  let sq = 0;
+  for (let i = lowerBoundSamples(ch.samples, from); i < ch.samples.length && ch.samples[i][0] <= to; i++) {
+    const [t, nv] = ch.samples[i];
+    sum += v * (t - last);
+    sq += v * v * (t - last);
+    last = t;
+    v = nv;
+    min = Math.min(min, v);
+    max = Math.max(max, v);
+  }
+  sum += v * (to - last);
+  sq += v * v * (to - last);
+  const span = to - from;
+  return { min, max, mean: sum / span, rms: Math.sqrt(sq / span), vpp: max - min };
+}
+
+/**
+ * SVG points of an analog channel over [from, to] in `width` pixels: a
+ * step trace, `y(volts)` mapping a voltage to a pixel row. Samples closer
+ * than half a pixel collapse to a vertical bar of their range.
+ */
+export function analogPoints(
+  ch: AnalogLine,
+  from: number,
+  to: number,
+  width: number,
+  y: (v: number) => number,
+): string {
+  const x = (t: number) => Math.round(((t - from) / (to - from)) * width * 2) / 2;
+  let v = valueAt(ch, from);
+  const out: string[] = [`0,${y(v)}`];
+  let lastPx = NaN;
+  for (let i = lowerBoundSamples(ch.samples, from); i < ch.samples.length; i++) {
+    const [t, nv] = ch.samples[i];
+    if (t > to) break;
+    const px = x(t);
+    if (px !== lastPx) out.push(`${px},${y(v)}`);
+    out.push(`${px},${y(nv)}`);
+    v = nv;
+    lastPx = px;
+  }
+  out.push(`${width},${y(v)}`);
+  return out.join(" ");
+}
+
+/** "2.48 V", "350 mV". */
+export function fmtVolts(v: number): string {
+  return Math.abs(v) < 1 && v !== 0 ? `${Number((v * 1000).toFixed(0))} mV` : `${Number(v.toFixed(2))} V`;
+}
+
+/** Volts per division, 1-2-5 from 10 mV to 5 V. */
+export const VOLTS_DIV: number[] = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5];

@@ -635,7 +635,7 @@ export function App() {
         </div>
       </main>
 
-      <BottomPanel runner={runner} />
+      <BottomPanel runner={runner} parts={project.parts} />
 
       {lessonOpen && (
         <LessonPanel

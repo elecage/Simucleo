@@ -948,7 +948,8 @@ mod tests {
         let (t_fine, t) = bmp280_t_fine(adc_t);
         assert!((t as f64 / 100.0 - 21.5).abs() <= 0.05, "{t}");
         let p = bmp280_pressure(adc_p, t_fine) as f64 / 256.0;
-        assert!((p - 95_000.0).abs() < 0.5, "{p}");
+        // Truncated to whole pascals, as firmware does: exactly the target.
+        assert_eq!(p as i64, 95_000, "{p}");
         assert!(b.warning.is_none());
 
         // Pressure skipped: 0x80000.
@@ -975,11 +976,11 @@ mod tests {
         };
         let (tc, p) = read(&mut b, t);
         assert_eq!(tc, 2500);
-        assert!((p - 101_325.0).abs() < 0.2, "{p}");
+        assert_eq!(p as i64, 101_325, "{p}");
         b.temp = -10.25;
         b.pressure = 80_000.0;
         let (tc, p) = read(&mut b, t + 1.0);
         assert_eq!(tc, -1025);
-        assert!((p - 80_000.0).abs() < 0.2, "{p}");
+        assert_eq!(p as i64, 80_000, "{p}");
     }
 }

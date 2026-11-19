@@ -105,6 +105,8 @@ struct Ring {
     level: bool,
     /// Time of the newest edge dropped for room.
     lost_until: Option<f64>,
+    /// When the pin began to be watched: nothing is known before.
+    since: f64,
 }
 
 impl Ring {
@@ -187,14 +189,17 @@ impl Scope {
     }
 
     /// The probed pins, in the order `push` numbers them, with their levels
-    /// now. History is dropped and the trigger re-armed.
-    pub fn set_channels(&mut self, pins: Vec<(String, bool)>) {
+    /// at `now` (ns), when watching them starts. History is dropped and the
+    /// trigger re-armed.
+    pub fn set_channels(&mut self, pins: Vec<(String, bool)>, now: f64) {
+        self.now = self.now.max(now);
         self.rings = pins
             .into_iter()
             .map(|(name, level)| Ring {
                 name,
                 level0: level,
                 level,
+                since: now,
                 ..Default::default()
             })
             .collect();
@@ -235,6 +240,8 @@ impl Scope {
             r.level0 = l;
             r.level = l;
             r.lost_until = None;
+            // Watched from the boot on.
+            r.since = f64::MIN;
         }
         self.now = f64::MIN;
         self.ready = None;
@@ -379,13 +386,14 @@ impl Scope {
             .rings
             .iter()
             .map(|r| {
-                let from = r.lost_until.map_or(start, |l| l.max(start));
-                let mut edges: Vec<(f64, bool)> = r
-                    .edges
-                    .iter()
-                    .filter(|e| e.0 >= start && e.0 <= end)
-                    .map(|&(t, l)| (t - t0, l))
-                    .collect();
+                // Complete from the window's start, unless the ring dropped
+                // edges after it or the pin was not watched yet.
+                let from = r.lost_until.map_or(start, |l| l.max(start)).max(r.since);
+                // The ring is in time order: only the window's edges.
+                let lo = r.edges.partition_point(|e| e.0 < start);
+                let hi = r.edges.partition_point(|e| e.0 <= end);
+                let mut edges: Vec<(f64, bool)> =
+                    r.edges.range(lo..hi).map(|&(t, l)| (t - t0, l)).collect();
                 let mut to_ns = end - t0;
                 if edges.len() > CAPTURE_EDGES {
                     to_ns = edges[CAPTURE_EDGES].0;
@@ -456,7 +464,7 @@ mod tests {
 
     fn scope(c: Config) -> Scope {
         let mut s = Scope::new();
-        s.set_channels(vec![("PA0".into(), false), ("PA1".into(), false)]);
+        s.set_channels(vec![("PA0".into(), false), ("PA1".into(), false)], f64::MIN);
         s.configure(Some(c));
         s
     }
@@ -647,6 +655,54 @@ mod tests {
         let cap = s.take_capture().expect("captured at once");
         assert_eq!(cap.trigger_ns, 10_000.0);
         assert_eq!(cap.channels[0].edges, vec![(0.0, true)]);
+    }
+
+    #[test]
+    fn history_before_probing_is_not_reported() {
+        // Probing starts at 1 ms into the run; the trigger comes 100 ns
+        // later with half of a 10 µs window before it.
+        let mut s = Scope::new();
+        s.set_channels(vec![("PA0".into(), false), ("PA1".into(), true)], 1e6);
+        s.configure(Some(config(Edge::Rising, Mode::Single, 10_000.0, 0.5)));
+        s.push(0, 1e6 + 100.0, true);
+        s.advance(1e6 + 20_000.0);
+        let cap = s.take_capture().unwrap();
+        assert_eq!(cap.start_ns, -5000.0);
+        for ch in &cap.channels {
+            assert_eq!(ch.from_ns, -100.0, "{}", ch.name);
+        }
+    }
+
+    #[test]
+    fn captures_only_visit_their_window() {
+        // Many short Normal captures after a fast signal filled the ring of
+        // another pin: they should cost about as much as with an almost
+        // empty ring, not grow with the whole history.
+        fn run(history: usize) -> std::time::Duration {
+            let mut s = scope(config(Edge::Rising, Mode::Normal, 100.0, 0.5));
+            s.configure(None);
+            for i in 0..history {
+                s.push(1, i as f64 * 10.0, i % 2 == 0);
+            }
+            s.configure(Some(config(Edge::Rising, Mode::Normal, 100.0, 0.5)));
+            let t0 = RING_EDGES as f64 * 10.0;
+            let started = std::time::Instant::now();
+            let mut n = 0;
+            for i in 0..20_000 {
+                let t = t0 + i as f64 * 1000.0;
+                s.push(0, t, true);
+                s.push(0, t + 500.0, false);
+                n += s.take_capture().is_some() as u32;
+            }
+            assert!(n > 19_000, "{n} captures");
+            started.elapsed()
+        }
+        let small = (0..3).map(|_| run(16)).min().unwrap();
+        let full = (0..3).map(|_| run(RING_EDGES)).min().unwrap();
+        assert!(
+            full < small * 3 + std::time::Duration::from_millis(5),
+            "{full:?} vs {small:?}"
+        );
     }
 
     #[test]

@@ -749,6 +749,7 @@ impl Simulator {
                 .iter()
                 .map(|&((port, pin), level)| (format!("P{}{pin}", (b'A' + port) as char), level))
                 .collect(),
+            self.board.time_ns(),
         );
         Ok(())
     }

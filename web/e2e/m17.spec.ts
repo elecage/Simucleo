@@ -40,8 +40,9 @@ test("three DS18B20 on one line: SEARCH ROM finds all, touching one warms only i
     await expect(consoleOut(page)).toContainText(`ROM ${rom}`);
   }
   await expect.poll(() => tempOf(page, roms[0]), { timeout: 8000 }).toBe(22.5);
-  expect(await tempOf(page, roms[1])).toBe(24);
-  expect(await tempOf(page, roms[2])).toBe(25.5);
+  // The sensors are printed one after another: wait for each line.
+  await expect.poll(() => tempOf(page, roms[1]), { timeout: 8000 }).toBe(24);
+  await expect.poll(() => tempOf(page, roms[2]), { timeout: 8000 }).toBe(25.5);
   await page.locator(".canvas-wrap").screenshot({ path: "test-results/m17-onewire.png" });
 
   // Hold a finger on the middle sensor: only its line warms up.

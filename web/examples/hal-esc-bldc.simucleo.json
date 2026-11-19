@@ -1,0 +1,133 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "ESC + BLDC 모터 (가변저항 스로틀)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "esc",
+      "kind": "esc-bldc",
+      "x": 52,
+      "y": 6,
+      "props": {
+        "kv": 1000,
+        "load": 0
+      }
+    },
+    {
+      "id": "bat",
+      "kind": "battery",
+      "x": 62,
+      "y": 22,
+      "props": {
+        "voltage": 11.1
+      }
+    },
+    {
+      "id": "pot",
+      "kind": "potentiometer",
+      "x": 44,
+      "y": 22,
+      "props": {
+        "ohms": "10k",
+        "position": 0.5
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "D5"
+      },
+      "b": {
+        "part": "esc",
+        "pin": "SIG"
+      },
+      "color": "#f5f5f5"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "esc",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "bat",
+        "pin": "+"
+      },
+      "b": {
+        "part": "esc",
+        "pin": "BAT+"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "bat",
+        "pin": "-"
+      },
+      "b": {
+        "part": "esc",
+        "pin": "BAT-"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "pot",
+        "pin": "1"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "pot",
+        "pin": "W"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "A0"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "pot",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P2"
+      },
+      "color": "#212121"
+    }
+  ],
+  "firmware": {
+    "name": "hal-esc-bldc",
+    "example": "hal-esc-bldc.elf"
+  }
+}

@@ -1,0 +1,230 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "스테퍼 모터 + A4988 (가속 램프, 1/8 스텝)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "drv",
+      "kind": "a4988",
+      "x": 50,
+      "y": 8,
+      "props": {
+        "model": "A4988",
+        "current": 100
+      }
+    },
+    {
+      "id": "mot",
+      "kind": "stepper-nema17",
+      "x": 64,
+      "y": 6,
+      "props": {
+        "load": 0,
+        "inertia": 0,
+        "turn": 0
+      }
+    },
+    {
+      "id": "bat",
+      "kind": "battery",
+      "x": 50,
+      "y": 24,
+      "props": {
+        "voltage": 12
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "D3"
+      },
+      "b": {
+        "part": "drv",
+        "pin": "STEP"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "D4"
+      },
+      "b": {
+        "part": "drv",
+        "pin": "DIR"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "drv",
+        "pin": "EN"
+      },
+      "color": "#8e24aa"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D8"
+      },
+      "b": {
+        "part": "drv",
+        "pin": "MS1"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "D9"
+      },
+      "b": {
+        "part": "drv",
+        "pin": "MS2"
+      },
+      "color": "#00acc1"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "nucleo",
+        "pin": "D10"
+      },
+      "b": {
+        "part": "drv",
+        "pin": "MS3"
+      },
+      "color": "#fdd835"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "drv",
+        "pin": "RST"
+      },
+      "b": {
+        "part": "drv",
+        "pin": "SLP"
+      },
+      "color": "#6d4c41"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "drv",
+        "pin": "VDD"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "drv",
+        "pin": "GND2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "bat",
+        "pin": "+"
+      },
+      "b": {
+        "part": "drv",
+        "pin": "VMOT"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w11",
+      "a": {
+        "part": "bat",
+        "pin": "-"
+      },
+      "b": {
+        "part": "drv",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w12",
+      "a": {
+        "part": "drv",
+        "pin": "1A"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "A+"
+      },
+      "color": "#111111"
+    },
+    {
+      "id": "w13",
+      "a": {
+        "part": "drv",
+        "pin": "1B"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "A-"
+      },
+      "color": "#16a34a"
+    },
+    {
+      "id": "w14",
+      "a": {
+        "part": "drv",
+        "pin": "2A"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "B+"
+      },
+      "color": "#dc2626"
+    },
+    {
+      "id": "w15",
+      "a": {
+        "part": "drv",
+        "pin": "2B"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "B-"
+      },
+      "color": "#2563eb"
+    }
+  ],
+  "firmware": {
+    "name": "hal-stepper-a4988",
+    "example": "hal-stepper-a4988.elf"
+  }
+}

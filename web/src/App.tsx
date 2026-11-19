@@ -273,6 +273,7 @@ export function App() {
         closed: v.closed,
         register: v.register,
         digits: v.digits,
+        motor: v.motor,
       };
       if (v.id === "LD2") {
         if (boardId) out[boardId] = { ...out[boardId], brightness: state.brightness, overcurrent: state.overcurrent };

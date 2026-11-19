@@ -121,6 +121,8 @@ export interface VisualState {
   register?: ShiftView;
   /** TM1637 digits. */
   digits?: DigitsView;
+  /** Motors and motor drivers (M21). */
+  motor?: MotorView;
   /** The control (`data-drag`) being operated now. */
   control?: string;
   /** The pressable element held down now (`data-action`). */
@@ -148,6 +150,25 @@ export interface ShiftView {
   latch: number;
   /** OE is low: the outputs drive (else high impedance). */
   enabled: boolean;
+}
+
+/** What a motor or motor driver shows (`simucleo_circuit::sim::MotorView`). */
+export interface MotorView {
+  /** Stepper: rotor position in full steps from the drivers' home; driver: STEP edges. */
+  steps: number;
+  /** Stepper: full steps lost so far. */
+  lost: number;
+  /** Coil / output currents, signed, in units of the rated current. */
+  coils: number[];
+  /** Lost steps, a jittering or stalled rotor just now. */
+  stalled: boolean;
+  /** Driver: on, disabled, sleep, reset, no-vmot, no-vdd; ESC: off, waiting, arming, … */
+  state: string;
+  /** Driver: microstep resolution (1/n). */
+  micro: number;
+  /** ESC: throttle 0–1 and beeps so far. */
+  throttle: number;
+  beeps: number;
 }
 
 /** What a TM1637 shows (`simucleo_circuit::sim::DigitsView`). */

@@ -1,0 +1,205 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "스테퍼 모터 + L298N (반스텝)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "br",
+      "kind": "l298n",
+      "x": 50,
+      "y": 8,
+      "props": {
+        "jumpers": "off"
+      }
+    },
+    {
+      "id": "mot",
+      "kind": "stepper-nema17",
+      "x": 66,
+      "y": 4,
+      "props": {
+        "load": 0,
+        "inertia": 0,
+        "turn": 0
+      }
+    },
+    {
+      "id": "bat",
+      "kind": "battery",
+      "x": 46,
+      "y": 24,
+      "props": {
+        "voltage": 12
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "br",
+        "pin": "IN1"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "D8"
+      },
+      "b": {
+        "part": "br",
+        "pin": "IN2"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D2"
+      },
+      "b": {
+        "part": "br",
+        "pin": "IN3"
+      },
+      "color": "#8e24aa"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D12"
+      },
+      "b": {
+        "part": "br",
+        "pin": "IN4"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "D5"
+      },
+      "b": {
+        "part": "br",
+        "pin": "ENA"
+      },
+      "color": "#00acc1"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "nucleo",
+        "pin": "D9"
+      },
+      "b": {
+        "part": "br",
+        "pin": "ENB"
+      },
+      "color": "#fdd835"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "bat",
+        "pin": "+"
+      },
+      "b": {
+        "part": "br",
+        "pin": "12V"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "bat",
+        "pin": "-"
+      },
+      "b": {
+        "part": "br",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "br",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "br",
+        "pin": "OUT1"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "A+"
+      },
+      "color": "#111111"
+    },
+    {
+      "id": "w11",
+      "a": {
+        "part": "br",
+        "pin": "OUT2"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "A-"
+      },
+      "color": "#16a34a"
+    },
+    {
+      "id": "w12",
+      "a": {
+        "part": "br",
+        "pin": "OUT3"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "B+"
+      },
+      "color": "#dc2626"
+    },
+    {
+      "id": "w13",
+      "a": {
+        "part": "br",
+        "pin": "OUT4"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "B-"
+      },
+      "color": "#2563eb"
+    }
+  ],
+  "firmware": {
+    "name": "hal-stepper-l298n",
+    "example": "hal-stepper-l298n.elf"
+  }
+}

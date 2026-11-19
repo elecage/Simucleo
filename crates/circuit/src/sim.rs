@@ -21,8 +21,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
 use crate::devices::{
-    Aht20, CharLcd, Device, Dht, Ds18b20, Ds3231, Encoder, IrRemote, Max7219, Mpu6050, NeoPixel,
-    SdCard, Sonar, Ssd1306,
+    ds18b20_rom, Aht20, CharLcd, Device, Dht, Ds18b20, Ds3231, Encoder, Hc05, IrRemote, Max7219,
+    Mpu6050, NeoPixel, Relay, SdCard, Sonar, Ssd1306,
 };
 
 use crate::netlist::{build_netlist, BusCatalog, Circuit, PartCatalog, PartInstance, PinRef, Wire};
@@ -40,6 +40,8 @@ const R_PULL: f64 = 40_000.0;
 const R_SUPPLY: f64 = 0.05;
 /// Leak to ground on every net so that floating nets stay solvable.
 const GMIN: f64 = 1e-9;
+/// Resistance of a closed relay contact (with its leads).
+const R_CONTACT: f64 = 0.1;
 /// LED dynamic resistance once conducting.
 const R_LED: f64 = 15.0;
 /// No-load speed of the DC motor at full drive (small 3–6 V hobby motor
@@ -165,6 +167,15 @@ enum Element {
         vmin: f64,
         visual: usize,
     },
+    /// A relay contact between `a` and `b`, closed while relay `relay`
+    /// (an index into the relay states after the device outputs in the
+    /// drive key) is in state `when` (true = energised, COM–NO).
+    Contact {
+        a: usize,
+        b: usize,
+        relay: usize,
+        when: bool,
+    },
     /// High-impedance input a part reads as a logic level: `a` − `b` above
     /// `threshold` (servo signal, motor driver inputs, supply detection).
     Sense {
@@ -222,6 +233,9 @@ pub struct PartVisual {
     /// LED dot-matrix contents (MAX7219 chain).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub matrix: Option<MatrixView>,
+    /// Relay: COM is on NO (else on NC).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub closed: Option<bool>,
 }
 
 /// What a chain of MAX7219 8×8 matrices shows.
@@ -345,6 +359,11 @@ pub struct CircuitSim {
     matrix_parts: Vec<MatrixPart>,
     /// Lines devices pull low on their own: (part id, node).
     dev_outputs: Vec<(String, usize, usize)>,
+    /// UART modules (HC-05) and where their pins are.
+    uart_parts: Vec<UartPart>,
+    /// Relay modules; their contact states follow the device outputs in
+    /// the drive key.
+    relay_parts: Vec<RelayPart>,
     /// Last level each single-wire part saw on its line.
     line_levels: HashMap<String, bool>,
     /// The device addressed on each I2C bus (by SCL pin).
@@ -364,6 +383,41 @@ struct WirePart {
     data: usize,
     vmin: f64,
 }
+
+/// A UART module (HC-05): its supply, serial lines and mode pin.
+#[derive(Debug, Clone)]
+struct UartPart {
+    id: String,
+    vcc: usize,
+    gnd: usize,
+    rxd: usize,
+    txd: usize,
+    en: usize,
+}
+
+/// A relay module: supply and the input that drives its coil.
+#[derive(Debug, Clone)]
+struct RelayPart {
+    id: String,
+    vcc: usize,
+    gnd: usize,
+    inp: usize,
+    active_low: bool,
+}
+
+/// Where a UART module's lines go: the MCU pins on the nets of its RXD
+/// (the MCU's TX belongs here) and TXD (the MCU's RX).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UartLink {
+    pub id: String,
+    pub rxd: Vec<(u8, u8)>,
+    pub txd: Vec<(u8, u8)>,
+}
+
+/// Lowest supply of an HC-05 board (3.6–6 V).
+const HC05_VMIN: f64 = 3.5;
+/// A 5 V relay coil pulls in at 75 % of its rated voltage.
+const RELAY_PULL_IN: f64 = 3.75;
 
 /// A MAX7219 chain: its serial lines as nets (bit-banged or SPI).
 #[derive(Debug, Clone)]
@@ -471,6 +525,8 @@ impl CircuitSim {
             wire_parts: Vec::new(),
             matrix_parts: Vec::new(),
             dev_outputs: Vec::new(),
+            uart_parts: Vec::new(),
+            relay_parts: Vec::new(),
             line_levels: HashMap::new(),
             devices: HashMap::new(),
             i2c_active: HashMap::new(),
@@ -510,6 +566,13 @@ impl CircuitSim {
                 }
                 Device::Matrix(m) => *m = Max7219::new(m.count),
                 Device::Ir(r) => *r = IrRemote::default(),
+                // Powered up again: EN is looked at afresh.
+                Device::Bluetooth(b) => {
+                    b.powered = false;
+                    b.to_phone.clear();
+                    b.to_mcu.clear();
+                }
+                Device::Relay(r) => *r = Relay::default(),
             }
         }
         self.i2c_active.clear();
@@ -731,6 +794,8 @@ impl CircuitSim {
         let mut wire_parts = Vec::new();
         let mut matrix_parts = Vec::new();
         let mut dev_outputs = Vec::new();
+        let mut uart_parts = Vec::new();
+        let mut relay_parts = Vec::new();
         let now_s = self.seconds_at(self.last_time);
         let mut map = std::mem::take(&mut self.pin_nodes);
         let mut add_visual = |id: &str, kind: VisualKind, channels: usize| {
@@ -1167,16 +1232,124 @@ impl CircuitSim {
                     });
                     dev_outputs.push((p.id.clone(), dq, 0));
                     let t = prop_f64(p, "temp", 25.0);
+                    // The 48-bit serial: the `serial` prop (hex), else one
+                    // derived from the part id, stable across sessions, so
+                    // every sensor on a shared line has its own ROM code.
+                    let serial = prop_str(p, "serial", "")
+                        .trim()
+                        .trim_start_matches("0x")
+                        .trim_start_matches("0X")
+                        .replace(['-', ' ', ':'], "");
+                    let serial = u64::from_str_radix(&serial, 16).ok().unwrap_or_else(|| {
+                        p.id.bytes().fold(0x5EED_u64, |a, b| {
+                            a.wrapping_mul(131).wrapping_add(b as u64)
+                        })
+                    }) & 0xFFFF_FFFF_FFFF;
+                    let rom = ds18b20_rom(serial);
                     match self.devices.get_mut(&p.id) {
-                        Some(Device::Thermo(x)) => x.temp = t,
+                        Some(Device::Thermo(x)) => {
+                            x.temp = t;
+                            x.rom = rom;
+                        }
                         _ => {
-                            // A serial number from the part id, stable across sessions.
-                            let serial = p.id.bytes().fold(0x5EED_u64, |a, b| {
-                                a.wrapping_mul(131).wrapping_add(b as u64)
-                            });
                             self.devices
                                 .insert(p.id.clone(), Device::Thermo(Ds18b20::new(t, serial)));
                         }
+                    }
+                }
+                "hc05" => {
+                    // HC-05 on a ZS-040 board: regulator for 3.6–6 V, 3.3 V
+                    // logic. TXD idles high, STATE is high while a phone is
+                    // connected, EN (KEY) has a pull-down.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    let (txd, rxd) = (node(pin("TXD"), &mut map), node(pin("RXD"), &mut map));
+                    let (state, en) = (node(pin("STATE"), &mut map), node(pin("EN"), &mut map));
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: HC05_VMIN,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    elements.push(Element::Resistor {
+                        a: en,
+                        b: gnd,
+                        r: 100_000.0,
+                    });
+                    dev_outputs.push((p.id.clone(), state, 0));
+                    dev_outputs.push((p.id.clone(), txd, 1));
+                    uart_parts.push(UartPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        rxd,
+                        txd,
+                        en,
+                    });
+                    let baud = prop_f64(p, "baud", 9600.0).clamp(1200.0, 1_382_400.0) as u32;
+                    match self.devices.get_mut(&p.id) {
+                        Some(Device::Bluetooth(b)) => {
+                            // The prop changed (an AT+UART setting stays
+                            // otherwise).
+                            if b.prop_baud != baud {
+                                b.baud = baud;
+                                b.prop_baud = baud;
+                            }
+                        }
+                        _ => {
+                            self.devices
+                                .insert(p.id.clone(), Device::Bluetooth(Box::new(Hc05::new(baud))));
+                        }
+                    }
+                }
+                "relay" => {
+                    // 1-channel 5 V relay module (SRD-05VDC-SL-C, driver
+                    // transistor, flyback diode, LED). Active-low boards pull
+                    // IN up to VCC; active-high ones pull it down.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    let inp = node(pin("IN"), &mut map);
+                    let (com, no, nc) = (
+                        node(pin("COM"), &mut map),
+                        node(pin("NO"), &mut map),
+                        node(pin("NC"), &mut map),
+                    );
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: RELAY_PULL_IN,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    let active_low = prop_str(p, "trigger", "low") != "high";
+                    let (a, b) = if active_low { (vcc, inp) } else { (inp, gnd) };
+                    elements.push(Element::Resistor { a, b, r: 10_000.0 });
+                    let k = relay_parts.len();
+                    elements.push(Element::Contact {
+                        a: com,
+                        b: no,
+                        relay: k,
+                        when: true,
+                    });
+                    elements.push(Element::Contact {
+                        a: com,
+                        b: nc,
+                        relay: k,
+                        when: false,
+                    });
+                    relay_parts.push(RelayPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        inp,
+                        active_low,
+                    });
+                    if !matches!(self.devices.get(&p.id), Some(Device::Relay(_))) {
+                        self.devices
+                            .insert(p.id.clone(), Device::Relay(Relay::default()));
                     }
                 }
                 "neopixel" | "neopixel-ring" | "neopixel-strip" | "neopixel-matrix" => {
@@ -1473,6 +1646,8 @@ impl CircuitSim {
             .map(|b: &BusPart| b.id.as_str())
             .chain(spi_parts.iter().map(|b: &SpiPart| b.id.as_str()))
             .chain(wire_parts.iter().map(|b: &WirePart| b.id.as_str()))
+            .chain(uart_parts.iter().map(|b: &UartPart| b.id.as_str()))
+            .chain(relay_parts.iter().map(|b: &RelayPart| b.id.as_str()))
             .chain(encoders)
             .collect();
         self.devices.retain(|id, _| ids.contains(id.as_str()));
@@ -1487,6 +1662,8 @@ impl CircuitSim {
         self.wire_parts = wire_parts;
         self.matrix_parts = matrix_parts;
         self.dev_outputs = dev_outputs;
+        self.uart_parts = uart_parts;
+        self.relay_parts = relay_parts;
         self.nodes = nodes;
         self.elements = elements;
         self.visuals = visuals;
@@ -1650,6 +1827,11 @@ impl CircuitSim {
         }
     }
 
+    /// Whether relay `k` has COM on NO in this drive key.
+    fn contact(&self, drives: &[Drive], k: usize) -> bool {
+        drives.get(self.mcu.len() + self.dev_outputs.len() + k) == Some(&Drive::High)
+    }
+
     /// Nodes connected to some source through conducting elements.
     fn components(&self, drives: &[Drive], on: &[bool]) -> Vec<bool> {
         let n = self.nodes;
@@ -1675,6 +1857,9 @@ impl CircuitSim {
                 }
                 Element::Led { a, k, .. } if on[i] => union(&mut parent, a, k),
                 Element::Sensor { out, gnd, .. } if on[i] => union(&mut parent, out, gnd),
+                Element::Contact { a, b, relay, when } if self.contact(drives, relay) == when => {
+                    union(&mut parent, a, b)
+                }
                 _ => {}
             }
         }
@@ -1747,6 +1932,9 @@ impl CircuitSim {
                     }
                 }
                 Element::Supply { n, v, .. } => source(&mut g, &mut rhs, n, v, R_SUPPLY),
+                Element::Contact { a, b, relay, when } if self.contact(drives, relay) == when => {
+                    stamp(&mut g, a, b, 1.0 / R_CONTACT)
+                }
                 Element::Sensor { out, gnd, v, r, .. } if on[i] => {
                     // Norton source v/r from gnd into out, with r across.
                     let c = 1.0 / r;
@@ -1811,6 +1999,17 @@ impl CircuitSim {
                 Some(true) => Drive::High,
                 None => Drive::Float,
             });
+        }
+        // Then where each relay's contacts are.
+        for part in &self.relay_parts {
+            let closed = match self.devices.get_mut(&part.id) {
+                Some(Device::Relay(r)) => {
+                    r.advance(now_s);
+                    r.closed
+                }
+                _ => false,
+            };
+            key.push(if closed { Drive::High } else { Drive::Low });
         }
         let drives = &key[..];
         if self.drives.as_deref() == Some(drives) {
@@ -1916,8 +2115,88 @@ impl CircuitSim {
         self.drives = Some(drives.to_vec());
         self.observe_lines(now_s, &sol);
         self.observe_matrices(&sol);
-        let changed = old.is_none_or(|o| o.inputs != sol.inputs);
-        changed.then(|| sol.inputs.clone())
+        self.observe_relays(now_s, &sol);
+        // A module that powered up or down drives its outputs differently:
+        // solve again with them.
+        if self.observe_uart_parts(&sol) {
+            let mcu = self.mcu.len();
+            let again = self.update(time, &drives[..mcu]);
+            return again.or_else(|| changed_inputs(&old, &sol));
+        }
+        changed_inputs(&old, &sol)
+    }
+
+    /// Relay coils follow their input; the contacts follow the coil after
+    /// the mechanical delay (see [`Relay`]).
+    fn observe_relays(&mut self, now: f64, sol: &Solution) {
+        for part in &self.relay_parts {
+            let supply = sol.v[part.vcc] - sol.v[part.gnd];
+            let vin = sol.v[part.inp] - sol.v[part.gnd];
+            let drive = if part.active_low {
+                vin < 1.5
+            } else {
+                vin > 2.0
+            };
+            if supply > 1.0 && supply < RELAY_PULL_IN && drive {
+                self.warnings.insert(format!(
+                    "{}: VCC is {supply:.1} V — the 5 V relay coil needs at least {RELAY_PULL_IN} V to pull in (connect VCC to 5V)",
+                    part.id
+                ));
+            }
+            if let Some(Device::Relay(r)) = self.devices.get_mut(&part.id) {
+                r.set_coil(now, supply >= RELAY_PULL_IN && drive);
+            }
+        }
+    }
+
+    /// UART modules notice their supply (and, at power-up, EN). Returns
+    /// whether one powered up or down.
+    fn observe_uart_parts(&mut self, sol: &Solution) -> bool {
+        let mut changed = false;
+        for part in &self.uart_parts {
+            let on = sol.v[part.vcc] - sol.v[part.gnd] >= HC05_VMIN;
+            let en = sol.v[part.en] - sol.v[part.gnd] > 2.0;
+            if let Some(Device::Bluetooth(b)) = self.devices.get_mut(&part.id) {
+                changed |= b.powered != on;
+                b.power(on, en);
+            }
+        }
+        changed
+    }
+
+    /// Where each UART module's RXD and TXD go (MCU pins on those nets).
+    pub fn uart_links(&self) -> Vec<UartLink> {
+        let on = |node: usize| -> Vec<(u8, u8)> {
+            self.mcu
+                .iter()
+                .filter(|&&(_, n)| n == node)
+                .map(|&(p, _)| p)
+                .collect()
+        };
+        self.uart_parts
+            .iter()
+            .map(|u| UartLink {
+                id: u.id.clone(),
+                rxd: on(u.rxd),
+                txd: on(u.txd),
+            })
+            .collect()
+    }
+
+    /// Contact changes of relay `id` so far (bounces included).
+    pub fn relay_clicks(&self, id: &str) -> u32 {
+        match self.devices.get(id) {
+            Some(Device::Relay(r)) => r.clicks,
+            _ => 0,
+        }
+    }
+
+    /// The HC-05 module of part `id`.
+    pub fn hc05(&mut self, id: &str) -> Option<&mut Hc05> {
+        match self.devices.get_mut(id) {
+            Some(Device::Bluetooth(b)) => Some(b),
+            _ => None,
+        }
     }
 
     /// Close the display frame at `time`; `seconds` is its simulated length.
@@ -2052,6 +2331,26 @@ impl CircuitSim {
                                 blink: l.blink,
                             });
                         }
+                        Some(Device::Thermo(d)) => v.text = Some(d.rom_text()),
+                        Some(Device::Relay(r)) => {
+                            // The module's LED shows the coil.
+                            v.on = Some(if r.coil && powered_now { 1.0 } else { 0.0 });
+                            v.closed = Some(r.closed);
+                        }
+                        Some(Device::Bluetooth(b)) => {
+                            v.text = Some(
+                                if !b.powered {
+                                    "off"
+                                } else if b.at_mode {
+                                    "at"
+                                } else if b.connected {
+                                    "connected"
+                                } else {
+                                    "waiting"
+                                }
+                                .into(),
+                            );
+                        }
                         Some(Device::Encoder(e)) => {
                             v.angle = Some((e.position.rem_euclid(20) * 18) as f64)
                         }
@@ -2172,7 +2471,9 @@ impl CircuitSim {
         let (c, s, hz) = self.clock;
         self.dev_outputs
             .iter()
-            .filter_map(|(id, _, _)| self.devices.get(id).and_then(|d| d.next_change()))
+            .map(|(id, _, _)| id)
+            .chain(self.relay_parts.iter().map(|r| &r.id))
+            .filter_map(|id| self.devices.get(id).and_then(|d| d.next_change()))
             .map(|t| c + ((t - s) * hz).ceil().max(0.0) as Cycles)
             .min()
     }
@@ -2464,6 +2765,13 @@ impl CircuitSim {
 }
 
 /// Norton equivalent (voltage, resistance) of a pin drive.
+/// The inputs of `sol` if they differ from those of `old`.
+fn changed_inputs(old: &Option<Rc<Solution>>, sol: &Solution) -> Option<Vec<Option<bool>>> {
+    old.as_ref()
+        .is_none_or(|o| o.inputs != sol.inputs)
+        .then(|| sol.inputs.clone())
+}
+
 fn drive_source(d: Drive) -> Option<(f64, f64)> {
     match d {
         Drive::High => Some((VDD, R_ON)),
@@ -2955,6 +3263,186 @@ mod tests {
             }
         }
         assert!((angle - 135.0).abs() < 1.0, "{angle}");
+    }
+
+    /// Let devices act on their own (relays, sensors) up to `until`.
+    fn run_to(s: &mut CircuitSim, until: Cycles, d: &[Drive]) {
+        while let Some(t) = s.next_event().filter(|&t| t <= until) {
+            s.update(t, d);
+        }
+        s.update(until, d);
+    }
+
+    #[test]
+    fn relay_contacts_switch_a_separately_powered_led() {
+        // 5 V → COM; NO → 330 Ω → red LED; NC → 330 Ω → green LED; IN on D7.
+        for trigger in ["low", "high"] {
+            let mut s = sim(
+                vec![
+                    part("k1", "relay", &[("trigger", trigger)]),
+                    part("rn", "resistor", &[("ohms", "330")]),
+                    part("rc", "resistor", &[("ohms", "330")]),
+                    part("on", "led-5mm", &[("color", "red")]),
+                    part("off", "led-5mm", &[("color", "green")]),
+                ],
+                vec![
+                    wire(("mcu", "5V"), ("k1", "VCC")),
+                    wire(("k1", "GND"), ("mcu", "GND")),
+                    wire(("mcu", "D7"), ("k1", "IN")),
+                    wire(("mcu", "5V"), ("k1", "COM")),
+                    wire(("k1", "NO"), ("rn", "1")),
+                    wire(("rn", "2"), ("on", "A")),
+                    wire(("k1", "NC"), ("rc", "1")),
+                    wire(("rc", "2"), ("off", "A")),
+                    wire(("on", "K"), ("mcu", "GND")),
+                    wire(("off", "K"), ("mcu", "GND")),
+                ],
+            );
+            let level = |high: bool| {
+                drives(&s, |p| match (p, high) {
+                    ((0, 8), true) => Drive::High,
+                    ((0, 8), false) => Drive::Low,
+                    _ => Drive::Float,
+                })
+            };
+            let (idle, energise) = if trigger == "low" {
+                (level(true), level(false))
+            } else {
+                (level(false), level(true))
+            };
+            let ms = |m: f64| (m * 16_000.0) as Cycles; // 16 MHz
+            run_to(&mut s, ms(1.0), &idle);
+            s.end_frame(ms(1.0), 0.001);
+            run_to(&mut s, ms(5.0), &idle);
+            let v = s.end_frame(ms(5.0), 0.004);
+            assert!(visual(&v, "off").brightness[0] > 0.9, "{trigger}: NC lit");
+            assert_eq!(visual(&v, "on").brightness[0], 0.0, "{trigger}");
+            assert_eq!(visual(&v, "k1").on, Some(0.0), "coil LED off");
+            assert_eq!(visual(&v, "k1").closed, Some(false));
+            // Energise: the contacts move ~10 ms later.
+            run_to(&mut s, ms(9.0), &energise);
+            let v = s.end_frame(ms(9.0), 0.004);
+            assert_eq!(visual(&v, "k1").on, Some(1.0), "{trigger}: coil LED on");
+            assert_eq!(
+                visual(&v, "k1").closed,
+                Some(false),
+                "{trigger}: not yet moved"
+            );
+            assert_eq!(visual(&v, "on").brightness[0], 0.0);
+            run_to(&mut s, ms(22.0), &energise);
+            s.end_frame(ms(22.0), 0.013);
+            run_to(&mut s, ms(30.0), &energise);
+            let v = s.end_frame(ms(30.0), 0.008);
+            assert_eq!(visual(&v, "k1").closed, Some(true), "{trigger}: COM on NO");
+            assert!(visual(&v, "on").brightness[0] > 0.9, "{trigger}: NO lit");
+            assert_eq!(visual(&v, "off").brightness[0], 0.0, "{trigger}");
+            // (5 − 1.9) / 345 Ω ≈ 9 mA through the contact, from 5 V.
+            let i = (s.voltage(&PinRef::new("rn", "1")).unwrap()
+                - s.voltage(&PinRef::new("on", "A")).unwrap())
+                / 330.0;
+            assert!((i - 0.009).abs() < 0.001, "{i}");
+            // Released: back to NC after the release time.
+            s.update(ms(30.0), &idle);
+            run_to(&mut s, ms(40.0), &idle);
+            s.end_frame(ms(40.0), 0.01);
+            assert!(s.relay_clicks("k1") >= 5, "the contacts bounced");
+            run_to(&mut s, ms(50.0), &idle);
+            let v = s.end_frame(ms(50.0), 0.01);
+            assert!(visual(&v, "off").brightness[0] > 0.9, "{trigger}: NC again");
+            assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        }
+    }
+
+    #[test]
+    fn relay_on_3v3_does_not_pull_in_and_warns() {
+        let mut s = sim(
+            vec![part("k1", "relay", &[])],
+            vec![
+                wire(("mcu", "3V3"), ("k1", "VCC")),
+                wire(("k1", "GND"), ("mcu", "GND")),
+                wire(("mcu", "D7"), ("k1", "IN")),
+            ],
+        );
+        let low = drives(&s, |p| {
+            if p == (0, 8) {
+                Drive::Low
+            } else {
+                Drive::Float
+            }
+        });
+        run_to(&mut s, 800_000, &low);
+        let v = s.end_frame(800_000, 0.05);
+        assert_eq!(visual(&v, "k1").closed, Some(false));
+        assert!(visual(&v, "k1").unpowered);
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.contains("k1") && w.contains("3.75")),
+            "{:?}",
+            s.warnings
+        );
+    }
+
+    #[test]
+    fn hc05_drives_state_and_txd_and_finds_its_uart_pins() {
+        let mut s = sim(
+            vec![part("bt", "hc05", &[("baud", "9600")])],
+            vec![
+                wire(("mcu", "5V"), ("bt", "VCC")),
+                wire(("bt", "GND"), ("mcu", "GND")),
+                wire(("mcu", "PA9"), ("bt", "RXD")),
+                wire(("mcu", "PA10"), ("bt", "TXD")),
+                wire(("mcu", "PA8"), ("bt", "STATE")),
+            ],
+        );
+        let d = drives(&s, |_| Drive::Float);
+        s.update(0, &d);
+        assert_eq!(
+            s.uart_links(),
+            vec![UartLink {
+                id: "bt".into(),
+                rxd: vec![(0, 9)],
+                txd: vec![(0, 10)],
+            }]
+        );
+        let level = |s: &CircuitSim, pin: &str| s.voltage(&PinRef::new("mcu", pin)).unwrap();
+        assert!(level(&s, "PA10") > 3.0, "TXD idles high");
+        assert!(level(&s, "PA8") < 0.5, "no phone: STATE low");
+        let b = s.hc05("bt").unwrap();
+        assert!(b.powered && !b.at_mode);
+        assert_eq!(b.uart_baud(), 9600);
+        b.connected = true;
+        s.update(10, &d);
+        assert!(level(&s, "PA8") > 3.0, "connected: STATE high");
+        let v = s.end_frame(20, 0.0);
+        assert_eq!(visual(&v, "bt").text.as_deref(), Some("connected"));
+    }
+
+    #[test]
+    fn hc05_with_en_high_at_power_up_answers_at_commands_at_38400() {
+        let mut s = sim(
+            vec![part("bt", "hc05", &[])],
+            vec![
+                wire(("mcu", "5V"), ("bt", "VCC")),
+                wire(("bt", "GND"), ("mcu", "GND")),
+                wire(("mcu", "3V3"), ("bt", "EN")),
+            ],
+        );
+        let d = drives(&s, |_| Drive::Float);
+        s.update(0, &d);
+        let b = s.hc05("bt").unwrap();
+        assert!(b.at_mode);
+        assert_eq!(b.uart_baud(), 38_400);
+        for &c in b"AT\r\nAT+NAME?\r\nAT+UART=115200,0,0\r\nAT+FOO\r\n" {
+            b.from_mcu(c, false);
+        }
+        let reply: Vec<u8> = b.to_mcu.drain(..).collect();
+        assert_eq!(
+            String::from_utf8(reply).unwrap(),
+            "OK\r\n+NAME:HC-05\r\nOK\r\nOK\r\nERROR:(0)\r\n"
+        );
+        assert_eq!(b.baud, 115_200);
+        assert!(!b.from_phone(b"x"), "no phone link in AT mode");
     }
 
     #[test]

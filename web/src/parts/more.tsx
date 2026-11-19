@@ -312,7 +312,7 @@ export const ds18b20: PartDef = {
   name: "디지털 온도센서 (DS18B20)",
   category: "sensor",
   description:
-    `1-Wire. DQ를 480 µs 이상 Low로 하면(리셋) 센서가 존재 펄스로 답합니다. 쓰기 슬롯은 짧은 Low(1)·긴 Low(0), 읽기 슬롯에서 0이면 센서가 선을 Low로 잡습니다. SKIP ROM(0xCC) → CONVERT T(0x44) → 750 ms 뒤 READ SCRATCHPAD(0xBE). 변환 전에는 85 °C가 읽힙니다. 모듈에 4.7 kΩ 풀업이 있습니다. 센서를 누르고 있으면 손가락 체온(약 ${FINGER_C} °C)으로 데워지고, 떼면 식습니다.`,
+    `1-Wire. DQ를 480 µs 이상 Low로 하면(리셋) 센서가 존재 펄스로 답합니다. 쓰기 슬롯은 짧은 Low(1)·긴 Low(0), 읽기 슬롯에서 0이면 센서가 선을 Low로 잡습니다. SKIP ROM(0xCC) → CONVERT T(0x44) → 750 ms 뒤 READ SCRATCHPAD(0xBE). 변환 전에는 85 °C가 읽힙니다. 모듈에 4.7 kΩ 풀업이 있습니다. 센서마다 고유한 64비트 ROM 코드(패밀리 0x28, 48비트 일련번호, CRC8)가 있어 여러 개를 한 선에 이을 수 있습니다(멀티드롭): SEARCH ROM(0xF0)으로 모두 찾고 MATCH ROM(0x55) + 8바이트로 하나를 고릅니다. 여러 개일 때 READ ROM(0x33)은 응답이 겹쳐 CRC가 틀립니다. serial에 16진수 12자리를 쓰면 일련번호가 바뀝니다(비우면 부품 이름에서 정해짐). 센서를 누르고 있으면 손가락 체온(약 ${FINGER_C} °C)으로 데워지고, 떼면 식습니다.`,
   w: 3,
   h: 5,
   pins: [
@@ -320,7 +320,7 @@ export const ds18b20: PartDef = {
     { id: "DQ", x: 1, y: 5, label: "DQ (데이터)" },
     { id: "VDD", x: 2, y: 5, label: "VDD" },
   ],
-  props: { temp: 25 },
+  props: { temp: 25, serial: "" },
   ranges: { temp: { min: -55, max: 125, step: 0.0625, label: "온도", unit: "°C" } },
   controls: { touch: fingerTouch("temp") },
   render: (props, visual) => (
@@ -336,6 +336,11 @@ export const ds18b20: PartDef = {
       <text x={P} y={-0.5 * P} textAnchor="middle" className="silk small value">
         {Number(props.temp)} °C
       </text>
+      {visual.text && (
+        <text x={P} y={-1.6 * P} textAnchor="middle" className="silk small rom-code" data-rom={visual.text}>
+          {visual.text}
+        </text>
+      )}
       {visual.unpowered && <NoPower x={P} y={6.2 * P} />}
     </g>
   ),

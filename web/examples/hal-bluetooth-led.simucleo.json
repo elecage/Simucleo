@@ -1,0 +1,89 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "HC-05 블루투스로 LD2 켜고 끄기",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "bt",
+      "kind": "hc05",
+      "x": 56,
+      "y": 10,
+      "props": {
+        "baud": 9600
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "bt",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "b": {
+        "part": "bt",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D8"
+      },
+      "b": {
+        "part": "bt",
+        "pin": "RXD"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D2"
+      },
+      "b": {
+        "part": "bt",
+        "pin": "TXD"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "bt",
+        "pin": "STATE"
+      },
+      "color": "#43a047"
+    }
+  ],
+  "firmware": {
+    "name": "hal-bluetooth-led",
+    "example": "hal-bluetooth-led.elf"
+  }
+}

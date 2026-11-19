@@ -1,6 +1,7 @@
 // React hook around the simulation worker.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  BluetoothFrame,
   BreakpointSpec,
   DebugFile,
   DebugState,
@@ -16,6 +17,60 @@ import type { CircuitJson } from "../editor/model";
 import { boardSignals, busCatalog } from "../parts";
 
 const CONSOLE_LIMIT = 20_000;
+const CHAT_LIMIT = 200;
+
+/** One bubble of the Bluetooth chat. */
+export interface BtMessage {
+  from: "mcu" | "phone" | "system";
+  text: string;
+  /** Some bytes were re-sampled at a mismatched baud rate. */
+  garbled?: boolean;
+  /** An MCU message still waiting for its line end. */
+  open?: boolean;
+}
+
+/** An HC-05 module's phone: its link and the conversation. */
+export interface BtChat {
+  status: BluetoothFrame;
+  messages: BtMessage[];
+}
+
+/** Data passes between the MCU and the phone. */
+export const btLinked = (s: BluetoothFrame) => s.powered && s.connected && !s.atMode;
+
+/** Fold one frame's HC-05 reports into the chats. */
+function mergeBluetooth(prev: Record<string, BtChat>, frames: BluetoothFrame[]): Record<string, BtChat> {
+  let changed = frames.length !== Object.keys(prev).length;
+  const next: Record<string, BtChat> = {};
+  for (const f of frames) {
+    const old = prev[f.id];
+    const { received, ...rest } = f;
+    const sameStatus =
+      old && Object.entries(rest).every(([k, v]) => (old.status as unknown as Record<string, unknown>)[k] === v);
+    if (old && sameStatus && received.length === 0) {
+      next[f.id] = old;
+      continue;
+    }
+    changed = true;
+    const messages = old ? [...old.messages] : [];
+    for (const [b, garbled] of received) {
+      let last = messages[messages.length - 1];
+      if (b === 10) {
+        if (last?.from === "mcu" && last.open) messages[messages.length - 1] = { ...last, open: false };
+        continue;
+      }
+      if (b === 13) continue;
+      if (!(last?.from === "mcu" && last.open)) {
+        last = { from: "mcu", text: "", open: true };
+        messages.push(last);
+      }
+      const ch = b >= 32 && b < 127 ? String.fromCharCode(b) : "\uFFFD";
+      messages[messages.length - 1] = { ...last, text: last.text + ch, garbled: last.garbled || garbled };
+    }
+    next[f.id] = { status: { ...f, received: [] }, messages: messages.slice(-CHAT_LIMIT) };
+  }
+  return changed ? next : prev;
+}
 const CATALOG = JSON.stringify(busCatalog());
 const SIGNALS = JSON.stringify(boardSignals());
 
@@ -53,6 +108,12 @@ export interface Runner {
   setProbes(pins: string[], owner?: string): void;
   sendConsole(text: string): void;
   clearConsole(): void;
+  /** HC-05 modules by part id: link status and chat. */
+  bluetooth: Record<string, BtChat>;
+  /** The phone of HC-05 `part` sends `text` (a line end is added). */
+  bluetoothSend(part: string, text: string): void;
+  bluetoothConnect(part: string, on: boolean): void;
+  clearBluetooth(part: string): void;
   readMemory(addr: number, len: number): void;
   /** The SD card in part `part` as a disk image (empty: no card). */
   sdImage(part: string): Promise<Uint8Array>;
@@ -113,6 +174,9 @@ export function useRunner(): Runner {
   const [speed, setSpeedState] = useState(0);
   const [frame, setFrame] = useState<SimFrame | null>(null);
   const [consoleText, setConsole] = useState("");
+  const [bluetooth, setBluetooth] = useState<Record<string, BtChat>>({});
+  const bluetoothRef = useRef(bluetooth);
+  bluetoothRef.current = bluetooth;
   const [memory, setMemory] = useState<{ addr: number; bytes: Uint8Array } | null>(null);
   const sdWaiters = useRef(new Map<string, (b: Uint8Array) => void>());
   const snapWaiters = useRef(new Map<string, ((b: Uint8Array) => void)[]>());
@@ -178,6 +242,7 @@ export function useRunner(): Runner {
           setRunning(m.running);
           setSpeedState(m.speed);
           if (m.console) setConsole((c) => (c + m.console).slice(-CONSOLE_LIMIT));
+          setBluetooth((b) => mergeBluetooth(b, m.frame.bluetooth ?? []));
           break;
         case "memory":
           setMemory({ addr: m.addr, bytes: m.bytes });
@@ -223,6 +288,27 @@ export function useRunner(): Runner {
       },
       sendConsole: (text: string) => send({ type: "console", text }),
       clearConsole: () => setConsole(""),
+      bluetoothSend: (part: string, text: string) => {
+        const chat = bluetoothRef.current[part];
+        const say = (msg: BtMessage) =>
+          setBluetooth((b) => (b[part] ? { ...b, [part]: { ...b[part], messages: [...b[part].messages, msg].slice(-CHAT_LIMIT) } } : b));
+        if (!chat || !btLinked(chat.status)) {
+          say({
+            from: "system",
+            text: !chat?.status.powered
+              ? "모듈에 전원이 없어 보내지 못했습니다."
+              : chat.status.atMode
+                ? "AT 모드에서는 휴대폰과 통신하지 않습니다."
+                : "휴대폰이 연결되지 않았습니다 — '연결'을 누르세요.",
+          });
+          return;
+        }
+        say({ from: "phone", text });
+        send({ type: "bluetooth", part, text: text + "\r\n" });
+      },
+      bluetoothConnect: (part: string, on: boolean) => send({ type: "bluetoothConnect", part, on }),
+      clearBluetooth: (part: string) =>
+        setBluetooth((b) => (b[part] ? { ...b, [part]: { ...b[part], messages: [] } } : b)),
       readMemory: (addr: number, len: number) => send({ type: "readMemory", addr, len }),
       sdImage: (part: string) =>
         new Promise<Uint8Array>((resolve) => {
@@ -252,7 +338,7 @@ export function useRunner(): Runner {
   );
 
   return {
-    ready, firmware, firmwareBytes, firmwareExample, loadError, running, speed, frame, console: consoleText, memory,
+    ready, firmware, firmwareBytes, firmwareExample, loadError, running, speed, frame, console: consoleText, memory, bluetooth,
     debugFiles, breakpoints, pauseEvent, debugState, disasm, watch, assigned, watchpoints, ...actions,
   };
 }

@@ -30,13 +30,40 @@ use thiserror::Error;
 pub use diagnose::{Diagnosis, FaultInfo};
 pub use rtos::{RtosSnapshot, TaskInfo, TaskState};
 pub use simucleo_circuit::netlist::{BusCatalog, Circuit};
-pub use simucleo_circuit::sim::{CircuitSim, Drive, PartVisual};
+pub use simucleo_circuit::sim::{CircuitSim, Drive, PartVisual, UartLink};
 pub use simucleo_periph_stm32f4::gpio::PinEvent;
 pub use simucleo_periph_stm32f4::usart::TerminalByte;
 pub use simucleo_periph_stm32f4::Warning;
 
 /// USART2 is wired to the ST-LINK virtual COM port.
 pub const VCP: usize = 1;
+
+/// USART names by index (`Stm32f401Bus::usart`).
+const USART_NAMES: [&str; 3] = ["USART1", "USART2", "USART6"];
+
+/// What the Bluetooth panel shows of an HC-05 module.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BluetoothStatus {
+    pub id: String,
+    /// Bytes the phone received since the last call: (byte, re-sampled
+    /// at a mismatched baud rate).
+    pub received: Vec<(u8, bool)>,
+    pub powered: bool,
+    pub connected: bool,
+    pub at_mode: bool,
+    pub name: String,
+    /// The module's UART baud rate (38400 in AT mode).
+    pub baud: u32,
+    /// The USART whose TX reaches the module's RXD, and the one whose RX
+    /// the module's TXD reaches (routed pins wired to them).
+    pub tx_usart: Option<&'static str>,
+    pub rx_usart: Option<&'static str>,
+    /// The baud rate that USART is configured for.
+    pub mcu_baud: Option<f64>,
+    /// An MCU TX pin is wired to the module's TXD (TX to TX).
+    pub swapped: bool,
+}
 
 #[derive(Debug, Error)]
 pub enum LoadError {
@@ -123,6 +150,8 @@ pub struct Nucleo {
     circuit: Rc<RefCell<CircuitSim>>,
     /// The RTOS kernel found in the firmware, if any.
     rtos: Option<rtos::FreeRtos>,
+    /// UART modules (HC-05) and the MCU pins on their lines.
+    uart_links: Vec<UartLink>,
 }
 
 impl Default for Nucleo {
@@ -153,6 +182,7 @@ impl Nucleo {
                 0,
             ))),
             rtos: None,
+            uart_links: Vec::new(),
         };
         board.power_on();
         board
@@ -175,6 +205,7 @@ impl Nucleo {
             hz: self.bus.clocks().hclk,
         }];
         self.sync_circuit_clock();
+        self.route_uarts();
     }
 
     /// Program an ELF image into flash and power the board up.
@@ -380,8 +411,144 @@ impl Nucleo {
     /// Process due peripheral events and forward interrupt lines.
     fn after_step(&mut self) {
         self.bus.run_events(self.sys.cycles);
+        // Bytes on USART1/USART6 go to the modules wired to them.
+        if !self.uart_links.is_empty()
+            && !(self.bus.usart[0].terminal.is_empty() && self.bus.usart[2].terminal.is_empty())
+        {
+            self.route_uarts();
+        }
         self.bus.poll(&mut self.sys);
         self.note_clock();
+    }
+
+    /// The USARTs a UART module is wired to: the one whose routed TX pin
+    /// is on the module's RXD net, the one whose routed RX pin is on its
+    /// TXD net; and whether some USART's TX is on its TXD (TX to TX).
+    fn usarts_of(&self, link: &UartLink) -> (Option<usize>, Option<usize>, bool) {
+        let routed: [_; 3] = std::array::from_fn(|u| self.bus.usart_pins(u));
+        let on = |pins: &[(u8, u8)], p: Option<(u8, u8)>| p.is_some_and(|p| pins.contains(&p));
+        let tx = (0..3).find(|&u| on(&link.rxd, routed[u].0));
+        let rx = (0..3).find(|&u| on(&link.txd, routed[u].1));
+        let swapped = (0..3).any(|u| on(&link.txd, routed[u].0));
+        (tx, rx, swapped)
+    }
+
+    /// Move bytes between the USARTs and the UART modules wired to them:
+    /// what the MCU transmitted reaches the module, the module's output
+    /// (phone text, AT replies) the MCU's receiver. Each USART's terminal
+    /// runs at its module's baud rate, so a mismatch garbles the bytes.
+    fn route_uarts(&mut self) {
+        let ends: Vec<_> = self.uart_links.iter().map(|l| self.usarts_of(l)).collect();
+        // What each USART transmitted, taken once: every module whose RXD
+        // is on that TX line gets its own copy (one that is unpowered or
+        // has no phone drops it without starving the others).
+        let mut sent: [Option<Vec<TerminalByte>>; 3] = Default::default();
+        for &(tx, ..) in &ends {
+            if let Some(u) = tx.filter(|&u| u != VCP) {
+                if sent[u].is_none() {
+                    sent[u] = Some(self.bus.terminal_take(u));
+                }
+            }
+        }
+        for (i, &(tx, rx, _)) in ends.iter().enumerate() {
+            let link = &self.uart_links[i];
+            // The terminal's baud follows the wiring alone (also before
+            // the firmware routes its pins), USART2 stays the VCP's.
+            let possible = |nets: &[(u8, u8)], want_tx: bool| {
+                simucleo_periph_stm32f4::USART_PINS
+                    .iter()
+                    .find(|&&(u, port, pin, _, t)| {
+                        u != VCP && t == want_tx && nets.contains(&(port, pin))
+                    })
+                    .map(|&(u, ..)| u)
+            };
+            let wired = [possible(&link.rxd, true), possible(&link.txd, false)];
+            let mut c = self.circuit.borrow_mut();
+            let Some(hc) = c.hc05(&link.id) else {
+                continue;
+            };
+            let baud = hc.uart_baud();
+            for u in wired.into_iter().flatten() {
+                self.bus.usart[u].host_baud = baud;
+            }
+            for b in tx.and_then(|u| sent[u].as_deref()).unwrap_or_default() {
+                hc.from_mcu(b.byte, b.garbled);
+            }
+            if hc.to_mcu.is_empty() {
+                continue;
+            }
+            let out: Vec<u8> = hc.to_mcu.drain(..).collect();
+            drop(c);
+            if let Some(u) = rx.filter(|&u| u != VCP) {
+                self.bus.set_time(self.sys.cycles);
+                self.bus.terminal_send(u, &out);
+            }
+        }
+        // Nothing listens on the other USART1/USART6 lines.
+        if !self.uart_links.is_empty() {
+            for u in [0, 2] {
+                if sent[u].is_none() {
+                    self.bus.usart[u].terminal.clear();
+                }
+            }
+        }
+    }
+
+    /// The HC-05 modules in the circuit, with what their phones received
+    /// since the last call.
+    pub fn bluetooth(&mut self) -> Vec<BluetoothStatus> {
+        self.route_uarts();
+        let mut out = Vec::new();
+        for link in self.uart_links.clone() {
+            let (tx, rx, swapped) = self.usarts_of(&link);
+            let mcu_baud = tx.or(rx).and_then(|u| self.bus.usart_baud(u));
+            let mut c = self.circuit.borrow_mut();
+            let Some(hc) = c.hc05(&link.id) else {
+                continue;
+            };
+            out.push(BluetoothStatus {
+                id: link.id.clone(),
+                received: std::mem::take(&mut hc.to_phone),
+                powered: hc.powered,
+                connected: hc.connected,
+                at_mode: hc.at_mode,
+                name: hc.name.clone(),
+                baud: hc.uart_baud(),
+                tx_usart: tx.map(|u| USART_NAMES[u]),
+                rx_usart: rx.map(|u| USART_NAMES[u]),
+                mcu_baud,
+                swapped,
+            });
+        }
+        out
+    }
+
+    /// The phone sends `bytes` through HC-05 part `id`. Returns whether
+    /// they went out (a powered module in data mode with a connection).
+    pub fn bluetooth_send(&mut self, id: &str, bytes: &[u8]) -> bool {
+        let sent = self
+            .circuit
+            .borrow_mut()
+            .hc05(id)
+            .is_some_and(|hc| hc.from_phone(bytes));
+        self.route_uarts();
+        self.bus.poll(&mut self.sys);
+        sent
+    }
+
+    /// Connect (pair) or disconnect the phone of HC-05 part `id`; STATE
+    /// follows.
+    pub fn bluetooth_connect(&mut self, id: &str, on: bool) {
+        let changed = match self.circuit.borrow_mut().hc05(id) {
+            Some(hc) if hc.connected != on => {
+                hc.connected = on;
+                true
+            }
+            _ => false,
+        };
+        if changed {
+            self.circuit_changed();
+        }
     }
 
     /// Level of a GPIO pin, e.g. `pin('A', 5)` for LD2.
@@ -433,7 +600,9 @@ impl Nucleo {
             c.set_catalog(catalog, signals);
             c.set_circuit(circuit, now);
         }
+        self.uart_links = self.circuit.borrow().uart_links();
         self.circuit_changed();
+        self.route_uarts();
     }
 
     /// What each part shows over the display frame that ends now;
@@ -546,7 +715,7 @@ impl Nucleo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use simucleo_core::bus::Bus;
+    use simucleo_core::bus::{AccessSize, Bus};
 
     /// Reset handler: count boots in SRAM[0]; on the first boot request a
     /// reset (AIRCR = 0x05FA0004; DSB) and then write 0xAA to SRAM[4], which
@@ -664,6 +833,144 @@ mod tests {
             0xE000_1004,
             "loop exited"
         );
+    }
+
+    /// `b .` forever (the board sleeps through it).
+    const IDLE_PROGRAM: [u8; 10] = [0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0xfe, 0xe7];
+
+    /// An idle board with an HC-05 on 5 V and USART1 (PA9 TX → RXD,
+    /// TXD → PA10 RX) set up at `brr` (16 MHz APB2) by register writes.
+    fn bluetooth_board(module_baud: &str, brr: u32) -> Nucleo {
+        let mut board = Nucleo::new();
+        board.bus.load(0x0800_0000, &IDLE_PROGRAM).unwrap();
+        board.reset().unwrap();
+        let circuit: Circuit = serde_json::from_value(serde_json::json!({
+            "parts": [{"id": "bt", "kind": "hc05", "props": {"baud": module_baud}}],
+            "wires": [
+                {"a": {"part": "board", "pin": "5V"}, "b": {"part": "bt", "pin": "VCC"}},
+                {"a": {"part": "board", "pin": "GND"}, "b": {"part": "bt", "pin": "GND"}},
+                {"a": {"part": "board", "pin": "PA9"}, "b": {"part": "bt", "pin": "RXD"}},
+                {"a": {"part": "board", "pin": "PA10"}, "b": {"part": "bt", "pin": "TXD"}}
+            ]
+        }))
+        .unwrap();
+        board.set_circuit(&circuit, &BusCatalog::default(), &HashMap::new());
+        let w = |b: &mut Nucleo, a: u32, v: u32| b.bus.write(a, AccessSize::Word, v).unwrap();
+        w(&mut board, 0x4002_3830, 1); // GPIOAEN
+        w(&mut board, 0x4002_3844, 1 << 4); // USART1EN
+        w(&mut board, 0x4002_0000, 0xA800_0000 | 0b1010 << 18); // PA9, PA10 AF
+        w(&mut board, 0x4002_0024, 7 << 4 | 7 << 8); // AF7
+        w(&mut board, 0x4001_1008, brr);
+        w(&mut board, 0x4001_100C, 0x200C); // UE TE RE
+        board
+    }
+
+    /// Transmit on USART1 one byte at a time and return what the phone got.
+    fn mcu_sends(board: &mut Nucleo, text: &[u8]) -> Vec<(u8, bool)> {
+        for &c in text {
+            board.bus.set_time(board.now());
+            board
+                .bus
+                .write(0x4001_1004, AccessSize::Word, c as u32)
+                .unwrap();
+            board.run_for_ns(1.2e6);
+        }
+        board
+            .bluetooth()
+            .into_iter()
+            .flat_map(|s| s.received)
+            .collect()
+    }
+
+    /// The phone sends one byte; what USART1's DR then holds.
+    fn phone_sends(board: &mut Nucleo, c: u8) -> Option<u32> {
+        assert!(board.bluetooth_send("bt", &[c]));
+        board.run_for_ns(1.5e6);
+        let sr = board.bus.read_u32(0x4001_1000).unwrap();
+        (sr & (1 << 5) != 0).then(|| board.bus.read_u32(0x4001_1004).unwrap())
+    }
+
+    #[test]
+    fn hc05_bridges_usart1_to_the_phone_at_matching_baud() {
+        let mut board = bluetooth_board("9600", 1667); // 9600 Bd
+        let st = &board.bluetooth()[0];
+        assert_eq!(
+            (st.tx_usart, st.rx_usart, st.baud, st.swapped),
+            (Some("USART1"), Some("USART1"), 9600, false)
+        );
+        // No phone yet: nothing arrives, and the phone cannot send.
+        assert_eq!(mcu_sends(&mut board, b"x"), []);
+        assert!(!board.bluetooth_send("bt", b"y"));
+        board.bluetooth_connect("bt", true);
+        assert_eq!(mcu_sends(&mut board, b"hi"), [(b'h', false), (b'i', false)]);
+        assert_eq!(phone_sends(&mut board, b'k'), Some(b'k' as u32));
+        assert!(board.take_console().is_empty(), "nothing on the VCP");
+    }
+
+    #[test]
+    fn every_hc05_on_one_tx_line_hears_the_mcu() {
+        // A second module's RXD on PA9 too; the first (unpowered once its
+        // VCC is gone) must not swallow what the second should get.
+        for first_powered in [true, false] {
+            let mut board = bluetooth_board("9600", 1667);
+            let mut wires = vec![
+                serde_json::json!({"a": {"part": "board", "pin": "GND"}, "b": {"part": "bt", "pin": "GND"}}),
+                serde_json::json!({"a": {"part": "board", "pin": "PA9"}, "b": {"part": "bt", "pin": "RXD"}}),
+                serde_json::json!({"a": {"part": "board", "pin": "5V"}, "b": {"part": "bt2", "pin": "VCC"}}),
+                serde_json::json!({"a": {"part": "board", "pin": "GND"}, "b": {"part": "bt2", "pin": "GND"}}),
+                serde_json::json!({"a": {"part": "board", "pin": "PA9"}, "b": {"part": "bt2", "pin": "RXD"}}),
+            ];
+            if first_powered {
+                wires.push(serde_json::json!({"a": {"part": "board", "pin": "5V"}, "b": {"part": "bt", "pin": "VCC"}}));
+            }
+            let circuit: Circuit = serde_json::from_value(serde_json::json!({
+                "parts": [
+                    {"id": "bt", "kind": "hc05", "props": {"baud": "9600"}},
+                    {"id": "bt2", "kind": "hc05", "props": {"baud": "9600"}}
+                ],
+                "wires": wires
+            }))
+            .unwrap();
+            board.set_circuit(&circuit, &BusCatalog::default(), &HashMap::new());
+            board.bluetooth_connect("bt2", true);
+            if first_powered {
+                board.bluetooth_connect("bt", true);
+            }
+            for &c in b"hi" {
+                board.bus.set_time(board.now());
+                board
+                    .bus
+                    .write(0x4001_1004, AccessSize::Word, c as u32)
+                    .unwrap();
+                board.run_for_ns(1.2e6);
+            }
+            let st = board.bluetooth();
+            let got = |id: &str| -> Vec<u8> {
+                st.iter()
+                    .find(|s| s.id == id)
+                    .unwrap()
+                    .received
+                    .iter()
+                    .map(|b| b.0)
+                    .collect()
+            };
+            assert_eq!(got("bt2"), b"hi", "first powered: {first_powered}");
+            assert_eq!(got("bt"), if first_powered { &b"hi"[..] } else { &[] });
+        }
+    }
+
+    #[test]
+    fn hc05_at_a_different_baud_garbles_both_ways() {
+        let mut board = bluetooth_board("9600", 139); // firmware at 115200 Bd
+        board.bluetooth_connect("bt", true);
+        let got = mcu_sends(&mut board, b"h");
+        assert_eq!(got.len(), 1);
+        assert!(got[0].1, "flagged as re-sampled");
+        assert_ne!(got[0].0, b'h');
+        assert_ne!(phone_sends(&mut board, b'k'), Some(b'k' as u32));
+        let st = &board.bluetooth()[0];
+        assert!((st.mcu_baud.unwrap() - 115_108.0).abs() < 1.0);
+        assert_eq!(st.baud, 9600);
     }
 
     #[test]

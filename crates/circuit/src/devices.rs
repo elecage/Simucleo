@@ -1293,11 +1293,15 @@ enum OwPhase {
     Rom,
     /// MATCH ROM: receiving 8 bytes.
     Match,
+    /// SEARCH ROM / ALARM SEARCH: bit `bit` of the ROM code, in slot
+    /// `sub` of its triplet (0 = the bit, 1 = its complement, 2 = the
+    /// direction the host writes).
+    Search { bit: u8, sub: u8 },
     /// A function command.
     Function,
     /// WRITE SCRATCHPAD: receiving TH, TL, configuration.
     WriteScratch,
-    /// Answering read slots from `tx`.
+    /// Answering read slots from `tx`; then `then`.
     Send,
     /// CONVERT T: read slots answer 0 while busy, then 1.
     Converting,
@@ -1305,10 +1309,15 @@ enum OwPhase {
     Deselected,
 }
 
-/// DS18B20 1-Wire digital thermometer (one device per line). The host
-/// times the slots: reset ≥ 480 µs low (the device answers with a
-/// presence pulse), write slots (low < 15 µs = 1, ≥ 60 µs = 0), read slots
-/// (the device holds the line low ~30 µs to send a 0).
+/// DS18B20 1-Wire digital thermometer. Several of them can share one line
+/// (multi-drop): each pulls the open-drain line low on its own and the
+/// circuit solve gives the wired-AND, so on a read slot any device sending
+/// a 0 wins. The host times the slots: reset ≥ 480 µs low (every device
+/// answers with a presence pulse), write slots (low < 15 µs = 1, ≥ 60 µs =
+/// 0), read slots (a device holds the line low ~30 µs to send a 0). ROM
+/// commands: READ ROM (0x33; collides with more than one device, as on the
+/// real bus), MATCH ROM (0x55), SKIP ROM (0xCC), SEARCH ROM (0xF0) and
+/// ALARM SEARCH (0xEC).
 #[derive(Debug, Clone)]
 pub struct Ds18b20 {
     pub temp: f64,
@@ -1316,7 +1325,12 @@ pub struct Ds18b20 {
     /// Scratchpad: temperature LSB, MSB, TH, TL, configuration, 3 reserved.
     pad: [u8; 8],
     phase: OwPhase,
+    /// Where `Send` goes once `tx` is empty.
+    then: OwPhase,
     fall: Option<Seconds>,
+    /// The slot that began at `fall` is a read slot (its rising edge is
+    /// not a bit the host writes).
+    read_slot: bool,
     rx: u16,
     rx_bits: u32,
     rx_bytes: Vec<u8>,
@@ -1329,18 +1343,25 @@ pub struct Ds18b20 {
     pub conversions: u32,
 }
 
+/// ROM code of a DS18B20: family 0x28, a 48-bit serial (LSB first), CRC.
+pub fn ds18b20_rom(serial: u64) -> [u8; 8] {
+    let mut rom = [0x28, 0, 0, 0, 0, 0, 0, 0];
+    rom[1..7].copy_from_slice(&serial.to_le_bytes()[..6]);
+    rom[7] = crc8_maxim(&rom[..7]);
+    rom
+}
+
 impl Ds18b20 {
     pub fn new(temp: f64, serial: u64) -> Self {
-        let mut rom = [0x28, 0, 0, 0, 0, 0, 0, 0];
-        rom[1..7].copy_from_slice(&serial.to_le_bytes()[..6]);
-        rom[7] = crc8_maxim(&rom[..7]);
         Self {
             temp,
-            rom,
+            rom: ds18b20_rom(serial),
             // Power-up value: 85 °C, alarm limits, 12-bit resolution.
             pad: [0x50, 0x05, 0x4B, 0x46, 0x7F, 0xFF, 0x0C, 0x10],
             phase: OwPhase::Idle,
+            then: OwPhase::Deselected,
             fall: None,
+            read_slot: false,
             rx: 0,
             rx_bits: 0,
             rx_bytes: Vec::new(),
@@ -1353,18 +1374,39 @@ impl Ds18b20 {
         }
     }
 
+    /// The ROM code as printed on labels and by the examples:
+    /// family-serial, the serial most significant byte first.
+    pub fn rom_text(&self) -> String {
+        let r = &self.rom;
+        format!(
+            "{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+            r[0], r[6], r[5], r[4], r[3], r[2], r[1]
+        )
+    }
+
     /// Conversion time for the configured resolution.
     fn conversion_time(&self) -> Seconds {
         0.09375 * (1 << ((self.pad[4] >> 5) & 3)) as f64
     }
 
-    fn send_bytes(&mut self, bytes: &[u8]) {
+    /// The last reading is at or above TH or at or below TL (whole °C).
+    fn alarm(&self) -> bool {
+        let t = i16::from_le_bytes([self.pad[0], self.pad[1]]) >> 4;
+        t >= self.pad[2] as i8 as i16 || t <= self.pad[3] as i8 as i16
+    }
+
+    fn send_bytes(&mut self, bytes: &[u8], then: OwPhase) {
         for &b in bytes {
             for i in 0..8 {
                 self.tx.push_back(b >> i & 1 != 0);
             }
         }
         self.phase = OwPhase::Send;
+        self.then = then;
+    }
+
+    fn rom_bit(&self, bit: u8) -> bool {
+        self.rom[bit as usize / 8] >> (bit % 8) & 1 != 0
     }
 
     fn byte(&mut self, b: u8, now: Seconds) {
@@ -1372,13 +1414,15 @@ impl Ds18b20 {
             OwPhase::Rom => match b {
                 0x33 => {
                     let rom = self.rom;
-                    self.send_bytes(&rom);
+                    self.send_bytes(&rom, OwPhase::Function);
                 }
                 0xCC => self.phase = OwPhase::Function,
                 0x55 => {
                     self.rx_bytes.clear();
                     self.phase = OwPhase::Match;
                 }
+                0xF0 => self.phase = OwPhase::Search { bit: 0, sub: 0 },
+                0xEC if self.alarm() => self.phase = OwPhase::Search { bit: 0, sub: 0 },
                 _ => self.phase = OwPhase::Deselected,
             },
             OwPhase::Match => {
@@ -1407,13 +1451,13 @@ impl Ds18b20 {
                     let mut out = [0u8; 9];
                     out[..8].copy_from_slice(&self.pad);
                     out[8] = crc8_maxim(&self.pad);
-                    self.send_bytes(&out);
+                    self.send_bytes(&out, OwPhase::Deselected);
                 }
                 0x4E => {
                     self.rx_bytes.clear();
                     self.phase = OwPhase::WriteScratch;
                 }
-                0xB4 => self.send_bytes(&[0xFF]), // externally powered
+                0xB4 => self.send_bytes(&[0xFF], OwPhase::Deselected), // externally powered
                 _ => self.phase = OwPhase::Deselected,
             },
             OwPhase::WriteScratch => {
@@ -1429,7 +1473,8 @@ impl Ds18b20 {
         }
     }
 
-    /// The line changed level (seen while the device is not pulling it).
+    /// The line changed level (seen while the device is not pulling it;
+    /// another device on the same line may be).
     pub fn observe(&mut self, now: Seconds, high: bool) {
         // A finished conversion updates the scratchpad.
         if now >= self.conv_done {
@@ -1441,20 +1486,31 @@ impl Ds18b20 {
         if !high {
             self.fall = Some(now);
             // A read slot: the device answers a 0 by holding the line low.
-            let zero = match self.phase {
-                OwPhase::Send => self.tx.front().is_some_and(|b| !b),
-                OwPhase::Converting => now < self.conv_done,
-                _ => false,
+            let (read, zero) = match self.phase {
+                OwPhase::Send => (true, self.tx.front().is_some_and(|b| !b)),
+                OwPhase::Converting => (true, now < self.conv_done),
+                // The bit, then its complement; every device still in the
+                // search sends at once and the line carries their AND.
+                OwPhase::Search { bit, sub: 0 } => (true, !self.rom_bit(bit)),
+                OwPhase::Search { bit, sub: 1 } => (true, self.rom_bit(bit)),
+                _ => (false, false),
             };
+            self.read_slot = read;
             if zero {
                 self.plan.push_back((now, true));
                 self.plan.push_back((now + 30e-6, false));
             }
-            if self.phase == OwPhase::Send {
-                self.tx.pop_front();
-                if self.tx.is_empty() {
-                    self.phase = OwPhase::Deselected;
+            match self.phase {
+                OwPhase::Send => {
+                    self.tx.pop_front();
+                    if self.tx.is_empty() {
+                        self.phase = self.then;
+                    }
                 }
+                OwPhase::Search { bit, sub } if sub < 2 => {
+                    self.phase = OwPhase::Search { bit, sub: sub + 1 }
+                }
+                _ => {}
             }
             return;
         }
@@ -1471,22 +1527,39 @@ impl Ds18b20 {
             self.rx = 0;
             self.rx_bits = 0;
             self.tx.clear();
+            self.read_slot = false;
             return;
         }
-        if matches!(
-            self.phase,
-            OwPhase::Rom | OwPhase::Match | OwPhase::Function | OwPhase::WriteScratch
-        ) {
-            // Write slot: sampled 30 µs after the falling edge.
-            let bit = w < 30e-6;
-            self.rx |= (bit as u16) << self.rx_bits;
-            self.rx_bits += 1;
-            if self.rx_bits == 8 {
-                let b = self.rx as u8;
-                self.rx = 0;
-                self.rx_bits = 0;
-                self.byte(b, now);
+        // The end of a read slot (the host's release, or the last device
+        // letting go of the line) carries no bit.
+        if std::mem::take(&mut self.read_slot) {
+            return;
+        }
+        // Write slot: sampled 30 µs after the falling edge.
+        let bit = w < 30e-6;
+        match self.phase {
+            OwPhase::Search { bit: i, sub: 2 } => {
+                // The host chose a direction: devices whose bit differs
+                // drop out until the next reset.
+                self.phase = if bit != self.rom_bit(i) {
+                    OwPhase::Deselected
+                } else if i == 63 {
+                    OwPhase::Function
+                } else {
+                    OwPhase::Search { bit: i + 1, sub: 0 }
+                };
             }
+            OwPhase::Rom | OwPhase::Match | OwPhase::Function | OwPhase::WriteScratch => {
+                self.rx |= (bit as u16) << self.rx_bits;
+                self.rx_bits += 1;
+                if self.rx_bits == 8 {
+                    let b = self.rx as u8;
+                    self.rx = 0;
+                    self.rx_bits = 0;
+                    self.byte(b, now);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -2130,6 +2203,220 @@ impl IrRemote {
     }
 }
 
+// -------------------------------------------------------------- HC-05
+
+/// HC-05 Bluetooth serial module (ZS-040 board). In data mode it bridges
+/// its UART (RXD/TXD, 8N1 at `baud`, 9600 by default) to the paired phone;
+/// with EN (KEY) high at power-up it starts in AT command mode at 38400
+/// baud and answers commands instead. The UART is modelled at the byte
+/// level, like the virtual COM port: the board routes the bytes of the
+/// USART whose pins are wired to RXD/TXD here.
+#[derive(Debug, Clone)]
+pub struct Hc05 {
+    /// Data-mode baud rate (`AT+UART` changes it).
+    pub baud: u32,
+    /// The part's `baud` prop it was last set from.
+    pub prop_baud: u32,
+    pub name: String,
+    /// The phone is paired and connected (the panel's toggle).
+    pub connected: bool,
+    /// Started in AT command mode (EN high at power-up).
+    pub at_mode: bool,
+    /// Supply present (seen at the last circuit update).
+    pub powered: bool,
+    /// Received from the MCU, for the phone: (byte, re-sampled at a
+    /// mismatched baud rate).
+    pub to_phone: Vec<(u8, bool)>,
+    /// For the MCU's RX: what the phone typed, or AT replies.
+    pub to_mcu: VecDeque<u8>,
+    /// AT command being received.
+    line: Vec<u8>,
+    /// Bytes the MCU sent with no phone connected (dropped).
+    pub dropped: u32,
+}
+
+/// Baud rate of the HC-05 AT command mode.
+pub const HC05_AT_BAUD: u32 = 38_400;
+
+impl Hc05 {
+    pub fn new(baud: u32) -> Self {
+        Self {
+            baud,
+            prop_baud: baud,
+            name: "HC-05".into(),
+            connected: false,
+            at_mode: false,
+            powered: false,
+            to_phone: Vec::new(),
+            to_mcu: VecDeque::new(),
+            line: Vec::new(),
+            dropped: 0,
+        }
+    }
+
+    /// The baud rate its UART runs at now.
+    pub fn uart_baud(&self) -> u32 {
+        if self.at_mode {
+            HC05_AT_BAUD
+        } else {
+            self.baud
+        }
+    }
+
+    /// Data passes between the MCU and the phone.
+    pub fn linked(&self) -> bool {
+        self.powered && self.connected && !self.at_mode
+    }
+
+    /// Power came (`en`: level of EN then) or went.
+    pub fn power(&mut self, on: bool, en: bool) {
+        if on && !self.powered {
+            self.at_mode = en;
+            self.line.clear();
+            self.to_mcu.clear();
+        }
+        self.powered = on;
+    }
+
+    /// A byte arrived on RXD.
+    pub fn from_mcu(&mut self, byte: u8, garbled: bool) {
+        if !self.powered {
+            return;
+        }
+        if self.at_mode {
+            self.at_byte(byte);
+        } else if self.connected {
+            self.to_phone.push((byte, garbled));
+        } else {
+            self.dropped += 1;
+        }
+    }
+
+    /// The phone sends text; it reaches the MCU only over a connection.
+    pub fn from_phone(&mut self, bytes: &[u8]) -> bool {
+        if !self.linked() {
+            return false;
+        }
+        self.to_mcu.extend(bytes);
+        true
+    }
+
+    fn reply(&mut self, s: &str) {
+        self.to_mcu.extend(s.as_bytes());
+    }
+
+    fn at_byte(&mut self, b: u8) {
+        if b != b'\n' {
+            if b != b'\r' && self.line.len() < 64 {
+                self.line.push(b);
+            }
+            return;
+        }
+        let cmd = String::from_utf8_lossy(&std::mem::take(&mut self.line)).to_string();
+        let upper = cmd.trim().to_ascii_uppercase();
+        if upper.is_empty() {
+            return;
+        }
+        match upper.as_str() {
+            "AT" | "AT+RESET" | "AT+INIT" => self.reply("OK\r\n"),
+            "AT+NAME?" | "AT+NAME" => {
+                let r = format!("+NAME:{}\r\nOK\r\n", self.name);
+                self.reply(&r);
+            }
+            "AT+VERSION?" | "AT+VERSION" => self.reply("+VERSION:2.0-20100601\r\nOK\r\n"),
+            "AT+ROLE?" => self.reply("+ROLE:0\r\nOK\r\n"),
+            "AT+ADDR?" => self.reply("+ADDR:98d3:31:fd5c42\r\nOK\r\n"),
+            "AT+UART?" => {
+                let r = format!("+UART:{},0,0\r\nOK\r\n", self.baud);
+                self.reply(&r);
+            }
+            _ if upper.starts_with("AT+NAME=") => {
+                self.name = cmd.trim()[8..].to_string();
+                self.reply("OK\r\n");
+            }
+            _ if upper.starts_with("AT+UART=") => {
+                match upper[8..]
+                    .split(',')
+                    .next()
+                    .and_then(|b| b.parse::<u32>().ok())
+                {
+                    Some(b) if (1200..=1_382_400).contains(&b) => {
+                        self.baud = b;
+                        self.reply("OK\r\n");
+                    }
+                    _ => self.reply("ERROR:(1D)\r\n"),
+                }
+            }
+            _ => self.reply("ERROR:(0)\r\n"),
+        }
+    }
+}
+
+// -------------------------------------------------------------- relay
+
+/// Mechanics of a small signal relay (SRD-05VDC-SL-C): the contacts move
+/// this long after the coil changes, and bounce on the way.
+pub const RELAY_OPERATE: Seconds = 0.010;
+pub const RELAY_RELEASE: Seconds = 0.005;
+
+/// A relay module's armature: whether COM touches NO, and the contact
+/// changes still to come (operate delay and bounce).
+#[derive(Debug, Clone, Default)]
+pub struct Relay {
+    /// The coil is energised now.
+    pub coil: bool,
+    /// COM is connected to NO (else to NC).
+    pub closed: bool,
+    plan: VecDeque<(Seconds, bool)>,
+    /// Contact changes (bounces included), for the click.
+    pub clicks: u32,
+}
+
+impl Relay {
+    /// The coil's drive changed at `now`.
+    pub fn set_coil(&mut self, now: Seconds, on: bool) {
+        if on == self.coil {
+            return;
+        }
+        self.coil = on;
+        // A change of mind before the contacts moved restarts the travel.
+        self.plan.clear();
+        let t = now + if on { RELAY_OPERATE } else { RELAY_RELEASE };
+        // The moving contact lands, bounces off twice and settles.
+        for (dt, state) in [
+            (0.0, on),
+            (0.3e-3, !on),
+            (0.6e-3, on),
+            (1.0e-3, !on),
+            (1.3e-3, on),
+        ] {
+            self.plan.push_back((t + dt, state));
+        }
+    }
+
+    pub fn advance(&mut self, now: Seconds) {
+        while let Some(&(t, state)) = self.plan.front() {
+            if t > now + 1e-12 {
+                break;
+            }
+            if state != self.closed {
+                self.clicks += 1;
+            }
+            self.closed = state;
+            self.plan.pop_front();
+        }
+    }
+
+    pub fn next(&self) -> Option<Seconds> {
+        self.plan.front().map(|&(t, _)| t)
+    }
+
+    /// The contacts are where the coil puts them (no travel pending).
+    pub fn settled(&self) -> bool {
+        self.plan.is_empty()
+    }
+}
+
 /// A bus device part's state, kept across circuit edits.
 #[derive(Debug, Clone)]
 pub enum Device {
@@ -2146,6 +2433,8 @@ pub enum Device {
     Imu(Box<Mpu6050>),
     Matrix(Max7219),
     Ir(IrRemote),
+    Bluetooth(Box<Hc05>),
+    Relay(Relay),
 }
 
 impl Device {
@@ -2171,6 +2460,7 @@ impl Device {
             Device::Sonar(s) => s.advance(now),
             Device::Thermo(d) => d.advance(now),
             Device::Ir(d) => d.advance(now),
+            Device::Relay(r) => r.advance(now),
             _ => {}
         }
     }
@@ -2185,6 +2475,11 @@ impl Device {
             Device::Sonar(s) => Some(s.echo),
             Device::Ir(d) => d.low.then_some(false),
             Device::Matrix(m) => Some(m.dout),
+            // STATE (0) is high while a phone is connected; TXD (1) idles high.
+            Device::Bluetooth(b) => match index {
+                0 => Some(b.powered && b.connected && !b.at_mode),
+                _ => b.powered.then_some(true),
+            },
             _ => None,
         }
     }
@@ -2197,6 +2492,7 @@ impl Device {
             Device::Sonar(s) => s.next(),
             Device::Thermo(d) => d.next(),
             Device::Ir(d) => d.next(),
+            Device::Relay(r) => r.next(),
             _ => None,
         }
     }
@@ -2670,6 +2966,239 @@ mod tests {
             -162,
             "conversion not finished"
         );
+    }
+
+    /// Several devices on one open-drain line with its pull-up: the line
+    /// is low while the host or any device pulls it (wired-AND), and every
+    /// device not pulling sees each edge, as `CircuitSim::observe_lines`
+    /// delivers them.
+    struct Line {
+        d: Vec<Ds18b20>,
+        t: f64,
+        host_low: bool,
+        high: bool,
+    }
+
+    impl Line {
+        fn new(d: Vec<Ds18b20>) -> Self {
+            Self {
+                d,
+                t: 0.0,
+                host_low: false,
+                high: true,
+            }
+        }
+        fn settle(&mut self) {
+            loop {
+                for d in &mut self.d {
+                    d.advance(self.t);
+                }
+                let high = !(self.host_low || self.d.iter().any(|d| d.pulling));
+                if high == self.high {
+                    break;
+                }
+                self.high = high;
+                for d in &mut self.d {
+                    if !d.pulling {
+                        d.observe(self.t, high);
+                    }
+                }
+            }
+        }
+        fn wait(&mut self, dt: f64) {
+            let end = self.t + dt;
+            while let Some(t) = self
+                .d
+                .iter()
+                .filter_map(|d| d.next())
+                .filter(|&t| t <= end)
+                .reduce(f64::min)
+            {
+                self.t = t.max(self.t);
+                self.settle();
+            }
+            self.t = end;
+            self.settle();
+        }
+        fn host(&mut self, low: bool) {
+            self.host_low = low;
+            self.settle();
+        }
+        fn reset(&mut self) -> bool {
+            self.host(true);
+            self.wait(500e-6);
+            self.host(false);
+            self.wait(70e-6);
+            let present = !self.high;
+            self.wait(430e-6);
+            present
+        }
+        fn write_bit(&mut self, one: bool) {
+            self.host(true);
+            self.wait(if one { 6e-6 } else { 60e-6 });
+            self.host(false);
+            self.wait(if one { 64e-6 } else { 10e-6 });
+        }
+        fn read_bit(&mut self) -> bool {
+            self.host(true);
+            self.wait(6e-6);
+            self.host(false);
+            self.wait(9e-6);
+            let b = self.high;
+            self.wait(55e-6);
+            b
+        }
+        fn write(&mut self, b: u8) {
+            for i in 0..8 {
+                self.write_bit(b >> i & 1 != 0);
+            }
+        }
+        fn read(&mut self) -> u8 {
+            (0..8).fold(0, |b, i| b | (self.read_bit() as u8) << i)
+        }
+        /// The Maxim search algorithm (application note 187): every ROM
+        /// code on the line, in the order the search finds them.
+        fn search(&mut self, command: u8) -> Vec<[u8; 8]> {
+            let mut found = Vec::new();
+            let mut rom = [0u8; 8];
+            let mut last_discrepancy: i32 = -1;
+            loop {
+                assert!(self.reset(), "presence");
+                self.write(command);
+                let mut last_zero = -1;
+                for i in 0..64 {
+                    let (b, c) = (self.read_bit(), self.read_bit());
+                    let dir = match (b, c) {
+                        (true, true) => return found, // nobody answers
+                        (false, true) => false,
+                        (true, false) => true,
+                        // Both values present: a discrepancy.
+                        (false, false) => {
+                            let d = if i < last_discrepancy {
+                                rom[i as usize / 8] >> (i % 8) & 1 != 0
+                            } else {
+                                i == last_discrepancy
+                            };
+                            if !d {
+                                last_zero = i;
+                            }
+                            d
+                        }
+                    };
+                    if dir {
+                        rom[i as usize / 8] |= 1 << (i % 8);
+                    } else {
+                        rom[i as usize / 8] &= !(1 << (i % 8));
+                    }
+                    self.write_bit(dir);
+                }
+                found.push(rom);
+                last_discrepancy = last_zero;
+                if last_discrepancy < 0 {
+                    return found;
+                }
+            }
+        }
+    }
+
+    fn three_sensors() -> Vec<Ds18b20> {
+        vec![
+            Ds18b20::new(21.5, 0x0000_0012_3456),
+            Ds18b20::new(-4.0, 0x0000_0012_3457),
+            Ds18b20::new(30.25, 0x00AB_CDEF_0001),
+        ]
+    }
+
+    #[test]
+    fn ds18b20_rom_codes_carry_family_serial_and_crc() {
+        let d = Ds18b20::new(25.0, 0x0123_4567_89AB);
+        assert_eq!(d.rom[0], 0x28);
+        assert_eq!(d.rom[1..7], [0xAB, 0x89, 0x67, 0x45, 0x23, 0x01]);
+        assert_eq!(d.rom[7], crc8_maxim(&d.rom[..7]));
+        assert_eq!(crc8_maxim(&d.rom), 0, "CRC over all 8 bytes is 0");
+        assert_eq!(d.rom_text(), "28-0123456789AB");
+        // The example in Maxim application note 27.
+        assert_eq!(
+            crc8_maxim(&[0x02, 0x1C, 0xB8, 0x01, 0x00, 0x00, 0x00]),
+            0xA2
+        );
+    }
+
+    #[test]
+    fn search_rom_finds_every_device_on_a_shared_line() {
+        let mut line = Line::new(three_sensors());
+        let mut want: Vec<[u8; 8]> = line.d.iter().map(|d| d.rom).collect();
+        let mut found = line.search(0xF0);
+        assert_eq!(found.len(), 3, "{found:02X?}");
+        for rom in &found {
+            assert_eq!(crc8_maxim(rom), 0);
+        }
+        found.sort();
+        want.sort();
+        assert_eq!(found, want);
+        // One device alone is found in a single pass.
+        let mut one = Line::new(vec![Ds18b20::new(20.0, 77)]);
+        assert_eq!(one.search(0xF0), vec![ds18b20_rom(77)]);
+    }
+
+    #[test]
+    fn match_rom_addresses_one_device_and_read_rom_collides() {
+        let mut line = Line::new(three_sensors());
+        // SKIP ROM + CONVERT T reaches all of them.
+        assert!(line.reset());
+        line.write(0xCC);
+        line.write(0x44);
+        line.wait(0.8);
+        assert!(line.d.iter().all(|d| d.conversions == 1));
+        for (i, want) in [21.5, -4.0, 30.25].into_iter().enumerate() {
+            let rom = line.d[i].rom;
+            assert!(line.reset());
+            line.write(0x55);
+            for b in rom {
+                line.write(b);
+            }
+            line.write(0xBE);
+            let pad: Vec<u8> = (0..9).map(|_| line.read()).collect();
+            assert_eq!(crc8_maxim(&pad), 0, "only device {i} answers: {pad:02X?}");
+            let t = i16::from_le_bytes([pad[0], pad[1]]) as f64 / 16.0;
+            assert_eq!(t, want);
+        }
+        // MATCH ROM with a code nobody has: the line stays high.
+        assert!(line.reset());
+        line.write(0x55);
+        for b in ds18b20_rom(999) {
+            line.write(b);
+        }
+        line.write(0xBE);
+        assert_eq!(line.read(), 0xFF);
+        // READ ROM with three devices: their codes AND together on the line
+        // and the CRC no longer checks.
+        assert!(line.reset());
+        line.write(0x33);
+        let rom: Vec<u8> = (0..8).map(|_| line.read()).collect();
+        let and: Vec<u8> = (0..8)
+            .map(|i| line.d.iter().fold(0xFF, |a, d| a & d.rom[i]))
+            .collect();
+        assert_eq!(rom, and);
+        assert_ne!(crc8_maxim(&rom), 0);
+    }
+
+    #[test]
+    fn alarm_search_finds_only_devices_outside_their_limits() {
+        let mut line = Line::new(three_sensors());
+        // TH 25 °C, TL −10 °C for all, then convert.
+        assert!(line.reset());
+        line.write(0xCC);
+        line.write(0x4E);
+        line.write(25);
+        line.write(-10i8 as u8);
+        line.write(0x7F);
+        assert!(line.reset());
+        line.write(0xCC);
+        line.write(0x44);
+        line.wait(0.8);
+        let found = line.search(0xEC);
+        assert_eq!(found, vec![line.d[2].rom], "only the 30.25 °C sensor");
     }
 
     #[test]

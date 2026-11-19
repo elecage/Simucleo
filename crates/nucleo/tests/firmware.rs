@@ -1848,3 +1848,348 @@ fn info_write_kind(board: &Nucleo, name: &str) -> &'static str {
         Err(_) => "neither",
     }
 }
+
+// ------------------------------------------------------- new parts (M17)
+
+/// The ROM code a DS18B20 part shows (and the examples print).
+fn rom_text(board: &mut Nucleo, id: &str) -> String {
+    board
+        .circuit_frame(0.0)
+        .iter()
+        .find(|p| p.id == id)
+        .and_then(|p| p.text.clone())
+        .unwrap_or_else(|| panic!("{id} shows no ROM code"))
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-onewire-multi"]
+fn three_ds18b20_share_one_line_found_by_search_rom() {
+    use simucleo_nucleo::BusCatalog;
+    let n = "nucleo";
+    let circuit = |temps: [f64; 3]| {
+        let parts: Vec<serde_json::Value> = (0..3)
+            .map(|i| serde_json::json!({"id": format!("t{}", i + 1), "kind": "ds18b20", "props": {"temp": temps[i]}}))
+            .collect();
+        let mut wires = Vec::new();
+        for i in 1..=3 {
+            let id = format!("t{i}");
+            wires.push(wire_json((n, "3V3"), (&id, "VDD")));
+            wires.push(wire_json((&id, "GND"), (n, "GND")));
+            wires.push(wire_json((n, "D2"), (&id, "DQ")));
+        }
+        m8_circuit(serde_json::Value::Array(parts), wires)
+    };
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-onewire-multi", "hal-onewire-multi"))
+        .unwrap();
+    board.set_circuit(
+        &circuit([21.5, -4.25, 30.0]),
+        &BusCatalog::default(),
+        &arduino_signals(),
+    );
+    let roms: Vec<String> = (1..=3)
+        .map(|i| rom_text(&mut board, &format!("t{i}")))
+        .collect();
+    assert!(roms.iter().all(|r| r.starts_with("28-")), "{roms:?}");
+    assert_ne!(roms[0], roms[1]);
+    assert_ne!(roms[1], roms[2]);
+    board.run_for_ns(1500e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("found 3 sensors"), "{text}");
+    for rom in &roms {
+        assert!(text.contains(&format!("ROM {rom}\r\n")), "{rom} in {text}");
+    }
+    assert!(text.contains(&format!(" {} 21.50 C", roms[0])), "{text}");
+    assert!(text.contains(&format!(" {} -4.25 C", roms[1])), "{text}");
+    assert!(text.contains(&format!(" {} 30.00 C", roms[2])), "{text}");
+    assert!(!text.contains("CRC error"), "{text}");
+    // Warming one sensor changes only its line.
+    board.set_circuit(
+        &circuit([21.5, 33.0, 30.0]),
+        &BusCatalog::default(),
+        &arduino_signals(),
+    );
+    board.run_for_ns(2100e6);
+    let text = console_text(&mut board);
+    let last = text.rsplit("--").nth(1).unwrap_or(&text);
+    assert!(last.contains(&format!(" {} 33.00 C", roms[1])), "{text}");
+    assert!(last.contains(&format!(" {} 21.50 C", roms[0])), "{text}");
+    assert!(last.contains(&format!(" {} 30.00 C", roms[2])), "{text}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+/// What the phone of HC-05 part `id` received since the last call.
+fn phone_text(board: &mut Nucleo, id: &str) -> String {
+    let st = board.bluetooth();
+    let s = st.iter().find(|s| s.id == id).expect("an HC-05 part");
+    assert!(
+        s.received.iter().all(|&(_, garbled)| !garbled),
+        "no baud rate mismatch"
+    );
+    String::from_utf8_lossy(&s.received.iter().map(|b| b.0).collect::<Vec<_>>()).into_owned()
+}
+
+fn hc05_circuit(baud: u32) -> simucleo_nucleo::Circuit {
+    let n = "nucleo";
+    m8_circuit(
+        serde_json::json!([{"id": "bt", "kind": "hc05", "props": {"baud": baud}}]),
+        vec![
+            wire_json((n, "5V"), ("bt", "VCC")),
+            wire_json(("bt", "GND"), (n, "GND")),
+            wire_json((n, "PA9"), ("bt", "RXD")),
+            wire_json(("bt", "TXD"), (n, "D2")),
+            wire_json(("bt", "STATE"), (n, "D7")),
+        ],
+    )
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-bluetooth-led"]
+fn phone_commands_over_hc05_switch_ld2_and_get_replies() {
+    use simucleo_nucleo::BusCatalog;
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-bluetooth-led", "hal-bluetooth-led"))
+        .unwrap();
+    board.set_circuit(
+        &hc05_circuit(9600),
+        &BusCatalog::default(),
+        &arduino_signals(),
+    );
+    board.run_for_ns(100e6);
+    assert!(console_text(&mut board).contains("HC-05 on USART1"));
+    let st = &board.bluetooth()[0];
+    assert_eq!((st.tx_usart, st.rx_usart), (Some("USART1"), Some("USART1")));
+    // The phone connects: STATE rises and the firmware greets it.
+    board.bluetooth_connect("bt", true);
+    board.run_for_ns(200e6);
+    assert!(console_text(&mut board).contains("[BT] phone connected"));
+    assert!(phone_text(&mut board, "bt").contains("Nucleo LED ready"));
+    assert!(!board.pin('A', 5));
+    let say = |board: &mut Nucleo, cmd: &str| -> String {
+        assert!(board.bluetooth_send("bt", format!("{cmd}\r\n").as_bytes()));
+        board.run_for_ns(150e6);
+        phone_text(board, "bt")
+    };
+    assert_eq!(say(&mut board, "on"), "LED ON\r\n");
+    assert!(board.pin('A', 5), "LD2 on");
+    assert_eq!(say(&mut board, "OFF"), "LED OFF\r\n");
+    assert!(!board.pin('A', 5));
+    assert_eq!(say(&mut board, "blink"), "LED BLINK (2 Hz)\r\n");
+    board.take_pin_events();
+    board.run_for_ns(1000e6);
+    let toggles = board
+        .take_pin_events()
+        .into_iter()
+        .filter(|e| e.port == 0 && e.pin == 5)
+        .count();
+    assert!(
+        (3..=5).contains(&toggles),
+        "2 Hz blink: {toggles} toggles in 1 s"
+    );
+    assert!(say(&mut board, "status").starts_with("LED BLINKING for 1 s"));
+    assert!(say(&mut board, "fly").starts_with("? 'fly'"));
+    assert!(console_text(&mut board).contains("[BT] rx: status"));
+    // Disconnected: STATE falls, and the phone no longer reaches the board.
+    board.bluetooth_connect("bt", false);
+    board.run_for_ns(50e6);
+    assert!(console_text(&mut board).contains("[BT] phone disconnected"));
+    assert!(!board.bluetooth_send("bt", b"on\r\n"));
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-bluetooth-led"]
+fn hc05_at_the_wrong_baud_rate_garbles_the_replies() {
+    use simucleo_nucleo::BusCatalog;
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-bluetooth-led", "hal-bluetooth-led"))
+        .unwrap();
+    board.set_circuit(
+        &hc05_circuit(115_200),
+        &BusCatalog::default(),
+        &arduino_signals(),
+    );
+    board.bluetooth_connect("bt", true);
+    board.run_for_ns(300e6);
+    let st = board.bluetooth().remove(0);
+    assert_eq!(st.baud, 115_200);
+    assert!((st.mcu_baud.unwrap() - 9600.0).abs() < 10.0);
+    assert!(!st.received.is_empty());
+    assert!(st.received.iter().all(|b| b.1), "every byte re-sampled");
+    let text: Vec<u8> = st.received.iter().map(|b| b.0).collect();
+    assert!(!String::from_utf8_lossy(&text).contains("ready"));
+}
+
+fn visual_of(v: &[simucleo_nucleo::PartVisual], id: &str) -> simucleo_nucleo::PartVisual {
+    v.iter().find(|p| p.id == id).unwrap().clone()
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-relay"]
+fn button_toggles_the_relay_that_switches_a_5v_led() {
+    use simucleo_nucleo::BusCatalog;
+    let n = "nucleo";
+    let circuit = m8_circuit(
+        serde_json::json!([
+            {"id": "k1", "kind": "relay", "props": {"trigger": "low"}},
+            {"id": "r1", "kind": "resistor", "props": {"ohms": "330"}},
+            {"id": "lamp", "kind": "led-5mm", "props": {"color": "yellow"}},
+            {"id": "sw1", "kind": "tact-switch"}
+        ]),
+        vec![
+            wire_json((n, "5V"), ("k1", "VCC")),
+            wire_json(("k1", "GND"), (n, "GND")),
+            wire_json((n, "D7"), ("k1", "IN")),
+            wire_json((n, "5V"), ("k1", "COM")),
+            wire_json(("k1", "NO"), ("r1", "1")),
+            wire_json(("r1", "2"), ("lamp", "A")),
+            wire_json(("lamp", "K"), (n, "GND")),
+            wire_json((n, "D4"), ("sw1", "1a")),
+            wire_json(("sw1", "2a"), (n, "GND")),
+        ],
+    );
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-relay", "hal-relay"))
+        .unwrap();
+    board.set_circuit(&circuit, &BusCatalog::default(), &arduino_signals());
+    board.run_for_ns(100e6);
+    board.circuit_frame(0.1);
+    board.run_for_ns(50e6);
+    let v = board.circuit_frame(0.05);
+    assert_eq!(visual_of(&v, "lamp").brightness[0], 0.0);
+    assert_eq!(visual_of(&v, "k1").closed, Some(false));
+    let text = console_text(&mut board);
+    assert!(text.contains("relay OFF"), "{text}");
+    for (k, on) in [true, false, true].into_iter().enumerate() {
+        board.press("sw1", true);
+        // The coil pulls in at once, the contacts ~10 ms later.
+        board.run_for_ns(5e6);
+        let v = board.circuit_frame(0.005);
+        assert_eq!(
+            visual_of(&v, "k1").on,
+            Some(on as u8 as f64),
+            "press {k}: coil LED"
+        );
+        board.run_for_ns(20e6);
+        board.circuit_frame(0.02);
+        board.press("sw1", false);
+        board.run_for_ns(250e6);
+        let v = board.circuit_frame(0.25);
+        assert_eq!(visual_of(&v, "k1").closed, Some(on), "press {k}: contacts");
+        let lamp = visual_of(&v, "lamp").brightness[0];
+        if on {
+            assert!(lamp > 0.9, "press {k}: lit from 5 V through COM-NO, {lamp}");
+        } else {
+            assert_eq!(lamp, 0.0, "press {k}");
+        }
+        assert_eq!(board.pin('A', 5), on, "LD2 mirrors the relay");
+        let text = console_text(&mut board);
+        assert!(
+            text.contains(if on { "relay ON" } else { "relay OFF" }),
+            "{text}"
+        );
+    }
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-servos-multi"]
+fn three_servos_on_tim3_and_tim1_follow_their_own_pulse_widths() {
+    use simucleo_core::bus::AccessSize;
+    use simucleo_nucleo::BusCatalog;
+    let n = "nucleo";
+    let ids = ["s1", "s2", "s3"];
+    let pins = ["D5", "D9", "D7"];
+    let parts: Vec<serde_json::Value> = ids
+        .iter()
+        .map(|id| serde_json::json!({"id": id, "kind": "servo"}))
+        .collect();
+    let mut wires = Vec::new();
+    for (id, pin) in ids.iter().zip(pins) {
+        wires.push(wire_json((n, "5V"), (id, "V+")));
+        wires.push(wire_json((id, "GND"), (n, "GND")));
+        wires.push(wire_json((n, pin), (id, "SIG")));
+    }
+    let mut signals = arduino_signals();
+    signals.insert("D9".into(), "PC7".into());
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-servos-multi", "hal-servos-multi"))
+        .unwrap();
+    board.set_circuit(
+        &m8_circuit(serde_json::Value::Array(parts), wires),
+        &BusCatalog::default(),
+        &signals,
+    );
+    // Compare registers: TIM3 CCR1, CCR2, TIM1 CCR1 (pulse widths in µs).
+    let ccr = |board: &Nucleo, i: usize| -> f64 {
+        let a = [0x4000_0434, 0x4000_0438, 0x4001_0034][i];
+        board.bus.peek(a, AccessSize::Word).unwrap() as f64
+    };
+    let mut seen = [[f64::MAX, f64::MIN]; 3];
+    for frame in 0..250 {
+        board.run_for_ns(20e6);
+        let v = board.circuit_frame(0.02);
+        if frame < 25 {
+            continue; // the horns travel from 90° first
+        }
+        for i in 0..3 {
+            let s = visual_of(&v, ids[i]);
+            assert!(!s.unpowered);
+            let angle = s.angle.unwrap();
+            let want = (ccr(&board, i) - 500.0) / 2000.0 * 180.0;
+            // A pulse width set within the last 20 ms may not have
+            // reached the horn yet (90°/s sweep).
+            assert!(
+                (angle - want).abs() < 4.5,
+                "frame {frame} servo {}: {angle:.1}° for {want:.1}°",
+                ids[i]
+            );
+            seen[i][0] = seen[i][0].min(angle);
+            seen[i][1] = seen[i][1].max(angle);
+        }
+        // A third of a period apart: never all at the same angle.
+        let a: Vec<f64> = ids
+            .iter()
+            .map(|id| visual_of(&v, id).angle.unwrap())
+            .collect();
+        assert!(
+            (a[0] - a[1]).abs() > 20.0 || (a[1] - a[2]).abs() > 20.0,
+            "{a:?}"
+        );
+    }
+    for (i, [lo, hi]) in seen.iter().enumerate() {
+        assert!(
+            *lo < 10.0 && *hi > 170.0,
+            "servo {} swept {lo}..{hi}",
+            ids[i]
+        );
+    }
+    let text = console_text(&mut board);
+    assert!(text.contains("S1 ") && text.contains("S3 "), "{text}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}

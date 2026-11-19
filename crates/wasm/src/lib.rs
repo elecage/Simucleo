@@ -470,6 +470,7 @@ impl Simulator {
             "circuitWarnings": self.board.circuit_warnings(),
             "probes": probes,
             "rtos": rtos,
+            "bluetooth": self.board.bluetooth(),
         })
         .to_string()
     }
@@ -512,6 +513,19 @@ impl Simulator {
     #[wasm_bindgen(js_name = consoleSend)]
     pub fn console_send(&mut self, text: &str) {
         self.board.console_send(text.as_bytes());
+    }
+
+    /// The phone of HC-05 part `id` sends `text`. Returns whether it went
+    /// out (the module is powered, in data mode and connected).
+    #[wasm_bindgen(js_name = bluetoothSend)]
+    pub fn bluetooth_send(&mut self, id: &str, text: &str) -> bool {
+        self.board.bluetooth_send(id, text.as_bytes())
+    }
+
+    /// Connect or disconnect the phone of HC-05 part `id`.
+    #[wasm_bindgen(js_name = bluetoothConnect)]
+    pub fn bluetooth_connect(&mut self, id: &str, on: bool) {
+        self.board.bluetooth_connect(id, on);
     }
 
     /// Press or release the blue user button B1.

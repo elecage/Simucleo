@@ -1,0 +1,189 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "DS18B20 세 개, 1-Wire 한 선 (SEARCH ROM)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "bb1",
+      "kind": "breadboard-half",
+      "x": 42,
+      "y": 4,
+      "props": {}
+    },
+    {
+      "id": "t1",
+      "kind": "ds18b20",
+      "x": 48,
+      "y": 10,
+      "props": {
+        "temp": 22.5,
+        "serial": ""
+      }
+    },
+    {
+      "id": "t2",
+      "kind": "ds18b20",
+      "x": 54,
+      "y": 10,
+      "props": {
+        "temp": 24.0,
+        "serial": ""
+      }
+    },
+    {
+      "id": "t3",
+      "kind": "ds18b20",
+      "x": 60,
+      "y": 10,
+      "props": {
+        "temp": 25.5,
+        "serial": ""
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "bp1"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "bn2"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D2"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "i6"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "bb1",
+        "pin": "j5"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "bn5"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "bb1",
+        "pin": "j7"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "bp7"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "bb1",
+        "pin": "j11"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "bn11"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "bb1",
+        "pin": "j13"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "bp13"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "bb1",
+        "pin": "h6"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "h12"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "bb1",
+        "pin": "j17"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "bn17"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "bb1",
+        "pin": "j19"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "bp19"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w11",
+      "a": {
+        "part": "bb1",
+        "pin": "h12"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "h18"
+      },
+      "color": "#1e88e5"
+    }
+  ],
+  "firmware": {
+    "name": "hal-onewire-multi",
+    "example": "hal-onewire-multi.elf"
+  }
+}

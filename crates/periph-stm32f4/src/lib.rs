@@ -320,6 +320,25 @@ const USARTS: [(&str, u32, u16, bool, u32, u32, &str); 3] = [
     ),
 ];
 
+/// The (port, pin) a USART's TX and RX are routed to, if they are.
+pub type UsartPins = (Option<(u8, u8)>, Option<(u8, u8)>);
+
+/// Where each USART's TX and RX can go: (USART index, port, pin, AF, TX).
+/// USART1 on PA9/PA10 (D8/D2) or PB6/PB7, USART2 on PA2/PA3 (the ST-LINK
+/// virtual COM port), USART6 on PA11/PA12 or PC6/PC7.
+pub const USART_PINS: [(usize, u8, u8, u8, bool); 10] = [
+    (0, 0, 9, 7, true),
+    (0, 1, 6, 7, true),
+    (0, 0, 10, 7, false),
+    (0, 1, 7, 7, false),
+    (1, 0, 2, 7, true),
+    (1, 0, 3, 7, false),
+    (2, 0, 11, 8, true),
+    (2, 2, 6, 8, true),
+    (2, 0, 12, 8, false),
+    (2, 2, 7, 8, false),
+];
+
 const GPIO_ENABLE_BITS: [&str; 8] = [
     "RCC.AHB1ENR.GPIOAEN",
     "RCC.AHB1ENR.GPIOBEN",
@@ -667,6 +686,26 @@ impl Stm32f401Bus {
                 .map(|&(port, pin, _)| (port, pin))
         };
         Some((routed(I2CS[i].scl)?, routed(I2CS[i].sda)?))
+    }
+
+    /// The TX and RX pins USART `i` (0 = USART1, 1 = USART2, 2 = USART6) is
+    /// routed to: GPIOs in alternate-function mode with its AF.
+    pub fn usart_pins(&self, i: usize) -> UsartPins {
+        let routed = |tx: bool| {
+            USART_PINS
+                .iter()
+                .find(|&&(u, port, pin, af, t)| {
+                    let g = &self.gpio[port as usize];
+                    u == i && t == tx && g.mode(pin) == gpio::PinMode::Alternate && g.af(pin) == af
+                })
+                .map(|&(_, port, pin, ..)| (port, pin))
+        };
+        (routed(true), routed(false))
+    }
+
+    /// Baud rate USART `i` is configured for with the present clocks.
+    pub fn usart_baud(&self, i: usize) -> Option<f64> {
+        self.usart[i].baud(&self.clocks)
     }
 
     /// The pins an SPI controller is routed to: SCK and MOSI must be, MISO
@@ -1891,6 +1930,67 @@ mod tests {
         let text: Vec<u8> = bus.terminal_take(1).iter().map(|b| b.byte).collect();
         assert_eq!(text, b"DMA!");
         assert_eq!(bus.read_u32(s6 + 0x04).unwrap(), 0);
+    }
+
+    #[test]
+    fn usart1_and_usart6_run_from_pclk2_and_are_routed_by_af() {
+        let mut bus = Stm32f401Bus::new();
+        let mut sys = CortexM::new();
+        let w = |bus: &mut Stm32f401Bus, a: u32, v: u32| bus.write(a, AccessSize::Word, v).unwrap();
+        // GPIOA and GPIOC clocks; USART1EN, USART6EN; APB2 at 16 MHz.
+        w(&mut bus, map::RCC_BASE + 0x30, 0b101);
+        w(&mut bus, map::RCC_BASE + 0x44, 1 << 4 | 1 << 5);
+        assert_eq!(bus.usart_pins(0), (None, None));
+        // PA9/PA10 AF7 (USART1), PC6/PC7 AF8 (USART6).
+        w(&mut bus, 0x4002_0000, 0xA800_0000 | 0b1010 << 18);
+        w(&mut bus, 0x4002_0024, 7 << 4 | 7 << 8);
+        w(&mut bus, 0x4002_0800, 0b1010 << 12);
+        w(&mut bus, 0x4002_0820, 8 << 24 | 8 << 28);
+        assert_eq!(bus.usart_pins(0), (Some((0, 9)), Some((0, 10))));
+        assert_eq!(bus.usart_pins(2), (Some((2, 6)), Some((2, 7))));
+        assert_eq!(bus.usart_pins(1), (None, None), "PA2/PA3 not in AF mode");
+        // The wrong AF number routes nothing.
+        w(&mut bus, 0x4002_0024, 8 << 4 | 7 << 8);
+        assert_eq!(bus.usart_pins(0), (None, Some((0, 10))));
+        w(&mut bus, 0x4002_0024, 7 << 4 | 7 << 8);
+        let (u1, u6) = (map::USART1_BASE, 0x4001_1400);
+        for (u, brr) in [(u1, 1667), (u6, 139)] {
+            w(&mut bus, u + 0x08, brr); // 9600 / 115200 Bd at 16 MHz
+            w(&mut bus, u + 0x0C, 1 << 13 | 1 << 3 | 1 << 2 | 1 << 5); // UE TE RE RXNEIE
+        }
+        assert!((bus.usart_baud(0).unwrap() - 9598.1).abs() < 1.0);
+        assert!((bus.usart_baud(2).unwrap() - 115_107.9).abs() < 1.0);
+        bus.usart[0].host_baud = 9600;
+        w(&mut bus, u1 + 0x04, b'1' as u32);
+        w(&mut bus, u6 + 0x04, b'6' as u32);
+        bus.terminal_send(0, b"a");
+        for t in (0..=40_000u64).step_by(100) {
+            bus.set_time(t);
+            bus.run_events(t);
+        }
+        let got = |bus: &mut Stm32f401Bus, i| -> Vec<(u8, bool)> {
+            bus.terminal_take(i)
+                .iter()
+                .map(|b| (b.byte, b.garbled))
+                .collect()
+        };
+        assert_eq!(got(&mut bus, 0), [(b'1', false)]);
+        assert_eq!(got(&mut bus, 2), [(b'6', false)]);
+        assert_eq!(got(&mut bus, 1), []);
+        // The byte typed at 9600 arrived on USART1, whose IRQ is 37.
+        assert_eq!(bus.usart[0].sr & usart::RXNE, usart::RXNE);
+        assert_eq!(bus.read_u32(u1 + 0x04).unwrap(), b'a' as u32);
+        bus.terminal_send(2, b"z");
+        for t in (40_000..=60_000u64).step_by(100) {
+            bus.set_time(t);
+            bus.run_events(t);
+        }
+        bus.poll(&mut sys);
+        assert_ne!(
+            sys.peek(0xE000_E200 + 8, AccessSize::Word) & (1 << (71 - 64)),
+            0,
+            "USART6 IRQ 71 pending"
+        );
     }
 
     #[test]

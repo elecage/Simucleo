@@ -108,8 +108,42 @@ function Body({
       );
     }
     default:
-      return <rect className="sym-line sym-fill" x={x} y={y} width={w} height={h} />;
+      return (
+        <g>
+          <rect className="sym-line sym-fill" x={x} y={y} width={w} height={h} />
+          {s.kind === "relay" && <RelayInside s={s} v={v} />}
+        </g>
+      );
   }
+}
+
+/** Inside a relay module's box: the coil and the change-over contact
+ * (COM to NO while energised, else to NC), linked by a dashed line. */
+function RelayInside({ s, v }: { s: SchSymbol; v?: VisualState }) {
+  const { x, y } = s;
+  const row = (i: number) => y + (2 * i + 2) * G; // pin rows: NO, COM, NC
+  const closed = !!v?.closed;
+  const coil = (v?.on ?? 0) > 0.5;
+  const pivot = [x + 8 * G, row(1)];
+  const contact = (i: number) => [x + 11 * G, row(i)];
+  const tip = closed ? [x + 11 * G, row(0) + 3] : [x + 11 * G, row(2) - 3];
+  return (
+    <g data-closed={closed ? "1" : "0"}>
+      <rect className={`sym-line${coil ? " sym-on" : ""}`} x={x + 3 * G} y={row(0) + G / 2} width={2.4 * G} height={3 * G} fill="none" />
+      <line className="sym-line" x1={x + 3 * G} y1={row(2) - G / 2} x2={x + 5.4 * G} y2={row(0) + G / 2} />
+      <line className="sym-line" x1={x + 5.4 * G} y1={row(1)} x2={pivot[0]} y2={pivot[1] + (closed ? -1 : 1) * G} strokeDasharray="3 3" />
+      {/* COM to the pivot, NO and NC contacts to their pins. */}
+      <line className="sym-line" x1={pivot[0]} y1={pivot[1]} x2={x + 12.5 * G} y2={row(1)} />
+      <line className="sym-line" x1={pivot[0]} y1={pivot[1]} x2={tip[0]} y2={tip[1]} />
+      {[0, 2].map((i) => (
+        <g key={i}>
+          <circle className="sym-line sym-fill" cx={contact(i)[0]} cy={contact(i)[1]} r={2.5} />
+          <line className="sym-line" x1={contact(i)[0] + 2.5} y1={row(i)} x2={x + 12.5 * G} y2={row(i)} />
+        </g>
+      ))}
+      <circle className="sym-line sym-fill" cx={pivot[0]} cy={pivot[1]} r={2.5} />
+    </g>
+  );
 }
 
 function PinEnd({

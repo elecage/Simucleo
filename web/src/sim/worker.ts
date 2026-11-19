@@ -127,6 +127,14 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     case "console":
       sim.consoleSend(m.text);
       break;
+    case "bluetooth":
+      sim.bluetoothSend(m.part, m.text);
+      if (!running) sendFrame();
+      break;
+    case "bluetoothConnect":
+      sim.bluetoothConnect(m.part, m.on);
+      if (!running) sendFrame();
+      break;
     case "readMemory":
       post({ type: "memory", addr: m.addr, bytes: sim.readMemory(m.addr, m.len) });
       break;

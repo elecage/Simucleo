@@ -30,6 +30,28 @@ export interface PartFrame {
   matrix?: import("../parts/types").MatrixView;
   /** SD card: moves whenever its contents change. */
   generation?: number;
+  /** Relay: COM is on NO. */
+  closed?: boolean;
+}
+
+/** An HC-05 module and what its phone received this frame (`simucleo_nucleo::BluetoothStatus`). */
+export interface BluetoothFrame {
+  id: string;
+  /** [byte, re-sampled at a mismatched baud rate] */
+  received: [number, boolean][];
+  powered: boolean;
+  connected: boolean;
+  atMode: boolean;
+  name: string;
+  /** The module's UART baud rate (38400 in AT mode). */
+  baud: number;
+  /** The USART whose TX reaches RXD, and the one TXD reaches. */
+  txUsart: string | null;
+  rxUsart: string | null;
+  /** The baud rate that USART is set to. */
+  mcuBaud: number | null;
+  /** An MCU TX is wired to the module's TXD. */
+  swapped: boolean;
 }
 
 /** Level changes of a probed pin within one frame. */
@@ -90,6 +112,8 @@ export interface SimFrame {
   probes: ProbeFrame[];
   /** Present when the firmware contains an RTOS (FreeRTOS). */
   rtos: RtosFrame | null;
+  /** HC-05 modules in the circuit. */
+  bluetooth: BluetoothFrame[];
 }
 
 export type ToWorker =
@@ -105,6 +129,8 @@ export type ToWorker =
   | { type: "wiring"; circuit: string; catalog: string; signals: string } // JSON
   | { type: "probes"; pins: string[] }
   | { type: "console"; text: string }
+  | { type: "bluetooth"; part: string; text: string }
+  | { type: "bluetoothConnect"; part: string; on: boolean }
   | { type: "readMemory"; addr: number; len: number }
   | { type: "sdImage"; part: string }
   | { type: "rotate"; part: string; detents: number }

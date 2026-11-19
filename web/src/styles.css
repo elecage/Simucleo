@@ -432,3 +432,48 @@ main { position: relative; }
   .lesson-complete { background: #14532d; color: #dcfce7; border-color: #166534; }
   .lesson-check .check-hint { color: #fbbf24; }
 }
+
+/* ------------------------------------------------------- M17 parts */
+.silk.rom-code { font-family: ui-monospace, Menlo, monospace; font-size: 3.6px; fill: var(--muted, #6b7280); pointer-events: none; }
+.bt-core { fill: #15803d; stroke: #14532d; }
+.bt-antenna { fill: none; stroke: #fbbf24; stroke-width: 0.8; }
+.bt-led { fill: #4b1d1d; }
+.bt-led.waiting { fill: #ef4444; animation: bt-fast 0.2s steps(2) infinite; }
+.bt-led.connected { fill: #ef4444; animation: bt-paired 2s linear infinite; }
+.bt-led.at { fill: #ef4444; animation: bt-fast 2s steps(2) infinite; }
+@keyframes bt-fast { 50% { fill: #4b1d1d; } }
+@keyframes bt-paired { 0%, 8%, 16%, 24% { fill: #ef4444; } 4%, 12%, 20%, 100% { fill: #4b1d1d; } }
+.relay-can { fill: #2563eb; stroke: #1e3a8a; }
+.relay-text { font: 600 3.2px sans-serif; fill: #e0e7ff; pointer-events: none; }
+.relay-text.small { font-size: 3px; fill: #1f2937; }
+.relay-coil { fill: #b45309; stroke: #78350f; stroke-width: 0.4; }
+.relay-coil.on { fill: #f59e0b; }
+.relay-winding { stroke: #78350f; stroke-width: 0.5; }
+.relay-terminal { fill: #e5e7eb; stroke: #9ca3af; }
+.screw { fill: #9ca3af; stroke: #4b5563; stroke-width: 0.4; }
+.relay-contact { fill: #b45309; }
+.relay-arm { stroke: #111827; stroke-width: 0.9; stroke-linecap: round; }
+.relay-pivot { fill: #111827; }
+.relay-led { fill: #4b1d1d; }
+.relay-led.on { fill: #ef4444; filter: drop-shadow(0 0 2px #ef4444); }
+
+/* Bluetooth phone (HC-05) */
+.phone { display: flex; flex-direction: column; height: 100%; gap: 4px; }
+.phone-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.phone-bar .hint { flex: 1; font-size: 12px; }
+.bt-status { padding: 0 8px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); color: var(--muted); }
+.bt-status.on { background: #dcfce7; color: #166534; border-color: #86efac; }
+.bt-warn { margin: 0; padding: 4px 8px; border-radius: 6px; font-size: 12px; background: #fff6db; color: #6b5200; border: 1px solid #f0d98a; }
+.chat { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); min-height: 0; }
+.bubble { max-width: 70%; padding: 4px 10px; border-radius: 12px; font: 13px/1.35 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+.bubble.mcu { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); }
+.bubble.phone { align-self: flex-end; background: var(--accent); color: #fff; }
+.bubble.system { align-self: center; max-width: 90%; font: 12px sans-serif; color: var(--muted); }
+.bubble.garbled { border-color: #f59e0b; color: #b45309; }
+.phone form { display: flex; gap: 6px; }
+.phone input { flex: 1; font: 13px ui-monospace, monospace; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--text); }
+@media (prefers-color-scheme: dark) {
+  .bt-status.on { background: #14532d; color: #dcfce7; border-color: #166534; }
+  .bt-warn { background: #3a3011; color: #f5dc8a; border-color: #6e5a1c; }
+  .bubble.garbled { color: #fbbf24; }
+}

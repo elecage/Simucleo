@@ -1321,6 +1321,24 @@ fn breakpoints_steps_call_stack_and_variables() {
         "{r:?}"
     );
     assert!(board.time_ns() - t >= 5e6 - 1e3);
+    // A false hit right at the end of the time budget is not a stop either
+    // (the next hit comes 1 ms after this one: end the run on, just before
+    // and just after it, a cycle at a time).
+    board.set_conditional_breakpoints(&bp("current == 2"));
+    board.run_for_ns_debug(10e6);
+    board.set_conditional_breakpoints(&bp("current > 3"));
+    let cycle = 1e9 / board.clock_hz() as f64;
+    for k in -4..=4 {
+        let r = board.run_for_ns_debug(1e6 + k as f64 * cycle);
+        assert!(
+            !matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_)),
+            "k = {k}: {r:?}"
+        );
+        // Back to the callback for the next try.
+        board.set_conditional_breakpoints(&bp("current == 2"));
+        board.run_for_ns_debug(10e6);
+        board.set_conditional_breakpoints(&bp("current > 3"));
+    }
     // A condition that cannot be evaluated stops (to show the error).
     board.set_conditional_breakpoints(&bp("nosuch == 1"));
     let r = board.run_for_ns_debug(5e6);

@@ -145,11 +145,23 @@ impl Nucleo {
     /// condition is false.
     pub fn run_for_ns_debug(&mut self, ns: f64) -> RunResult {
         let end = self.time_ns() + ns;
+        let mut cycles = 0;
         loop {
             let r = self.run_for_ns((end - self.time_ns()).max(0.0));
+            cycles += r.cycles;
             match r.stop {
-                StopReason::Breakpoint(a) if !self.breakpoint_stops(a) && self.time_ns() < end => {}
-                _ => return r,
+                // A false condition is no stop, even when the hit is right
+                // at the end of the time budget (the next run resumes past
+                // it).
+                StopReason::Breakpoint(a) if !self.breakpoint_stops(a) => {
+                    if self.time_ns() >= end {
+                        return RunResult {
+                            cycles,
+                            stop: StopReason::BudgetExhausted,
+                        };
+                    }
+                }
+                stop => return RunResult { cycles, stop },
             }
         }
     }

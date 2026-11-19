@@ -377,6 +377,11 @@ export function Canvas({
   useEffect(() => {
     if (pending && !project.parts.some((p) => p.id === pending.start.part)) setPending(null);
   }, [project.parts, pending]);
+  /** The wire in progress, if its start still exists. Handlers use this
+   * rather than `pending`: a click can arrive before the effect above has
+   * cleared a wire whose part was just deleted, and must start a new wire
+   * instead of finishing that one. */
+  const livePending = pending && project.parts.some((p) => p.id === pending.start.part) ? pending : null;
 
   const finishWire = (end: PinRef) => {
     if (pending && pinKey(pending.start) !== pinKey(end)) onAddWire(pending.start, end, pending.points);
@@ -586,7 +591,7 @@ export function Canvas({
               className={cls}
               onPointerDown={(e) => {
                 e.stopPropagation();
-                if (pending) {
+                if (livePending) {
                   finishWire(ref);
                   return;
                 }
@@ -611,7 +616,7 @@ export function Canvas({
         viewBox={`${view.x} ${view.y} ${(svgRef.current?.clientWidth ?? 1200) / view.scale} ${(svgRef.current?.clientHeight ?? 800) / view.scale}`}
         onPointerDown={(e) => {
           if (e.target !== svgRef.current) return;
-          if (pending) {
+          if (livePending) {
             wiringClick(toCanvas(e));
             return;
           }

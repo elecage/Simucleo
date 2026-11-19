@@ -73,6 +73,33 @@ test("deleting the part a wire starts from cancels the wire", async ({ page }) =
   await expect(page.locator(".nets li")).toHaveCount(0);
 });
 
+test("a pin clicked right after its wire's part is deleted starts a new wire", async ({ page }) => {
+  await page.getByRole("button", { name: "LED 5mm" }).click();
+  const led = await partId(page, "led");
+  const a = await pin(page, led, "A");
+  await page.mouse.click(a.x, a.y);
+  await expect(page.locator(".wire-preview")).toHaveCount(1);
+  // Delete the LED and click D13 the moment the deletion is on screen,
+  // before React's effects run (a MutationObserver fires first): the
+  // click must not try to finish the deleted part's wire.
+  await page.evaluate((id) => {
+    const d13 = document.querySelector('[data-pins="nucleo"] [data-pin="D13"]')!;
+    const r = d13.getBoundingClientRect();
+    const at = { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, pointerId: 1, isPrimary: true };
+    const obs = new MutationObserver(() => {
+      if (document.querySelector(`[data-id="${id}"]`)) return;
+      obs.disconnect();
+      d13.dispatchEvent(new PointerEvent("pointerdown", { ...at, buttons: 1 }));
+      d13.dispatchEvent(new PointerEvent("pointerup", { ...at, buttons: 0 }));
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+  }, led);
+  await expect(page.locator(`[data-id="${led}"]`)).toHaveCount(0);
+  await expect(page.locator(".wire-preview")).toHaveCount(1);
+  await expect(page.locator("path.wire")).toHaveCount(0);
+});
+
 // https://github.com/elecage/Simucleo/issues/3
 test("releasing the mouse outside the canvas ends a drag", async ({ page }) => {
   const board = page.locator('[data-id="nucleo"]');

@@ -1221,11 +1221,18 @@ fn sonar_and_ds18b20_are_timed_in_microseconds() {
 // ------------------------------------------------ IMU, matrix, IR (M13)
 
 fn imu_matrix_circuit(roll: f64, pitch: f64) -> simucleo_nucleo::Circuit {
+    imu_matrix_circuit_shaken(roll, pitch, 0.0)
+}
+
+/// Two separate MAX7219 parts: `mx` on SPI1, `bar` on mx's DOUT with the
+/// same CLK and CS. `ay` is a shake along Y (g).
+fn imu_matrix_circuit_shaken(roll: f64, pitch: f64, ay: f64) -> simucleo_nucleo::Circuit {
     let n = "nucleo";
     m8_circuit(
         serde_json::json!([
-            {"id": "imu", "kind": "mpu6050", "props": {"roll": roll, "pitch": pitch, "gz": 12.5, "temp": 28.0}},
-            {"id": "mx", "kind": "max7219", "props": {"count": 1}}
+            {"id": "imu", "kind": "mpu6050", "props": {"roll": roll, "pitch": pitch, "gz": 12.5, "temp": 28.0, "ay": ay}},
+            {"id": "mx", "kind": "max7219", "props": {"count": 1}},
+            {"id": "bar", "kind": "max7219", "props": {"count": 1}}
         ]),
         vec![
             wire_json((n, "3V3"), ("imu", "VCC")),
@@ -1237,23 +1244,34 @@ fn imu_matrix_circuit(roll: f64, pitch: f64) -> simucleo_nucleo::Circuit {
             wire_json((n, "D13"), ("mx", "CLK")),
             wire_json((n, "D11"), ("mx", "DIN")),
             wire_json((n, "D10"), ("mx", "CS")),
+            wire_json((n, "5V"), ("bar", "VCC")),
+            wire_json(("bar", "GND"), (n, "GND")),
+            wire_json(("mx", "DOUT"), ("bar", "DIN")),
+            wire_json(("mx", "CLK"), ("bar", "CLK")),
+            wire_json(("mx", "CS"), ("bar", "CS")),
         ],
     )
 }
 
-/// The matrix's lit dot as (row, column), bit 7 the left column.
-fn matrix_dot(board: &mut Nucleo) -> Vec<(usize, usize)> {
+/// Rows of the MAX7219 part `id`.
+fn matrix_rows(board: &mut Nucleo, id: &str) -> Vec<u8> {
     let v = board.circuit_frame(0.1);
     let m = v
         .iter()
-        .find(|p| p.id == "mx")
+        .find(|p| p.id == id)
         .unwrap()
         .matrix
         .clone()
         .expect("matrix view");
     assert_eq!(m.intensity, [4]);
+    m.rows
+}
+
+/// The matrix's lit dot as (row, column), bit 7 the left column.
+fn matrix_dot(board: &mut Nucleo) -> Vec<(usize, usize)> {
+    let rows = matrix_rows(board, "mx");
     let mut dots = Vec::new();
-    for (r, row) in m.rows.iter().enumerate() {
+    for (r, row) in rows.iter().enumerate() {
         for c in 0..8 {
             if row & (0x80 >> c) != 0 {
                 dots.push((r, c));
@@ -1297,7 +1315,7 @@ fn mpu6050_tilt_moves_the_dot_on_the_max7219_matrix() {
     let text = console_text(&mut board);
     assert!(text.contains("roll -30.0 pitch 20.0 |"), "{text}");
     let line = text.lines().rev().find(|l| l.starts_with("roll")).unwrap();
-    assert!(line.ends_with("dot row 5 col 1"), "{line}");
+    assert!(line.ends_with("dot row 5 col 1 | |a| 1.00 g"), "{line}");
     assert_eq!(matrix_dot(&mut board), [(5, 1)]);
 
     board.set_circuit(
@@ -1310,6 +1328,51 @@ fn mpu6050_tilt_moves_the_dot_on_the_max7219_matrix() {
     assert!(text.contains("roll 90.0 pitch -45.0 |"), "{text}");
     assert_eq!(matrix_dot(&mut board), [(0, 7)]);
     assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-imu-matrix"]
+fn second_max7219_part_on_dout_shows_the_shake_bar() {
+    use simucleo_nucleo::BusCatalog;
+    let mut signals = arduino_signals();
+    signals.insert("D13".into(), "PA5".into());
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-imu-matrix", "hal-imu-matrix"))
+        .unwrap();
+    board.set_circuit(
+        &imu_matrix_circuit(0.0, 0.0),
+        &BusCatalog::default(),
+        &signals,
+    );
+    board.run_for_ns(400e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("dot row 3 col 3 | |a| 1.00 g\r\n"), "{text}");
+    // Hardware SPI sends both frames in one CS period; the second part,
+    // fed only from mx's DOUT, takes the first: a bar of 3 rows for 1 g.
+    let bar = |rows: Vec<u8>| rows.iter().filter(|&&r| r == 0xFF).count();
+    assert_eq!(
+        matrix_rows(&mut board, "bar"),
+        [0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF]
+    );
+    assert_eq!(matrix_dot(&mut board), [(3, 3)]);
+
+    // Shaken along Y: |a| grows, the bar too; the dot is thrown aside.
+    board.set_circuit(
+        &imu_matrix_circuit_shaken(0.0, 0.0, 1.2),
+        &BusCatalog::default(),
+        &signals,
+    );
+    board.run_for_ns(300e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("|a| 1.56 g\r\n"), "{text}");
+    assert_eq!(bar(matrix_rows(&mut board, "bar")), 5);
+    assert_eq!(matrix_dot(&mut board), [(3, 7)]);
     assert!(
         board.circuit_warnings().is_empty(),
         "{:?}",

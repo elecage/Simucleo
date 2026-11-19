@@ -28,6 +28,8 @@ export interface PartFrame {
   leds?: number[];
   lcd?: import("../parts/types").LcdView;
   matrix?: import("../parts/types").MatrixView;
+  /** SD card: moves whenever its contents change. */
+  generation?: number;
 }
 
 /** Level changes of a probed pin within one frame. */
@@ -112,7 +114,10 @@ export type ToWorker =
   | { type: "setVariable"; target: string; value: string; frame: number }
   | { type: "watchpoints"; list: WatchpointSpec[]; frame: number }
   | { type: "selectTask"; tcb: number | null }
-  | { type: "sdLoad"; part: string; bytes: ArrayBuffer };
+  | { type: "sdLoad"; part: string; bytes: ArrayBuffer }
+  | { type: "sdSnapshot"; part: string }
+  | { type: "sdRestore"; part: string; bytes: ArrayBuffer }
+  | { type: "sdWipe"; part: string };
 
 export type FromWorker =
   | { type: "ready"; version: string }
@@ -128,6 +133,7 @@ export type FromWorker =
     }
   | { type: "memory"; addr: number; bytes: Uint8Array }
   | { type: "sdImage"; part: string; bytes: Uint8Array }
+  | { type: "sdSnapshot"; part: string; bytes: Uint8Array }
   | { type: "debugFiles"; files: DebugFile[] }
   | { type: "breakpoints"; placed: ({ file: number; line: number } | null)[] }
   | { type: "debugState"; state: DebugState }

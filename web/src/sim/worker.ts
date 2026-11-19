@@ -168,6 +168,18 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case "sdLoad":
       sim.sdLoad(m.part, new Uint8Array(m.bytes));
+      if (!running) sendFrame();
+      break;
+    case "sdSnapshot":
+      post({ type: "sdSnapshot", part: m.part, bytes: sim.sdSnapshot(m.part) });
+      break;
+    case "sdRestore":
+      sim.sdRestore(m.part, new Uint8Array(m.bytes));
+      if (!running) sendFrame();
+      break;
+    case "sdWipe":
+      sim.sdWipe(m.part);
+      if (!running) sendFrame();
       break;
   }
 };

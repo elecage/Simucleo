@@ -16,7 +16,7 @@ CI builds every project here and runs it through `simucleo` as a regression test
 | `hal-adc-servo` | CubeMX HAL | ADC1 (pot, LDR divider, TMP36, internal temperature, VREFINT) → servo on TIM3 50 Hz, DC motor PWM | M5 ✅ |
 | `hal-i2c-oled` | CubeMX HAL | I2C1 at 100 kHz: bus scan (`IsDeviceReady`), SSD1306 OLED frame buffer, DS3231 RTC read/write (`Mem_Read/Write`), AHT20 measurement | M6 ✅ |
 | `hal-spi-sd-logger` | CubeMX HAL + FatFs | SPI1 SD card driver (SPI-mode init, block read/write), `f_mkfs` on a blank card, CSV log with RTC time stamps, SPI OLED sharing the bus, I2C sensors | M6 ✅ |
-| `hal-imu-matrix` | CubeMX HAL | I2C1 `Mem_Read` burst from an MPU-6050 (wake-up, ranges), roll/pitch from gravity, MAX7219 8×8 matrix on SPI1 with a GPIO CS | M13 ✅ |
+| `hal-imu-matrix` | CubeMX HAL | I2C1 `Mem_Read` burst from an MPU-6050 (wake-up, ranges), roll/pitch from gravity, MAX7219 8×8 matrix on SPI1 with a GPIO CS; a second MAX7219 chained on DOUT shows \|a\| as a bar (two frames per CS) | M13 ✅, M15 ✅ |
 | `hal-ir-remote` | CubeMX HAL | TIM2_CH2 input capture of falling edges at 1 µs: NEC leader, bits, check bytes and repeat codes; LD2 blinks the digit | M13 ✅ |
 | `freertos-two-tasks` | CubeMX + FreeRTOS (CMSIS-RTOS v2) | Blink/Count/Button/Flags threads, mutex, B1 EXTI → semaphore → thread flags; SVC/PendSV/SysTick, PSP, BASEPRI, HAL tick on TIM11 | M4 ✅ |
 | `freertos-queue-uart` | CubeMX + FreeRTOS (CMSIS-RTOS v2) | UART RX ISR → message queue → echo task; producer/consumer queue; heap and stack statistics | M4 ✅ |

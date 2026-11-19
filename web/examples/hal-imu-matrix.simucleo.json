@@ -1,7 +1,7 @@
 {
   "format": "simucleo-project",
   "version": 1,
-  "name": "MPU-6050 기울기 + MAX7219 도트 매트릭스",
+  "name": "MPU-6050 기울기·흔들기 + MAX7219 도트 매트릭스 2개 (DOUT 체인)",
   "parts": [
     {
       "id": "nucleo",
@@ -30,6 +30,15 @@
       "kind": "max7219",
       "x": 66,
       "y": 8,
+      "props": {
+        "count": 1
+      }
+    },
+    {
+      "id": "bar",
+      "kind": "max7219",
+      "x": 66,
+      "y": 20,
       "props": {
         "count": 1
       }
@@ -143,6 +152,116 @@
         "pin": "CLK"
       },
       "color": "#8e24aa"
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "mx",
+        "pin": "VCC"
+      },
+      "b": {
+        "part": "bar",
+        "pin": "VCC"
+      },
+      "color": "#e53935",
+      "points": [
+        {
+          "x": 61,
+          "y": 10
+        },
+        {
+          "x": 61,
+          "y": 22
+        }
+      ]
+    },
+    {
+      "id": "w11",
+      "a": {
+        "part": "mx",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "bar",
+        "pin": "GND"
+      },
+      "color": "#212121",
+      "points": [
+        {
+          "x": 60,
+          "y": 11
+        },
+        {
+          "x": 60,
+          "y": 23
+        }
+      ]
+    },
+    {
+      "id": "w12",
+      "a": {
+        "part": "mx",
+        "pin": "DOUT"
+      },
+      "b": {
+        "part": "bar",
+        "pin": "DIN"
+      },
+      "color": "#1e88e5",
+      "points": [
+        {
+          "x": 64,
+          "y": 15
+        },
+        {
+          "x": 64,
+          "y": 24
+        }
+      ]
+    },
+    {
+      "id": "w13",
+      "a": {
+        "part": "mx",
+        "pin": "CS"
+      },
+      "b": {
+        "part": "bar",
+        "pin": "CS"
+      },
+      "color": "#fb8c00",
+      "points": [
+        {
+          "x": 62,
+          "y": 13
+        },
+        {
+          "x": 62,
+          "y": 25
+        }
+      ]
+    },
+    {
+      "id": "w14",
+      "a": {
+        "part": "mx",
+        "pin": "CLK"
+      },
+      "b": {
+        "part": "bar",
+        "pin": "CLK"
+      },
+      "color": "#8e24aa",
+      "points": [
+        {
+          "x": 63,
+          "y": 14
+        },
+        {
+          "x": 63,
+          "y": 26
+        }
+      ]
     }
   ],
   "firmware": {

@@ -135,3 +135,34 @@ test("loading while the schematic shows fits the breadboard once it is back", as
   await page.getByRole("group", { name: "보기" }).getByRole("button", { name: "브레드보드" }).click();
   await expect(page.getByTestId("zoom-level")).toHaveText(fitted!);
 });
+
+test("module boxes: supply on the left, signals on the right, chained matrices in order", async ({ page }) => {
+  await openSchematic(page, "hal-imu-matrix");
+  const sch = page.locator("svg.schematic");
+  const side = (part: string) =>
+    sch.locator(`[data-part=${part}] .sym-pin`).evaluateAll((pins, part) => {
+      const box = document.querySelector(`[data-part=${part}] rect.sym-line`)!.getBoundingClientRect();
+      return pins.map((p) => {
+        const r = p.querySelector("line")!.getBoundingClientRect();
+        return `${p.getAttribute("data-pin")}:${r.right <= box.left + 1 ? "L" : "R"}`;
+      });
+    }, part);
+  expect(await side("mx")).toEqual(["VCC:L", "GND:L", "DIN:R", "CLK:R", "CS:R", "DOUT:R"]);
+  expect(await side("imu")).toEqual(["VCC:L", "GND:L", "SCL:R", "SDA:R"]);
+  await expect(sch.locator("[data-part=mx] .sym-sub")).toHaveText(" LED 매트릭스 ×1 (MAX7219)");
+  await expect(sch.locator("[data-part=imu] .sym-sub")).toContainText("IMU (MPU-6050)");
+  // mx's DOUT feeds bar's DIN: one net, and the first of the chain is drawn first.
+  const dout = await sch.locator("[data-part=mx] [data-pin=DOUT] .net-end").getAttribute("data-net");
+  await expect(sch.locator(`[data-part=bar] [data-pin=DIN] .net-end[data-net=${dout}]`)).toHaveCount(1);
+  const top = async (p: string) => (await sch.locator(`[data-part=${p}] rect.sym-line`).boundingBox())!.y;
+  expect(await top("mx")).toBeLessThan(await top("bar"));
+  await expect(sch.locator("[data-part=bar] [data-pin=DOUT] .sym-nc")).toHaveCount(1);
+
+  // The IR receiver: three pins, none for the remote's buttons.
+  await page.goto("/");
+  await expect(status(page)).toContainText("예제를");
+  await openSchematic(page, "hal-ir-remote");
+  expect(await side("ir")).toEqual(["VCC:L", "GND:L", "OUT:R"]);
+  await expect(sch.locator("[data-part=ir] .sym-sub")).toContainText("IR 수신기");
+  await page.screenshot({ path: "test-results/m15-schematic.png" });
+});

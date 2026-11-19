@@ -93,6 +93,32 @@ const TWO_TERMINALS: Record<string, [string[], string[]]> = {
   thermistor: [["1"], ["2"]],
 };
 
+/**
+ * Box symbols laid out by hand: supply pins on the left, signals on the
+ * right in the order they are used, and what the module is.
+ */
+const BOX_LAYOUT: Record<
+  string,
+  { left: string[]; right: string[]; subtitle: (props: Record<string, string | number>) => string }
+> = {
+  mpu6050: {
+    left: ["VCC", "GND"],
+    right: ["SCL", "SDA"],
+    subtitle: (p) => `IMU (MPU-6050) · I2C ${p.address ?? "0x68"}`,
+  },
+  max7219: {
+    left: ["VCC", "GND"],
+    right: ["DIN", "CLK", "CS", "DOUT"],
+    subtitle: (p) => `LED 매트릭스 ×${Math.min(4, Math.max(1, Number(p.count) || 1))} (MAX7219)`,
+  },
+  // Only the receiver is wired: the remote's buttons are not pins.
+  "ir-receiver": {
+    left: ["VCC", "GND"],
+    right: ["OUT"],
+    subtitle: () => "IR 수신기 (VS1838B, NEC)",
+  },
+};
+
 export function buildSchematic(project: Project, netlist: Netlist): Schematic {
   const kindOf = new Map(project.parts.map((p) => [p.id, p.kind]));
   // Nets that connect something (the breadboard does not count): pins of
@@ -186,15 +212,23 @@ export function buildSchematic(project: Project, netlist: Netlist): Schematic {
   }
 
   // Other parts in columns to the right, those on lower MCU pins first.
+  // Compared pin by pin, so of two parts on the same clock the one on more
+  // MCU pins (the first of a chain) comes first.
   const order = new Map(symbols[0]?.pins.map((p, i) => [p.net, i]) ?? []);
   const rank = (id: string) => {
     const def = PART_BY_KIND[kindOf.get(id)!];
-    const r = def.pins.map((p) => order.get(netName({ part: id, pin: p.id })) ?? 999);
-    return Math.min(999, ...r);
+    return def.pins.map((p) => order.get(netName({ part: id, pin: p.id })) ?? 999).sort((a, b) => a - b);
+  };
+  const byRank = (a: number[], b: number[]) => {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const d = (a[i] ?? 999) - (b[i] ?? 999);
+      if (d) return d;
+    }
+    return 0;
   };
   const parts = project.parts
     .filter((p) => !isBoard(p.kind) && !isMechanical(p.kind) && PART_BY_KIND[p.kind])
-    .sort((a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id));
+    .sort((a, b) => byRank(rank(a.id), rank(b.id)) || a.id.localeCompare(b.id));
   const colX0 = (board ? 4 * G + mcuW + STUB : 0) + LABEL_ROOM + STUB;
   const maxColH = Math.max(mcuH + 6 * G, 60 * G);
   let colX = colX0;
@@ -210,7 +244,7 @@ export function buildSchematic(project: Project, netlist: Netlist): Schematic {
         ? ((r) => (r ? formatOhms(r) : ""))(parseOhms(part.props.ohms ?? def.props?.ohms ?? ""))
         : part.kind === "led-5mm"
           ? `LED ${part.props.color ?? def.props?.color ?? ""}`
-          : def.name;
+          : (BOX_LAYOUT[part.kind]?.subtitle({ ...def.props, ...part.props }) ?? def.name);
     if (shape !== "box") {
       const [l, r] = TWO_TERMINALS[part.kind];
       const w = 6 * G;
@@ -239,13 +273,15 @@ export function buildSchematic(project: Project, netlist: Netlist): Schematic {
       // Bused pins (COM and COM2) are one terminal.
       const groups: string[][] = [];
       const seen = new Set<string>();
-      for (const p of def.pins) {
+      const layout = BOX_LAYOUT[part.kind];
+      const listed = layout ? [...layout.left, ...layout.right] : [];
+      for (const p of [...listed.map((id) => ({ id })), ...def.pins]) {
         if (seen.has(p.id)) continue;
         const bus = def.buses?.find((b) => b.includes(p.id)) ?? [p.id];
         bus.forEach((id) => seen.add(id));
         groups.push(bus);
       }
-      const left = Math.ceil(groups.length / 2);
+      const left = layout ? layout.left.length : Math.ceil(groups.length / 2);
       const rows = Math.max(left, groups.length - left);
       const longest = Math.max(...groups.map((g) => g.join("/").length));
       const w = Math.max(10 * G, Math.ceil((longest * 2 * 7 + 3 * G) / G) * G);

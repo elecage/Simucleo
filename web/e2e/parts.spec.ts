@@ -105,6 +105,57 @@ test("dragging the MPU-6050 tilts it and the dot on the MAX7219 matrix follows",
   await page.screenshot({ path: "test-results/m13-imu-matrix.png" });
 });
 
+/** The largest |a| (g) the hal-imu-matrix firmware printed after `from` characters of console text. */
+async function maxAccel(page: Page, from = 0): Promise<number> {
+  const text = (await consoleOut(page).textContent())!.slice(from);
+  return Math.max(0, ...[...text.matchAll(/\|a\| (\d+\.\d+) g/g)].map((m) => Number(m[1])));
+}
+
+test("shaking the MPU-6050 shows on |a| and on a second MAX7219 chained on DOUT", async ({ page }) => {
+  await loadExampleProject(page, "hal-imu-matrix");
+  await expect(consoleOut(page)).toContainText("dot row 3 col 3 | |a| 1.00 g", { timeout: 5000 });
+  // A separate part on mx's DOUT (shared CLK and CS) gets the frames that
+  // pass through mx: the |a| bar, 3 rows for 1 g.
+  const bar = () => page.locator("[data-id=bar] [data-matrix]").getAttribute("data-matrix");
+  await expect.poll(bar, { timeout: 5000 }).toBe("00,00,00,00,00,ff,ff,ff");
+  expect(await maxAccel(page)).toBeLessThan(1.05);
+
+  // The shake button: a few decaying swings on top of gravity. The firmware
+  // samples every 100 ms, so give it a couple of tries to land on a swing.
+  const before = (await consoleOut(page).textContent())!.length;
+  for (let i = 0; i < 4 && (await maxAccel(page, before)) < 1.25; i++) {
+    await click(page, "[data-id=imu] [data-drag=shake] rect");
+    await page.waitForTimeout(800);
+  }
+  expect(await maxAccel(page, before)).toBeGreaterThanOrEqual(1.25);
+  // It dies away: back to gravity alone.
+  await expect(page.getByLabel("ax")).toHaveValue("0", { timeout: 3000 });
+  await expect(consoleOut(page)).toContainText(/\|a\| 1\.00 g\r?\n$/, { timeout: 5000 });
+  await expect.poll(bar, { timeout: 5000 }).toBe("00,00,00,00,00,ff,ff,ff");
+
+  // A quick back-and-forth flick while dragging shakes it too.
+  const mark = (await consoleOut(page).textContent())!.length;
+  const box = (await page.locator("[data-id=imu] [data-drag=tilt] .imu-dial").boundingBox())!;
+  const [x0, y0] = [box.x + box.width / 2, box.y + box.height / 2];
+  let jiggled = false;
+  for (let i = 0; i < 4 && (await maxAccel(page, mark)) < 1.25; i++) {
+    await page.mouse.move(x0, y0);
+    await page.mouse.down();
+    // About 2 px/ms, the way a hand flicks a mouse (one move per frame).
+    for (const dx of [40, 80, 40, 0, -40, 0]) {
+      await page.mouse.move(x0 + dx, y0);
+      await page.waitForTimeout(20);
+    }
+    jiggled ||= (await page.locator("[data-id=imu] [data-shake]").getAttribute("data-shake")) === "1";
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+  }
+  expect(jiggled, "the drawing jiggles while shaken").toBe(true);
+  expect(await maxAccel(page, mark)).toBeGreaterThanOrEqual(1.25);
+  await expect(page.getByLabel("ay")).toHaveValue("0", { timeout: 3000 });
+  await expect(page.getByTestId("circuit-warning")).toHaveCount(0);
+});
+
 test("remote buttons are decoded as NEC codes, holding one repeats", async ({ page }) => {
   await loadExampleProject(page, "hal-ir-remote");
   await expect(consoleOut(page)).toContainText("NEC IR receiver on D3", { timeout: 5000 });

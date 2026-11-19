@@ -587,6 +587,9 @@ enum SdWrite {
 /// SDHC card in SPI mode: CMD0/8/55/ACMD41/58 initialisation, CSD/CID,
 /// single and multiple block reads and writes. Blocks never written read
 /// as zeros; storage is sparse.
+/// Header of [`SdCard::sparse`].
+const SPARSE_MAGIC: &[u8; 4] = b"SDS1";
+
 #[derive(Debug, Clone)]
 pub struct SdCard {
     pub blocks: u32,
@@ -606,6 +609,9 @@ pub struct SdCard {
     pub writes: u32,
     /// Contents changed since the image was last exported.
     pub dirty: bool,
+    /// Moves on every change of the contents (a block written, an image
+    /// put in, the card wiped): the UI saves the card when it moves.
+    pub generation: u32,
 }
 
 impl SdCard {
@@ -624,6 +630,7 @@ impl SdCard {
             reads: 0,
             writes: 0,
             dirty: false,
+            generation: 0,
         }
     }
 
@@ -634,6 +641,7 @@ impl SdCard {
         fresh.nominal_mb = self.nominal_mb;
         fresh.data = std::mem::take(&mut self.data);
         fresh.dirty = self.dirty;
+        fresh.generation = self.generation;
         *self = fresh;
     }
 
@@ -650,6 +658,55 @@ impl SdCard {
             self.data.insert(block, Box::new(b));
         }
         self.dirty = true;
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// Every block back to zeros (no file system any more); the size stays.
+    pub fn wipe(&mut self) {
+        self.data.clear();
+        self.dirty = true;
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// The contents as just the blocks in use, to keep them small: "SDS1",
+    /// the card's size in blocks, then each block that is not all zeros as
+    /// its number and its 512 bytes, in block order (numbers u32 LE).
+    pub fn sparse(&self) -> Vec<u8> {
+        let mut used: Vec<u32> = self.data.keys().copied().collect();
+        used.sort_unstable();
+        let mut out = Vec::with_capacity(8 + used.len() * (4 + SD_BLOCK));
+        out.extend_from_slice(SPARSE_MAGIC);
+        out.extend_from_slice(&self.blocks.to_le_bytes());
+        for n in used {
+            out.extend_from_slice(&n.to_le_bytes());
+            out.extend_from_slice(&self.data[&n][..]);
+        }
+        out
+    }
+
+    /// Replace the contents with what [`SdCard::sparse`] gave (the card
+    /// takes its size too). False, with nothing changed, if `bytes` is not
+    /// in that form.
+    pub fn load_sparse(&mut self, bytes: &[u8]) -> bool {
+        let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+        if bytes.len() < 8
+            || &bytes[..4] != SPARSE_MAGIC
+            || !(bytes.len() - 8).is_multiple_of(4 + SD_BLOCK)
+        {
+            return false;
+        }
+        let blocks = word(4);
+        let entries = (8..bytes.len()).step_by(4 + SD_BLOCK);
+        if blocks == 0 || entries.clone().any(|at| word(at) >= blocks) {
+            return false;
+        }
+        self.data.clear();
+        self.blocks = blocks;
+        for at in entries {
+            self.write_block(word(at), &bytes[at + 4..at + 4 + SD_BLOCK]);
+        }
+        self.dirty = false;
+        true
     }
 
     /// The whole card as a disk image.
@@ -1663,6 +1720,8 @@ pub struct Mpu6050 {
     pub pitch: f64,
     /// Rotation rates about X, Y, Z (°/s).
     pub gyro: [f64; 3],
+    /// Acceleration on top of gravity along X, Y, Z (g): a shake.
+    pub extra: [f64; 3],
     pub temp: f64,
     pub regs: [u8; 0x80],
     pointer: u8,
@@ -1688,6 +1747,7 @@ impl Mpu6050 {
             roll: 0.0,
             pitch: 0.0,
             gyro: [0.0; 3],
+            extra: [0.0; 3],
             temp: 25.0,
             regs: [0; 0x80],
             pointer: 0,
@@ -1709,10 +1769,12 @@ impl Mpu6050 {
         self.regs[Self::PWR_MGMT_1 as usize] & 0x40 != 0
     }
 
-    /// Acceleration (g) along X, Y, Z: gravity turned by roll and pitch.
+    /// Acceleration (g) along X, Y, Z: gravity turned by roll and pitch,
+    /// plus any shake.
     pub fn accel_g(&self) -> [f64; 3] {
         let (r, p) = (self.roll.to_radians(), self.pitch.to_radians());
-        [-p.sin(), r.sin() * p.cos(), r.cos() * p.cos()]
+        let g = [-p.sin(), r.sin() * p.cos(), r.cos() * p.cos()];
+        [0, 1, 2].map(|i| g[i] + self.extra[i])
     }
 
     /// LSB per g for ACCEL_CONFIG.AFS_SEL (±2/4/8/16 g).
@@ -1804,12 +1866,18 @@ const CODE_B: [u8; 16] = [
 /// FC-16 module). 16-bit frames (address nibble, data byte) are shifted in
 /// MSB first on CLK rising edges while CS is low and taken on the CS rising
 /// edge; with N chips the last 16·N bits count, the first frame shifted
-/// ending up in the farthest chip.
+/// ending up in the farthest chip. What falls out of the farthest chip's
+/// register comes out on DOUT (its MSB, 16·N clocks after it went in,
+/// changing on the CLK falling edge), so a further module on DOUT carries
+/// the chain on.
 #[derive(Debug, Clone)]
 pub struct Max7219 {
     pub count: usize,
     /// The chained shift registers, the nearest chip in the low 16 bits.
     shift: u64,
+    /// The level on DOUT: the register's MSB as of the last CLK falling
+    /// edge (or the end of the last SPI byte).
+    pub dout: bool,
     /// Registers 0x0–0xF of each chip (0x1–0x8 digits, 0x9 decode mode,
     /// 0xA intensity, 0xB scan limit, 0xC shutdown, 0xF display test).
     pub regs: [[u8; 16]; 4],
@@ -1827,6 +1895,7 @@ impl Max7219 {
         Self {
             count: count.clamp(1, Self::MAX_CHAIN),
             shift: 0,
+            dout: false,
             regs: [[0; 16]; 4],
             last_clk: None,
             last_cs: None,
@@ -1842,16 +1911,29 @@ impl Max7219 {
         }
     }
 
-    /// One bit into DIN.
-    pub fn shift_bit(&mut self, bit: bool) {
-        self.shift = (self.shift << 1 | bit as u64) & self.mask();
+    /// The register's MSB: the bit the next clock pushes out.
+    fn msb(&self) -> bool {
+        self.shift >> (16 * self.count - 1) & 1 != 0
     }
 
-    /// Eight bits, MSB first (an SPI byte).
-    pub fn byte(&mut self, b: u8) {
+    /// One bit into DIN; returns the bit pushed out of the far end.
+    pub fn shift_bit(&mut self, bit: bool) -> bool {
+        let out = self.msb();
+        self.shift = (self.shift << 1 | bit as u64) & self.mask();
+        out
+    }
+
+    /// Eight bits, MSB first (an SPI byte). Returns the eight bits that
+    /// left on DOUT meanwhile, first one in the MSB: what a module chained
+    /// on DOUT receives. The clock idles low afterwards (SPI mode 0), so
+    /// DOUT already shows the new MSB.
+    pub fn byte(&mut self, b: u8) -> u8 {
+        let mut out = 0;
         for i in (0..8).rev() {
-            self.shift_bit(b >> i & 1 != 0);
+            out = out << 1 | self.shift_bit(b >> i & 1 != 0) as u8;
         }
+        self.dout = self.msb();
+        out
     }
 
     /// CS rising edge: every chip takes the frame in its shift register.
@@ -1867,10 +1949,14 @@ impl Max7219 {
     }
 
     /// The levels of CLK, CS and DIN now (bit-banged or not): shift on a
-    /// CLK rising edge with CS low, latch on a CS rising edge.
+    /// CLK rising edge with CS low, latch on a CS rising edge, DOUT
+    /// follows the MSB on a CLK falling edge.
     pub fn pins(&mut self, clk: bool, cs: bool, din: bool) {
         if self.last_clk == Some(false) && clk && !cs {
             self.shift_bit(din);
+        }
+        if self.last_clk == Some(true) && !clk {
+            self.dout = self.msb();
         }
         if self.last_cs == Some(false) && cs {
             self.latch();
@@ -2098,6 +2184,7 @@ impl Device {
             Device::Encoder(e) => e.closed[index.min(1)].then_some(false),
             Device::Sonar(s) => Some(s.echo),
             Device::Ir(d) => d.low.then_some(false),
+            Device::Matrix(m) => Some(m.dout),
             _ => None,
         }
     }
@@ -2297,6 +2384,39 @@ mod tests {
         for _ in 0..3 {
             sd.exchange(0xFF);
         }
+    }
+
+    #[test]
+    fn sd_card_snapshot_keeps_only_used_blocks_and_counts_changes() {
+        let mut sd = SdCard::new(32);
+        assert_eq!(sd.generation, 0);
+        sd.write_block(0, &[0xEB, 0x3C, 0x90]);
+        sd.write_block(40_000, b"time,temp_c\n");
+        assert_eq!(sd.generation, 2);
+        let snap = sd.sparse();
+        // Two blocks of 512 bytes, not a 32 MB image.
+        assert_eq!(snap.len(), 8 + 2 * (4 + SD_BLOCK));
+        assert_eq!(&snap[..4], b"SDS1");
+        let image = sd.image();
+        // Power cycles keep the contents and the count.
+        sd.power_cycle();
+        assert_eq!(sd.generation, 2);
+        sd.wipe();
+        assert_eq!((sd.read_block(0)[0], sd.generation), (0, 3));
+        assert_eq!(sd.blocks, 32 * 2048, "the size stays");
+        // Back from the snapshot: the same image.
+        let mut back = SdCard::new(1);
+        assert!(back.load_sparse(&snap));
+        assert_eq!(back.blocks, 32 * 2048);
+        assert_eq!(&back.read_block(40_000)[..12], b"time,temp_c\n");
+        assert!(back.image() == image);
+        // Not a snapshot (a raw image, a truncated one): nothing changes.
+        assert!(!back.load_sparse(&[0u8; 1024]));
+        assert!(!back.load_sparse(&snap[..snap.len() - 1]));
+        let mut beyond = snap.clone();
+        beyond[4..8].copy_from_slice(&100u32.to_le_bytes());
+        assert!(!back.load_sparse(&beyond));
+        assert_eq!(back.read_block(0)[0], 0xEB);
     }
 
     #[test]
@@ -2661,6 +2781,25 @@ mod tests {
     }
 
     #[test]
+    fn mpu6050_shake_adds_to_gravity_and_saturates_at_full_scale() {
+        let mut m = Mpu6050::new(0x68);
+        i2c_write(&mut m, &[0x6B, 0x00], 0.0);
+        let accel = |m: &mut Mpu6050| {
+            let d = mem_read(m, 0x3B, 6);
+            [0, 1, 2].map(|i| i16::from_be_bytes([d[2 * i], d[2 * i + 1]]))
+        };
+        assert_eq!(accel(&mut m), [0, 0, 16384]);
+        m.extra = [0.5, -0.25, 0.75];
+        assert_eq!(accel(&mut m), [8192, -4096, 16384 + 12288]);
+        // ±2 g: a hard knock clips.
+        m.extra = [3.0, 0.0, 0.0];
+        assert_eq!(accel(&mut m)[0], 32767);
+        // ±8 g has room for it.
+        i2c_write(&mut m, &[0x1C, 0x10], 0.0);
+        assert_eq!(accel(&mut m), [12288, 0, 4096]);
+    }
+
+    #[test]
     fn max7219_chain_shifts_latches_and_shows_rows() {
         let mut m = Max7219::new(2);
         let send = |m: &mut Max7219, frames: &[u16]| {
@@ -2720,6 +2859,49 @@ mod tests {
         m.pins(false, false, false);
         m.pins(false, true, false);
         assert_eq!(m.rows(0)[7], 0x42);
+    }
+
+    #[test]
+    fn max7219_dout_carries_the_bits_pushed_out_16_clocks_later() {
+        // One module: a 16-bit frame comes out of DOUT 16 clocks later.
+        let mut a = Max7219::new(1);
+        assert_eq!((a.byte(0x0C), a.byte(0x01)), (0, 0));
+        assert!(!a.dout);
+        assert_eq!((a.byte(0x0A), a.byte(0x07)), (0x0C, 0x01));
+        // Two separate modules, B on A's DOUT: B ends up with the frame
+        // sent first, A with the last; both take them on the shared CS.
+        let mut a = Max7219::new(1);
+        let mut b = Max7219::new(1);
+        for byte in [0x01, 0x81, 0x01, 0x18] {
+            let over = a.byte(byte);
+            b.byte(over);
+        }
+        a.latch();
+        b.latch();
+        assert_eq!((b.regs[0][1], a.regs[0][1]), (0x81, 0x18));
+        // The same as one part with count 2.
+        let mut c = Max7219::new(2);
+        for byte in [0x01, 0x81, 0x01, 0x18] {
+            assert_eq!(c.byte(byte), 0);
+        }
+        c.latch();
+        assert_eq!((c.regs[1][1], c.regs[0][1]), (0x81, 0x18));
+
+        // Bit-banged: DOUT shows the MSB from the CLK falling edge on.
+        let mut a = Max7219::new(1);
+        a.pins(false, false, false);
+        let mut seen = Vec::new();
+        for i in 0..32 {
+            let bit = i == 0 || i == 15; // 0x8001, then zeros
+            a.pins(false, false, bit);
+            seen.push(a.dout); // what a module on DOUT samples now
+            a.pins(true, false, bit);
+            assert_eq!(a.dout, seen[i], "DOUT holds while CLK is high");
+        }
+        a.pins(false, false, false);
+        // Bit i went in at clock i and is sampled downstream at clock i + 16.
+        let ones: Vec<usize> = (0..32).filter(|&i| seen[i]).collect();
+        assert_eq!(ones, [16, 31]);
     }
 
     #[test]

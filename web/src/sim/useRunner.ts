@@ -46,6 +46,12 @@ export interface Runner {
   /** The SD card in part `part` as a disk image (empty: no card). */
   sdImage(part: string): Promise<Uint8Array>;
   sdLoad(part: string, bytes: ArrayBuffer): void;
+  /** The card's blocks in use (what is kept in IndexedDB; empty: no card). */
+  sdSnapshot(part: string): Promise<Uint8Array>;
+  /** Put back what `sdSnapshot` gave. */
+  sdRestore(part: string, bytes: ArrayBuffer): void;
+  /** Erase the card: all zeros, no file system. */
+  sdWipe(part: string): void;
   /** Turn a rotary encoder by detents (negative: counter-clockwise). */
   rotate(part: string, detents: number): void;
   /** Source files of the loaded firmware (from its debug information). */
@@ -87,6 +93,7 @@ export function useRunner(): Runner {
   const [consoleText, setConsole] = useState("");
   const [memory, setMemory] = useState<{ addr: number; bytes: Uint8Array } | null>(null);
   const sdWaiters = useRef(new Map<string, (b: Uint8Array) => void>());
+  const snapWaiters = useRef(new Map<string, ((b: Uint8Array) => void)[]>());
   const [debugFiles, setDebugFiles] = useState<DebugFile[]>([]);
   const [breakpoints, setPlaced] = useState<{ file: number; line: number }[]>([]);
   const [pauseEvent, setPause] = useState({ n: 0, reason: "" });
@@ -156,6 +163,9 @@ export function useRunner(): Runner {
           sdWaiters.current.get(m.part)?.(m.bytes);
           sdWaiters.current.delete(m.part);
           break;
+        case "sdSnapshot":
+          snapWaiters.current.get(m.part)?.shift()?.(m.bytes);
+          break;
       }
     };
     return () => w.terminate();
@@ -188,6 +198,13 @@ export function useRunner(): Runner {
           send({ type: "sdImage", part });
         }),
       sdLoad: (part: string, bytes: ArrayBuffer) => send({ type: "sdLoad", part, bytes }, [bytes]),
+      sdSnapshot: (part: string) =>
+        new Promise<Uint8Array>((resolve) => {
+          snapWaiters.current.set(part, [...(snapWaiters.current.get(part) ?? []), resolve]);
+          send({ type: "sdSnapshot", part });
+        }),
+      sdRestore: (part: string, bytes: ArrayBuffer) => send({ type: "sdRestore", part, bytes }, [bytes]),
+      sdWipe: (part: string) => send({ type: "sdWipe", part }),
       rotate: (part: string, detents: number) => send({ type: "rotate", part, detents }),
       setBreakpoints: (list: BreakpointSpec[]) => send({ type: "breakpoints", list }),
       step: (kind: "instruction" | "into" | "over" | "out") => send({ type: "step", kind }),

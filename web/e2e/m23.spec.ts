@@ -103,10 +103,12 @@ test("the oscilloscope shows 500 ns of dead time between CH1 (PA8) falling and C
   const csv = readFileSync((await (await dl).path())!, "utf8").trim().split("\n");
   expect(csv[0]).toBe("time_ns,PA8,PA7");
   const rows = csv.slice(1).map((r) => r.split(",").map(Number));
-  // Before the trigger CH1 is on and CH1N off; never both on.
-  const first = rows[0];
-  expect(first[1]).toBe(1);
-  expect(first[2]).toBe(0);
+  // Just before the falling trigger CH1 is on and CH1N off (how long
+  // before depends on the duty: the window may start inside the low
+  // part of the period); never both on.
+  const before = rows.filter((r) => r[0] < 0).at(-1)!;
+  expect(before[1]).toBe(1);
+  expect(before[2]).toBe(0);
   for (const r of rows) expect(r[1] + r[2]).toBeLessThan(2);
   const fall = rows.find((r) => r[0] >= 0 && r[1] === 0)!;
   expect(fall[0]).toBe(0);

@@ -739,7 +739,7 @@ export function App() {
             setEditorOpen(false);
             setLessonOpen(true);
           }}
-          onNew={() => window.confirm("편집 중인 레슨을 버리고 새로 만들까요? (내 레슨에 저장한 것은 남습니다)") && changeDraft(blankLesson(myLessons.map((m) => m.id)))}
+          onNew={() => changeDraft(blankLesson(myLessons.map((m) => m.id)))}
           onClose={() => setEditorOpen(false)}
         />
       )}

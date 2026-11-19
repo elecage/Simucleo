@@ -333,7 +333,18 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
         </datalist>
         <header>
           <b>✏️ 레슨 편집기</b>
-          <button onClick={onNew}>새 레슨</button>
+          <button
+            onClick={() => {
+              if (!window.confirm("편집 중인 레슨을 버리고 새로 만들까요? (내 레슨에 저장한 것은 남습니다)")) return;
+              onNew();
+              setStimuliText("[]");
+              setStimuliError(null);
+              setLoadError(null);
+              setNote(null);
+            }}
+          >
+            새 레슨
+          </button>
           <label className="file-btn">
             JSON 불러오기
             <input

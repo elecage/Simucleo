@@ -5,8 +5,11 @@
 //! board around the MCU (the B1 button pull-up, the ST-LINK virtual COM
 //! port on USART2) and explains why firmware stopped ([`Diagnosis`]).
 
+mod debugger;
 mod diagnose;
 pub mod rtos;
+
+pub use debugger::{Step, StepEnd};
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -113,6 +116,7 @@ pub struct Nucleo {
     pub bus: Stm32f401Bus,
     pub sys: CortexM,
     pub firmware: Option<FirmwareImage>,
+    debug: debugger::DebugState,
     resets: u32,
     timeline: Vec<Segment>,
     /// Everything wired to the board, plus LD2 and B1.
@@ -139,6 +143,7 @@ impl Nucleo {
             bus: Stm32f401Bus::new(),
             sys: CortexM::new(),
             firmware: None,
+            debug: Default::default(),
             resets: 0,
             timeline: Vec::new(),
             circuit: Rc::new(RefCell::new(CircuitSim::new(
@@ -176,6 +181,8 @@ impl Nucleo {
     pub fn load_elf(&mut self, bytes: &[u8]) -> Result<(), LoadError> {
         let fw = FirmwareImage::parse(bytes)?;
         self.rtos = rtos::FreeRtos::detect(&fw, bytes);
+        self.set_breakpoints(&[]);
+        self.debug.new_firmware(bytes);
         self.sys = CortexM::new();
         self.timeline.clear();
         self.power_on();

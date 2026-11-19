@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import { PART_BY_KIND } from "../parts";
-import { PITCH, type VisualState } from "../parts/types";
+import { PITCH, type ControlPointer, type ControlSession, type PropValues, type VisualState } from "../parts/types";
 import { pinKey, pinPosition, type PinRef, type Point, type Project } from "./model";
 
 interface Props {
@@ -14,7 +14,7 @@ interface Props {
   onAddWire: (a: PinRef, b: PinRef, points: Point[]) => void;
   /** The bend points of a wire were edited. */
   onUpdateWire?: (id: string, points: Point[]) => void;
-  /** A live input on a part (e.g. a potentiometer knob) was dragged. */
+  /** A live input on a part (a potentiometer knob, a lamp over an LDR, …) was operated. */
   onPropChange?: (id: string, key: string, value: number) => void;
   /** An end of a wire was dragged onto another pin. */
   onMoveWireEnd?: (id: string, end: "a" | "b", pin: PinRef) => void;
@@ -36,14 +36,24 @@ type Drag =
   | { kind: "wire"; sx: number; sy: number; moved: boolean }
   | { kind: "point"; wire: string; index: number }
   | { kind: "end"; wire: string; end: "a" | "b" }
-  | { kind: "prop"; part: string; prop: string; sy: number; start: number; min: number; max: number }
-  /** Tilting a motion sensor: roll from horizontal, pitch from vertical travel. */
-  | { kind: "tilt"; part: string; sx: number; sy: number; roll0: number; pitch0: number; roll: number; pitch: number; t: number };
+  /** Operating a control on a part (`data-drag`, see `PartDef.controls`). */
+  | { kind: "control"; key: string; part: string; sx: number; sy: number; holdOnly: boolean; dx: number; dy: number };
 
-/** Largest tilt a drag sets (degrees). */
-const MAX_TILT = 90;
-/** The rotation rate falls back to 0 this long (ms) after the drag stops moving. */
-const GYRO_HOLD = 150;
+/** A control gesture in progress, or one still animating after the release. */
+interface Live {
+  part: string;
+  control: string;
+  session: ControlSession;
+  held: boolean;
+}
+
+/** Prop writes from a drag reach the simulator at most this often (ms):
+ * each one re-sends the whole circuit. The drawing follows at once. */
+const PROP_INTERVAL = 50;
+/** Timed controls (a warming sensor) step this often (ms). */
+const TICK_MS = 100;
+/** Pointer travel (px) that turns a press-and-hold control into a move. */
+const HOLD_SLOP = 5;
 
 interface Pending {
   start: PinRef;
@@ -97,8 +107,99 @@ export function Canvas({
   const [mouse, setMouse] = useState({ x: 0, y: 0 });
   const [hover, setHover] = useState<{ pin: PinRef; label: string } | null>(null);
   const [pressed, setPressed] = useState<{ part: string; action: string } | null>(null);
-  const gyroStop = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => clearTimeout(gyroStop.current ?? undefined), []);
+  /** The control under the pointer: its hint is shown next to it. */
+  const [controlHint, setControlHint] = useState<{ text: string; x: number; y: number } | null>(null);
+  /** The control held down now, shown by its part (`visual.control`). */
+  const [held, setHeld] = useState<{ part: string; control: string } | null>(null);
+
+  // ---------------------------------------------------- control props
+
+  // Latest values for timers and native listeners.
+  const projectRef = useRef(project);
+  projectRef.current = project;
+  const onPropChangeRef = useRef(onPropChange);
+  onPropChangeRef.current = onPropChange;
+
+  /** Values written but not yet sent on (drawn already). */
+  const unsent = useRef(new Map<string, PropValues>());
+  const [overlay, setOverlay] = useState<Record<string, PropValues>>({});
+  const lastSent = useRef(0);
+  const sendTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushProps = useCallback(() => {
+    clearTimeout(sendTimer.current ?? undefined);
+    sendTimer.current = null;
+    lastSent.current = performance.now();
+    if (unsent.current.size === 0) return;
+    for (const [part, values] of unsent.current)
+      for (const [k, v] of Object.entries(values)) onPropChangeRef.current?.(part, k, v);
+    unsent.current.clear();
+    setOverlay({});
+  }, []);
+
+  /** Write props from a control: drawn now, sent on at most every PROP_INTERVAL. */
+  const writeProps = useCallback(
+    (part: string, values: PropValues, now = false) => {
+      unsent.current.set(part, { ...unsent.current.get(part), ...values });
+      setOverlay((o) => ({ ...o, [part]: { ...o[part], ...values } }));
+      const wait = PROP_INTERVAL - (performance.now() - lastSent.current);
+      if (now || wait <= 0) flushProps();
+      else sendTimer.current ??= setTimeout(flushProps, wait);
+    },
+    [flushProps],
+  );
+  useEffect(() => () => clearTimeout(sendTimer.current ?? undefined), []);
+
+  /** A part's props as they are now, including unsent control writes. */
+  const propsOf = useCallback((id: string) => {
+    const part = projectRef.current.parts.find((p) => p.id === id);
+    const def = part && PART_BY_KIND[part.kind];
+    return { ...def?.props, ...part?.props, ...unsent.current.get(id) };
+  }, []);
+
+  // Control sessions, by `part|control`. Timed ones tick until done.
+  const live = useRef(new Map<string, Live>());
+  const ticker = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tick = useCallback(() => {
+    const t = performance.now();
+    for (const [key, l] of live.current) {
+      if (!projectRef.current.parts.some((p) => p.id === l.part)) {
+        live.current.delete(key);
+        continue;
+      }
+      if (!l.session.tick) continue;
+      const r = l.session.tick(t, l.held, propsOf(l.part));
+      if (r.set) writeProps(l.part, r.set, !l.held);
+      if (r.done && !l.held) live.current.delete(key);
+    }
+    if (live.current.size === 0 && ticker.current) {
+      clearInterval(ticker.current);
+      ticker.current = null;
+    }
+  }, [propsOf, writeProps]);
+  const startTicking = () => {
+    ticker.current ??= setInterval(tick, TICK_MS);
+  };
+  useEffect(() => () => clearInterval(ticker.current ?? undefined), []);
+
+  /** The pointer of `e` in the part's own coordinates. */
+  const pointerIn = (e: { clientX: number; clientY: number }, partId: string): ControlPointer => {
+    const part = projectRef.current.parts.find((p) => p.id === partId);
+    const c = toCanvas(e);
+    return { x: c.x - (part?.x ?? 0) * PITCH, y: c.y - (part?.y ?? 0) * PITCH, clientX: e.clientX, clientY: e.clientY, t: performance.now() };
+  };
+
+  /** The press on a control ended (released, or turned into a move). */
+  const releaseControl = (key: string, e: { clientX: number; clientY: number }) => {
+    const l = live.current.get(key);
+    if (!l?.held) return;
+    l.held = false;
+    const r = l.session.release?.(pointerIn(e, l.part));
+    if (r) writeProps(l.part, r);
+    flushProps();
+    if (!l.session.tick) live.current.delete(key);
+    setHeld(null);
+  };
 
   // Release a pressed board button wherever the pointer goes up.
   useEffect(() => {
@@ -144,6 +245,17 @@ export function Canvas({
       y0 = Math.min(y0, p.y - 2);
       x1 = Math.max(x1, p.x + def.w + 1);
       y1 = Math.max(y1, p.y + def.h + 1);
+      // What the part draws outside its box too (a lamp, an obstacle).
+      const g = el.querySelector(`[data-id="${CSS.escape(p.id)}"] > g`);
+      if (g instanceof SVGGraphicsElement) {
+        const b = g.getBBox();
+        if (b.width > 0) {
+          x0 = Math.min(x0, p.x + b.x / PITCH - 1);
+          y0 = Math.min(y0, p.y + b.y / PITCH - 1);
+          x1 = Math.max(x1, p.x + (b.x + b.width) / PITCH + 1);
+          y1 = Math.max(y1, p.y + (b.y + b.height) / PITCH + 1);
+        }
+      }
     }
     for (const w of project.wires) {
       for (const q of w.points ?? []) {
@@ -205,13 +317,24 @@ export function Canvas({
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      // Over a control that turns with the wheel (a knob): turn it.
+      const el = e.target instanceof Element ? e.target.closest("[data-drag]") : null;
+      const partId = el?.closest("[data-id]")?.getAttribute("data-id");
+      const kind = partId && projectRef.current.parts.find((p) => p.id === partId)?.kind;
+      const control = kind && PART_BY_KIND[kind]?.controls?.[el!.getAttribute("data-drag")!];
+      if (control && control.wheel && partId && onPropChangeRef.current) {
+        const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+        const r = control.wheel(dy, propsOf(partId));
+        if (r) writeProps(partId, r);
+        return;
+      }
       const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
       // Pinch gestures arrive as ctrl+wheel with small deltas.
       zoomBy(Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX, e.clientY);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [zoomBy]);
+  }, [zoomBy, propsOf, writeProps]);
 
   // --------------------------------------------------------- geometry
 
@@ -285,10 +408,20 @@ export function Canvas({
   /** Route all pointer events to the canvas until the button is released,
    * even outside it, so a drag always ends (#3). */
   const startDrag = (e: RPointerEvent, d: Drag) => {
-    svgRef.current?.setPointerCapture(e.pointerId);
+    try {
+      svgRef.current?.setPointerCapture(e.pointerId);
+    } catch {
+      // Not a live pointer (a synthetic event): the drag still ends on its pointerup.
+    }
     setDrag(d);
   };
+  /** The drag is over without a release we saw: let go of a control too. */
+  const dropDrag = (e: { clientX: number; clientY: number }) => {
+    if (drag?.kind === "control") releaseControl(drag.key, e);
+    setDrag(null);
+  };
   const endDrag = (e: RPointerEvent) => {
+    if (drag?.kind === "control") releaseControl(drag.key, e);
     if (svgRef.current?.hasPointerCapture(e.pointerId)) svgRef.current.releasePointerCapture(e.pointerId);
     if (drag?.kind === "end") {
       // Re-plug the wire end into the pin it was dropped on (or near).
@@ -308,7 +441,7 @@ export function Canvas({
   const onPointerMove = (e: RPointerEvent) => {
     if (drag && e.buttons === 0) {
       // The release happened somewhere we could not see it.
-      setDrag(null);
+      dropDrag(e);
       return;
     }
     const p = toCanvas(e);
@@ -319,33 +452,16 @@ export function Canvas({
       setView((v) => ({ ...v, x: drag.vx - (e.clientX - drag.sx) / v.scale, y: drag.vy - (e.clientY - drag.sy) / v.scale }));
     } else if (drag?.kind === "wire" && !drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > DRAG_START) {
       setDrag({ ...drag, moved: true });
-    } else if (drag?.kind === "prop") {
-      // Drag up to turn up: 150 px for the full range.
-      const span = drag.max - drag.min;
-      const v = Math.min(drag.max, Math.max(drag.min, drag.start + ((drag.sy - e.clientY) / 150) * span));
-      onPropChange?.(drag.part, drag.prop, Math.round(v * 1000) / 1000);
-    } else if (drag?.kind === "tilt" && onPropChange) {
-      // About 1° per pixel; while moving, the angle's rate of change is
-      // what the gyroscope measures.
-      const clamp = (v: number) => Math.max(-MAX_TILT, Math.min(MAX_TILT, Math.round(v)));
-      const roll = clamp(drag.roll0 + (e.clientX - drag.sx));
-      const pitch = clamp(drag.pitch0 + (e.clientY - drag.sy));
-      if (roll !== drag.roll || pitch !== drag.pitch) {
-        const now = performance.now();
-        const dt = Math.max(8, now - drag.t) / 1000;
-        const rate = (d: number) => Math.max(-2000, Math.min(2000, Math.round(d / dt)));
-        onPropChange(drag.part, "roll", roll);
-        onPropChange(drag.part, "pitch", pitch);
-        onPropChange(drag.part, "gx", rate(roll - drag.roll));
-        onPropChange(drag.part, "gy", rate(pitch - drag.pitch));
-        setDrag({ ...drag, roll, pitch, t: now });
-        clearTimeout(gyroStop.current ?? undefined);
-        const part = drag.part;
-        gyroStop.current = setTimeout(() => {
-          onPropChange(part, "gx", 0);
-          onPropChange(part, "gy", 0);
-        }, GYRO_HOLD);
+    } else if (drag?.kind === "control") {
+      if (drag.holdOnly && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > HOLD_SLOP) {
+        // Pressed to touch, but dragged: it is a move after all.
+        releaseControl(drag.key, e);
+        setDrag({ kind: "part", id: drag.part, dx: drag.dx, dy: drag.dy });
+        return;
       }
+      const l = live.current.get(drag.key);
+      const r = l?.session.move?.(pointerIn(e, drag.part));
+      if (r) writeProps(drag.part, r);
     } else if (drag?.kind === "point" && onUpdateWire) {
       const w = project.wires.find((x) => x.id === drag.wire);
       if (w?.points) {
@@ -377,33 +493,42 @@ export function Canvas({
           className={selected === part.id ? "part selected" : "part"}
         >
           <g
+            onPointerOver={(e) => {
+              const el = (e.target as Element).closest("[data-drag]");
+              const hint = el && def.controls?.[el.getAttribute("data-drag")!]?.hint;
+              const r = svgRef.current!.getBoundingClientRect();
+              setControlHint(hint ? { text: hint, x: e.clientX - r.left, y: e.clientY - r.top } : null);
+            }}
+            onPointerLeave={() => setControlHint(null)}
             onPointerDown={(e) => {
               e.stopPropagation();
               if (pending) {
                 wiringClick(toCanvas(e));
                 return;
               }
-              if ((e.target as Element).closest("[data-drag-tilt]") && onPropChange) {
-                // Operate the sensor; the part moves by its edge.
+              const p = toCanvas(e);
+              const name = (e.target as Element).closest("[data-drag]")?.getAttribute("data-drag");
+              const control = name ? def.controls?.[name] : undefined;
+              if (name && control && onPropChange) {
+                // Operate the part (knob, lamp, touch…); the rest of its body moves it.
                 onSelect(part.id);
-                const props = { ...def.props, ...part.props };
-                const roll = Number(props.roll ?? 0),
-                  pitch = Number(props.pitch ?? 0);
-                startDrag(e, { kind: "tilt", part: part.id, sx: e.clientX, sy: e.clientY, roll0: roll, pitch0: pitch, roll, pitch, t: performance.now() });
-                return;
-              }
-              const knob = (e.target as Element).closest("[data-drag-prop]");
-              if (knob && onPropChange) {
-                const prop = knob.getAttribute("data-drag-prop")!;
-                onSelect(part.id);
+                const key = `${part.id}|${name}`;
+                // Still cooling from the last touch: carry on from there.
+                const before = live.current.get(key);
+                const session = control.start(pointerIn(e, part.id), propsOf(part.id), before?.session.carry);
+                live.current.set(key, { part: part.id, control: name, session, held: true });
+                if (session.set) writeProps(part.id, session.set);
+                if (session.tick) startTicking();
+                setHeld({ part: part.id, control: name });
                 startDrag(e, {
-                  kind: "prop",
+                  kind: "control",
+                  key,
                   part: part.id,
-                  prop,
+                  sx: e.clientX,
                   sy: e.clientY,
-                  start: Number(part.props[prop] ?? def.props?.[prop] ?? 0),
-                  min: Number(knob.getAttribute("data-min") ?? 0),
-                  max: Number(knob.getAttribute("data-max") ?? 1),
+                  holdOnly: !!control.holdOnly,
+                  dx: p.x / PITCH - part.x,
+                  dy: p.y / PITCH - part.y,
                 });
                 return;
               }
@@ -414,14 +539,14 @@ export function Canvas({
                 return;
               }
               onSelect(part.id);
-              const p = toCanvas(e);
               startDrag(e, { kind: "part", id: part.id, dx: p.x / PITCH - part.x, dy: p.y / PITCH - part.y });
             }}
           >
-            {def.render({ ...def.props, ...part.props }, {
+            {def.render({ ...def.props, ...part.props, ...overlay[part.id] }, {
               ...(visuals?.[part.id] ?? {}),
               pressed: pressed?.part === part.id && pressed.action !== "reset",
               action: pressed?.part === part.id ? pressed.action : undefined,
+              control: held?.part === part.id ? held.control : undefined,
             })}
           </g>
         </g>
@@ -487,7 +612,7 @@ export function Canvas({
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
-        onLostPointerCapture={() => setDrag(null)}
+        onLostPointerCapture={(e) => dropDrag(e)}
         onContextMenu={(e) => {
           // Right click while wiring: cancel.
           if (pending) {
@@ -602,6 +727,14 @@ export function Canvas({
           })}
       </svg>
       {hover && <div className="tooltip">{hover.label}</div>}
+      {controlHint && !pending && (
+        <div className="control-hint" data-testid="control-hint" style={{
+            left: Math.max(4, Math.min(controlHint.x + 14, (svgRef.current?.clientWidth ?? 1200) - 270)),
+            top: controlHint.y + 18 > (svgRef.current?.clientHeight ?? 800) - 60 ? controlHint.y - 60 : controlHint.y + 18,
+          }}>
+          {controlHint.text}
+        </div>
+      )}
       {pending && (
         <div className="wiring-hint">
           배선 중: 다른 핀을 클릭(또는 끌어다 놓기) · 빈 곳 클릭 = 꺾는 점 · Backspace = 점 취소 · Esc/우클릭 = 취소

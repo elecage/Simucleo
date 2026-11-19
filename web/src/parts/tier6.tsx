@@ -1,6 +1,7 @@
 // Tier 6 parts (M13): MPU-6050 motion sensor, MAX7219 LED dot matrix and an
 // IR receiver with its NEC remote. Their models live in
 // `simucleo_circuit::devices` (Mpu6050, Max7219, IrRemote).
+import { tiltControl } from "./controls";
 import { PITCH, type MatrixView, type PartDef } from "./types";
 
 const P = PITCH;
@@ -59,6 +60,7 @@ export const mpu6050: PartDef = {
     gz: { min: -500, max: 500, step: 1, label: "자이로 Z", unit: "°/s" },
     temp: { min: -40, max: 85, step: 0.5, label: "온도", unit: "°C" },
   },
+  controls: { tilt: tiltControl },
   render: (props, visual) => {
     const roll = Number(props.roll) || 0,
       pitch = Number(props.pitch) || 0;
@@ -73,7 +75,7 @@ export const mpu6050: PartDef = {
             {name}
           </text>
         ))}
-        <g data-drag-tilt="1" className="imu-pad">
+        <g data-drag="tilt" className={visual.control === "tilt" ? "imu-pad held" : "imu-pad"}>
           <circle cx={4 * P} cy={4 * P} r={3.3 * P} className="imu-dial" />
           <line x1={0.9 * P} y1={4 * P} x2={7.1 * P} y2={4 * P} className="imu-axis" />
           <line x1={4 * P} y1={0.9 * P} x2={4 * P} y2={7.1 * P} className="imu-axis" />

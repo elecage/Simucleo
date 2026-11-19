@@ -1,6 +1,8 @@
 // More parts (M8): 7-segment displays, keypad, rotary encoder, thermistor,
 // ultrasonic sensor, DS18B20, I2C character LCD and a stepper motor. Their
 // models live in `simucleo_circuit::sim` and `simucleo_circuit::devices`.
+import { FINGER_C, fingerTouch, slideHandle, type Slide } from "./controls";
+import { Fingertip } from "./feedback";
 import { PITCH, type LcdView, type PartDef, type VisualState } from "./types";
 
 const P = PITCH;
@@ -204,7 +206,7 @@ export const thermistor: PartDef = {
   name: "서미스터 (NTC)",
   category: "sensor",
   description:
-    "온도가 오르면 저항이 줄어드는 NTC. R = R25 · exp(B (1/T − 1/298.15 K)). 고정 저항과 분압기로 묶어 아날로그 핀에서 읽으세요.",
+    `온도가 오르면 저항이 줄어드는 NTC. R = R25 · exp(B (1/T − 1/298.15 K)). 고정 저항과 분압기로 묶어 아날로그 핀에서 읽으세요. 머리를 누르고 있으면 손가락 체온(약 ${FINGER_C} °C)으로 데워지고, 떼면 식습니다.`,
   w: 1,
   h: 3,
   pins: [
@@ -214,11 +216,13 @@ export const thermistor: PartDef = {
   props: { ohms: "10k", beta: 3950, temp: 25 },
   propOptions: { ohms: ["10k", "100k"] },
   ranges: { temp: { min: -40, max: 125, step: 0.5, label: "온도", unit: "°C" } },
-  render: (props) => (
-    <g>
+  controls: { touch: fingerTouch("temp") },
+  render: (props, visual) => (
+    <g data-drag="touch" data-temp={Number(props.temp)}>
       <line x1={0} y1={1.2 * P} x2={0} y2={3 * P} className="lead" />
       <line x1={P} y1={1.2 * P} x2={P} y2={3 * P} className="lead" />
       <ellipse cx={0.5 * P} cy={0.7 * P} rx={0.8 * P} ry={0.7 * P} className="ntc-body" />
+      {visual.control === "touch" && <Fingertip x={0.5 * P} y={0.7 * P} scale={0.8} />}
       <text x={0.5 * P} y={-0.4 * P} textAnchor="middle" className="silk small value">
         {Number(props.temp)} °C
       </text>
@@ -228,32 +232,77 @@ export const thermistor: PartDef = {
 
 // ------------------------------------------------------- HC-SR04
 
+/** Obstacle distance above the module (grid steps) ↔ cm: finer near the
+ * sensor, where it matters most (quadratic). */
+const SONAR_NEAR = 0.6,
+  SONAR_FAR = 12.6;
+const SONAR: Slide = {
+  min: SONAR_NEAR,
+  max: SONAR_FAR,
+  toValue: (d) => Math.round(2 + 448 * ((d - SONAR_NEAR) / (SONAR_FAR - SONAR_NEAR)) ** 2),
+  fromValue: (cm) =>
+    SONAR_NEAR + (SONAR_FAR - SONAR_NEAR) * Math.sqrt(Math.min(1, Math.max(0, (cm - 2) / 448))),
+};
+
 export const ultrasonic: PartDef = {
   kind: "hc-sr04",
   name: "초음파 거리센서",
   category: "sensor",
   description:
-    "HC-SR04P(3.3–5 V). TRIG에 10 µs 이상 High 펄스를 주면, ECHO가 소리가 왕복한 시간만큼 High가 됩니다(1 cm당 약 58 µs, 400 cm 넘으면 38 ms). 입력 캡처로 재면 정확합니다.",
+    "HC-SR04P(3.3–5 V). TRIG에 10 µs 이상 High 펄스를 주면, ECHO가 소리가 왕복한 시간만큼 High가 됩니다(1 cm당 약 58 µs, 400 cm 넘으면 38 ms). 입력 캡처로 재면 정확합니다. 앞의 장애물(손)을 위아래로 끌어 거리를 바꿉니다(2–450 cm, 가까운 쪽이 더 세밀). 모듈을 끌면 옮겨집니다.",
   w: 9,
   h: 5,
   pins: ["VCC", "TRIG", "ECHO", "GND"].map((id, i) => ({ id, x: 3 + i, y: 5, label: id })),
   props: { distance: 50 },
   ranges: { distance: { min: 2, max: 450, step: 1, label: "거리", unit: "cm" } },
-  render: (props, visual) => (
-    <g>
-      <rect x={0} y={0} width={9 * P} height={4.4 * P} rx={1} className="module-pcb" />
-      {[2, 7].map((cx) => (
-        <g key={cx}>
-          <circle cx={cx * P} cy={2.1 * P} r={1.7 * P} className="sonar-can" />
-          <circle cx={cx * P} cy={2.1 * P} r={1.2 * P} className="sonar-mesh" />
+  controls: {
+    obstacle: slideHandle(
+      "distance",
+      0,
+      SONAR,
+      "장애물을 위아래로 끌어 거리를 바꾸세요 (2–450 cm). 모듈을 끌면 옮겨집니다.",
+    ),
+  },
+  render: (props, visual) => {
+    const cm = Number(props.distance);
+    const d = SONAR.fromValue(cm);
+    const y = -d * P; // the obstacle's near face
+    const held = visual.control === "obstacle";
+    return (
+      <g>
+        {/* Sound going out and back: arcs between the module and the obstacle. */}
+        <line x1={4.5 * P} y1={0} x2={4.5 * P} y2={y} className="sonar-gap" />
+        {[0.25, 0.5, 0.75].map((k) =>
+          d * k > 0.4 ? (
+            <path
+              key={k}
+              d={`M ${2.5 * P} ${y * k} Q ${4.5 * P} ${y * k - 0.8 * P} ${6.5 * P} ${y * k}`}
+              className="sonar-wave"
+            />
+          ) : null,
+        )}
+        <g data-drag="obstacle" className={held ? "obstacle held" : "obstacle"} data-distance-grid={d.toFixed(2)}>
+          <rect x={1 * P} y={y - 1.2 * P} width={7 * P} height={1.2 * P} rx={1.5} className="obstacle-wall" />
+          <text x={4.5 * P} y={y - 0.35 * P} textAnchor="middle" className="obstacle-label">
+            ✋ 장애물
+          </text>
+          {/* A wider grip than the board itself. */}
+          <rect x={0.5 * P} y={y - 1.7 * P} width={8 * P} height={2 * P} fill="transparent" />
         </g>
-      ))}
-      <text x={4.5 * P} y={-0.5 * P} textAnchor="middle" className="silk small value">
-        {Number(props.distance)} cm
-      </text>
-      {visual.unpowered && <NoPower x={4.5 * P} y={6.2 * P} />}
-    </g>
-  ),
+        <text x={8.6 * P} y={y - 0.3 * P} className="silk small value" data-cm={cm}>
+          {cm} cm
+        </text>
+        <rect x={0} y={0} width={9 * P} height={4.4 * P} rx={1} className="module-pcb" />
+        {[2, 7].map((cx) => (
+          <g key={cx}>
+            <circle cx={cx * P} cy={2.1 * P} r={1.7 * P} className="sonar-can" />
+            <circle cx={cx * P} cy={2.1 * P} r={1.2 * P} className="sonar-mesh" />
+          </g>
+        ))}
+        {visual.unpowered && <NoPower x={4.5 * P} y={6.2 * P} />}
+      </g>
+    );
+  },
 };
 
 // ------------------------------------------------------- DS18B20
@@ -263,7 +312,7 @@ export const ds18b20: PartDef = {
   name: "디지털 온도센서 (DS18B20)",
   category: "sensor",
   description:
-    "1-Wire. DQ를 480 µs 이상 Low로 하면(리셋) 센서가 존재 펄스로 답합니다. 쓰기 슬롯은 짧은 Low(1)·긴 Low(0), 읽기 슬롯에서 0이면 센서가 선을 Low로 잡습니다. SKIP ROM(0xCC) → CONVERT T(0x44) → 750 ms 뒤 READ SCRATCHPAD(0xBE). 변환 전에는 85 °C가 읽힙니다. 모듈에 4.7 kΩ 풀업이 있습니다.",
+    `1-Wire. DQ를 480 µs 이상 Low로 하면(리셋) 센서가 존재 펄스로 답합니다. 쓰기 슬롯은 짧은 Low(1)·긴 Low(0), 읽기 슬롯에서 0이면 센서가 선을 Low로 잡습니다. SKIP ROM(0xCC) → CONVERT T(0x44) → 750 ms 뒤 READ SCRATCHPAD(0xBE). 변환 전에는 85 °C가 읽힙니다. 모듈에 4.7 kΩ 풀업이 있습니다. 센서를 누르고 있으면 손가락 체온(약 ${FINGER_C} °C)으로 데워지고, 떼면 식습니다.`,
   w: 3,
   h: 5,
   pins: [
@@ -273,8 +322,9 @@ export const ds18b20: PartDef = {
   ],
   props: { temp: 25 },
   ranges: { temp: { min: -55, max: 125, step: 0.0625, label: "온도", unit: "°C" } },
+  controls: { touch: fingerTouch("temp") },
   render: (props, visual) => (
-    <g>
+    <g data-drag="touch" data-temp={Number(props.temp)}>
       {[0, 1, 2].map((i) => (
         <line key={i} x1={i * P} y1={2.6 * P} x2={i * P} y2={5 * P} className="lead" />
       ))}
@@ -282,6 +332,7 @@ export const ds18b20: PartDef = {
       <text x={P} y={2.3 * P} textAnchor="middle" className="to92-label">
         18B20
       </text>
+      {visual.control === "touch" && <Fingertip x={P} y={1.8 * P} />}
       <text x={P} y={-0.5 * P} textAnchor="middle" className="silk small value">
         {Number(props.temp)} °C
       </text>

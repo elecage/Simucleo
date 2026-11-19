@@ -96,7 +96,9 @@ export type ToWorker =
   | { type: "load"; name: string; bytes: ArrayBuffer }
   | { type: "run" }
   | { type: "pause" }
-  | { type: "reset" }
+  /** `epoch` (optional) is carried by every frame from then on, so a caller
+   * can tell frames after its reset from the ones already on the way. */
+  | { type: "reset"; epoch?: number }
   | { type: "speed"; value: number } // simulated ms per wall ms; Infinity = as fast as possible
   | { type: "press"; part: string; pressed: boolean } // a tact-switch part id, or "B1"
   | { type: "wiring"; circuit: string; catalog: string; signals: string } // JSON
@@ -130,6 +132,8 @@ export type FromWorker =
       running: boolean;
       /** Achieved simulated-time / wall-time ratio. */
       speed: number;
+      /** The `epoch` of the last reset that asked for one (0 before). */
+      epoch: number;
     }
   | { type: "memory"; addr: number; bytes: Uint8Array }
   | { type: "sdImage"; part: string; bytes: Uint8Array }

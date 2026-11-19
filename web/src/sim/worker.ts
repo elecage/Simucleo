@@ -13,13 +13,14 @@ let speed = 1;
 let lastWall = 0;
 let achieved = 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
+let epoch = 0;
 
 const post = (m: FromWorker) => (self as unknown as Worker).postMessage(m);
 
 function sendFrame() {
   if (!sim) return;
   const frame = JSON.parse(sim.frame()) as SimFrame;
-  post({ type: "frame", frame, console: sim.takeConsole(), running, speed: achieved });
+  post({ type: "frame", frame, console: sim.takeConsole(), running, speed: achieved, epoch });
 }
 
 function tick() {
@@ -93,6 +94,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     case "reset": {
       const was = running;
       stop();
+      if (m.epoch !== undefined) epoch = m.epoch;
       if (loaded) sim.reset();
       sendFrame();
       if (was) start();

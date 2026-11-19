@@ -736,10 +736,12 @@ export function Waveform({
               ))}
               {arows.map(({ cfg, name }, i) => (
                 <div key={name} className="wave-label analog-label" data-analog={cfg.spec} style={{ height: AROW }}>
-                  <b className={name === source ? "trig-src" : undefined}>{name}</b>
-                  <button aria-label={`${name} 제거`} onClick={() => setAnalog((a) => a.filter((q) => q.spec !== cfg.spec))}>
-                    ×
-                  </button>
+                  <div>
+                    <b className={name === source ? "trig-src" : undefined}>{name}</b>
+                    <button aria-label={`${name} 제거`} onClick={() => setAnalog((a) => a.filter((q) => q.spec !== cfg.spec))}>
+                      ×
+                    </button>
+                  </div>
                   <div>
                     <select
                       value={cfg.vdiv}

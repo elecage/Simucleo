@@ -69,7 +69,7 @@ test("a wrong clock setup is diagnosed", async ({ page }) => {
 test("uploaded ELF runs; registers and memory are visible", async ({ page }) => {
   await page.getByTestId("elf-input").setInputFiles("public/examples/bare-blinky.elf");
   await expect(status(page)).toContainText("bare-blinky.elf");
-  await page.getByRole("button", { name: "레지스터" }).click();
+  await page.getByRole("button", { name: "레지스터", exact: true }).click();
   await expect(page.locator(".registers")).toContainText("<Reset_Handler>");
   await page.getByRole("button", { name: "▶ 실행" }).click();
   await page.waitForTimeout(500);

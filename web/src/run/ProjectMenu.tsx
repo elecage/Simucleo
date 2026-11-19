@@ -32,7 +32,10 @@ export function ProjectMenu({ project, name, runner, onNew, onOpenText }: Props)
     download(`${slug(name)}.simucleo.json`, new Blob([serialize(project, name, fw)], { type: "application/json" }));
   };
 
-  const svg = () => document.querySelector<SVGSVGElement>("svg.canvas");
+  // The view on screen: the schematic or the breadboard.
+  const svg = () =>
+    [...document.querySelectorAll<SVGSVGElement>("svg.schematic, svg.canvas")].find((e) => e.getClientRects().length > 0) ??
+    null;
   const saveSvg = () => {
     const el = svg();
     if (el) download(`${slug(name)}.svg`, new Blob([exportSvg(el)], { type: "image/svg+xml" }));
@@ -62,8 +65,8 @@ export function ProjectMenu({ project, name, runner, onNew, onOpenText }: Props)
       <label className="check" title="저장할 때 불러온 ELF를 파일에 넣습니다">
         <input type="checkbox" checked={withElf} onChange={(e) => setWithElf(e.target.checked)} /> ELF 포함
       </label>
-      <button onClick={saveSvg} title="배선도를 SVG 그림으로 저장">SVG</button>
-      <button onClick={savePng} title="배선도를 PNG 그림으로 저장 (2배 해상도)">PNG</button>
+      <button onClick={saveSvg} title="보고 있는 배선도나 회로도를 SVG 그림으로 저장">SVG</button>
+      <button onClick={savePng} title="보고 있는 배선도나 회로도를 PNG 그림으로 저장 (2배 해상도)">PNG</button>
     </div>
   );
 }

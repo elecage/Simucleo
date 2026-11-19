@@ -1,21 +1,33 @@
 import { useEffect, useRef, useState } from "react";
-import type { Runner } from "../sim/useRunner";
+import { btLinked, type Runner } from "../sim/useRunner";
 import { Waveform } from "./Waveform";
 import { RtosView } from "./RtosView";
 import { SourceView } from "./SourceView";
 
-type Tab = "console" | "source" | "waveform" | "rtos" | "registers" | "memory";
+/** A fixed tab, or `bt:<part id>` for an HC-05's phone. */
+type Tab = "console" | "source" | "waveform" | "rtos" | "registers" | "memory" | `bt:${string}`;
 
 const hex = (v: number, w = 8) => "0x" + (v >>> 0).toString(16).toUpperCase().padStart(w, "0");
 
 export function BottomPanel({ runner }: { runner: Runner }) {
   const [tab, setTab] = useState<Tab>("console");
+  const phones = Object.keys(runner.bluetooth).sort();
+  const btTabs: [Tab, string][] = phones.map((id) => [
+    `bt:${id}`,
+    phones.length > 1 ? `블루투스 (HC-05 · ${id})` : "블루투스 (HC-05)",
+  ]);
+  // The module was removed: back to the console.
+  const btPart = tab.startsWith("bt:") ? tab.slice(3) : null;
+  useEffect(() => {
+    if (btPart && !runner.bluetooth[btPart]) setTab("console");
+  }, [btPart, runner.bluetooth]);
   return (
     <section className="bottom">
       <nav className="tabs">
         {(
           [
             ["console", "가상 콘솔 (USART2)"],
+            ...btTabs,
             ["source", "소스 (디버그)"],
             ["waveform", "파형 (프로브)"],
             ["rtos", "RTOS"],
@@ -30,6 +42,7 @@ export function BottomPanel({ runner }: { runner: Runner }) {
       </nav>
       <div className="tab-body">
         {tab === "console" && <Console runner={runner} />}
+        {btPart && runner.bluetooth[btPart] && <Phone runner={runner} part={btPart} />}
         {/* Kept mounted: breakpoints and added sources survive tab switches. */}
         <div className="tab-keep" hidden={tab !== "source"}>
           <SourceView runner={runner} />
@@ -70,6 +83,87 @@ function Console({ runner }: { runner: Runner }) {
         <button type="button" onClick={runner.clearConsole}>
           지우기
         </button>
+      </form>
+    </div>
+  );
+}
+
+/** The phone paired with an HC-05: a chat over the module's UART. */
+function Phone({ runner, part }: { runner: Runner; part: string }) {
+  const chat = runner.bluetooth[part];
+  const out = useRef<HTMLDivElement>(null);
+  const [line, setLine] = useState("");
+  useEffect(() => {
+    out.current?.scrollTo(0, out.current.scrollHeight);
+  }, [chat.messages]);
+  const s = chat.status;
+  const linked = btLinked(s);
+  const garbled = chat.messages.some((m) => m.garbled);
+  const mismatch = s.mcuBaud !== null && Math.abs(s.mcuBaud / s.baud - 1) > 0.03;
+  const wiring = s.txUsart
+    ? `${s.txUsart} TX → RXD${s.rxUsart ? `, TXD → ${s.rxUsart} RX` : " (TXD는 MCU RX에 연결 안 됨)"}`
+    : "MCU의 USART TX가 RXD에 연결되지 않았습니다";
+  return (
+    <div className="phone" data-testid="bt-phone" data-part={part}>
+      <div className="phone-bar">
+        <b>📱 {s.name}</b>
+        <span className={linked ? "bt-status on" : "bt-status"} data-testid="bt-status">
+          {!s.powered ? "모듈 전원 없음" : s.atMode ? "AT 모드 (38400 baud)" : s.connected ? "연결됨" : "연결 안 됨"}
+        </span>
+        <button
+          onClick={() => runner.bluetoothConnect(part, !s.connected)}
+          disabled={!s.powered || s.atMode}
+          aria-label={s.connected ? "블루투스 연결 끊기" : "블루투스 연결"}
+        >
+          {s.connected ? "연결 끊기" : "연결"}
+        </button>
+        <span className="hint">
+          {wiring} · 모듈 {s.baud} baud{s.mcuBaud ? ` · MCU ${Math.round(s.mcuBaud)} baud` : ""}
+        </span>
+        <button type="button" onClick={() => runner.clearBluetooth(part)}>
+          지우기
+        </button>
+      </div>
+      {s.swapped && (
+        <p className="bt-warn" role="alert">
+          ⚠ MCU의 TX가 모듈의 TXD에 연결되어 있습니다. TX는 상대의 RX로 — MCU TX → 모듈 RXD, 모듈 TXD → MCU RX로 교차해서 연결하세요.
+        </p>
+      )}
+      {(mismatch || garbled) && (
+        <p className="bt-warn" role="alert" data-testid="bt-baud-warning">
+          ⚠ 글자가 깨집니다: 보레이트가 맞지 않습니다 (모듈 {s.baud} baud
+          {s.mcuBaud ? `, 펌웨어 ${Math.round(s.mcuBaud)} baud` : ""}). 펌웨어의 BaudRate나 부품의 baud 속성을 맞추세요.
+        </p>
+      )}
+      <div className="chat" ref={out} data-testid="bt-chat">
+        {chat.messages.length === 0 && (
+          <p className="hint">
+            {linked
+              ? "MCU가 보낸 내용이 여기에 나옵니다. 아래에 입력하면 MCU의 RX로 갑니다."
+              : "'연결'을 누르면 휴대폰이 HC-05에 연결되고 STATE가 High가 됩니다."}
+          </p>
+        )}
+        {chat.messages.map((m, i) => (
+          <div key={i} className={`bubble ${m.from}${m.garbled ? " garbled" : ""}`} data-from={m.from}>
+            {m.text}
+          </div>
+        ))}
+      </div>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!line) return;
+          runner.bluetoothSend(part, line);
+          setLine("");
+        }}
+      >
+        <input
+          value={line}
+          onChange={(e) => setLine(e.target.value)}
+          placeholder={linked ? "메시지 입력 후 Enter (CR LF와 함께 전송)" : "먼저 '연결'을 누르세요"}
+          aria-label="블루투스 메시지"
+        />
+        <button type="submit">보내기</button>
       </form>
     </div>
   );

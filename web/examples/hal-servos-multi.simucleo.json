@@ -1,0 +1,149 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "서보 세 개 (TIM3 CH1·CH2, TIM1 CH1)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "s1",
+      "kind": "servo",
+      "x": 50,
+      "y": 12,
+      "props": {}
+    },
+    {
+      "id": "s2",
+      "kind": "servo",
+      "x": 58,
+      "y": 12,
+      "props": {}
+    },
+    {
+      "id": "s3",
+      "kind": "servo",
+      "x": 66,
+      "y": 12,
+      "props": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "s1",
+        "pin": "V+"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "b": {
+        "part": "s1",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D5"
+      },
+      "b": {
+        "part": "s1",
+        "pin": "SIG"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "s1",
+        "pin": "V+"
+      },
+      "b": {
+        "part": "s2",
+        "pin": "V+"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "s1",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "s2",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "nucleo",
+        "pin": "D9"
+      },
+      "b": {
+        "part": "s2",
+        "pin": "SIG"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "s2",
+        "pin": "V+"
+      },
+      "b": {
+        "part": "s3",
+        "pin": "V+"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "s2",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "s3",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "s3",
+        "pin": "SIG"
+      },
+      "color": "#fb8c00"
+    }
+  ],
+  "firmware": {
+    "name": "hal-servos-multi",
+    "example": "hal-servos-multi.elf"
+  }
+}

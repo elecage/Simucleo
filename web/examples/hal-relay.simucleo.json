@@ -1,0 +1,181 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "버튼으로 릴레이 켜기 (5V LED 스위칭)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "bb1",
+      "kind": "breadboard-half",
+      "x": 42,
+      "y": 4,
+      "props": {}
+    },
+    {
+      "id": "k1",
+      "kind": "relay",
+      "x": 78,
+      "y": 6,
+      "props": {
+        "trigger": "low"
+      }
+    },
+    {
+      "id": "lamp",
+      "kind": "led-5mm",
+      "x": 63,
+      "y": 9,
+      "props": {
+        "color": "yellow"
+      }
+    },
+    {
+      "id": "r1",
+      "kind": "resistor",
+      "x": 64,
+      "y": 10,
+      "props": {
+        "ohms": "330"
+      }
+    },
+    {
+      "id": "sw1",
+      "kind": "tact-switch",
+      "x": 47,
+      "y": 28,
+      "props": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "tp1"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "tn2"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "k1",
+        "pin": "VCC"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "tp29"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "k1",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "tn29"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "k1",
+        "pin": "IN"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "k1",
+        "pin": "COM"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "tp27"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "k1",
+        "pin": "NO"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "a25"
+      },
+      "color": "#fdd835"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "bb1",
+        "pin": "a20"
+      },
+      "b": {
+        "part": "bb1",
+        "pin": "tn19"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "nucleo",
+        "pin": "D4"
+      },
+      "b": {
+        "part": "sw1",
+        "pin": "1a"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "sw1",
+        "pin": "2a"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P2"
+      },
+      "color": "#212121"
+    }
+  ],
+  "firmware": {
+    "name": "hal-relay",
+    "example": "hal-relay.elf"
+  }
+}

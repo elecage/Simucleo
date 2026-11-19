@@ -115,6 +115,8 @@ export interface VisualState {
   lcd?: LcdView;
   /** LED dot-matrix contents (MAX7219 chain). */
   matrix?: MatrixView;
+  /** Relay: COM is on NO (else on NC). */
+  closed?: boolean;
   /** The control (`data-drag`) being operated now. */
   control?: string;
   /** The pressable element held down now (`data-action`). */

@@ -111,6 +111,17 @@ const BOX_LAYOUT: Record<
     right: ["DIN", "CLK", "CS", "DOUT"],
     subtitle: (p) => `LED 매트릭스 ×${Math.min(4, Math.max(1, Number(p.count) || 1))} (MAX7219)`,
   },
+  hc05: {
+    left: ["VCC", "GND", "EN"],
+    right: ["TXD", "RXD", "STATE"],
+    subtitle: (p) => `블루투스 (HC-05) · ${p.baud ?? 9600} baud`,
+  },
+  // Coil side (driven through the module's transistor) and the contacts.
+  relay: {
+    left: ["VCC", "GND", "IN"],
+    right: ["NO", "COM", "NC"],
+    subtitle: (p) => `릴레이 5V · ${p.trigger === "high" ? "High" : "Low"} 트리거`,
+  },
   // Only the receiver is wired: the remote's buttons are not pins.
   "ir-receiver": {
     left: ["VCC", "GND"],
@@ -284,7 +295,9 @@ export function buildSchematic(project: Project, netlist: Netlist): Schematic {
       const left = layout ? layout.left.length : Math.ceil(groups.length / 2);
       const rows = Math.max(left, groups.length - left);
       const longest = Math.max(...groups.map((g) => g.join("/").length));
-      const w = Math.max(10 * G, Math.ceil((longest * 2 * 7 + 3 * G) / G) * G);
+      // A relay draws its coil and contacts between the pin names.
+      const w =
+        part.kind === "relay" ? 16 * G : Math.max(10 * G, Math.ceil((longest * 2 * 7 + 3 * G) / G) * G);
       const h = (rows * 2 + 2) * G;
       sym = {
         part: part.id,

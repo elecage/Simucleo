@@ -261,6 +261,7 @@ export function App() {
         leds: v.leds,
         lcd: v.lcd,
         matrix: v.matrix,
+        closed: v.closed,
       };
       if (v.id === "LD2") {
         if (boardId) out[boardId] = { ...out[boardId], brightness: state.brightness, overcurrent: state.overcurrent };

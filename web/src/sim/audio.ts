@@ -21,8 +21,34 @@ interface Voice {
   gain: GainNode;
 }
 
+/** A short tick, as a relay's armature makes when it moves. */
+function click(audio: AudioContext) {
+  const t = audio.currentTime;
+  const osc = audio.createOscillator();
+  const gain = audio.createGain();
+  osc.type = "square";
+  osc.frequency.value = 1800;
+  gain.gain.setValueAtTime(VOLUME * 1.5, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.015);
+  osc.connect(gain).connect(audio.destination);
+  osc.start(t);
+  osc.stop(t + 0.03);
+}
+
 export function useBuzzerAudio(visuals: Record<string, VisualState>, parts: PlacedPart[], enabled: boolean): void {
   const voices = useRef(new Map<string, Voice>());
+  const relays = useRef(new Map<string, boolean>());
+
+  // Relays click when their contacts change over.
+  useEffect(() => {
+    for (const p of parts) {
+      if (p.kind !== "relay") continue;
+      const closed = !!visuals[p.id]?.closed;
+      const was = relays.current.get(p.id);
+      relays.current.set(p.id, closed);
+      if (enabled && ctx && was !== undefined && was !== closed) click(ctx);
+    }
+  }, [visuals, parts, enabled]);
 
   useEffect(() => {
     const audio = ctx;

@@ -13,3 +13,4 @@ path = "src/main.rs"
 simucleo-core.workspace = true
 simucleo-periph-stm32f4.workspace = true
 simucleo-nucleo.workspace = true
+simucleo-elf.workspace = true

@@ -270,6 +270,7 @@ main { position: relative; }
 .gutter { flex: 0 0 52px; text-align: right; padding-right: 10px; color: #9ca3af; user-select: none; position: relative; }
 .src-line.code .gutter { color: #4b5563; cursor: pointer; }
 .gutter.bp::before { content: ""; position: absolute; left: 6px; top: 4px; width: 9px; height: 9px; border-radius: 50%; background: #dc2626; }
+.gutter.bp.cond::before { background: #f59e0b; }
 .src-text { padding-left: 6px; }
 .debug-side { flex: 0 0 300px; overflow: auto; font-size: 12px; }
 .debug-side h4 { margin: 6px 0 2px; font-size: 12px; }
@@ -284,3 +285,21 @@ main { position: relative; }
 .var-value { color: #111827; }
 .tab-keep { height: 100%; }
 .tab-keep[hidden] { display: none; }
+.asm-toggle { font-size: 12px; display: inline-flex; align-items: center; gap: 2px; }
+.asm-view { flex: 0 0 38%; overflow: auto; font: 12px/1.4 ui-monospace, monospace; border: 1px solid #e5e7eb; border-top: 0; background: #f8fafc; }
+.asm-src { color: #6b7280; padding: 2px 6px; background: #eef2ff; white-space: pre; }
+.asm-row { display: flex; gap: 12px; padding: 0 6px; white-space: pre; }
+.asm-row.here { background: #fef08a; }
+.asm-addr { color: #6b7280; }
+.asm-bytes { color: #9ca3af; width: 80px; }
+.watch-add { display: flex; gap: 4px; }
+.watch-add input { flex: 1; min-width: 0; font: 12px ui-monospace, monospace; }
+.watches { padding-left: 0; }
+.watches .watch { display: flex; align-items: flex-start; gap: 4px; }
+.watches .watch > ul { padding-left: 0; flex: 1; }
+.watch-del { padding: 0 5px; line-height: 1.2; font-size: 12px; }
+.watch-error { color: #b91c1c; }
+.bp-list { list-style: none; margin: 0; padding: 0; }
+.bp-list li { display: flex; align-items: center; gap: 4px; margin: 2px 0; }
+.bp-at { font-family: ui-monospace, monospace; cursor: pointer; white-space: nowrap; }
+.bp-list input { flex: 1; min-width: 0; font: 12px ui-monospace, monospace; }

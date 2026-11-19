@@ -4,7 +4,7 @@
 // example sources or from files the user adds.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Runner } from "../sim/useRunner";
-import type { DebugValue } from "../sim/protocol";
+import type { BreakpointSpec, DebugValue } from "../sim/protocol";
 
 const base = "./";
 
@@ -56,7 +56,10 @@ export function SourceView({ runner }: { runner: Runner }) {
   const [available, setAvailable] = useState<Set<string>>(new Set());
   const [fileIdx, setFileIdx] = useState<number | null>(null);
   const [frame, setFrame] = useState(0);
-  const [wanted, setWanted] = useState<{ file: number; line: number }[]>([]);
+  const [showAsm, setShowAsm] = useState(false);
+  const [wanted, setWanted] = useState<BreakpointSpec[]>([]);
+  const [watches, setWatches] = useState<string[]>([]);
+  const [newWatch, setNewWatch] = useState("");
   const codeRef = useRef<HTMLDivElement>(null);
   const upload = useRef<HTMLInputElement>(null);
   const { setBreakpoints, requestDebugState, debugState, pauseEvent: pause, running } = runner;
@@ -100,6 +103,8 @@ export function SourceView({ runner }: { runner: Runner }) {
   }, [key, texts, uploaded]);
 
   useEffect(() => setBreakpoints(wanted), [wanted, setBreakpoints]);
+  const setCondition = (b: BreakpointSpec, condition: string) =>
+    setWanted((w) => w.map((x) => (x.file === b.file && x.line === b.line ? { ...x, condition } : x)));
 
   // Paused: fetch where we are and show it.
   useEffect(() => {
@@ -116,6 +121,16 @@ export function SourceView({ runner }: { runner: Runner }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileIdx]);
   const shownFrame = debugState?.frames[frame];
+  // Watch expressions are evaluated in the shown frame whenever it changes.
+  const { requestWatch } = runner;
+  useEffect(() => {
+    if (paused && watches.length) requestWatch(watches, frame);
+  }, [paused, debugState, frame, watches, requestWatch]);
+  // Machine code around the shown frame's pc.
+  const { requestDisasm } = runner;
+  useEffect(() => {
+    if (showAsm && paused && shownFrame) requestDisasm(shownFrame.pc);
+  }, [showAsm, paused, shownFrame, requestDisasm]);
   useEffect(() => {
     const f = debugState?.frames[frame];
     if (f?.file != null && files.some((x) => x.index === f.file)) setFileIdx(f.file);
@@ -128,6 +143,7 @@ export function SourceView({ runner }: { runner: Runner }) {
 
   const codeLines = useMemo(() => new Set(current?.lines ?? []), [current]);
   const placed = new Set(runner.breakpoints.filter((b) => b.file === fileIdx).map((b) => b.line));
+  const conditional = new Set(wanted.filter((b) => b.file === fileIdx && b.condition?.trim()).map((b) => b.line));
   const lines = key && texts[key] !== undefined ? texts[key].split("\n") : null;
 
   const toggle = (line: number) => {
@@ -170,6 +186,9 @@ export function SourceView({ runner }: { runner: Runner }) {
           <button onClick={() => runner.step("instruction")} disabled={running} title="기계어 명령 하나">
             명령 1개
           </button>
+          <label className="asm-toggle">
+            <input type="checkbox" checked={showAsm} onChange={(e) => setShowAsm(e.target.checked)} /> 기계어
+          </label>
           <button onClick={() => upload.current?.click()}>소스 추가…</button>
           <input
             ref={upload}
@@ -201,7 +220,7 @@ export function SourceView({ runner }: { runner: Runner }) {
                   className={`src-line${here === n ? " here" : ""}${code ? " code" : ""}`}
                 >
                   <span
-                    className={`gutter${placed.has(n) ? " bp" : ""}`}
+                    className={`gutter${placed.has(n) ? " bp" : ""}${conditional.has(n) ? " cond" : ""}`}
                     onClick={() => toggle(n)}
                     data-testid={`gutter-${n}`}
                     title={code ? "클릭: 중단점" : ""}
@@ -218,8 +237,111 @@ export function SourceView({ runner }: { runner: Runner }) {
             </p>
           )}
         </div>
+        {showAsm && (
+          <div className="asm-view" data-testid="disassembly">
+            {paused ? (
+              runner.disasm.map((r, i) => {
+                const prev = runner.disasm[i - 1];
+                const newLine = r.line !== null && (!prev || prev.line !== r.line || prev.file !== r.file);
+                const src = r.file !== null ? files.find((f) => f.index === r.file) : undefined;
+                return (
+                  <div key={r.addr}>
+                    {newLine && (
+                      <div className="asm-src">
+                        {src ? baseName(src.path) : "?"}:{r.line}
+                        {r.file === fileIdx && lines?.[r.line! - 1] ? `  ${lines[r.line! - 1].trim()}` : ""}
+                      </div>
+                    )}
+                    <div className={`asm-row${r.addr === shownFrame?.pc ? " here" : ""}`} data-addr={r.addr}>
+                      <span className="asm-addr">{r.addr.toString(16).padStart(8, "0")}</span>
+                      <span className="asm-bytes">{r.bytes}</span>
+                      <span className="asm-text">{r.text}</span>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <p className="hint">멈추면 현재 위치의 기계어가 보입니다.</p>
+            )}
+          </div>
+        )}
       </div>
       <aside className="debug-side">
+        <h4>감시식</h4>
+        <form
+          className="watch-add"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const x = newWatch.trim();
+            if (x && !watches.includes(x)) setWatches((w) => [...w, x]);
+            setNewWatch("");
+          }}
+        >
+          <input
+            aria-label="감시식"
+            placeholder="예: count * 2, buf[i], htim2.Instance->CNT"
+            value={newWatch}
+            onChange={(e) => setNewWatch(e.target.value)}
+          />
+          <button type="submit">추가</button>
+        </form>
+        <ul className="vars watches" data-testid="watches">
+          {watches.map((x, i) => {
+            const v = paused ? runner.watch[i] : undefined;
+            return (
+              <li key={x} className="watch">
+                <button
+                  className="watch-del"
+                  title="감시식 지우기"
+                  onClick={() => setWatches((w) => w.filter((y) => y !== x))}
+                >
+                  ×
+                </button>
+                {v && "error" in v ? (
+                  <span className="var-row">
+                    <span className="var-name">{x}</span>{" "}
+                    <span className="watch-error" data-watch={x}>
+                      {v.error}
+                    </span>
+                  </span>
+                ) : v ? (
+                  <ul className="vars" data-watch={x}>
+                    <ValueTree v={v} />
+                  </ul>
+                ) : (
+                  <span className="var-name">{x}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        <h4>중단점</h4>
+        <ul className="bp-list" data-testid="breakpoints">
+          {wanted.map((b) => {
+            const f = files.find((x) => x.index === b.file);
+            const at = `${f ? baseName(f.path) : "?"}:${b.line}`;
+            return (
+              <li key={`${b.file}:${b.line}`}>
+                <button className="watch-del" title="중단점 지우기" onClick={() => setWanted((w) => w.filter((x) => x !== b))}>
+                  ×
+                </button>
+                <span className="bp-at" onClick={() => setFileIdx(b.file)}>
+                  {at}
+                </span>
+                <input
+                  aria-label={`${at} 조건`}
+                  placeholder="조건 (예: i == 3)"
+                  defaultValue={b.condition ?? ""}
+                  onBlur={(e) => setCondition(b, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") setCondition(b, e.currentTarget.value);
+                  }}
+                />
+              </li>
+            );
+          })}
+        </ul>
+        {wanted.length === 0 && <p className="hint">줄 번호를 클릭하면 중단점이 생깁니다. 조건을 적으면 그 식이 참일 때만 멈춥니다.</p>}
         <h4>호출 스택</h4>
         <ol className="frames">
           {(paused ? debugState!.frames : []).map((f, i) => (

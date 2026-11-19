@@ -87,7 +87,8 @@ pub struct Value {
 }
 
 /// Where a value's bytes are.
-enum Src {
+#[derive(Clone)]
+pub(crate) enum Src {
     Addr(u32),
     Bytes(Vec<u8>),
 }
@@ -546,6 +547,196 @@ impl DebugInfo {
         out.sort_by(|a, b| a.name.cmp(&b.name));
         out.dedup_by(|a, b| a.name == b.name && a.addr == b.addr);
         out
+    }
+
+    /// Evaluate a C expression over the frame's variables (watch).
+    pub fn evaluate(&self, expr: &str, frame: &Frame, read: ReadMem<'_>) -> Result<Value, String> {
+        crate::expr::Evaluator::new(self, self.dwarf(), frame, read).value(expr)
+    }
+
+    /// Evaluate a breakpoint condition: true when non-zero.
+    pub fn condition(&self, expr: &str, frame: &Frame, read: ReadMem<'_>) -> Result<bool, String> {
+        crate::expr::Evaluator::new(self, self.dwarf(), frame, read).truth(expr)
+    }
+
+    /// A local variable or parameter of the frame by name (innermost
+    /// scope first): its unit, type and location.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn find_local(
+        &self,
+        dwarf: &Dwarf<'_>,
+        frame: &Frame,
+        name: &str,
+        read: ReadMem<'_>,
+    ) -> Option<(
+        gimli::DebugInfoOffset<usize>,
+        Option<UnitOffset<usize>>,
+        Result<Src, &'static str>,
+    )> {
+        let pc = frame.pc;
+        let f = self
+            .function_at(pc)
+            .or_else(|| self.function_at(pc.wrapping_sub(2)))?;
+        let header = dwarf.debug_info.header_from_offset(f.unit).ok()?;
+        let unit = dwarf.unit(header).ok()?;
+        // Walk the function's scopes, keeping the innermost match.
+        let mut found = None;
+        let mut entries = unit.entries_at_offset(f.die).ok()?;
+        let mut depth = 0isize;
+        let mut skip_below: Option<isize> = None;
+        let mut first = true;
+        while let Ok(Some((delta, e))) = entries.next_dfs() {
+            depth += delta;
+            // Past the function's own entries.
+            if !first && depth <= 0 {
+                break;
+            }
+            first = false;
+            if let Some(d) = skip_below {
+                if depth > d {
+                    continue;
+                }
+                skip_below = None;
+            }
+            match e.tag() {
+                gimli::DW_TAG_lexical_block
+                    if die_contains(dwarf, &unit, e, pc as u64) == Some(false) =>
+                {
+                    skip_below = Some(depth)
+                }
+                gimli::DW_TAG_subprogram | gimli::DW_TAG_inlined_subroutine if depth > 0 => {
+                    skip_below = Some(depth)
+                }
+                gimli::DW_TAG_formal_parameter | gimli::DW_TAG_variable
+                    if name_of(dwarf, &unit, e).as_deref() == Some(name) =>
+                {
+                    let e = e.clone();
+                    if let Some(src) = self.locate(dwarf, &unit, &e, frame, pc, read) {
+                        found = Some((f.unit, type_of(&e), src));
+                    }
+                }
+                _ => {}
+            }
+        }
+        found
+    }
+
+    /// A global variable by name: its unit, type and address.
+    pub(crate) fn find_global(
+        &self,
+        name: &str,
+    ) -> Option<(
+        gimli::DebugInfoOffset<usize>,
+        Option<UnitOffset<usize>>,
+        u32,
+    )> {
+        self.globals
+            .iter()
+            .find(|g| g.name == name)
+            .map(|g| (g.unit, g.ty, g.addr))
+    }
+
+    /// The value of an enumeration constant by name.
+    pub(crate) fn find_enumerator(&self, dwarf: &Dwarf<'_>, name: &str) -> Option<i64> {
+        let mut units = dwarf.units();
+        while let Ok(Some(header)) = units.next() {
+            let Ok(unit) = dwarf.unit(header) else {
+                continue;
+            };
+            let mut entries = unit.entries();
+            while let Ok(Some((_, e))) = entries.next_dfs() {
+                if e.tag() == gimli::DW_TAG_enumerator
+                    && name_of(dwarf, &unit, e).as_deref() == Some(name)
+                {
+                    return match e.attr_value(gimli::DW_AT_const_value).ok().flatten() {
+                        Some(AttributeValue::Sdata(v)) => Some(v),
+                        Some(v) => attr_u64(v).map(|u| u as i64),
+                        None => None,
+                    };
+                }
+            }
+        }
+        None
+    }
+
+    pub(crate) fn size_of(&self, unit: &Unit<'_>, ty: Option<UnitOffset<usize>>) -> Option<u32> {
+        self.byte_size(unit, ty)
+    }
+
+    pub(crate) fn dims_of(&self, unit: &Unit<'_>, off: UnitOffset<usize>) -> Vec<u32> {
+        self.array_dims(unit, off)
+    }
+
+    /// Offset and type of a struct member by name.
+    pub(crate) fn member_of(
+        &self,
+        dwarf: &Dwarf<'_>,
+        unit: &Unit<'_>,
+        off: UnitOffset<usize>,
+        name: &str,
+    ) -> Option<(u32, Option<UnitOffset<usize>>)> {
+        let mut tree = unit.entries_tree(Some(off)).ok()?;
+        let root = tree.root().ok()?;
+        let mut ch = root.children();
+        while let Ok(Some(c)) = ch.next() {
+            let e = c.entry();
+            if e.tag() == gimli::DW_TAG_member && name_of(dwarf, unit, e).as_deref() == Some(name) {
+                let moff = e
+                    .attr_value(gimli::DW_AT_data_member_location)
+                    .ok()
+                    .flatten()
+                    .and_then(attr_u64)
+                    .unwrap_or(0) as u32;
+                return Some((moff, type_of(e)));
+            }
+        }
+        None
+    }
+
+    pub(crate) fn render_value(
+        &self,
+        dwarf: &Dwarf<'_>,
+        unit: &Unit<'_>,
+        ty: Option<UnitOffset<usize>>,
+        src: Src,
+        read: ReadMem<'_>,
+    ) -> Value {
+        self.render(dwarf, unit, ty, src, read, 0)
+    }
+
+    /// The rest of an array after `skip` dimensions were indexed.
+    pub(crate) fn render_array_tail(
+        &self,
+        dwarf: &Dwarf<'_>,
+        unit: &Unit<'_>,
+        ty: Option<UnitOffset<usize>>,
+        skip: usize,
+        src: Src,
+        read: ReadMem<'_>,
+    ) -> Value {
+        let Some(off) = ty else {
+            return Value::default();
+        };
+        let dims = self.array_dims(unit, off);
+        let elem = unit.entry(off).ok().and_then(|e| type_of(&e));
+        let mut v = self.render_array(
+            dwarf,
+            unit,
+            elem,
+            &dims[skip.min(dims.len())..],
+            src,
+            read,
+            0,
+        );
+        v.ty = format!(
+            "{}{}",
+            self.type_name(dwarf, unit, elem),
+            dims[skip.min(dims.len())..]
+                .iter()
+                .map(|n| format!("[{n}]"))
+                .collect::<String>()
+        );
+        v
     }
 
     /// Parameters and local variables of a frame that are in scope at its pc.

@@ -103,9 +103,11 @@ export type ToWorker =
   | { type: "sdImage"; part: string }
   | { type: "rotate"; part: string; detents: number }
   | { type: "debugFiles" }
-  | { type: "breakpoints"; list: { file: number; line: number }[] }
+  | { type: "breakpoints"; list: BreakpointSpec[] }
   | { type: "step"; kind: "instruction" | "into" | "over" | "out" }
   | { type: "debugState"; frame: number; globalsFile: number }
+  | { type: "disassemble"; addr: number | null }
+  | { type: "evaluate"; exprs: string[]; frame: number }
   | { type: "sdLoad"; part: string; bytes: ArrayBuffer };
 
 export type FromWorker =
@@ -125,6 +127,8 @@ export type FromWorker =
   | { type: "debugFiles"; files: DebugFile[] }
   | { type: "breakpoints"; placed: ({ file: number; line: number } | null)[] }
   | { type: "debugState"; state: DebugState }
+  | { type: "disasm"; rows: DisasmRow[] }
+  | { type: "watch"; values: WatchValue[] }
   /** Execution paused by the debugger (breakpoint, step done, …). */
   | { type: "paused"; reason: string };
 
@@ -150,6 +154,26 @@ export interface DebugFrameInfo {
   file: number | null;
   line: number | null;
   exception: boolean;
+}
+
+/** A breakpoint on a source line; with a condition (a C expression) it
+ * stops only where the condition is true. */
+export interface BreakpointSpec {
+  file: number;
+  line: number;
+  condition?: string;
+}
+
+/** A watch expression's value, or why it has none. */
+export type WatchValue = DebugValue | { error: string };
+
+/** One disassembled instruction with its source line. */
+export interface DisasmRow {
+  addr: number;
+  bytes: string;
+  text: string;
+  file: number | null;
+  line: number | null;
 }
 
 /** Where a paused program is and what it holds. */

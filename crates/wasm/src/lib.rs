@@ -122,7 +122,7 @@ impl Simulator {
         if let Some(why) = &self.stopped {
             return why.clone();
         }
-        let r = self.board.run_for_ns(ms * 1e6);
+        let r = self.board.run_for_ns_debug(ms * 1e6);
         self.at_breakpoint = matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_));
         match self.board.diagnose(&r) {
             Some(d) => {
@@ -160,14 +160,18 @@ impl Simulator {
         serde_json::to_string(&files).unwrap_or_default()
     }
 
-    /// Set the breakpoints from JSON `[{file, line}]`. Returns where each
-    /// one landed, `[{file, line} | null]` (the next line with code).
+    /// Set the breakpoints from JSON `[{file, line, condition?}]` (a
+    /// breakpoint with a condition, a C expression, stops only where it is
+    /// true). Returns where each one landed, `[{file, line} | null]` (the
+    /// next line with code).
     #[wasm_bindgen(js_name = setBreakpoints)]
     pub fn set_breakpoints(&mut self, json: &str) -> Result<String, JsError> {
         #[derive(serde::Deserialize)]
         struct Bp {
             file: u32,
             line: u32,
+            #[serde(default)]
+            condition: Option<String>,
         }
         let bps: Vec<Bp> = serde_json::from_str(json)?;
         let Some(info) = self.board.debug_info() else {
@@ -178,13 +182,13 @@ impl Simulator {
             .iter()
             .map(|b| match info.breakpoint_addresses(b.file, b.line) {
                 Some((line, a)) => {
-                    addrs.extend(a);
+                    addrs.extend(a.into_iter().map(|a| (a, b.condition.clone())));
                     serde_json::json!({"file": b.file, "line": line})
                 }
                 None => serde_json::Value::Null,
             })
             .collect();
-        self.board.set_breakpoints(&addrs);
+        self.board.set_conditional_breakpoints(&addrs);
         Ok(serde_json::to_string(&placed)?)
     }
 
@@ -216,6 +220,28 @@ impl Simulator {
                 }
             }
         }
+    }
+
+    /// Evaluate a C expression in call-stack frame `frame`: JSON
+    /// `{name, type, value, children}` or `{error}`.
+    pub fn evaluate(&self, expr: &str, frame: usize) -> String {
+        match self.board.evaluate(expr, frame) {
+            Ok(v) => serde_json::to_string(&v).unwrap_or_default(),
+            Err(e) => serde_json::json!({ "error": e }).to_string(),
+        }
+    }
+
+    /// Machine code around `addr` (default: the pc) as JSON
+    /// `[{addr, bytes, text, file, line}]`.
+    pub fn disassemble(&self, addr: Option<u32>, before: usize, after: usize) -> String {
+        let addr = addr.unwrap_or_else(|| self.board.cpu.registers().pc());
+        let rows: Vec<serde_json::Value> = self
+            .board
+            .disassemble_around(addr, before, after)
+            .into_iter()
+            .map(|(i, loc)| serde_json::json!({"addr": i.addr, "bytes": i.bytes, "text": i.text, "file": loc.map(|l| l.0), "line": loc.map(|l| l.1)}))
+            .collect();
+        serde_json::to_string(&rows).unwrap_or_default()
     }
 
     /// Where the program is and what it holds, as JSON: `{ pc, file,

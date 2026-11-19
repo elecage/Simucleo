@@ -269,3 +269,127 @@ export const tiltControl: PartControl = {
     };
   },
 };
+
+// ------------------------------------------------------- joystick (M19)
+
+/** A press that does not move the stick holds SW down after this (ms). */
+const STICK_PRESS_MS = 120;
+/** A quick click still presses SW for this long (ms). */
+const STICK_CLICK_MS = 200;
+/** Moving the pointer further than this (part units) is a drag. */
+const STICK_SLOP = 0.25 * PITCH;
+
+/**
+ * A thumb stick centred at (cx, cy) that travels ±`range` part units in
+ * its square: dragging sets `x` (0 left … 1 right) and `y` (0 down … 1
+ * up); released, it springs back to the centre. Pressing it without
+ * moving pushes the stick down (SW, the `sw` prop), as does a quick click.
+ */
+export function joystickStick(cx: number, cy: number, range: number): PartControl {
+  return {
+    hint: "손잡이를 끌어 기울이세요 — 놓으면 가운데로 돌아옵니다. 움직이지 않고 누르면(클릭) 스틱 버튼(SW)이 눌립니다.",
+    start(p) {
+      const t0 = p.t;
+      let moved = false;
+      let pressed = false;
+      let clickUntil = 0;
+      return {
+        move(q) {
+          if (!moved && Math.hypot(q.x - p.x, q.y - p.y) < STICK_SLOP) return;
+          moved = true;
+          const dx = clamp(q.x - cx, -range, range);
+          const dy = clamp(q.y - cy, -range, range);
+          const out: PropValues = { x: tidy(0.5 + dx / (2 * range), 0.01), y: tidy(0.5 - dy / (2 * range), 0.01) };
+          if (pressed) {
+            pressed = false;
+            out.sw = 0;
+          }
+          return out;
+        },
+        release(q): PropValues {
+          if (!moved && !pressed) {
+            // A quick click: a short press of SW.
+            pressed = true;
+            clickUntil = q.t + STICK_CLICK_MS;
+            return { sw: 1 };
+          }
+          pressed = false;
+          return { x: 0.5, y: 0.5, sw: 0 };
+        },
+        tick(t, held): { set?: PropValues; done?: boolean } {
+          if (held) {
+            if (!moved && !pressed && t - t0 >= STICK_PRESS_MS) {
+              pressed = true;
+              return { set: { sw: 1 } };
+            }
+            return {};
+          }
+          if (clickUntil && t < clickUntil) return {};
+          return { set: clickUntil ? { sw: 0, x: 0.5, y: 0.5 } : undefined, done: true };
+        },
+      };
+    },
+  };
+}
+
+// ---------------------------------------------------- PIR person (M19)
+
+/** Motion stops this long (ms) after the figure was last moved. */
+export const STILL_MS = 300;
+/** The "움직임" button reports motion at least this long (ms). */
+const WAVE_MS = 1000;
+
+/**
+ * The person in front of a PIR sensor: dragging moves `person` (0 … 1
+ * along the track from `x0` to `x1`, part units); while the figure moves
+ * inside the field of view (`inView`), `motion` is 1, and it drops back
+ * to 0 once the figure stands still or leaves.
+ */
+export function personDrag(x0: number, x1: number, inView: (pos: number) => boolean): PartControl {
+  return {
+    hint: "사람을 좌우로 끌어 센서 앞(부채꼴 안)을 지나가게 하세요 — 움직이는 동안만 움직임이 감지됩니다.",
+    start(p, props) {
+      const offset = (p.x - x0) / (x1 - x0) - num(props.person);
+      let last = p.t;
+      let pos = num(props.person);
+      let moving = false;
+      return {
+        move(q) {
+          const next = tidy(clamp((q.x - x0) / (x1 - x0) - offset, 0, 1), 0.005);
+          if (next === pos) return;
+          pos = next;
+          last = q.t;
+          const m = inView(pos);
+          const out: PropValues = { person: pos };
+          if (m !== moving) {
+            moving = m;
+            out.motion = m ? 1 : 0;
+          }
+          return out;
+        },
+        tick(t, held) {
+          if (moving && t - last >= STILL_MS) {
+            moving = false;
+            return { set: { motion: 0 }, done: !held };
+          }
+          return { done: !held && !moving };
+        },
+      };
+    },
+  };
+}
+
+/** A button: motion while held, and for at least WAVE_MS. */
+export const waveControl: PartControl = {
+  hint: "누르면 센서 앞에서 움직임이 생깁니다(누르는 동안, 최소 1초).",
+  start(p) {
+    const t0 = p.t;
+    return {
+      set: { motion: 1 },
+      tick(t, held) {
+        if (held || t - t0 < WAVE_MS) return {};
+        return { set: { motion: 0 }, done: true };
+      },
+    };
+  },
+};

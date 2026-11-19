@@ -1,0 +1,123 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "PIR 센서로 LED 켜기 (HC-SR501)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "pir",
+      "kind": "pir",
+      "x": 50,
+      "y": 4,
+      "props": {
+        "mode": "H",
+        "delay": 3,
+        "warmup": 3,
+        "person": 0.05,
+        "motion": 0
+      }
+    },
+    {
+      "id": "r1",
+      "kind": "resistor",
+      "x": 66,
+      "y": 24,
+      "props": {
+        "ohms": "330"
+      }
+    },
+    {
+      "id": "led",
+      "kind": "led-5mm",
+      "x": 72,
+      "y": 21,
+      "props": {
+        "color": "red"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "pir",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "pir",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "pir",
+        "pin": "OUT"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D6"
+      },
+      "b": {
+        "part": "r1",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "r1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "led",
+        "pin": "A"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "led",
+        "pin": "K"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    }
+  ],
+  "firmware": {
+    "name": "hal-pir-alarm",
+    "example": "hal-pir-alarm.elf"
+  }
+}

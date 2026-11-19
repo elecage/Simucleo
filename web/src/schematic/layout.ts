@@ -87,6 +87,9 @@ const TWO_TERMINALS: Record<string, [string[], string[]]> = {
   thermistor: [["1"], ["2"]],
 };
 
+/** Pin ids drawn under another name (74HC595 Q7' is the pin `Q7S`). */
+const PIN_NAME: Record<string, string> = { Q7S: "Q7'" };
+
 /**
  * Box symbols laid out by hand: supply pins on the left, signals on the
  * right in the order they are used, and what the module is.
@@ -116,6 +119,41 @@ const BOX_LAYOUT: Record<
     right: ["NO", "COM", "NC"],
     subtitle: (p) => `릴레이 5V · ${p.trigger === "high" ? "High" : "Low"} 트리거`,
   },
+  hc595: {
+    left: ["VCC", "GND", "DS", "SHCP", "STCP", "OE", "MR"],
+    right: ["Q0", "Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q7S"],
+    subtitle: () => "시프트 레지스터 (74HC595)",
+  },
+  tm1637: {
+    left: ["VCC", "GND"],
+    right: ["CLK", "DIO"],
+    subtitle: () => "4자리 7세그먼트 (TM1637)",
+  },
+  joystick: {
+    left: ["+5V", "GND"],
+    right: ["VRx", "VRy", "SW"],
+    subtitle: () => "조이스틱 (KY-023)",
+  },
+  pir: {
+    left: ["VCC", "GND"],
+    right: ["OUT"],
+    subtitle: (p) => `PIR (HC-SR501) · ${p.mode === "L" ? "단발 L" : "재트리거 H"} · ${p.delay ?? 3} s`,
+  },
+  bmp280: {
+    left: ["VCC", "GND"],
+    right: ["SCL", "SDA"],
+    subtitle: (p) => `기압 (BMP280) · I2C ${p.address ?? "0x76"}`,
+  },
+  ...Object.fromEntries(
+    ["neopixel-ring", "neopixel-strip", "neopixel-matrix"].map((k) => [
+      k,
+      {
+        left: ["VCC", "GND"],
+        right: ["DIN", "DOUT"],
+        subtitle: (p: Record<string, string | number>) => `NeoPixel ×${p.count ?? ""} (WS2812B)`,
+      },
+    ]),
+  ),
   // Only the receiver is wired: the remote's buttons are not pins.
   "ir-receiver": {
     left: ["VCC", "GND"],
@@ -322,7 +360,7 @@ export function buildSchematic(project: Project, netlist: Netlist, opts: Schemat
         h,
         pins: groups.map((ids, i) => ({
           ids,
-          name: ids.join("/"),
+          name: ids.map((id) => PIN_NAME[id] ?? id).join("/"),
           net: ids.map((id) => netName({ part: part.id, pin: id })).find((x) => x !== null) ?? null,
           side: i < left ? ("left" as const) : ("right" as const),
           x: 0,

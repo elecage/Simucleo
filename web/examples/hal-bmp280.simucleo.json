@@ -1,0 +1,79 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "BMP280 기압·온도·고도 (I2C)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "baro",
+      "kind": "bmp280",
+      "x": 52,
+      "y": 8,
+      "props": {
+        "address": "0x76",
+        "temp": 25,
+        "pressure": 1013.25
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "baro",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "baro",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D15"
+      },
+      "b": {
+        "part": "baro",
+        "pin": "SCL"
+      },
+      "color": "#fdd835"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D14"
+      },
+      "b": {
+        "part": "baro",
+        "pin": "SDA"
+      },
+      "color": "#1e88e5"
+    }
+  ],
+  "firmware": {
+    "name": "hal-bmp280",
+    "example": "hal-bmp280.elf"
+  }
+}

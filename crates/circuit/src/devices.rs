@@ -5,6 +5,8 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use crate::tier8::{Bmp280, Hc595, Pir, Tm1637};
+
 /// Simulated seconds since power-up, given to devices that keep time.
 pub type Seconds = f64;
 
@@ -1075,6 +1077,9 @@ pub struct NeoPixel {
     /// The last pulse that fitted neither bit (µs), for a warning.
     pub bad_pulse: Option<f64>,
     pub frames: u32,
+    /// Bits of the last frame past this chain's own LEDs: what left on
+    /// DOUT, for a part chained there.
+    pub spill: Vec<bool>,
 }
 
 impl NeoPixel {
@@ -1086,13 +1091,26 @@ impl NeoPixel {
             last_fall: None,
             bad_pulse: None,
             frames: 0,
+            spill: Vec::new(),
         }
+    }
+
+    /// The bits a chip before this one passed on DOUT (already reshaped,
+    /// so they are taken at once).
+    pub fn receive(&mut self, bits: Vec<bool>) {
+        self.bits = bits;
+        self.latch();
     }
 
     fn latch(&mut self) {
         if self.bits.is_empty() {
             return;
         }
+        self.spill = self
+            .bits
+            .get(self.leds.len() * 24..)
+            .unwrap_or(&[])
+            .to_vec();
         for (i, led) in self.leds.iter_mut().enumerate() {
             let chunk = self.bits.get(i * 24..i * 24 + 24);
             let Some(chunk) = chunk else {
@@ -2435,6 +2453,10 @@ pub enum Device {
     Ir(IrRemote),
     Bluetooth(Box<Hc05>),
     Relay(Relay),
+    Shift(Hc595),
+    Tm(Box<Tm1637>),
+    Pir(Pir),
+    Baro(Box<Bmp280>),
 }
 
 impl Device {
@@ -2446,6 +2468,7 @@ impl Device {
             Device::Aht(d) => Some(d),
             Device::Lcd(d) => Some(d.as_mut()),
             Device::Imu(d) => Some(d.as_mut()),
+            Device::Baro(d) => Some(d.as_mut()),
             _ => None,
         }
     }
@@ -2461,6 +2484,7 @@ impl Device {
             Device::Thermo(d) => d.advance(now),
             Device::Ir(d) => d.advance(now),
             Device::Relay(r) => r.advance(now),
+            Device::Pir(p) => p.advance(now),
             _ => {}
         }
     }
@@ -2475,6 +2499,13 @@ impl Device {
             Device::Sonar(s) => Some(s.echo),
             Device::Ir(d) => d.low.then_some(false),
             Device::Matrix(m) => Some(m.dout),
+            // Q0–Q7 while OE is low, Q7' (8) whenever powered.
+            Device::Shift(x) => match index {
+                0..=7 => (x.powered && x.enabled).then_some(x.latch >> index & 1 != 0),
+                _ => x.powered.then_some(x.q7s()),
+            },
+            Device::Tm(x) => x.ack.then_some(false),
+            Device::Pir(p) => p.powered().then_some(p.out),
             // STATE (0) is high while a phone is connected; TXD (1) idles high.
             Device::Bluetooth(b) => match index {
                 0 => Some(b.powered && b.connected && !b.at_mode),
@@ -2493,6 +2524,7 @@ impl Device {
             Device::Thermo(d) => d.next(),
             Device::Ir(d) => d.next(),
             Device::Relay(r) => r.next(),
+            Device::Pir(p) => p.next(),
             _ => None,
         }
     }
@@ -2504,6 +2536,7 @@ impl Device {
             Device::Aht(_) => 0x38,
             Device::Lcd(d) => d.address,
             Device::Imu(d) => d.address,
+            Device::Baro(d) => d.address,
             _ => 0,
         }
     }

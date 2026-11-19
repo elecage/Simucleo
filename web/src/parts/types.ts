@@ -117,6 +117,10 @@ export interface VisualState {
   matrix?: MatrixView;
   /** Relay: COM is on NO (else on NC). */
   closed?: boolean;
+  /** 74HC595 registers. */
+  register?: ShiftView;
+  /** TM1637 digits. */
+  digits?: DigitsView;
   /** The control (`data-drag`) being operated now. */
   control?: string;
   /** The pressable element held down now (`data-action`). */
@@ -134,6 +138,25 @@ export interface LcdView {
   backlight: boolean;
   cursor?: [number, number];
   blink: boolean;
+}
+
+/** What a 74HC595 holds (`simucleo_circuit::sim::ShiftView`). */
+export interface ShiftView {
+  /** Shift register, bit n = stage n. */
+  shift: number;
+  /** Storage register on Q0–Q7 (bit n = Qn). */
+  latch: number;
+  /** OE is low: the outputs drive (else high impedance). */
+  enabled: boolean;
+}
+
+/** What a TM1637 shows (`simucleo_circuit::sim::DigitsView`). */
+export interface DigitsView {
+  /** Segment byte per digit, left first (bit 0 = a … bit 6 = g; digit 1's bit 7 = colon). */
+  segments: number[];
+  /** Pulse width 0–7. */
+  brightness: number;
+  on: boolean;
 }
 
 /** What a MAX7219 chain shows (`simucleo_circuit::sim::MatrixView`). */

@@ -3077,3 +3077,153 @@ fn bldc_is_commutated_from_its_hall_interrupts() {
         board.circuit_warnings()
     );
 }
+
+/// The M23 example's circuit: TIM1 CH1–CH3 and CH1N–CH3N on the bridge,
+/// halls on D3/D4/D6, a pot on A0 (`pot`: its position).
+fn bldc_pwm_circuit(pot: f64) -> simucleo_nucleo::Circuit {
+    let n = "nucleo";
+    m19_circuit(
+        serde_json::json!([
+            {"id": "br", "kind": "bridge-3ph"},
+            {"id": "mot", "kind": "bldc-hall"},
+            {"id": "bat", "kind": "battery", "props": {"voltage": 12}},
+            {"id": "pot", "kind": "potentiometer", "props": {"position": pot}}
+        ]),
+        &[
+            ((n, "D3"), ("mot", "HA")),
+            ((n, "D4"), ("mot", "HB")),
+            ((n, "D6"), ("mot", "HC")),
+            ((n, "5V"), ("mot", "VCC")),
+            (("mot", "GND"), (n, "GND")),
+            ((n, "D7"), ("br", "INHA")),
+            ((n, "D11"), ("br", "INLA")),
+            ((n, "D8"), ("br", "INHB")),
+            ((n, "A3"), ("br", "INLB")),
+            ((n, "D2"), ("br", "INHC")),
+            ((n, "PB1"), ("br", "INLC")),
+            (("bat", "+"), ("br", "PVDD")),
+            (("bat", "-"), (n, "GND")),
+            (("br", "GND"), (n, "GND")),
+            (("br", "OUTA"), ("mot", "U")),
+            (("br", "OUTB"), ("mot", "V")),
+            (("br", "OUTC"), ("mot", "W")),
+            ((n, "3V3"), ("pot", "1")),
+            (("pot", "W"), (n, "A0")),
+            (("pot", "2"), (n, "GND")),
+        ],
+    )
+}
+
+fn m23_signals() -> std::collections::HashMap<String, String> {
+    let mut s = m21_signals();
+    for (a, b) in [("A3", "PB0"), ("PB1", "PB1")] {
+        s.insert(a.to_string(), b.to_string());
+    }
+    s
+}
+
+/// The last "rpm" the firmware printed.
+fn printed_rpm(text: &str) -> f64 {
+    let last = text
+        .lines()
+        .rev()
+        .find(|l| l.contains(" rpm "))
+        .unwrap_or_else(|| panic!("no rpm line in {text:?}"));
+    last.rsplit(' ').next().unwrap().parse().unwrap()
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-bldc-pwm"]
+fn bldc_pwm_speed_follows_the_pot_and_the_break_stops_driving() {
+    let mut circuit = bldc_pwm_circuit(0.5);
+    let signals = m23_signals();
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-bldc-pwm", "hal-bldc-pwm"))
+        .unwrap();
+    board.set_circuit(&circuit, &simucleo_nucleo::BusCatalog::default(), &signals);
+    board.run_for_ns(1500e6);
+    let v = board.circuit_frame(1.5);
+    let half = part_visual(&v, "mot").rpm.unwrap();
+    // Half the duty: about half of the 3300 rpm at full voltage.
+    assert!(half > 1200.0 && half < 2100.0, "{half}");
+    let text = console_text(&mut board);
+    assert!(text.contains("dead time 500 ns"), "{text}");
+    assert!(text.contains("run   duty  49 %"), "{text}");
+    assert!(
+        (printed_rpm(&text) - half).abs() < 150.0,
+        "{text} vs {half}"
+    );
+    // Each high side chops, each low side also on for its own sector.
+    let br = motor_view(&v, "br");
+    assert!(
+        br.duty.iter().all(|&d| d > 0.05 && d < 0.6),
+        "{:?}",
+        br.duty
+    );
+    assert!(!br.shoot_through);
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+    // Pot towards 3V3: 90 % duty, faster.
+    set_part_props(
+        &mut board,
+        &mut circuit,
+        "pot",
+        serde_json::json!({"position": 0.1}),
+        &signals,
+    );
+    board.run_for_ns(1500e6);
+    let fast = part_visual(&board.circuit_frame(1.5), "mot").rpm.unwrap();
+    assert!(fast > half * 1.5 && fast < 3400.0, "{half} → {fast}");
+    let text = console_text(&mut board);
+    assert!(
+        text.contains("duty  89 %") || text.contains("duty  90 %"),
+        "{text}"
+    );
+    assert!(
+        (printed_rpm(&text) - fast).abs() < 150.0,
+        "{text} vs {fast}"
+    );
+    // B1: software break — BIF, the outputs idle, no current, it coasts.
+    board.set_user_button(true);
+    board.run_for_ns(30e6);
+    board.set_user_button(false);
+    board.run_for_ns(300e6);
+    let text = console_text(&mut board);
+    assert!(
+        text.contains("break: BIF set, MOE off - outputs idle, the motor coasts"),
+        "{text}"
+    );
+    board.circuit_frame(0.33);
+    board.run_for_ns(100e6);
+    let v = board.circuit_frame(0.1);
+    let coast = part_visual(&v, "mot").rpm.unwrap();
+    assert!(coast < fast && coast > 0.0, "{fast} → {coast}");
+    assert!(
+        motor_view(&v, "mot").coils.iter().all(|c| c.abs() < 1e-6),
+        "{:?}",
+        motor_view(&v, "mot").coils
+    );
+    assert!(motor_view(&v, "br").duty.iter().all(|&d| d == 0.0));
+    board.run_for_ns(2000e6);
+    let stopped = part_visual(&board.circuit_frame(2.0), "mot").rpm.unwrap();
+    assert!(stopped < coast * 0.5, "{coast} → {stopped}");
+    assert!(console_text(&mut board).contains("break duty"));
+    // B1 again: MOE on, driving again.
+    board.set_user_button(true);
+    board.run_for_ns(30e6);
+    board.set_user_button(false);
+    board.run_for_ns(1500e6);
+    assert!(console_text(&mut board).contains("resumed: MOE on"));
+    let again = part_visual(&board.circuit_frame(1.53), "mot").rpm.unwrap();
+    assert!(again > fast * 0.9, "{again}");
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}

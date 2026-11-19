@@ -667,6 +667,11 @@ impl Stm32f401Bus {
             if g.mode(pin) != gpio::PinMode::Alternate || g.af(pin) != af {
                 continue;
             }
+            if !(0..TIMERS[ti as usize].channels as usize)
+                .any(|c| self.timers[ti as usize].is_input(c))
+            {
+                continue;
+            }
             // The other input of the TI1/TI2 pair (encoder mode).
             let other = timer::PIN_MAP
                 .iter()
@@ -677,11 +682,8 @@ impl Stm32f401Bus {
                         && self.gpio[op as usize].af(opin) == oaf
                 })
                 .map(|&(op, opin, ..)| self.gpio[op as usize].level(opin));
-            let t = &mut self.timers[ti as usize];
-            if (0..t.info.channels as usize).any(|c| t.is_input(c)) {
-                t.input_edge(ch as usize, new & (1 << pin) != 0, time, other);
-                self.reschedule_timer(ti as usize);
-            }
+            self.timers[ti as usize].input_edge(ch as usize, new & (1 << pin) != 0, time, other);
+            self.reschedule_timer(ti as usize);
         }
         if timer::BKIN_PINS
             .iter()
@@ -931,6 +933,12 @@ impl Stm32f401Bus {
     fn set_external_at(&mut self, port: usize, pin: u8, level: Option<bool>, time: Cycles) {
         let g = &mut self.gpio[port];
         let bit = 1u16 << pin;
+        let now = (g.external_driven & bit != 0).then_some(g.external & bit != 0);
+        if now == level {
+            // Nothing changes on the pin (the circuit reports every input
+            // whenever any changed).
+            return;
+        }
         match level {
             Some(l) => {
                 g.external_driven |= bit;

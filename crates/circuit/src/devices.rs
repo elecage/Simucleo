@@ -2457,6 +2457,8 @@ pub enum Device {
     Tm(Box<Tm1637>),
     Pir(Pir),
     Baro(Box<Bmp280>),
+    /// M21: a BLDC whose hall sensors are open-collector outputs.
+    Bldc(Box<crate::tier9::HallBldc>),
 }
 
 impl Device {
@@ -2485,6 +2487,7 @@ impl Device {
             Device::Ir(d) => d.advance(now),
             Device::Relay(r) => r.advance(now),
             Device::Pir(p) => p.advance(now),
+            Device::Bldc(b) => b.advance(now),
             _ => {}
         }
     }
@@ -2506,6 +2509,7 @@ impl Device {
             },
             Device::Tm(x) => x.ack.then_some(false),
             Device::Pir(p) => p.powered().then_some(p.out),
+            Device::Bldc(b) => b.hall_output(index),
             // STATE (0) is high while a phone is connected; TXD (1) idles high.
             Device::Bluetooth(b) => match index {
                 0 => Some(b.powered && b.connected && !b.at_mode),
@@ -2525,6 +2529,7 @@ impl Device {
             Device::Ir(d) => d.next(),
             Device::Relay(r) => r.next(),
             Device::Pir(p) => p.next(),
+            Device::Bldc(b) => b.next_hall,
             _ => None,
         }
     }

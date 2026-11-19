@@ -754,6 +754,321 @@ impl Esc {
     }
 }
 
+// ------------------------------------------------- BLDC with hall sensors
+
+/// Pole pairs of the hall BLDC (electrical angle = 4 × mechanical).
+pub const BLDC_POLE_PAIRS: f64 = 4.0;
+/// Back-EMF constant per phase (V per mechanical rad/s) = torque constant.
+const BLDC_KE: f64 = 0.02;
+/// Phase resistance (Ω) and rotor inertia (kg·m²).
+const BLDC_R: f64 = 1.0;
+const BLDC_J: f64 = 5e-5;
+/// Bearing friction (N·m) and viscous drag (N·m per rad/s).
+const BLDC_FRICTION: f64 = 0.002;
+const BLDC_DRAG: f64 = 2e-5;
+/// Powered but slower than this on average (rad/s) over
+/// [`BLDC_STALL_TIME`]: stalled.
+const BLDC_STALL_SPEED: f64 = 20.0;
+const BLDC_STALL_TIME: Seconds = 0.3;
+/// Hall sensor hysteresis (electrical rad): a sensor switches 2° past
+/// its threshold, so a rotor sitting on an edge does not chatter.
+const HALL_HYST: f64 = 2.0 * PI / 180.0;
+/// Look ahead for the next hall edge at most this far (s).
+const HALL_HORIZON: Seconds = 0.02;
+
+/// What a 3-phase bridge does with one phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PhaseDrive {
+    /// Both switches off: the phase floats.
+    #[default]
+    Float,
+    /// High-side switch on: the phase at the supply.
+    High,
+    /// Low-side switch on: the phase at ground.
+    Low,
+}
+
+/// The shape of phase k's back-EMF (and torque) at electrical angle `e`:
+/// U peaks at 0°, V at 120°, W at 240°.
+fn phase_shape(e: f64, k: usize) -> f64 {
+    (e - k as f64 * TAU / 3.0).cos()
+}
+
+/// Hall code (bit 0 = A, 1 = B, 2 = C) at electrical angle `e`: A is high
+/// from 0° to 180°, B from 120° to 300°, C from 240° to 60°.
+pub fn hall_code(e: f64) -> u8 {
+    let d = e.to_degrees().rem_euclid(360.0);
+    let a = d < 180.0;
+    let b = (120.0..300.0).contains(&d);
+    let c = !(60.0..240.0).contains(&d);
+    a as u8 | (b as u8) << 1 | (c as u8) << 2
+}
+
+/// The commutation that turns the motor forward for each hall code:
+/// (phase to the supply, phase to ground), phases 0 = U, 1 = V, 2 = W.
+pub const COMMUTATION: [(u8, (usize, usize)); 6] = [
+    (0b101, (0, 2)),
+    (0b001, (1, 2)),
+    (0b011, (1, 0)),
+    (0b010, (2, 0)),
+    (0b110, (2, 1)),
+    (0b100, (0, 1)),
+];
+
+/// A small 3-phase BLDC (42BLY class, 4 pole pairs) with three hall
+/// sensors, driven six-step by a bridge.
+#[derive(Debug, Clone)]
+pub struct HallBldc {
+    /// Rotor angle (mechanical rad, cumulative) and speed (rad/s).
+    pub theta: f64,
+    pub omega: f64,
+    /// What the bridge does with U, V and W, and its supply.
+    pub drive: [PhaseDrive; 3],
+    pub supply: f64,
+    /// Phase currents (A, into the motor).
+    pub current: [f64; 3],
+    /// Load torque from the slider (N·m).
+    pub load: f64,
+    /// The hall sensors have their supply.
+    pub powered: bool,
+    time: Seconds,
+    /// Start of the stall watch window: time and rotor angle.
+    stuck_since: Option<(Seconds, f64)>,
+    /// Stalled now; a stall not reported yet.
+    pub stalled: bool,
+    pub stall_new: bool,
+    /// When a hall output next changes by itself (if the drive stays).
+    pub next_hall: Option<Seconds>,
+    /// Hall edges so far, and the three sensors now (bit 0 = A).
+    pub hall_edges: u64,
+    halls: u8,
+    /// Since when each hall line floats while released (no pull-up).
+    pub float_since: [Option<Seconds>; 3],
+}
+
+impl Default for HallBldc {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HallBldc {
+    pub fn new() -> Self {
+        Self {
+            theta: 0.3,
+            omega: 0.0,
+            drive: [PhaseDrive::Float; 3],
+            supply: 0.0,
+            current: [0.0; 3],
+            load: 0.0,
+            powered: false,
+            time: 0.0,
+            stuck_since: None,
+            stalled: false,
+            stall_new: false,
+            next_hall: None,
+            hall_edges: 0,
+            halls: hall_code(0.3 * BLDC_POLE_PAIRS),
+            float_since: [None; 3],
+        }
+    }
+
+    pub fn rebase(&mut self, now: Seconds) {
+        self.time = now;
+        self.float_since = [None; 3];
+        self.stuck_since = None;
+        self.next_hall = None;
+    }
+
+    /// Electrical angle.
+    pub fn electrical(&self) -> f64 {
+        BLDC_POLE_PAIRS * self.theta
+    }
+
+    pub fn hall(&self) -> u8 {
+        self.halls
+    }
+
+    /// The sensors after a move, with hysteresis: sensor k is high while
+    /// sin(e − 120°·k) is clearly above 0, low while clearly below.
+    fn update_halls(&mut self) {
+        let e = self.electrical();
+        for k in 0..3 {
+            let s = (e - k as f64 * TAU / 3.0).sin();
+            if s > HALL_HYST.sin() {
+                self.halls |= 1 << k;
+            } else if s < -HALL_HYST.sin() {
+                self.halls &= !(1 << k);
+            }
+        }
+    }
+
+    /// Hall output `k` (0 = A): open collector, so low (`Some(false)`) or
+    /// let go (`None`), and nothing without supply.
+    pub fn hall_output(&self, k: usize) -> Option<bool> {
+        (self.powered && self.hall() >> k & 1 == 0).then_some(false)
+    }
+
+    /// Shaft angle in degrees, 0–360.
+    pub fn degrees(&self) -> f64 {
+        self.theta.to_degrees().rem_euclid(360.0)
+    }
+
+    pub fn rpm(&self) -> f64 {
+        self.omega / TAU * 60.0
+    }
+
+    /// New bridge state from `now` on.
+    pub fn set_drive(&mut self, now: Seconds, drive: [PhaseDrive; 3], supply: f64) {
+        self.advance(now);
+        if drive != self.drive || (supply - self.supply).abs() > 0.05 {
+            self.drive = drive;
+            self.supply = supply;
+            self.predict();
+        }
+    }
+
+    /// Integrate up to `now`.
+    pub fn advance(&mut self, now: Seconds) {
+        // A look ahead that is due (within a nanosecond: the wake-up time
+        // went through core cycles) is redone, or it would wake us again
+        // and again at the same moment.
+        let due = |n: &Option<Seconds>| n.is_some_and(|t| t <= now + 1e-9);
+        if now <= self.time {
+            if due(&self.next_hall) {
+                self.predict();
+            }
+            return;
+        }
+        let mut left = now - self.time;
+        self.time = now;
+        let before = self.hall();
+        let mut crossed = false;
+        while left > 0.0 {
+            if self.omega == 0.0 && self.idle() {
+                break;
+            }
+            let dt = left.min(DT);
+            left -= dt;
+            let h = self.hall();
+            self.step(dt);
+            if self.hall() != h {
+                self.hall_edges += 1;
+                crossed = true;
+            }
+        }
+        // Stall watch: current flowing, but over a while the shaft got
+        // hardly anywhere (it may rock back and forth).
+        let driven = self.current.iter().any(|i| i.abs() > 0.5);
+        if driven {
+            let (t0, a0) = *self.stuck_since.get_or_insert((now, self.theta));
+            if now - t0 >= BLDC_STALL_TIME {
+                let stuck = (self.theta - a0).abs() < BLDC_STALL_SPEED * (now - t0);
+                if stuck && !self.stalled {
+                    self.stall_new = true;
+                }
+                self.stalled = stuck;
+                self.stuck_since = Some((now, self.theta));
+            }
+        } else {
+            self.stuck_since = None;
+            self.stalled = false;
+        }
+        if crossed || self.hall() != before || due(&self.next_hall) {
+            self.predict();
+        }
+    }
+
+    /// No current can flow (fewer than two phases driven, or no supply).
+    fn idle(&self) -> bool {
+        let driven = self
+            .drive
+            .iter()
+            .filter(|d| **d != PhaseDrive::Float)
+            .count();
+        let differ =
+            self.drive.contains(&PhaseDrive::High) && self.drive.contains(&PhaseDrive::Low);
+        driven < 2 || !differ || self.supply <= 0.0
+    }
+
+    /// Phase currents for the drive at the present speed and angle: the
+    /// driven phases form a star; a floating phase carries nothing.
+    fn currents(&self) -> [f64; 3] {
+        let e = self.electrical();
+        let mut cur = [0.0; 3];
+        if self.idle() {
+            return cur;
+        }
+        let emf = |k: usize| BLDC_KE * self.omega * phase_shape(e, k);
+        let volts = |k: usize| match self.drive[k] {
+            PhaseDrive::High => Some(self.supply),
+            PhaseDrive::Low => Some(0.0),
+            PhaseDrive::Float => None,
+        };
+        let driven: Vec<usize> = (0..3).filter(|&k| volts(k).is_some()).collect();
+        let star = driven
+            .iter()
+            .map(|&k| volts(k).unwrap() - emf(k))
+            .sum::<f64>()
+            / driven.len() as f64;
+        for &k in &driven {
+            cur[k] = (volts(k).unwrap() - emf(k) - star) / BLDC_R;
+        }
+        cur
+    }
+
+    fn step(&mut self, dt: f64) {
+        self.current = self.currents();
+        let e = self.electrical();
+        let motor: f64 = (0..3)
+            .map(|k| BLDC_KE * self.current[k] * phase_shape(e, k))
+            .sum();
+        let t = motor - BLDC_DRAG * self.omega;
+        let stop = BLDC_FRICTION + self.load;
+        if self.omega == 0.0 && t.abs() <= stop {
+            return;
+        }
+        let dir = if self.omega != 0.0 {
+            self.omega.signum()
+        } else {
+            t.signum()
+        };
+        let w = self.omega + (t - stop * dir) / BLDC_J * dt;
+        self.omega = if self.omega != 0.0 && w.signum() != self.omega.signum() {
+            0.0
+        } else {
+            w
+        };
+        self.theta += self.omega * dt;
+        self.update_halls();
+    }
+
+    /// When the halls next change if the drive stays as it is: run a copy
+    /// ahead.
+    fn predict(&mut self) {
+        self.next_hall = None;
+        if self.omega == 0.0 && self.idle() {
+            return;
+        }
+        let mut probe = self.clone();
+        let h = probe.hall();
+        let mut t = 0.0;
+        while t < HALL_HORIZON {
+            probe.step(DT);
+            t += DT;
+            if probe.hall() != h {
+                self.next_hall = Some(self.time + t);
+                return;
+            }
+            if probe.omega == 0.0 && probe.idle() {
+                return;
+            }
+        }
+        // Not yet: look again then.
+        self.next_hall = Some(self.time + HALL_HORIZON);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1051,5 +1366,85 @@ mod tests {
         // Without a battery it is off.
         e.power(t, 3.0);
         assert_eq!(e.state, EscState::Off);
+    }
+
+    /// Six-step commutation from the halls, as firmware would do it on
+    /// every hall edge; `map` turns the code read into the code used.
+    fn run_bldc(m: &mut HallBldc, secs: f64, map: impl Fn(u8) -> u8, reverse: bool) {
+        let mut t = m.time;
+        let end = t + secs;
+        m.powered = true;
+        while t < end {
+            let code = map(m.hall());
+            let mut drive = [PhaseDrive::Float; 3];
+            if let Some(&(_, (h, l))) = COMMUTATION.iter().find(|c| c.0 == code) {
+                let (h, l) = if reverse { (l, h) } else { (h, l) };
+                drive[h] = PhaseDrive::High;
+                drive[l] = PhaseDrive::Low;
+            }
+            m.set_drive(t, drive, 12.0);
+            // Until the next hall edge (plus a few µs of interrupt latency).
+            t = m.next_hall.map_or(t + 1e-3, |n| n + 3e-6).min(end);
+            m.advance(t);
+        }
+    }
+
+    #[test]
+    fn hall_codes_step_through_the_six_sectors() {
+        let codes: Vec<u8> = (0..6)
+            .map(|s| hall_code((30.0 + 60.0 * s as f64).to_radians()))
+            .collect();
+        assert_eq!(codes, [0b101, 0b001, 0b011, 0b010, 0b110, 0b100]);
+        // The table drives the pair with the most forward torque.
+        for (s, &code) in codes.iter().enumerate() {
+            let e = (30.0 + 60.0 * s as f64).to_radians();
+            let (h, l) = COMMUTATION.iter().find(|c| c.0 == code).unwrap().1;
+            let best = (0..3)
+                .flat_map(|a| (0..3).map(move |b| (a, b)))
+                .filter(|(a, b)| a != b)
+                .max_by(|x, y| {
+                    let f = |(a, b): (usize, usize)| phase_shape(e, a) - phase_shape(e, b);
+                    f(*x).partial_cmp(&f(*y)).unwrap()
+                })
+                .unwrap();
+            assert_eq!((h, l), best, "sector {s}");
+        }
+    }
+
+    #[test]
+    fn six_step_commutation_spins_the_bldc_up_and_a_wrong_table_stalls_it() {
+        let mut m = HallBldc::new();
+        run_bldc(&mut m, 1.0, |c| c, false);
+        assert!(m.rpm() > 3000.0 && m.rpm() < 3600.0, "{}", m.rpm());
+        assert!(!m.stalled);
+        assert!(m.hall_edges > 1000);
+        // The other way round: swap the high and low sides.
+        let mut m = HallBldc::new();
+        run_bldc(&mut m, 1.0, |c| c, true);
+        assert!(m.rpm() < -3000.0, "{}", m.rpm());
+        // Halls A and B swapped: torque the wrong way in four sectors of
+        // six — it rocks on an edge and stalls.
+        let swap = |c: u8| c & 0b100 | (c & 1) << 1 | (c >> 1) & 1;
+        let mut m = HallBldc::new();
+        run_bldc(&mut m, 1.0, swap, false);
+        assert!(m.rpm().abs() < 200.0, "{}", m.rpm());
+        assert!(m.stalled && m.stall_new);
+        // A brake on the shaft slows it down.
+        let mut m = HallBldc::new();
+        m.load = 0.05;
+        run_bldc(&mut m, 1.0, |c| c, false);
+        assert!(m.rpm() > 500.0 && m.rpm() < 2500.0, "{}", m.rpm());
+    }
+
+    #[test]
+    fn hall_outputs_are_open_collector() {
+        let mut m = HallBldc::new();
+        assert_eq!(m.hall_output(0), None, "unpowered: nothing");
+        m.powered = true;
+        let code = m.hall();
+        for k in 0..3 {
+            let low = code >> k & 1 == 0;
+            assert_eq!(m.hall_output(k), low.then_some(false));
+        }
     }
 }

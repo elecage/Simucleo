@@ -26,7 +26,9 @@ use crate::devices::{
 };
 
 use crate::tier8::{Bmp280, Hc595, Pir, Tm1637, PIR_VMIN};
-use crate::tier9::{l298n_bridge, BipolarStepper, CoilDrive, Esc, EscState, StepDriver};
+use crate::tier9::{
+    l298n_bridge, BipolarStepper, CoilDrive, Esc, EscState, HallBldc, PhaseDrive, StepDriver,
+};
 
 use crate::netlist::{build_netlist, BusCatalog, Circuit, PartCatalog, PartInstance, PinRef, Wire};
 
@@ -445,6 +447,10 @@ pub struct CircuitSim {
     driver_parts: Vec<DriverPart>,
     bridge_parts: Vec<BridgePart>,
     esc_parts: Vec<EscPart>,
+    bldc_parts: Vec<BldcPart>,
+    phase_bridges: Vec<PhaseBridgePart>,
+    /// What each 3-phase bridge does with its outputs, and its supply.
+    phase_out: HashMap<String, ([PhaseDrive; 3], f64)>,
     steppers: HashMap<String, BipolarStepper>,
     drivers: HashMap<String, DriverState>,
     bridges: HashMap<String, BridgeState>,
@@ -613,6 +619,33 @@ struct EscPart {
     bat: usize,
 }
 
+/// A BLDC with hall sensors: phases U, V, W (and the bridge output each
+/// sits on: part id, output), the halls' supply and outputs.
+#[derive(Debug, Clone)]
+struct BldcPart {
+    id: String,
+    phases: [usize; 3],
+    links: [Option<(String, usize)>; 3],
+    vcc: usize,
+    gnd: usize,
+    halls: [usize; 3],
+}
+
+/// A 3-phase bridge module (DRV8302 class): INH/INL per phase.
+#[derive(Debug, Clone)]
+struct PhaseBridgePart {
+    id: String,
+    inh: [usize; 3],
+    inl: [usize; 3],
+    pvdd: usize,
+    gnd: usize,
+    out: [usize; 3],
+}
+
+/// Lowest supply of the hall sensors and of the 3-phase bridge.
+const HALL_VMIN: f64 = 3.0;
+const PHASE_BRIDGE_VMIN: f64 = 6.0;
+
 /// Lowest motor supply of an A4988 (8–35 V) and logic supply (3–5.5 V).
 const VMOT_MIN: f64 = 8.0;
 const DRIVER_VDD_MIN: f64 = 3.0;
@@ -742,6 +775,9 @@ impl CircuitSim {
             driver_parts: Vec::new(),
             bridge_parts: Vec::new(),
             esc_parts: Vec::new(),
+            bldc_parts: Vec::new(),
+            phase_bridges: Vec::new(),
+            phase_out: HashMap::new(),
             steppers: HashMap::new(),
             drivers: HashMap::new(),
             bridges: HashMap::new(),
@@ -797,6 +833,8 @@ impl CircuitSim {
                 Device::Tm(x) => **x = Tm1637::new(),
                 Device::Pir(x) => *x = Pir::new(x.retrigger, x.delay, x.warmup),
                 Device::Baro(x) => **x = Bmp280::new(x.address, x.temp, x.pressure),
+                // The shaft stays where it is; the clock starts again.
+                Device::Bldc(x) => x.rebase(0.0),
             }
         }
         self.i2c_active.clear();
@@ -1050,6 +1088,8 @@ impl CircuitSim {
         let mut driver_parts: Vec<DriverPart> = Vec::new();
         let mut bridge_parts: Vec<BridgePart> = Vec::new();
         let mut esc_parts: Vec<EscPart> = Vec::new();
+        let mut bldc_parts: Vec<BldcPart> = Vec::new();
+        let mut phase_bridges: Vec<PhaseBridgePart> = Vec::new();
         let now_s = self.seconds_at(self.last_time);
         let mut map = std::mem::take(&mut self.pin_nodes);
         let mut add_visual = |id: &str, kind: VisualKind, channels: usize| {
@@ -1818,6 +1858,74 @@ impl CircuitSim {
                     e.kv = kv;
                     e.load = load;
                 }
+                "bldc-hall" => {
+                    // 3-phase BLDC (star) with three open-collector hall
+                    // sensors (device outputs 0–2: A, B, C).
+                    add_visual(&p.id, VisualKind::Motion, 0);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let halls = [
+                        node(pin("HA"), &mut map),
+                        node(pin("HB"), &mut map),
+                        node(pin("HC"), &mut map),
+                    ];
+                    for (i, &h) in halls.iter().enumerate() {
+                        dev_outputs.push((p.id.clone(), h, i));
+                    }
+                    bldc_parts.push(BldcPart {
+                        id: p.id.clone(),
+                        phases: [
+                            node(pin("U"), &mut map),
+                            node(pin("V"), &mut map),
+                            node(pin("W"), &mut map),
+                        ],
+                        links: [None, None, None],
+                        vcc: node(pin("VCC"), &mut map),
+                        gnd: node(pin("GND"), &mut map),
+                        halls,
+                    });
+                    let load = prop_f64(p, "load", 0.0).clamp(0.0, 100.0) / 100.0;
+                    match self.devices.get_mut(&p.id) {
+                        Some(Device::Bldc(b)) => {
+                            b.advance(now_s);
+                            b.load = load;
+                        }
+                        _ => {
+                            let mut b = HallBldc::new();
+                            b.rebase(now_s);
+                            b.load = load;
+                            self.devices.insert(p.id.clone(), Device::Bldc(Box::new(b)));
+                        }
+                    }
+                }
+                "bridge-3ph" => {
+                    // INH/INL inputs pulled down on the module (100 kΩ).
+                    add_visual(&p.id, VisualKind::Motion, 0);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let gnd = node(pin("GND"), &mut map);
+                    let mut inh = [0; 3];
+                    let mut inl = [0; 3];
+                    let mut out = [0; 3];
+                    for (k, ph) in ["A", "B", "C"].iter().enumerate() {
+                        inh[k] = node(pin(&format!("INH{ph}")), &mut map);
+                        inl[k] = node(pin(&format!("INL{ph}")), &mut map);
+                        out[k] = node(pin(&format!("OUT{ph}")), &mut map);
+                        for n in [inh[k], inl[k]] {
+                            elements.push(Element::Resistor {
+                                a: n,
+                                b: gnd,
+                                r: 100_000.0,
+                            });
+                        }
+                    }
+                    phase_bridges.push(PhaseBridgePart {
+                        id: p.id.clone(),
+                        inh,
+                        inl,
+                        pvdd: node(pin("PVDD"), &mut map),
+                        gnd,
+                        out,
+                    });
+                }
                 "joystick" => {
                     // KY-023: two 10 kΩ pots between GND and +5V, wipers on
                     // VRx and VRy; the push switch closes SW to GND (no
@@ -2206,6 +2314,7 @@ impl CircuitSim {
             .chain(shift_parts.iter().map(|b: &ShiftPart| b.id.as_str()))
             .chain(tm_parts.iter().map(|b: &TmPart| b.id.as_str()))
             .chain(pir_parts.iter().map(|b: &PirPart| b.id.as_str()))
+            .chain(bldc_parts.iter().map(|b: &BldcPart| b.id.as_str()))
             .chain(encoders)
             .collect();
         self.devices.retain(|id, _| ids.contains(id.as_str()));
@@ -2227,7 +2336,8 @@ impl CircuitSim {
         self.pir_parts = pir_parts;
         self.pixel_parts = pixel_parts;
         // Motors: which driver outputs each coil sits across.
-        let link_warnings = link_steppers(&mut stepper_parts, &driver_parts, &bridge_parts);
+        let mut link_warnings = link_steppers(&mut stepper_parts, &driver_parts, &bridge_parts);
+        link_warnings.extend(link_bldcs(&mut bldc_parts, &phase_bridges));
         self.warnings.extend(link_warnings.iter().cloned());
         self.value_warnings.extend(link_warnings);
         let ids: Vec<String> = stepper_parts.iter().map(|m| m.id.clone()).collect();
@@ -2242,6 +2352,10 @@ impl CircuitSim {
         self.driver_parts = driver_parts;
         self.bridge_parts = bridge_parts;
         self.esc_parts = esc_parts;
+        self.phase_out
+            .retain(|id, _| phase_bridges.iter().any(|b| &b.id == id));
+        self.bldc_parts = bldc_parts;
+        self.phase_bridges = phase_bridges;
         self.nodes = nodes;
         self.elements = elements;
         self.visuals = visuals;
@@ -2979,6 +3093,49 @@ impl CircuitSim {
             m.set_drive(now, target, drive);
             stepper_warnings(&part.id, m, &mut self.warnings);
         }
+        for part in &self.phase_bridges {
+            let rel = |n: usize| v(n) - v(part.gnd);
+            let supply = rel(part.pvdd);
+            let high = |n: usize| rel(n) > 2.0;
+            let mut out = [PhaseDrive::Float; 3];
+            if supply >= PHASE_BRIDGE_VMIN {
+                for (k, o) in out.iter_mut().enumerate() {
+                    *o = match (high(part.inh[k]), high(part.inl[k])) {
+                        (true, true) => {
+                            self.warnings.insert(format!(
+                                "{}: INH{ph} and INL{ph} are both high — shoot-through: both switches of phase {ph} would short the supply (the module turns the phase off)",
+                                part.id,
+                                ph = ["A", "B", "C"][k]
+                            ));
+                            PhaseDrive::Float
+                        }
+                        (true, false) => PhaseDrive::High,
+                        (false, true) => PhaseDrive::Low,
+                        _ => PhaseDrive::Float,
+                    };
+                }
+            }
+            self.phase_out.insert(part.id.clone(), (out, supply));
+        }
+        for part in &self.bldc_parts {
+            let Some(Device::Bldc(b)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            let mut drive = [PhaseDrive::Float; 3];
+            let mut supply: f64 = 0.0;
+            for k in 0..3 {
+                if let Some((id, o)) = &part.links[k] {
+                    if let Some((out, s)) = self.phase_out.get(id) {
+                        drive[k] = out[*o];
+                        supply = supply.max(*s);
+                    }
+                }
+            }
+            b.powered = v(part.vcc) - v(part.gnd) >= HALL_VMIN;
+            b.set_drive(now, drive, supply);
+            hall_pull_ups(part, b, now, sol, &self.mcu, &mut self.warnings);
+            bldc_warnings(&part.id, b, &mut self.warnings);
+        }
         for part in &self.esc_parts {
             let Some((e, last)) = self.escs.get_mut(&part.id) else {
                 continue;
@@ -3208,6 +3365,38 @@ impl CircuitSim {
                         v.motor = Some(MotorView {
                             coils,
                             state: if b.powered { "on" } else { "no-power" }.into(),
+                            ..Default::default()
+                        });
+                    } else if let Some(Device::Bldc(b)) = self.devices.get_mut(&slot.id) {
+                        b.advance(now);
+                        bldc_warnings(&slot.id, b, &mut self.warnings);
+                        let part = self.bldc_parts.iter().find(|p| p.id == slot.id);
+                        if let (Some(part), Some(sol)) = (part, &cur) {
+                            hall_pull_ups(part, b, now, sol, &self.mcu, &mut self.warnings);
+                        }
+                        v.angle = Some(b.degrees());
+                        v.rpm = Some(b.rpm());
+                        v.unpowered = !b.powered;
+                        let h = b.hall();
+                        v.text = Some(format!("{}{}{}", h & 1, h >> 1 & 1, h >> 2 & 1));
+                        v.motor = Some(MotorView {
+                            coils: b.current.iter().map(|i| i / 6.0).collect(),
+                            stalled: b.stalled,
+                            state: if b.powered { "on" } else { "off" }.into(),
+                            ..Default::default()
+                        });
+                    } else if let Some((out, supply)) = self.phase_out.get(&slot.id) {
+                        v.unpowered = *supply < PHASE_BRIDGE_VMIN;
+                        v.motor = Some(MotorView {
+                            coils: out
+                                .iter()
+                                .map(|d| match d {
+                                    PhaseDrive::High => 1.0,
+                                    PhaseDrive::Low => -1.0,
+                                    PhaseDrive::Float => 0.0,
+                                })
+                                .collect(),
+                            state: if v.unpowered { "no-power" } else { "on" }.into(),
                             ..Default::default()
                         });
                     } else if let Some((e, _)) = self.escs.get_mut(&slot.id) {
@@ -3841,6 +4030,68 @@ impl CircuitSim {
 }
 
 /// A prop that means "on": `true`, a non-zero number, or "1"/"true".
+/// Hall lines the sensor lets go of must be pulled up (open collector):
+/// warn about one that floats for a while (every pin floats for a moment
+/// after reset, until the firmware sets it up).
+fn hall_pull_ups(
+    part: &BldcPart,
+    b: &mut HallBldc,
+    now: f64,
+    sol: &Solution,
+    mcu: &[((u8, u8), usize)],
+    warnings: &mut BTreeSet<String>,
+) {
+    for (k, &h) in part.halls.iter().enumerate() {
+        let floats = b.powered
+            && b.hall_output(k).is_none()
+            && !sol.driven[h]
+            && mcu.iter().any(|&(_, n)| n == h);
+        let since = &mut b.float_since[k];
+        if !floats {
+            *since = None;
+        } else if now - *since.get_or_insert(now) > 0.1 {
+            warnings.insert(format!(
+                "{}: hall output H{} floats when high — the sensors are open collector: enable the pin's pull-up (GPIO_PULLUP) or add 10 kΩ to 3V3",
+                part.id,
+                ["A", "B", "C"][k]
+            ));
+        }
+    }
+}
+
+/// Report a BLDC that stalled since the last look.
+fn bldc_warnings(id: &str, b: &mut HallBldc, warnings: &mut BTreeSet<String>) {
+    if std::mem::take(&mut b.stall_new) {
+        warnings.insert(format!(
+            "{id}: the motor has current but does not turn — the commutation does not match the hall sensors (check the table and which hall and phase goes where), or the load is more than its torque"
+        ));
+    }
+}
+
+/// Which 3-phase bridge output each BLDC phase sits on. Returns wiring
+/// warnings.
+fn link_bldcs(motors: &mut [BldcPart], bridges: &[PhaseBridgePart]) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for m in motors {
+        for k in 0..3 {
+            m.links[k] = bridges.iter().find_map(|b| {
+                b.out
+                    .iter()
+                    .position(|&o| o == m.phases[k])
+                    .map(|o| (b.id.clone(), o))
+            });
+        }
+        let linked = m.links.iter().filter(|l| l.is_some()).count();
+        if linked > 0 && linked < 3 {
+            warnings.push(format!(
+                "{}: only {linked} of the phases U, V, W go to a bridge output — connect all three (OUTA, OUTB, OUTC)",
+                m.id
+            ));
+        }
+    }
+    warnings
+}
+
 /// Report what a stepper did wrong since the last look.
 fn stepper_warnings(id: &str, m: &mut BipolarStepper, warnings: &mut BTreeSet<String>) {
     if std::mem::take(&mut m.slipped) {
@@ -5886,5 +6137,155 @@ mod tests {
         let v = motor(&mut s, t, "esc");
         assert!(v.unpowered);
         assert_eq!(v.motor.unwrap().state, "off");
+    }
+
+    /// A BLDC on a 3-phase bridge: INHA/INLA/INHB/INLB/INHC/INLC on
+    /// PB0–PB5, halls A/B/C on PA8/PA9/PA10 (pull-ups from the MCU), 12 V.
+    fn bldc_sim() -> CircuitSim {
+        let mut wires = vec![
+            wire(("bat", "+"), ("br", "PVDD")),
+            wire(("bat", "-"), ("mcu", "GND")),
+            wire(("br", "GND"), ("mcu", "GND")),
+            wire(("mot", "GND"), ("mcu", "GND")),
+            wire(("mcu", "5V"), ("mot", "VCC")),
+            wire(("br", "OUTA"), ("mot", "U")),
+            wire(("br", "OUTB"), ("mot", "V")),
+            wire(("br", "OUTC"), ("mot", "W")),
+            wire(("mot", "HA"), ("mcu", "PA8")),
+            wire(("mot", "HB"), ("mcu", "PA9")),
+            wire(("mot", "HC"), ("mcu", "PA10")),
+        ];
+        for (i, n) in ["INHA", "INLA", "INHB", "INLB", "INHC", "INLC"]
+            .iter()
+            .enumerate()
+        {
+            wires.push(wire(("mcu", &format!("PB{i}")), ("br", n)));
+        }
+        sim(
+            vec![
+                part("br", "bridge-3ph", &[]),
+                part("mot", "bldc-hall", &[]),
+                part("bat", "battery", &[("voltage", "12")]),
+            ],
+            wires,
+        )
+    }
+
+    /// Run a six-step controller against the circuit for `secs`: on every
+    /// circuit event it reads the halls and drives the bridge from the
+    /// table; `pull_up`: the hall pins have their pull-ups.
+    fn commutate(s: &mut CircuitSim, t: &mut f64, secs: f64, swap_ab: bool, pull_up: bool) {
+        use crate::tier9::COMMUTATION;
+        let end = *t + secs;
+        let mut now = at(*t);
+        let hall = |s: &CircuitSim, pin: u8| s.mcu_voltage(0, pin).is_some_and(|v| v > VDD / 2.0);
+        let code_of = |s: &CircuitSim| {
+            let (a, b, c) = (hall(s, 8), hall(s, 9), hall(s, 10));
+            let (a, b) = if swap_ab { (b, a) } else { (a, b) };
+            a as u8 | (b as u8) << 1 | (c as u8) << 2
+        };
+        let mut last: Option<Vec<Drive>> = None;
+        loop {
+            // The halls as they are now (an edge may be due), then the
+            // bridge from the table, until they agree.
+            let last = last.get_or_insert_with(|| {
+                drives(s, |p| match p {
+                    (0, 8..=10) if pull_up => Drive::PullUp,
+                    _ => Drive::Float,
+                })
+            });
+            s.update(now, last);
+            for _ in 0..3 {
+                let code = code_of(s);
+                let mut on = [false; 6];
+                if let Some(&(_, (h, l))) = COMMUTATION.iter().find(|x| x.0 == code) {
+                    on[2 * h] = true;
+                    on[2 * l + 1] = true;
+                }
+                let d = drives(s, |p| match p {
+                    (1, i @ 0..=5) => {
+                        if on[i as usize] {
+                            Drive::High
+                        } else {
+                            Drive::Low
+                        }
+                    }
+                    (0, 8..=10) if pull_up => Drive::PullUp,
+                    _ => Drive::Float,
+                });
+                s.update(now, &d);
+                *last = d;
+                if code_of(s) == code {
+                    break;
+                }
+            }
+            // The next hall edge, or a look every millisecond; a few µs of
+            // interrupt latency.
+            let next = s
+                .next_event()
+                .map_or(now + at(1e-3), |e| e + 50)
+                .min(now + at(1e-3));
+            if next > at(end) {
+                break;
+            }
+            now = next.max(now + 1);
+        }
+        *t = end;
+    }
+
+    #[test]
+    fn bldc_on_a_3_phase_bridge_follows_its_hall_sensors() {
+        let mut s = bldc_sim();
+        let mut t = 0.01;
+        commutate(&mut s, &mut t, 1.0, false, true);
+        let v = motor(&mut s, t, "mot");
+        let rpm = v.rpm.unwrap();
+        assert!(rpm > 3000.0 && rpm < 3600.0, "{rpm}");
+        assert!(!v.motor.unwrap().stalled);
+        assert_eq!(v.text.as_deref().map(str::len), Some(3));
+        let br = motor(&mut s, t, "br").motor.unwrap();
+        assert_eq!(
+            br.coils.iter().filter(|c| c.abs() > 0.5).count(),
+            2,
+            "{:?}",
+            br.coils
+        );
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    }
+
+    #[test]
+    fn bldc_with_halls_mixed_up_stalls_and_without_pull_ups_warns() {
+        let mut s = bldc_sim();
+        let mut t = 0.01;
+        commutate(&mut s, &mut t, 1.0, true, true);
+        let v = motor(&mut s, t, "mot");
+        assert!(v.rpm.unwrap().abs() < 300.0, "{:?}", v.rpm);
+        assert!(v.motor.unwrap().stalled);
+        assert!(
+            s.warnings.iter().any(|w| w.contains("does not turn")),
+            "{:?}",
+            s.warnings
+        );
+        let mut s = bldc_sim();
+        let mut t = 0.01;
+        commutate(&mut s, &mut t, 0.05, false, false);
+        motor(&mut s, t, "mot");
+        motor(&mut s, t + 0.2, "mot");
+        assert!(
+            s.warnings.iter().any(|w| w.contains("floats when high")),
+            "{:?}",
+            s.warnings
+        );
+        // Both switches of a phase on: shoot-through.
+        let d = drives(&s, |p| match p {
+            (1, 0) | (1, 1) => Drive::High,
+            _ => Drive::Float,
+        });
+        s.update(at(0.2), &d);
+        assert!(
+            s.warnings.iter().any(|w| w.contains("shoot-through")),
+            "{:?}",
+            s.warnings
+        );
     }
 }

@@ -11,6 +11,7 @@ import type {
   ToWorker,
   WatchpointPlaced,
   WatchpointSpec,
+  TriggerConfig,
   WatchValue,
 } from "./protocol";
 import type { CircuitJson } from "../editor/model";
@@ -106,6 +107,10 @@ export interface Runner {
   /** Pins whose edges the frames report; each `owner` (default: the
    * waveform view) keeps its own list and the union is probed. */
   setProbes(pins: string[], owner?: string): void;
+  /** Oscilloscope trigger over the probed pins (null: none); re-arms. */
+  setTrigger(config: TriggerConfig | null): void;
+  /** Wait for the next trigger (after a Single capture). */
+  armTrigger(): void;
   sendConsole(text: string): void;
   clearConsole(): void;
   /** HC-05 modules by part id: link status and chat. */
@@ -286,6 +291,8 @@ export function useRunner(): Runner {
         probeOwners.current.set(owner, pins);
         send({ type: "probes", pins: [...new Set([...probeOwners.current.values()].flat())] });
       },
+      setTrigger: (config: TriggerConfig | null) => send({ type: "trigger", config }),
+      armTrigger: () => send({ type: "armTrigger" }),
       sendConsole: (text: string) => send({ type: "console", text }),
       clearConsole: () => setConsole(""),
       bluetoothSend: (part: string, text: string) => {

@@ -70,6 +70,7 @@ jobs:
         run: |
           cargo test --release -p simucleo-nucleo --test firmware -- --include-ignored
           cargo test --release -p simucleo-cli -- --include-ignored
+          cargo test --release -p simucleo-wasm --test scope_firmware -- --include-ignored
       - name: CLI smoke test
         run: |
           cargo run --release -p simucleo-cli -- run firmware/bare-blinky/build/bare-blinky.elf --ms 500

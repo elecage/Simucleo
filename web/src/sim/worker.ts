@@ -48,6 +48,11 @@ function tick() {
       post({ type: "paused", reason: sim.pauseReason() });
       break;
     }
+    if (sim.triggerPaused()) {
+      running = false;
+      post({ type: "paused", reason: "trigger" });
+      break;
+    }
   }
   const simDt = sim.timeMs() - startSim;
   const ratio = wallDt > 0 ? simDt / wallDt : 0;
@@ -123,6 +128,12 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case "probes":
       sim.setProbes(JSON.stringify(m.pins));
+      break;
+    case "trigger":
+      sim.setTrigger(m.config ? JSON.stringify(m.config) : "");
+      break;
+    case "armTrigger":
+      sim.armTrigger();
       break;
     case "console":
       sim.consoleSend(m.text);

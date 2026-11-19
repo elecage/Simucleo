@@ -67,6 +67,56 @@ export interface ProbeFrame {
   dense: boolean;
 }
 
+/** One pin of a triggered capture; times in ns relative to the trigger. */
+export interface CaptureChannel {
+  name: string;
+  /** Level at the start of the window. */
+  level0: boolean;
+  /** [time in ns from the trigger, level], every edge in the window. */
+  edges: [number, boolean][];
+  /** The edges are complete from here (after the window's start when the
+   * ring buffer had dropped older ones) … */
+  fromNs: number;
+  /** … up to here (before its end when the capture filled up). */
+  toNs: number;
+}
+
+/** A window of every probed pin around a trigger (`crates/wasm/src/scope.rs`). */
+export interface ScopeCapture {
+  seq: number;
+  source: string;
+  /** Absolute simulated time of the trigger. */
+  triggerMs: number;
+  /** Window relative to the trigger. */
+  startNs: number;
+  endNs: number;
+  channels: CaptureChannel[];
+}
+
+export type ScopeState = "off" | "nosource" | "armed" | "collecting" | "stopped";
+
+export interface ScopeFrame {
+  state: ScopeState;
+  /** A capture completed since the last frame. */
+  capture: ScopeCapture | null;
+}
+
+/** Oscilloscope trigger settings (see `Simulator.setTrigger`). */
+export interface TriggerConfig {
+  /** Source pin, e.g. "PC7" (one of the probed pins). */
+  source: string;
+  edge: "rising" | "falling" | "either";
+  mode: "auto" | "normal" | "single";
+  /** Captured span: 10 divisions of the timebase. */
+  windowNs: number;
+  /** Share of the window before the trigger (0.1–0.9). */
+  pre: number;
+  /** Pulse-width condition: a pulse narrower (lt) or wider (gt) than ns. */
+  width?: { cmp: "lt" | "gt"; ns: number };
+  /** Pause the simulation once a capture is complete. */
+  pause: boolean;
+}
+
 export interface RtosTask {
   tcb: number;
   name: string;
@@ -112,6 +162,8 @@ export interface SimFrame {
   /** Electrical-rule violations (LED without resistor, …). */
   circuitWarnings: string[];
   probes: ProbeFrame[];
+  /** Trigger state and the capture completed in this frame. */
+  scope: ScopeFrame;
   /** Present when the firmware contains an RTOS (FreeRTOS). */
   rtos: RtosFrame | null;
   /** HC-05 modules in the circuit. */
@@ -130,6 +182,10 @@ export type ToWorker =
   | { type: "press"; part: string; pressed: boolean } // a tact-switch part id, or "B1"
   | { type: "wiring"; circuit: string; catalog: string; signals: string } // JSON
   | { type: "probes"; pins: string[] }
+  /** Set the oscilloscope trigger (null: none) and arm it. */
+  | { type: "trigger"; config: TriggerConfig | null }
+  /** Wait for the next trigger (Single). */
+  | { type: "armTrigger" }
   | { type: "console"; text: string }
   | { type: "bluetooth"; part: string; text: string }
   | { type: "bluetoothConnect"; part: string; on: boolean }

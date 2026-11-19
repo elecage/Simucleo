@@ -116,6 +116,7 @@ function pauseText(reason: string): string {
     done: "스텝",
     pause: "일시정지",
     limit: "스텝이 너무 길어 멈춤",
+    trigger: "오실로스코프 트리거",
   };
   if (fixed[reason]) return fixed[reason];
   // "watchpoint write 0x20000010"

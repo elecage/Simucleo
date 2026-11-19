@@ -127,3 +127,59 @@ test("SD card contents survive a reload; 카드 비우기 erases them for good",
   await page.getByRole("button", { name: "▶ 실행" }).click();
   await expect(consoleOut(page)).toContainText("blank card: formatting... done", { timeout: 8000 });
 });
+
+/** Open a project file: the board and, optionally, an SD card part `sd`. */
+async function openProject(page: Page, name: string, withCard: boolean, firmware?: string) {
+  const project = {
+    format: "simucleo-project",
+    version: 1,
+    name,
+    parts: [
+      { id: "nucleo", kind: "nucleo-f401re", x: 4, y: 2, props: {} },
+      ...(withCard ? [{ id: "sd", kind: "sd-card", x: 50, y: 10, props: {} }] : []),
+    ],
+    wires: [],
+    ...(firmware ? { firmware: { name: firmware, example: `${firmware}.elf` } } : {}),
+  };
+  await page.getByTestId("project-input").setInputFiles({
+    name: `${name}.simucleo.json`,
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await expect(page.getByLabel("프로젝트 이름")).toHaveValue(name);
+}
+
+test("switching projects with a save pending keeps each project's card its own", async ({ page }) => {
+  await loadExampleProject(page, "hal-spi-sd-logger");
+  const logger = await page.getByLabel("프로젝트 이름").inputValue();
+  // While the firmware formats the card (its save still pending), open
+  // another project whose card has the same part id.
+  await expect(consoleOut(page)).toContainText("blank card: formatting", { timeout: 8000 });
+  // (Its own firmware does not touch the card: it stays blank.)
+  await openProject(page, "other", true, "hal-blinky");
+  await page.waitForTimeout(4000);
+  const stored = await storedCards(page);
+  // The logger's card was saved before the switch, with its file system,
+  // not overwritten by the other project's blank card.
+  expect(stored[`sd:${logger}:sd`]).toBeGreaterThan(8);
+  expect(stored["sd:other:sd"] ?? 8).toBe(8);
+  // The other project's card is blank, not the logger's left behind.
+  await selectCard(page);
+  expect((await downloadCard(page)).subarray(0, 1 << 20).every((b) => b === 0)).toBe(true);
+});
+
+test("a project's card comes back when the project is opened again", async ({ page }) => {
+  await loadExampleProject(page, "hal-spi-sd-logger");
+  await expect(consoleOut(page)).toContainText(/,21\.0,55\.0/, { timeout: 8000 });
+  const line = (await consoleOut(page).textContent())!.match(/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,21\.0,55\.0/)![0];
+  await page.getByRole("button", { name: "⏸ 일시정지" }).click();
+  await expect.poll(async () => Object.values(await storedCards(page))[0] ?? 0, { timeout: 5000 }).toBeGreaterThan(8);
+  // Away to a project without the card (the simulator drops it), and back.
+  await openProject(page, "no card", false);
+  await page.getByLabel("예제 펌웨어").selectOption("hal-spi-sd-logger.elf");
+  await expect(status(page)).toContainText("hal-spi-sd-logger");
+  await selectCard(page);
+  await expect
+    .poll(async () => (await downloadCard(page)).includes(Buffer.from(line + "\n")), { timeout: 5000 })
+    .toBe(true);
+});

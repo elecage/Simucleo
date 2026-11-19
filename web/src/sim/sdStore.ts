@@ -27,54 +27,91 @@ interface Card {
 }
 
 export function useSdPersistence(runner: Runner, project: Project, projectName: string) {
+  // Only the cards of the circuit now in the simulator. An entry lives as
+  // long as that card does: a project switch or removing the part ends it
+  // (the simulator drops the card), so coming back restores it again.
   const cards = useRef(new Map<string, Card>());
+  /** Saves still writing; restores wait for them so they read the latest. */
+  const flushing = useRef<Promise<unknown>>(Promise.resolve());
   const { ready, frame, running, sdRestore, sdSnapshot, sdWipe } = runner;
   const partsKey = project.parts
     .filter((p) => p.kind === "sd-card")
     .map((p) => p.id)
     .join(",");
 
-  // Put back what was saved for this project's cards (once per key).
-  useEffect(() => {
-    if (!ready) return;
-    for (const part of partsKey ? partsKey.split(",") : []) {
-      const key = sdKey(projectName, part);
-      if (cards.current.has(key)) continue;
-      const card: Card = { part, saved: undefined };
-      cards.current.set(key, card);
-      void idbGet<Uint8Array>(key).then((bytes) => {
-        if (bytes?.length) sdRestore(part, bytes.slice().buffer);
-        card.saved = null;
+  /** Snapshot `card` now and store it under `key`. The snapshot request
+   * is queued to the worker at once, so it reads this card even when a new
+   * circuit is sent right after. */
+  const saveCard = useCallback(
+    (key: string, card: Card) => {
+      clearTimeout(card.timer);
+      card.timer = undefined;
+      const gen = card.seen ?? null;
+      const done = sdSnapshot(card.part).then(async (bytes) => {
+        if (!bytes.length) return;
+        await idbSet(key, bytes);
+        card.saved = gen;
       });
-    }
-  }, [ready, projectName, partsKey, sdRestore]);
+      flushing.current = Promise.all([flushing.current, done]);
+      return done;
+    },
+    [sdSnapshot],
+  );
 
   const save = useCallback(
     async (key: string) => {
       const card = cards.current.get(key);
+      // Only a card still in the simulator, and not while it is restored.
       if (!card || card.saved === undefined) return;
-      clearTimeout(card.timer);
-      card.timer = undefined;
-      const gen = card.seen ?? null;
-      const bytes = await sdSnapshot(card.part);
-      if (!bytes.length) return;
-      await idbSet(key, bytes);
-      card.saved = gen;
+      await saveCard(key, card);
     },
-    [sdSnapshot],
+    [saveCard],
   );
+
+  // The cards of this circuit: put back what was saved for them. Before
+  // the circuit changes (another project, a card added or removed), save
+  // what is pending — the snapshot goes to the worker ahead of the new
+  // circuit — and forget the cards, whose contents the simulator may drop.
+  useEffect(() => {
+    if (!ready) return;
+    const mine = new Map<string, Card>();
+    for (const part of partsKey ? partsKey.split(",") : []) {
+      const key = sdKey(projectName, part);
+      const card: Card = { part, saved: undefined };
+      mine.set(key, card);
+      cards.current.set(key, card);
+      void flushing.current
+        .then(() => idbGet<Uint8Array>(key))
+        .then((bytes) => {
+          // Gone meanwhile (switched away): this restore is stale.
+          if (cards.current.get(key) !== card) return;
+          // Nothing saved: a blank card, not the one another project left
+          // in the simulator under the same part id.
+          if (bytes?.length) sdRestore(part, bytes.slice().buffer);
+          else sdWipe(part);
+          card.saved = null;
+        });
+    }
+    return () => {
+      for (const [key, card] of mine) {
+        if (card.timer && card.saved !== undefined) void saveCard(key, card);
+        clearTimeout(card.timer);
+        if (cards.current.get(key) === card) cards.current.delete(key);
+      }
+    };
+  }, [ready, projectName, partsKey, sdRestore, sdWipe, saveCard]);
 
   // The firmware wrote to a card: save it soon.
   useEffect(() => {
     if (!frame) return;
     for (const part of partsKey ? partsKey.split(",") : []) {
-      const card = cards.current.get(sdKey(projectName, part));
+      const key = sdKey(projectName, part);
+      const card = cards.current.get(key);
       const gen = frame.parts.find((p) => p.id === part)?.generation;
       if (!card || gen === undefined || card.saved === undefined) continue;
       card.seen = gen;
       if (card.saved === null) card.saved = gen;
       else if (gen !== card.saved && !card.timer) {
-        const key = sdKey(projectName, part);
         card.timer = setTimeout(() => void save(key), SAVE_DELAY);
       }
     }
@@ -87,7 +124,6 @@ export function useSdPersistence(runner: Runner, project: Project, projectName: 
       for (const [key, card] of cards.current) if (card.timer) void save(key);
     wasRunning.current = running;
   }, [running, save]);
-  useEffect(() => () => cards.current.forEach((c) => clearTimeout(c.timer)), []);
 
   /** Erase a card and keep it erased. */
   const wipe = useCallback(

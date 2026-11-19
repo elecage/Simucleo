@@ -4,7 +4,7 @@
 // example sources or from files the user adds.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Runner } from "../sim/useRunner";
-import type { DebugValue } from "../sim/protocol";
+import type { BreakpointSpec, DebugValue } from "../sim/protocol";
 
 const base = "./";
 
@@ -57,7 +57,9 @@ export function SourceView({ runner }: { runner: Runner }) {
   const [fileIdx, setFileIdx] = useState<number | null>(null);
   const [frame, setFrame] = useState(0);
   const [showAsm, setShowAsm] = useState(false);
-  const [wanted, setWanted] = useState<{ file: number; line: number }[]>([]);
+  const [wanted, setWanted] = useState<BreakpointSpec[]>([]);
+  const [watches, setWatches] = useState<string[]>([]);
+  const [newWatch, setNewWatch] = useState("");
   const codeRef = useRef<HTMLDivElement>(null);
   const upload = useRef<HTMLInputElement>(null);
   const { setBreakpoints, requestDebugState, debugState, pauseEvent: pause, running } = runner;
@@ -101,6 +103,8 @@ export function SourceView({ runner }: { runner: Runner }) {
   }, [key, texts, uploaded]);
 
   useEffect(() => setBreakpoints(wanted), [wanted, setBreakpoints]);
+  const setCondition = (b: BreakpointSpec, condition: string) =>
+    setWanted((w) => w.map((x) => (x.file === b.file && x.line === b.line ? { ...x, condition } : x)));
 
   // Paused: fetch where we are and show it.
   useEffect(() => {
@@ -117,6 +121,11 @@ export function SourceView({ runner }: { runner: Runner }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileIdx]);
   const shownFrame = debugState?.frames[frame];
+  // Watch expressions are evaluated in the shown frame whenever it changes.
+  const { requestWatch } = runner;
+  useEffect(() => {
+    if (paused && watches.length) requestWatch(watches, frame);
+  }, [paused, debugState, frame, watches, requestWatch]);
   // Machine code around the shown frame's pc.
   const { requestDisasm } = runner;
   useEffect(() => {
@@ -134,6 +143,7 @@ export function SourceView({ runner }: { runner: Runner }) {
 
   const codeLines = useMemo(() => new Set(current?.lines ?? []), [current]);
   const placed = new Set(runner.breakpoints.filter((b) => b.file === fileIdx).map((b) => b.line));
+  const conditional = new Set(wanted.filter((b) => b.file === fileIdx && b.condition?.trim()).map((b) => b.line));
   const lines = key && texts[key] !== undefined ? texts[key].split("\n") : null;
 
   const toggle = (line: number) => {
@@ -210,7 +220,7 @@ export function SourceView({ runner }: { runner: Runner }) {
                   className={`src-line${here === n ? " here" : ""}${code ? " code" : ""}`}
                 >
                   <span
-                    className={`gutter${placed.has(n) ? " bp" : ""}`}
+                    className={`gutter${placed.has(n) ? " bp" : ""}${conditional.has(n) ? " cond" : ""}`}
                     onClick={() => toggle(n)}
                     data-testid={`gutter-${n}`}
                     title={code ? "클릭: 중단점" : ""}
@@ -257,6 +267,81 @@ export function SourceView({ runner }: { runner: Runner }) {
         )}
       </div>
       <aside className="debug-side">
+        <h4>감시식</h4>
+        <form
+          className="watch-add"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const x = newWatch.trim();
+            if (x && !watches.includes(x)) setWatches((w) => [...w, x]);
+            setNewWatch("");
+          }}
+        >
+          <input
+            aria-label="감시식"
+            placeholder="예: count * 2, buf[i], htim2.Instance->CNT"
+            value={newWatch}
+            onChange={(e) => setNewWatch(e.target.value)}
+          />
+          <button type="submit">추가</button>
+        </form>
+        <ul className="vars watches" data-testid="watches">
+          {watches.map((x, i) => {
+            const v = paused ? runner.watch[i] : undefined;
+            return (
+              <li key={x} className="watch">
+                <button
+                  className="watch-del"
+                  title="감시식 지우기"
+                  onClick={() => setWatches((w) => w.filter((y) => y !== x))}
+                >
+                  ×
+                </button>
+                {v && "error" in v ? (
+                  <span className="var-row">
+                    <span className="var-name">{x}</span>{" "}
+                    <span className="watch-error" data-watch={x}>
+                      {v.error}
+                    </span>
+                  </span>
+                ) : v ? (
+                  <ul className="vars" data-watch={x}>
+                    <ValueTree v={v} />
+                  </ul>
+                ) : (
+                  <span className="var-name">{x}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        <h4>중단점</h4>
+        <ul className="bp-list" data-testid="breakpoints">
+          {wanted.map((b) => {
+            const f = files.find((x) => x.index === b.file);
+            const at = `${f ? baseName(f.path) : "?"}:${b.line}`;
+            return (
+              <li key={`${b.file}:${b.line}`}>
+                <button className="watch-del" title="중단점 지우기" onClick={() => setWanted((w) => w.filter((x) => x !== b))}>
+                  ×
+                </button>
+                <span className="bp-at" onClick={() => setFileIdx(b.file)}>
+                  {at}
+                </span>
+                <input
+                  aria-label={`${at} 조건`}
+                  placeholder="조건 (예: i == 3)"
+                  defaultValue={b.condition ?? ""}
+                  onBlur={(e) => setCondition(b, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") setCondition(b, e.currentTarget.value);
+                  }}
+                />
+              </li>
+            );
+          })}
+        </ul>
+        {wanted.length === 0 && <p className="hint">줄 번호를 클릭하면 중단점이 생깁니다. 조건을 적으면 그 식이 참일 때만 멈춥니다.</p>}
         <h4>호출 스택</h4>
         <ol className="frames">
           {(paused ? debugState!.frames : []).map((f, i) => (

@@ -8,7 +8,10 @@
 
 ![PWM으로 RGB LED와 LD2 밝기 제어](docs/images/m3-pwm-rgb.png)
 
-> **상태: M9 완료.** 소스 탭에서 C 코드에 중단점을 걸고 한 줄씩 실행하며 호출 스택과 변수 값을 본다
+> **상태: M10 완료.** GDB로 접속해 디버깅할 수 있고(`simucleo gdb`), 웹 소스 탭에서 기계어를 보고,
+> 감시식(C 식)과 조건부 중단점을 쓴다.
+>
+> **M9:** 소스 탭에서 C 코드에 중단점을 걸고 한 줄씩 실행하며 호출 스택과 변수 값을 본다
 > (DWARF 디버그 정보 사용, 인터럽트 핸들러 안에서도).
 >
 > **M8:** 실습에 흔히 쓰는 부품을 더했다: 7세그먼트(멀티플렉싱), 4×4 키패드, 로터리 엔코더(타이머
@@ -27,14 +30,14 @@
 > 배선된 회로를 DC 해석해 PWM 밝기, 부저 음, 버튼 인터럽트(EXTI)를 보여 주고, 저항 없는 LED 같은
 > 전기 규칙 위반을 알려 준다. 파형(로직 프로브) 뷰, 프로젝트 파일 저장·열기·자동 저장, 배선도 그림 내보내기,
 > 배선이 포함된 예제가 있다. CPU 코어는 Unicorn과 명령어 단위로 검증했고, STM32CubeMX HAL 펌웨어가
-> 84 MHz로 실시간 실행된다. 이후 계획(회로도 뷰, GDB 서버, 소스 레벨 디버깅, 추가 부품)과 진행 상황은 [로드맵](docs/roadmap.md)을 참고.
+> 84 MHz로 실시간 실행된다. 이후 계획(회로도 뷰, 변수 값 바꾸기 등)과 진행 상황은 [로드맵](docs/roadmap.md)을 참고.
 
 ## 특징 (목표)
 - 수정하지 않은 **베어메탈 / CubeMX HAL / CubeMX FreeRTOS** 펌웨어 실행
 - Arduino 헤더와 **Morpho 헤더**를 모두 갖춘 Nucleo 보드, 브레드보드 드래그 앤 드롭 배선, 실행 중 배선 변경
 - PWM 밝기, 부저 소리, 모터 회전, OLED 화면 등 실제와 비슷한 표시
 - 교육용 진단: 미구현 레지스터 접근, `Error_Handler`/HardFault 원인, 저항 없는 LED 같은 전기 규칙 위반
-- 가상 콘솔(UART), 소스 수준 디버깅(중단점·스텝·변수), 파형 뷰, 레지스터/메모리 뷰, RTOS 태스크 뷰
+- 가상 콘솔(UART), 소스 수준 디버깅(중단점·조건부 중단점·스텝·변수·감시식·기계어), GDB 원격 서버, 파형 뷰, 레지스터/메모리 뷰, RTOS 태스크 뷰
 
 ## 문서
 - [아키텍처](docs/architecture.md)
@@ -90,6 +93,16 @@ HI
 ```
 
 펌웨어가 멈추면 이유를 알려 준다(예: `STOP: Error_Handler() was called from SystemClock_Config(): a HAL call returned an error`).
+
+GDB로 디버깅하려면 서버를 띄우고 다른 터미널에서 접속한다(VS Code Cortex-Debug는 `servertype: "external"`, `gdbTarget: "localhost:3333"`).
+
+```bash
+cargo run --release -p simucleo-cli -- gdb firmware/hal-7seg-keypad/build/hal-7seg-keypad.elf --port 3333
+```
+
+```bash
+gdb-multiarch firmware/hal-7seg-keypad/build/hal-7seg-keypad.elf -ex "target extended-remote :3333" -ex "break main" -ex continue
+```
 
 펌웨어 테스트와 Unicorn 차분 테스트는 [firmware/README.md](firmware/README.md)를 참고.
 

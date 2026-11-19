@@ -1,6 +1,6 @@
 // React hook around the simulation worker.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DebugFile, DebugState, DisasmRow, FromWorker, SimFrame, ToWorker } from "./protocol";
+import type { BreakpointSpec, DebugFile, DebugState, DisasmRow, FromWorker, SimFrame, ToWorker, WatchValue } from "./protocol";
 import type { CircuitJson } from "../editor/model";
 import { boardSignals, busCatalog } from "../parts";
 
@@ -41,7 +41,7 @@ export interface Runner {
   debugFiles: DebugFile[];
   /** Where each breakpoint landed (the line with code). */
   breakpoints: { file: number; line: number }[];
-  setBreakpoints(list: { file: number; line: number }[]): void;
+  setBreakpoints(list: BreakpointSpec[]): void;
   step(kind: "instruction" | "into" | "over" | "out"): void;
   /** Bumped whenever the debugger paused execution; with the reason. */
   pauseEvent: { n: number; reason: string };
@@ -50,6 +50,9 @@ export interface Runner {
   /** Machine code around an address (null: the pc). */
   disasm: DisasmRow[];
   requestDisasm(addr: number | null): void;
+  /** Values of watch expressions, in the order asked. */
+  watch: WatchValue[];
+  requestWatch(exprs: string[], frame: number): void;
 }
 
 export function useRunner(): Runner {
@@ -70,6 +73,7 @@ export function useRunner(): Runner {
   const [pauseEvent, setPause] = useState({ n: 0, reason: "" });
   const [debugState, setDebugState] = useState<DebugState | null>(null);
   const [disasm, setDisasm] = useState<DisasmRow[]>([]);
+  const [watch, setWatch] = useState<WatchValue[]>([]);
 
   useEffect(() => {
     const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
@@ -86,6 +90,7 @@ export function useRunner(): Runner {
           setConsole("");
           setDebugState(null);
           setPlaced([]);
+          setWatch([]);
           w.postMessage({ type: "debugFiles" } satisfies ToWorker);
           break;
         case "debugFiles":
@@ -102,6 +107,9 @@ export function useRunner(): Runner {
           break;
         case "disasm":
           setDisasm(m.rows);
+          break;
+        case "watch":
+          setWatch(m.values);
           break;
         case "frame":
           setFrame(m.frame);
@@ -149,16 +157,17 @@ export function useRunner(): Runner {
         }),
       sdLoad: (part: string, bytes: ArrayBuffer) => send({ type: "sdLoad", part, bytes }, [bytes]),
       rotate: (part: string, detents: number) => send({ type: "rotate", part, detents }),
-      setBreakpoints: (list: { file: number; line: number }[]) => send({ type: "breakpoints", list }),
+      setBreakpoints: (list: BreakpointSpec[]) => send({ type: "breakpoints", list }),
       step: (kind: "instruction" | "into" | "over" | "out") => send({ type: "step", kind }),
       requestDebugState: (frame: number, globalsFile: number) => send({ type: "debugState", frame, globalsFile }),
       requestDisasm: (addr: number | null) => send({ type: "disassemble", addr }),
+      requestWatch: (exprs: string[], frame: number) => send({ type: "evaluate", exprs, frame }),
     }),
     [send],
   );
 
   return {
     ready, firmware, firmwareBytes, firmwareExample, loadError, running, speed, frame, console: consoleText, memory,
-    debugFiles, breakpoints, pauseEvent, debugState, disasm, ...actions,
+    debugFiles, breakpoints, pauseEvent, debugState, disasm, watch, ...actions,
   };
 }

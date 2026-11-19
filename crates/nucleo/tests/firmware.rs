@@ -1248,6 +1248,33 @@ fn breakpoints_steps_call_stack_and_variables() {
     let htim = globals.iter().find(|g| g.name == "htim10").unwrap();
     let inst = htim.children.iter().find(|c| c.name == "Instance").unwrap();
     assert_eq!(inst.value, "0x40014400");
+    // Watch expressions.
+    let info = board.debug_info().unwrap();
+    let frame = board.call_stack()[0].clone();
+    let read = |a: u32, n: usize| -> Option<Vec<u8>> {
+        (0..n as u32).map(|i| board.peek_byte(a + i)).collect()
+    };
+    let ev = |e: &str| info.evaluate(e, &frame, &read).map(|v| v.value);
+    assert_eq!(ev("KEYS[1][3]").unwrap(), "66 'B'");
+    assert_eq!(ev("KEYS[2]").unwrap(), "\"789C\"");
+    assert_eq!(ev("FONT[8] == 0x7F").unwrap(), "1");
+    assert_eq!(ev("(FONT[1] + 2) * 3").unwrap(), "24");
+    assert_eq!(ev("htim10.Instance").unwrap(), "0x40014400");
+    assert_eq!(ev("htim10.Instance->ARR").unwrap(), "999");
+    assert_eq!(ev("htim10.Init.Period + 1").unwrap(), "1000");
+    assert_eq!(ev("value").unwrap(), "0");
+    assert!(ev("nosuch").is_err());
+    assert!(ev("KEYS[9][0]").unwrap_err().contains("out of range"));
+    assert!(info
+        .condition("len == 0 && current >= 0", &frame, &read)
+        .unwrap());
+    assert!(!info.condition("KEYS[0][0] != '1'", &frame, &read).unwrap());
+    // Short-circuit: the right side is not needed (and fails).
+    assert!(!info.condition("len != 0 && nosuch", &frame, &read).unwrap());
+    assert!(info.condition("len == 0 || nosuch", &frame, &read).unwrap());
+    assert!(info.condition("len == 0 && nosuch", &frame, &read).is_err());
+    drop(info);
+
     // A breakpoint inside the timer interrupt shows the interrupted code.
     board.set_breakpoints(&[]);
     let cb = board
@@ -1272,5 +1299,41 @@ fn breakpoints_steps_call_stack_and_variables() {
     assert!(
         stack.iter().any(|f| f.function.as_deref() == Some("main")),
         "{stack:?}"
+    );
+    // Conditional breakpoints: the timer callback runs every millisecond
+    // and steps `current` through 0..3; stop only where it is 2.
+    let bp = |c: &str| [(cb, Some(c.to_string()))];
+    board.set_conditional_breakpoints(&bp("current == 2"));
+    for _ in 0..3 {
+        let r = board.run_for_ns_debug(10e6);
+        assert!(
+            matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(a) if a == cb & !1),
+            "{r:?}"
+        );
+        assert_eq!(board.evaluate("current", 0).unwrap().value, "2");
+    }
+    // Never true: it runs the whole time.
+    board.set_conditional_breakpoints(&bp("current > 3"));
+    let t = board.time_ns();
+    let r = board.run_for_ns_debug(5e6);
+    assert!(
+        !matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_)),
+        "{r:?}"
+    );
+    assert!(board.time_ns() - t >= 5e6 - 1e3);
+    // A condition that cannot be evaluated stops (to show the error).
+    board.set_conditional_breakpoints(&bp("nosuch == 1"));
+    let r = board.run_for_ns_debug(5e6);
+    assert!(
+        matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_)),
+        "{r:?}"
+    );
+    assert!(board.evaluate("nosuch", 0).is_err());
+    // An unconditional breakpoint at the same address wins.
+    board.set_conditional_breakpoints(&[(cb, Some("current > 3".into())), (cb, None)]);
+    let r = board.run_for_ns_debug(5e6);
+    assert!(
+        matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_)),
+        "{r:?}"
     );
 }

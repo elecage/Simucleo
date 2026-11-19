@@ -2,9 +2,9 @@
 //! stepping by instruction or source line (into, over, out of calls), the
 //! call stack and variable values, from the firmware's DWARF information.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
-use simucleo_core::cpu::StopReason;
+use simucleo_core::cpu::{RunResult, StopReason};
 use simucleo_elf::debug::{DebugInfo, Frame, Value};
 
 use crate::Nucleo;
@@ -47,6 +47,8 @@ pub(crate) struct DebugState {
     pub info: std::cell::OnceCell<Option<std::rc::Rc<DebugInfo>>>,
     /// User breakpoint addresses.
     pub breakpoints: BTreeSet<u32>,
+    /// Conditions of conditional breakpoints, by address.
+    pub conditions: HashMap<u32, String>,
 }
 
 impl DebugState {
@@ -67,6 +69,11 @@ impl DebugState {
     }
 }
 
+/// A breakpoint condition, if it has one (blank is none).
+fn cond(c: &Option<String>) -> Option<&str> {
+    c.as_deref().map(str::trim).filter(|c| !c.is_empty())
+}
+
 impl Nucleo {
     /// The firmware's debug information, if it has any.
     pub fn debug_info(&self) -> Option<std::rc::Rc<DebugInfo>> {
@@ -75,12 +82,75 @@ impl Nucleo {
 
     /// Replace the user breakpoints (code addresses).
     pub fn set_breakpoints(&mut self, addrs: &[u32]) {
+        let bps: Vec<(u32, Option<String>)> = addrs.iter().map(|&a| (a, None)).collect();
+        self.set_conditional_breakpoints(&bps);
+    }
+
+    /// Replace the user breakpoints; one with a condition (a C expression)
+    /// stops only when the condition is true there.
+    pub fn set_conditional_breakpoints(&mut self, bps: &[(u32, Option<String>)]) {
         for a in std::mem::take(&mut self.debug.breakpoints) {
             self.cpu.remove_breakpoint(a);
         }
-        for &a in addrs {
+        self.debug.conditions.clear();
+        // Several breakpoints may share an address (lines of one inlined
+        // call): one without a condition makes it unconditional.
+        let unconditional: BTreeSet<u32> = bps
+            .iter()
+            .filter(|(_, c)| cond(c).is_none())
+            .map(|(a, _)| a & !1)
+            .collect();
+        for (a, c) in bps {
+            let a = a & !1;
             self.cpu.add_breakpoint(a);
-            self.debug.breakpoints.insert(a & !1);
+            self.debug.breakpoints.insert(a);
+            if let Some(c) = cond(c).filter(|_| !unconditional.contains(&a)) {
+                self.debug
+                    .conditions
+                    .entry(a)
+                    .or_insert_with(|| c.to_string());
+            }
+        }
+    }
+
+    /// Evaluate a C expression (variables, members, indexing, arithmetic,
+    /// comparisons) in call-stack frame `frame`.
+    pub fn evaluate(&self, expr: &str, frame: usize) -> Result<Value, String> {
+        let info = self.debug.get().ok_or("no debug information")?;
+        let frames = self.call_stack();
+        let f = frames.get(frame).ok_or("no such frame")?;
+        let read = |a: u32, n: usize| self.read_mem(a, n);
+        info.evaluate(expr, f, &read)
+    }
+
+    /// Whether the user breakpoint at `addr`, just hit, should stop: it
+    /// has no condition, its condition holds, or the condition cannot be
+    /// evaluated (stopping shows the user why).
+    pub fn breakpoint_stops(&self, addr: u32) -> bool {
+        let Some(cond) = self.debug.conditions.get(&(addr & !1)) else {
+            return true;
+        };
+        let Some(info) = self.debug.get() else {
+            return true;
+        };
+        let frames = self.call_stack();
+        let Some(f) = frames.first() else {
+            return true;
+        };
+        let read = |a: u32, n: usize| self.read_mem(a, n);
+        info.condition(cond, f, &read).unwrap_or(true)
+    }
+
+    /// `run_for_ns` that goes on past conditional breakpoints whose
+    /// condition is false.
+    pub fn run_for_ns_debug(&mut self, ns: f64) -> RunResult {
+        let end = self.time_ns() + ns;
+        loop {
+            let r = self.run_for_ns((end - self.time_ns()).max(0.0));
+            match r.stop {
+                StopReason::Breakpoint(a) if !self.breakpoint_stops(a) && self.time_ns() < end => {}
+                _ => return r,
+            }
         }
     }
 
@@ -203,8 +273,11 @@ impl Nucleo {
             let r = self.run_for_ns(10e6);
             match r.stop {
                 StopReason::Breakpoint(a) if a == addr => break StepEnd::Done,
-                StopReason::Breakpoint(_) => break StepEnd::Breakpoint,
-                StopReason::BudgetExhausted | StopReason::Sleeping | StopReason::Yield => {}
+                StopReason::Breakpoint(a) if self.breakpoint_stops(a) => break StepEnd::Breakpoint,
+                StopReason::Breakpoint(_)
+                | StopReason::BudgetExhausted
+                | StopReason::Sleeping
+                | StopReason::Yield => {}
                 other => break StepEnd::Stopped(other),
             }
             if self.time_ns() - start > RUN_LIMIT_NS {
@@ -250,7 +323,7 @@ impl Nucleo {
                         return StepEnd::Stopped(e);
                     }
                     let pc = self.pc();
-                    if self.debug.breakpoints.contains(&pc) {
+                    if self.debug.breakpoints.contains(&pc) && self.breakpoint_stops(pc) {
                         return StepEnd::Breakpoint;
                     }
                     let ipsr = self.cpu.registers().ipsr();

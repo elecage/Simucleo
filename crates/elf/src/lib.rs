@@ -4,6 +4,7 @@
 
 pub mod debug;
 pub mod disasm;
+mod expr;
 
 use std::collections::{BTreeMap, HashMap};
 

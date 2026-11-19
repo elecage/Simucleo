@@ -1580,6 +1580,23 @@ fn breakpoints_steps_call_stack_and_variables() {
         matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_)),
         "{r:?}"
     );
+
+    // Watchpoints survive a reset: the startup code's .bss clear writes
+    // `current` again.
+    board.set_conditional_breakpoints(&[]);
+    let (addr, len) = board.address_of("current", 0).unwrap();
+    board.set_watchpoints(&[Watchpoint {
+        addr,
+        len,
+        kind: WatchKind::Write,
+    }]);
+    board.reset().unwrap();
+    let r = board.run_for_ns(10e6);
+    assert_eq!(
+        r.stop,
+        simucleo_core::cpu::StopReason::Watchpoint { addr, write: true }
+    );
+    assert_eq!(func(&board).as_deref(), Some("Reset_Handler"));
 }
 
 /// Whether a variable is set in memory or in a register (for the log).

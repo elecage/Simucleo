@@ -734,19 +734,37 @@ impl DebugInfo {
                     .ok()
                     .flatten()
                     .and_then(attr_u64)
-                    .map(|width| {
-                        let start = e
-                            .attr_value(gimli::DW_AT_data_bit_offset)
-                            .ok()
-                            .flatten()
-                            .and_then(attr_u64)
-                            .unwrap_or(moff as u64 * 8);
-                        (start as u32, width as u32)
-                    });
+                    .map(|width| (self.bit_start(unit, e, moff, width) as u32, width as u32));
                 return Some((moff, type_of(e), bits));
             }
         }
         None
+    }
+
+    /// First bit of bit-field member `e` (`width` bits, byte offset
+    /// `moff`), counted from the start of the struct: DWARF 5's
+    /// `DW_AT_data_bit_offset`, or DWARF 4's `DW_AT_bit_offset` (from the
+    /// most significant bit of the storage unit).
+    fn bit_start(
+        &self,
+        unit: &Unit<'_>,
+        e: &gimli::DebuggingInformationEntry<'_, '_, R<'_>>,
+        moff: u32,
+        width: u64,
+    ) -> u64 {
+        let attr = |a| e.attr_value(a).ok().flatten().and_then(attr_u64);
+        if let Some(start) = attr(gimli::DW_AT_data_bit_offset) {
+            return start;
+        }
+        match attr(gimli::DW_AT_bit_offset) {
+            Some(from_msb) => {
+                let unit_bytes = attr(gimli::DW_AT_byte_size)
+                    .or_else(|| self.byte_size(unit, type_of(e)).map(u64::from))
+                    .unwrap_or(4);
+                legacy_bit_start(moff, unit_bytes, from_msb, width)
+            }
+            None => moff as u64 * 8,
+        }
     }
 
     pub(crate) fn render_value(
@@ -1423,12 +1441,7 @@ impl DebugInfo {
                         .flatten()
                         .and_then(attr_u64)
                     {
-                        let start = ce
-                            .attr_value(gimli::DW_AT_data_bit_offset)
-                            .ok()
-                            .flatten()
-                            .and_then(attr_u64)
-                            .unwrap_or(moff as u64 * 8);
+                        let start = self.bit_start(unit, ce, moff, bits);
                         if let Some(b) = self.bytes(
                             &src,
                             (start / 8) as u32,
@@ -1447,6 +1460,13 @@ impl DebugInfo {
         }
         v
     }
+}
+
+/// DWARF 4 bit field position to a bit offset from the start of the struct
+/// (little-endian): the storage unit of `unit_bytes` at byte `moff`, the
+/// field `width` bits wide, `from_msb` bits below the unit's top.
+fn legacy_bit_start(moff: u32, unit_bytes: u64, from_msb: u64, width: u64) -> u64 {
+    (moff as u64 * 8 + unit_bytes * 8).saturating_sub(from_msb + width)
 }
 
 fn format_float(f: f64) -> String {
@@ -1470,4 +1490,20 @@ fn normalize(p: &str) -> String {
         }
     }
     parts.join("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::legacy_bit_start;
+
+    #[test]
+    fn dwarf4_bit_offsets() {
+        // `struct { unsigned a:3; unsigned b:5; unsigned c:24; }`: GCC's
+        // DWARF 4 gives bit offsets 29, 24 and 0 in a 4-byte unit.
+        assert_eq!(legacy_bit_start(0, 4, 29, 3), 0);
+        assert_eq!(legacy_bit_start(0, 4, 24, 5), 3);
+        assert_eq!(legacy_bit_start(0, 4, 0, 24), 8);
+        // A unit further into the struct.
+        assert_eq!(legacy_bit_start(4, 2, 12, 4), 32);
+    }
 }

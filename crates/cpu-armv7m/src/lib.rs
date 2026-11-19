@@ -539,9 +539,12 @@ impl CpuBackend for ArmV7M {
         sys.reset();
         let msp = bus.read(sys.vtor, AccessSize::Word)?;
         let reset_vector = bus.read(sys.vtor + 4, AccessSize::Word)?;
+        // Debugger state survives a reset of the core.
         let bps = std::mem::take(&mut self.breakpoints);
+        let wps = std::mem::take(&mut self.watchpoints);
         *self = Self::new();
         self.breakpoints = bps;
+        self.watchpoints = wps;
         self.r[13] = msp & !3;
         self.r[14] = 0xFFFF_FFFF;
         self.pc = reset_vector & !1;

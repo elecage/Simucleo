@@ -182,6 +182,7 @@ impl Nucleo {
         let fw = FirmwareImage::parse(bytes)?;
         self.rtos = rtos::FreeRtos::detect(&fw, bytes);
         self.set_breakpoints(&[]);
+        self.set_watchpoints(&[]);
         self.debug.new_firmware(bytes);
         self.sys = CortexM::new();
         self.timeline.clear();

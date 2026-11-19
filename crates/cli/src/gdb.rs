@@ -84,13 +84,30 @@ fn read_reg(board: &Nucleo, n: usize) -> Option<u64> {
     })
 }
 
+/// Thread mode with CONTROL.SPSEL set: the process stack is in use.
+fn psp_active(r: &simucleo_core::cpu::Registers) -> bool {
+    r.control & 2 != 0 && r.xpsr & 0x1FF == 0
+}
+
 fn write_reg(board: &mut Nucleo, n: usize, v: u64) -> bool {
     let mut r = board.cpu.registers();
     match n {
         0..=15 => r.r[n] = v as u32,
         16 => r.xpsr = v as u32,
-        17 => r.msp = v as u32,
-        18 => r.psp = v as u32,
+        // The active stack pointer is r13 (the CPU takes the active bank
+        // from it): keep the two in step.
+        17 => {
+            r.msp = v as u32;
+            if !psp_active(&r) {
+                r.r[13] = v as u32;
+            }
+        }
+        18 => {
+            r.psp = v as u32;
+            if psp_active(&r) {
+                r.r[13] = v as u32;
+            }
+        }
         19..=34 => {
             let d = n - 19;
             r.s[2 * d] = v as u32;
@@ -550,6 +567,17 @@ mod tests {
         // Write a register and read it back.
         assert_eq!(c.cmd("P0=78563412"), "OK");
         assert_eq!(c.cmd("p0"), "78563412");
+        // MSP is the active stack in main: writing it moves sp too, and
+        // writing sp moves MSP.
+        let sp = c.cmd("pd");
+        assert_eq!(c.cmd("P11=f0ff0120"), "OK");
+        assert_eq!(c.cmd("pd"), "f0ff0120");
+        assert_eq!(c.cmd(&format!("Pd={sp}")), "OK");
+        assert_eq!(c.cmd("p11"), sp);
+        // PSP is not in use: writing it leaves sp alone.
+        assert_eq!(c.cmd("P12=00100020"), "OK");
+        assert_eq!(c.cmd("p12"), "00100020");
+        assert_eq!(c.cmd("pd"), sp);
         // Step one instruction: the pc moves.
         assert_eq!(c.cmd(&format!("z0,{main:x},2")), "OK");
         assert_eq!(c.cmd("s"), "T05");

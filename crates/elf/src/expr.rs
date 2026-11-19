@@ -104,6 +104,9 @@ pub(crate) struct Evaluator<'a, 'r> {
     read: ReadMem<'r>,
     toks: Vec<Tok>,
     pos: usize,
+    /// Inside the right side of a short-circuited `&&`/`||`: parse, but
+    /// read and compute nothing.
+    skipping: usize,
 }
 
 impl<'a, 'r> Evaluator<'a, 'r> {
@@ -121,6 +124,7 @@ impl<'a, 'r> Evaluator<'a, 'r> {
             read,
             toks: Vec::new(),
             pos: 0,
+            skipping: 0,
         }
     }
 
@@ -238,18 +242,27 @@ impl<'a, 'r> Evaluator<'a, 'r> {
                 break;
             }
             self.pos += 1;
+            if self.skipping > 0 {
+                self.binary(prec + 1)?;
+                continue;
+            }
             // `&&` and `||` short-circuit: once the left side decides, the
-            // right side is parsed but may fail (`p && p->x` with p null).
+            // right side is only parsed (`p && p->x` with p null).
             let decided = match op {
                 "&&" => (!self.truthy(&lhs).unwrap_or(true)).then_some(false),
                 "||" => self.truthy(&lhs).unwrap_or(false).then_some(true),
                 _ => None,
             };
-            let rhs = self.binary(prec + 1);
-            lhs = match decided {
-                Some(b) => Val::Int(b as i64),
-                None => self.apply(op, lhs, rhs?)?,
-            };
+            if let Some(b) = decided {
+                self.skipping += 1;
+                let rhs = self.binary(prec + 1);
+                self.skipping -= 1;
+                rhs?;
+                lhs = Val::Int(b as i64);
+            } else {
+                let rhs = self.binary(prec + 1)?;
+                lhs = self.apply(op, lhs, rhs)?;
+            }
         }
         Ok(lhs)
     }
@@ -311,6 +324,9 @@ impl<'a, 'r> Evaluator<'a, 'r> {
             Some(op @ ("-" | "!" | "~" | "*" | "+")) => {
                 self.pos += 1;
                 let v = self.unary()?;
+                if self.skipping > 0 {
+                    return Ok(Val::Int(0));
+                }
                 if op == "*" {
                     return self.deref(v, 0);
                 }
@@ -338,6 +354,9 @@ impl<'a, 'r> Evaluator<'a, 'r> {
                         return Err("expected a member name".into());
                     };
                     self.pos += 1;
+                    if self.skipping > 0 {
+                        continue;
+                    }
                     if arrow {
                         v = self.deref(v, 0)?;
                     }
@@ -347,6 +366,9 @@ impl<'a, 'r> Evaluator<'a, 'r> {
                     self.pos += 1;
                     let idx = self.binary(0)?;
                     self.expect("]")?;
+                    if self.skipping > 0 {
+                        continue;
+                    }
                     let i = match self.scalar(idx)? {
                         Val::Int(i) => i,
                         _ => return Err("index must be an integer".into()),
@@ -370,6 +392,7 @@ impl<'a, 'r> Evaluator<'a, 'r> {
                 self.expect(")")?;
                 Ok(v)
             }
+            Tok::Ident(_) if self.skipping > 0 => Ok(Val::Int(0)),
             Tok::Ident(name) => self.lookup(&name),
             t => Err(format!("unexpected {t:?}")),
         }

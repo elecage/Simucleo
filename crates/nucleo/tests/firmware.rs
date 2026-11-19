@@ -1273,6 +1273,11 @@ fn breakpoints_steps_call_stack_and_variables() {
     assert!(!info.condition("len != 0 && nosuch", &frame, &read).unwrap());
     assert!(info.condition("len == 0 || nosuch", &frame, &read).unwrap());
     assert!(info.condition("len == 0 && nosuch", &frame, &read).is_err());
+    // The skipped side is parsed whole, not cut short by its error.
+    assert_eq!(ev("0 && KEYS[9] + 1").unwrap(), "0");
+    assert_eq!(ev("1 || KEYS[9][0] * (nosuch->x + 2)").unwrap(), "1");
+    assert_eq!(ev("(0 && nosuch) + 5").unwrap(), "5");
+    assert!(ev("0 && (1 +").is_err(), "syntax errors still count");
     drop(info);
 
     // A breakpoint inside the timer interrupt shows the interrupted code.
@@ -1347,6 +1352,21 @@ fn breakpoints_steps_call_stack_and_variables() {
         "{r:?}"
     );
     assert!(board.evaluate("nosuch", 0).is_err());
+    // Two conditions at one address: it stops when either holds.
+    board.set_conditional_breakpoints(&[
+        (cb, Some("current == 1".into())),
+        (cb, Some("current == 3".into())),
+    ]);
+    let mut seen = Vec::new();
+    for _ in 0..4 {
+        let r = board.run_for_ns_debug(10e6);
+        assert!(
+            matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_)),
+            "{r:?}"
+        );
+        seen.push(board.evaluate("current", 0).unwrap().value);
+    }
+    assert_eq!(seen, ["1", "3", "1", "3"]);
     // An unconditional breakpoint at the same address wins.
     board.set_conditional_breakpoints(&[(cb, Some("current > 3".into())), (cb, None)]);
     let r = board.run_for_ns_debug(5e6);

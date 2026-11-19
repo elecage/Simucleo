@@ -47,8 +47,9 @@ pub(crate) struct DebugState {
     pub info: std::cell::OnceCell<Option<std::rc::Rc<DebugInfo>>>,
     /// User breakpoint addresses.
     pub breakpoints: BTreeSet<u32>,
-    /// Conditions of conditional breakpoints, by address.
-    pub conditions: HashMap<u32, String>,
+    /// Conditions of conditional breakpoints, by address (several
+    /// breakpoints may share one: it stops when any condition holds).
+    pub conditions: HashMap<u32, Vec<String>>,
 }
 
 impl DebugState {
@@ -108,7 +109,8 @@ impl Nucleo {
                 self.debug
                     .conditions
                     .entry(a)
-                    .or_insert_with(|| c.to_string());
+                    .or_default()
+                    .push(c.to_string());
             }
         }
     }
@@ -127,7 +129,7 @@ impl Nucleo {
     /// has no condition, its condition holds, or the condition cannot be
     /// evaluated (stopping shows the user why).
     pub fn breakpoint_stops(&self, addr: u32) -> bool {
-        let Some(cond) = self.debug.conditions.get(&(addr & !1)) else {
+        let Some(conds) = self.debug.conditions.get(&(addr & !1)) else {
             return true;
         };
         let Some(info) = self.debug.get() else {
@@ -138,7 +140,9 @@ impl Nucleo {
             return true;
         };
         let read = |a: u32, n: usize| self.read_mem(a, n);
-        info.condition(cond, f, &read).unwrap_or(true)
+        conds
+            .iter()
+            .any(|c| info.condition(c, f, &read).unwrap_or(true))
     }
 
     /// `run_for_ns` that goes on past conditional breakpoints whose

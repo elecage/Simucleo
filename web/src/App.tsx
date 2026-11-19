@@ -95,6 +95,12 @@ export function App() {
   const [projectName, setProjectName] = useState("새 프로젝트");
   const [notice, setNotice] = useState<string | null>(null);
   const [fitKey, setFitKey] = useState(0);
+  // The editor fits the circuit into its viewport: not while hidden (it has
+  // no size then), so a fit asked for meanwhile waits for the board view.
+  const [shownFitKey, setShownFitKey] = useState(0);
+  useEffect(() => {
+    if (view === "board") setShownFitKey(fitKey);
+  }, [view, fitKey]);
   /** Centre of the visible canvas, in grid units: where new parts go. */
   const viewCenter = useRef({ x: 60, y: 30 });
   const [reveal, setReveal] = useState<{ id: string; seq: number } | undefined>();
@@ -405,7 +411,7 @@ export function App() {
             }
             visuals={visuals}
             onPartAction={onPartAction}
-            fitKey={fitKey}
+            fitKey={shownFitKey}
             onViewCenter={(p) => (viewCenter.current = p)}
             reveal={reveal}
             onAddWire={(a, b, points) =>

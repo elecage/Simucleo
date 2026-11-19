@@ -91,3 +91,47 @@ test("LED and switch symbols; the LED glows while lit", async ({ page }) => {
   await expect(sch.locator("[data-part=led1] .sym-glow")).toHaveCount(1, { timeout: 5000 });
   await expect(page.getByTestId("console-output")).toContainText("D2");
 });
+
+test("a wire between two pins of one part is shown", async ({ page }) => {
+  // A resistor shorted by a wire, and a jumper between D13 (PA5) and D12 (PA6).
+  const project = {
+    format: "simucleo-project",
+    version: 1,
+    name: "shorts",
+    parts: [
+      { id: "nucleo", kind: "nucleo-f401re", x: 4, y: 2, props: {} },
+      { id: "r1", kind: "resistor", x: 50, y: 10, props: { ohms: "1k" } },
+    ],
+    wires: [
+      { id: "w1", a: { part: "r1", pin: "1" }, b: { part: "r1", pin: "2" }, color: "#e53935" },
+      { id: "w2", a: { part: "nucleo", pin: "D13" }, b: { part: "nucleo", pin: "D12" }, color: "#1e88e5" },
+    ],
+  };
+  await page.getByTestId("project-input").setInputFiles({
+    name: "shorts.simucleo.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await page.getByRole("group", { name: "보기" }).getByRole("button", { name: "회로도" }).click();
+  const sch = page.locator("svg.schematic");
+  // Both resistor ends carry the same net label; no "not connected" marks.
+  await expect(sch.locator("[data-part=r1] .net-end[data-net=N1]")).toHaveCount(2);
+  await expect(sch.locator("[data-part=r1] .sym-nc")).toHaveCount(0);
+  // The jumper: PA5 and PA6 on one net.
+  await expect(sch.locator("[data-part=nucleo] .net-end[data-net='PA5/PA6']")).toHaveCount(2);
+});
+
+test("loading while the schematic shows fits the breadboard once it is back", async ({ page }) => {
+  // The framing a load gives in the breadboard view…
+  await page.getByLabel("예제 펌웨어").selectOption("hal-adc-servo.elf");
+  await expect(status(page)).toContainText("hal-adc-servo");
+  const fitted = await page.getByTestId("zoom-level").textContent();
+  // …and the same load made while the schematic is on screen.
+  await page.goto("/");
+  await expect(status(page)).toContainText("예제를");
+  await page.getByRole("group", { name: "보기" }).getByRole("button", { name: "회로도" }).click();
+  await page.getByLabel("예제 펌웨어").selectOption("hal-adc-servo.elf");
+  await expect(status(page)).toContainText("hal-adc-servo");
+  await page.getByRole("group", { name: "보기" }).getByRole("button", { name: "브레드보드" }).click();
+  await expect(page.getByTestId("zoom-level")).toHaveText(fitted!);
+});

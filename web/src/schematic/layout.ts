@@ -95,11 +95,18 @@ const TWO_TERMINALS: Record<string, [string[], string[]]> = {
 
 export function buildSchematic(project: Project, netlist: Netlist): Schematic {
   const kindOf = new Map(project.parts.map((p) => [p.id, p.kind]));
-  // Nets that join two or more parts (the breadboard does not count).
+  // Nets that connect something (the breadboard does not count): pins of
+  // two parts, or two pins of one part that are not joined inside it (a
+  // wire shorting a resistor, a jumper between two MCU signals).
+  const terminal = (p: PinRef) => {
+    const def = PART_BY_KIND[kindOf.get(p.part) ?? ""];
+    const bus = def?.buses?.findIndex((b) => b.includes(p.pin)) ?? -1;
+    return bus >= 0 ? `${p.part}#${bus}` : pinKey(p);
+  };
   const netOfPin = new Map<string, number>();
   const real = netlist.nets
     .map((n) => n.pins.filter((p) => !isMechanical(kindOf.get(p.part) ?? "")))
-    .filter((pins) => new Set(pins.map((p) => p.part)).size >= 2);
+    .filter((pins) => new Set(pins.map(terminal)).size >= 2);
   real.forEach((pins, i) => pins.forEach((p) => netOfPin.set(pinKey(p), i)));
 
   // Name each net: by the MCU signal on it, else N1, N2, ….

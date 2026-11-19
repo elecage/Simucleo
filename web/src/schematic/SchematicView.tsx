@@ -248,6 +248,7 @@ export function SchematicView({
   onAllPins,
   onConnect,
   onDisconnect,
+  marks,
 }: {
   schematic: Schematic;
   pins?: PinFrame[];
@@ -264,6 +265,8 @@ export function SchematicView({
   onConnect?: (a: SchEnd, b: SchEnd) => void;
   /** Remove the wires on a pin. */
   onDisconnect?: (end: SchEnd) => void;
+  /** Pins (`part:pin`) of wiring checks that failed at grading (M24). */
+  marks?: Set<string>;
 }) {
   const [hover, setHover] = useState<string | null>(null);
   const [pinned, setPinned] = useState<string | null>(null);
@@ -418,6 +421,11 @@ export function SchematicView({
         <label className="all-pins" title="쓰지 않는 MCU 핀과 전원 핀(3V3, 5V, GND, …)도 보여, 그 핀에 배선할 수 있습니다">
           <input type="checkbox" checked={allPins} onChange={(e) => onAllPins?.(e.target.checked)} /> 모든 MCU 핀
         </label>
+        {!!marks?.size && (
+          <span className="sch-marks" data-testid="sch-marks">
+            🔴 채점: 틀린 배선 검사의 핀·넷
+          </span>
+        )}
         {selEnd && (
           <span className="pin-selection" data-testid="pin-selection">
             선택: <b>{selEnd.label}</b>
@@ -478,8 +486,15 @@ export function SchematicView({
                   const level = levelOf(n, pins);
                   const key = endKey(s.part, p.ids);
                   const end = ends.find((x) => x.key === key)!;
+                  const marked = !!marks && p.ids.some((id) => marks.has(`${s.part}:${id}`));
                   return (
-                    <g key={i} className="sym-pin" data-pin={p.ids.join("/")}>
+                    <g
+                      key={i}
+                      className={marked ? "sym-pin marked" : "sym-pin"}
+                      data-pin={p.ids.join("/")}
+                      data-mark={marked ? "fail" : undefined}
+                    >
+                      {marked && <circle className="pin-mark" cx={p.x} cy={p.y} r={10} />}
                       <line className={`sym-stub${level}`} x1={edge} y1={p.y} x2={p.x} y2={p.y} />
                       {(s.shape === "box" || s.shape === "mcu") && (
                         <text

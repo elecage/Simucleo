@@ -28,6 +28,8 @@ interface Props {
   onViewCenter?: (p: Point) => void;
   /** Bring this part into view if it is not (e.g. just added). */
   reveal?: { id: string; seq: number };
+  /** Pins (`part:pin`) of wiring checks that failed at grading (M24). */
+  marks?: Set<string>;
 }
 
 type Drag =
@@ -99,6 +101,7 @@ export function Canvas({
   fitKey,
   onViewCenter,
   reveal,
+  marks,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: BASE_SCALE });
@@ -580,7 +583,9 @@ export function Canvas({
                 ? "pin snap"
                 : highlighted.has(key)
                   ? "pin hot"
-                  : "pin";
+                  : marks?.has(key)
+                    ? "pin marked"
+                    : "pin";
           return (
             <circle
               key={pin.id}

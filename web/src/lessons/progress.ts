@@ -1,5 +1,6 @@
 // Per-lesson progress (kept in IndexedDB) and the results file students
 // hand in. Pure apart from the storage helpers, which callers pass in.
+import type { IntegrityField } from "./integrity.ts";
 import type { CheckResult } from "./types.ts";
 
 export interface CheckRecord {
@@ -64,9 +65,13 @@ export interface ResultsFile {
   version: 1;
   student: string;
   exportedAt: string;
+  /** SHA-256 of the rest of the file (M24; older files have none). See integrity.ts. */
+  integrity?: IntegrityField;
   lessons: {
     id: string;
     title: string;
+    /** Step titles (M24; for the teacher view's column headers). */
+    steps?: string[];
     startedAt: string;
     completedAt: string | null;
     attempts: number;
@@ -76,7 +81,13 @@ export interface ResultsFile {
   }[];
 }
 
-export function resultsJson(progress: Progress, student: string, now: string, order: string[] = []): ResultsFile {
+export function resultsJson(
+  progress: Progress,
+  student: string,
+  now: string,
+  order: string[] = [],
+  stepTitles: Record<string, string[]> = {},
+): ResultsFile {
   const ids = Object.keys(progress).sort((a, b) => (order.indexOf(a) - order.indexOf(b)) || a.localeCompare(b));
   return {
     format: "simucleo-lesson-results",
@@ -91,6 +102,7 @@ export function resultsJson(progress: Progress, student: string, now: string, or
       return {
         id,
         title: p.title,
+        ...(stepTitles[id] ? { steps: stepTitles[id] } : {}),
         startedAt: p.startedAt,
         completedAt: p.completedAt ?? null,
         attempts: p.attempts,

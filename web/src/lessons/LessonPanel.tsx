@@ -9,8 +9,12 @@ import { nucleoSignal } from "../parts/nucleo";
 import type { Netlist } from "../sim/simulator";
 import type { Runner } from "../sim/useRunner";
 import { behaviourLabel, evaluateBehaviour, gradeMs, probedPins, Recording } from "./behaviour";
-import { LESSONS } from "./index";
+import { involved, type Involved } from "./fromWiring";
+import { LESSONS, type LessonEntry } from "./index";
+import { seal } from "./integrity";
 import { Markdown } from "./Markdown";
+import { PREVIEW_ID } from "./mine";
+import { parseLesson, validateLesson } from "./validate";
 import {
   ACTIVE_KEY,
   checkKey,
@@ -47,12 +51,41 @@ interface Props {
   onRestoreBackup?: () => void;
   hasBackup: boolean;
   onClose(): void;
+  /** "내 레슨" (M24). */
+  myLessons?: Lesson[];
+  onSaveMine?: (lessons: Lesson[]) => void;
+  onRemoveMine?: (id: string) => void;
+  /** Open the lesson editor: on a copy of a lesson, or on the current draft. */
+  onEdit?: (lesson: Lesson | null) => void;
+  /** Open the teacher's results view. */
+  onTeacher?: () => void;
+  /** The editor's lesson, run on the current project ("미리 보기"). */
+  preview?: { lesson: Lesson; seq: number } | null;
+  /** Wiring checks that failed at the last grading, for the schematic. */
+  onMarks?: (marks: Involved[] | null) => void;
 }
 
 const now = () => new Date().toISOString();
 const fmtTime = (iso: string) => new Date(iso).toLocaleString("ko-KR");
+const KINDS = new Set(Object.keys(PART_BY_KIND));
 
-export function LessonPanel({ runner, project, netlist, onStart, onSetProp, onRestoreBackup, hasBackup, onClose }: Props) {
+export function LessonPanel({
+  runner,
+  project,
+  netlist,
+  onStart,
+  onSetProp,
+  onRestoreBackup,
+  hasBackup,
+  onClose,
+  myLessons = [],
+  onSaveMine,
+  onRemoveMine,
+  onEdit,
+  onTeacher,
+  preview,
+  onMarks,
+}: Props) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress>({});
   const [student, setStudent] = useState("");
@@ -65,7 +98,8 @@ export function LessonPanel({ runner, project, netlist, onStart, onSetProp, onRe
     void Promise.all([idbGet<Progress>(PROGRESS_KEY), idbGet<string>(STUDENT_KEY), idbGet<string>(ACTIVE_KEY)]).then(([p, s, a]) => {
       setProgress(p ?? {});
       setStudent(s ?? "");
-      if (a && LESSONS.some((e) => e.lesson.id === a)) setActiveId(a);
+      // "내 레슨" may still be loading: an id not found just shows the list.
+      if (a && a !== PREVIEW_ID) setActiveId(a);
       setLoaded(true);
     });
   }, []);
@@ -76,12 +110,32 @@ export function LessonPanel({ runner, project, netlist, onStart, onSetProp, onRe
     if (loaded) void idbSet(STUDENT_KEY, student);
   }, [student, loaded]);
   useEffect(() => {
-    if (loaded) void idbSet(ACTIVE_KEY, activeId ?? "");
+    if (loaded) void idbSet(ACTIVE_KEY, activeId && activeId !== PREVIEW_ID ? activeId : "");
   }, [activeId, loaded]);
   // Stop a grading run when the panel goes away.
   useEffect(() => () => cancelGrade.current?.(), []);
 
-  const lesson = LESSONS.find((e) => e.lesson.id === activeId)?.lesson ?? null;
+  // Bundled lessons, then "내 레슨" (an id of a bundled one is an error), then the preview.
+  const mineEntries: LessonEntry[] = useMemo(
+    () =>
+      myLessons.map((l) => ({
+        lesson: l,
+        errors: [
+          ...validateLesson(l, KINDS),
+          ...(LESSONS.some((e) => e.lesson.id === l.id) ? [`id '${l.id}'가 기본 실습과 같습니다`] : []),
+        ],
+      })),
+    [myLessons],
+  );
+  const previewLesson = useMemo(
+    () => (preview ? { ...preview.lesson, id: PREVIEW_ID, title: `(미리 보기) ${preview.lesson.title}` } : null),
+    [preview],
+  );
+  const all = useMemo(
+    () => [...LESSONS, ...mineEntries, ...(previewLesson ? [{ lesson: previewLesson, errors: [] }] : [])],
+    [mineEntries, previewLesson],
+  );
+  const lesson = all.find((e) => e.lesson.id === activeId)?.lesson ?? null;
   const mine = lesson ? progress[lesson.id] : undefined;
 
   // ------------------------------------------------------ live wiring checks
@@ -147,12 +201,47 @@ export function LessonPanel({ runner, project, netlist, onStart, onSetProp, onRe
     if (!(await onStart(l))) return;
     setActiveId(l.id);
     setMessage(null);
+    setMarksOn(false);
     // Starting over clears the last results (attempts and the first completion stay).
     setProgress((all) => ({
       ...all,
       [l.id]: all[l.id] ? { ...all[l.id], checks: {} } : { id: l.id, title: l.title, startedAt: now(), attempts: 0, checks: {} },
     }));
   };
+
+  // The editor's "미리 보기": the lesson on the project as it is (no start circuit).
+  useEffect(() => {
+    if (!preview || !loaded) return;
+    setActiveId(PREVIEW_ID);
+    setMessage(null);
+    setProgress((all) => ({
+      ...all,
+      [PREVIEW_ID]: { id: PREVIEW_ID, title: preview.lesson.title, startedAt: now(), attempts: 0, checks: {} },
+    }));
+  }, [preview, loaded]);
+
+  // ------------------------------------------- grading marks (M24)
+  // After "채점", the wiring checks that fail mark their pins and nets on
+  // the schematic (and breadboard) until they pass or another lesson opens.
+  const [marksOn, setMarksOn] = useState(false);
+  useEffect(() => setMarksOn(false), [activeId]);
+  const marks = useMemo(() => {
+    if (!marksOn || !lesson) return null;
+    const out: Involved[] = [];
+    lesson.steps.forEach((s, i) =>
+      s.checks.forEach((c, j) => {
+        if (!isWiring(c) || live.find((l) => l.key === checkKey(i, j))?.result.pass !== false) return;
+        const inv = involved(c, ctx);
+        if (inv.pins.length || inv.signals.length) out.push(inv);
+      }),
+    );
+    return out.length ? out : null;
+  }, [marksOn, lesson, live, ctx]);
+  const marksKey = JSON.stringify(marks);
+  const onMarksRef = useRef(onMarks);
+  onMarksRef.current = onMarks;
+  useEffect(() => onMarksRef.current?.(marksKey === "null" ? null : (JSON.parse(marksKey) as Involved[])), [marksKey]);
+  useEffect(() => () => onMarksRef.current?.(null), []);
 
   // ------------------------------------------------------------- grading
   const grade = () => {
@@ -212,6 +301,7 @@ export function LessonPanel({ runner, project, netlist, onStart, onSetProp, onRe
       const t = now();
       update(lesson.id, (p) => ({ ...record(p, results, t), gradedAt: t, attempts: p.attempts + 1 }));
       setGrading(null);
+      setMarksOn(true);
     };
     const unsubscribe = runner.onFrame((e) => {
       if (e.epoch !== epoch || finished) return;
@@ -241,12 +331,82 @@ export function LessonPanel({ runner, project, netlist, onStart, onSetProp, onRe
   };
 
   // -------------------------------------------------------------- export
-  const exportResults = (kind: "json" | "csv") => {
-    const order = LESSONS.map((e) => e.lesson.id);
-    const file = resultsJson(progress, student.trim(), now(), order);
+  const exportResults = async (kind: "json" | "csv") => {
+    const order = all.map((e) => e.lesson.id);
+    // Not the editor's preview runs.
+    const handedIn = Object.fromEntries(Object.entries(progress).filter(([id]) => id !== PREVIEW_ID));
+    const titles = Object.fromEntries(all.map((e) => [e.lesson.id, e.lesson.steps.map((s) => s.title)]));
+    const file = resultsJson(handedIn, student.trim(), now(), order, titles);
     const base = `lesson-results_${student.trim().replace(/[^\p{L}\p{N}.-]+/gu, "_") || "noname"}`;
-    if (kind === "json") download(`${base}.json`, new Blob([JSON.stringify(file, null, 2) + "\n"], { type: "application/json" }));
-    else download(`${base}.csv`, new Blob([resultsCsv(file)], { type: "text/csv" }));
+    if (kind === "json") {
+      // With a SHA-256 of its content: the teacher view flags casual edits (M24).
+      const sealed = await seal(file);
+      download(`${base}.json`, new Blob([JSON.stringify(sealed, null, 2) + "\n"], { type: "application/json" }));
+    } else download(`${base}.csv`, new Blob([resultsCsv(file)], { type: "text/csv" }));
+  };
+
+  // ------------------------------------------------------- my lessons
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const importLessons = async (files: File[]) => {
+    const ok: Lesson[] = [];
+    const errors: string[] = [];
+    for (const f of files) {
+      const r = parseLesson(await f.text(), KINDS);
+      if (r.lesson && LESSONS.some((e) => e.lesson.id === r.lesson!.id)) errors.push(`${f.name}: id '${r.lesson.id}'가 기본 실습과 같습니다`);
+      else if (r.lesson) ok.push(r.lesson);
+      else errors.push(`${f.name}: ${r.errors.join("; ")}`);
+    }
+    if (ok.length) onSaveMine?.(ok);
+    setImportErrors(errors);
+  };
+
+  const lessonItem = ({ lesson: l, errors }: LessonEntry, mineList: boolean) => {
+    const p = progress[l.id];
+    return (
+      <li key={l.id} data-lesson={l.id}>
+        <div>
+          <b>{l.title}</b> <span className="lesson-level">{l.level}</span>
+          {p?.completedAt && <span title={`완료 ${fmtTime(p.completedAt)}`}> ✅</span>}
+        </div>
+        <div className="hint">{l.goal}</div>
+        {errors.length ? (
+          <div className="error">레슨 파일 오류: {errors.join("; ")}</div>
+        ) : (
+          <div className="lesson-actions">
+            {p ? (
+              <>
+                <button onClick={() => (setActiveId(l.id), setMessage(null))} title="지금 회로 그대로 이어서 합니다">
+                  이어서 하기
+                </button>{" "}
+                <button onClick={() => void start(l)} title="시작 회로와 펌웨어를 다시 불러옵니다">
+                  처음부터
+                </button>
+              </>
+            ) : (
+              <button onClick={() => void start(l)}>시작</button>
+            )}
+          </div>
+        )}
+        {(onEdit || (mineList && onRemoveMine)) && (
+          <div className="lesson-actions">
+            {onEdit && (
+              <button className="small" onClick={() => onEdit(mineList ? l : { ...l, id: `${l.id}-copy`, title: `${l.title} (복사본)` })}>
+                {mineList ? "편집" : "복사해서 편집"}
+              </button>
+            )}{" "}
+            {mineList && onRemoveMine && (
+              <button
+                className="small"
+                onClick={() => window.confirm(`'${l.title}'을(를) 내 레슨에서 지울까요?`) && onRemoveMine(l.id)}
+                aria-label={`${l.title} 삭제`}
+              >
+                삭제
+              </button>
+            )}
+          </div>
+        )}
+      </li>
+    );
   };
 
   const studentRow = (
@@ -256,10 +416,10 @@ export function LessonPanel({ runner, project, netlist, onStart, onSetProp, onRe
         <input value={student} onChange={(e) => setStudent(e.target.value)} placeholder="학번 이름" aria-label="학생 이름" />
       </label>
       <div>
-        <button onClick={() => exportResults("csv")} title="실습별 검사 결과를 CSV로 저장 (선생님께 제출)">
+        <button onClick={() => void exportResults("csv")} title="실습별 검사 결과를 CSV로 저장 (선생님께 제출)">
           결과 내보내기 (CSV)
         </button>{" "}
-        <button onClick={() => exportResults("json")} title="같은 내용을 JSON으로 저장">
+        <button onClick={() => void exportResults("json")} title="같은 내용을 JSON으로 저장 (변조 확인용 해시 포함, 선생님용 모아보기에 권장)">
           JSON
         </button>
       </div>
@@ -283,38 +443,44 @@ export function LessonPanel({ runner, project, netlist, onStart, onSetProp, onRe
       {!lesson ? (
         <>
           <p className="hint">실습을 고르면 시작 회로와 펌웨어를 불러옵니다. 배선 검사는 바로바로, 동작 검사는 '채점'으로 확인합니다.</p>
-          <ol className="lesson-list">
-            {LESSONS.map(({ lesson: l, errors }) => {
-              const p = progress[l.id];
-              return (
-                <li key={l.id} data-lesson={l.id}>
-                  <div>
-                    <b>{l.title}</b> <span className="lesson-level">{l.level}</span>
-                    {p?.completedAt && <span title={`완료 ${fmtTime(p.completedAt)}`}> ✅</span>}
-                  </div>
-                  <div className="hint">{l.goal}</div>
-                  {errors.length ? (
-                    <div className="error">레슨 파일 오류: {errors.join("; ")}</div>
-                  ) : (
-                    <div className="lesson-actions">
-                      {p ? (
-                        <>
-                          <button onClick={() => (setActiveId(l.id), setMessage(null))} title="지금 회로 그대로 이어서 합니다">
-                            이어서 하기
-                          </button>{" "}
-                          <button onClick={() => void start(l)} title="시작 회로와 펌웨어를 다시 불러옵니다">
-                            처음부터
-                          </button>
-                        </>
-                      ) : (
-                        <button onClick={() => void start(l)}>시작</button>
-                      )}
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
+          <ol className="lesson-list">{LESSONS.map((e) => lessonItem(e, false))}</ol>
+          <section className="lesson-mine" aria-label="내 레슨">
+            <h3>내 레슨</h3>
+            {mineEntries.length ? (
+              <ol className="lesson-list">{mineEntries.map((e) => lessonItem(e, true))}</ol>
+            ) : (
+              <p className="hint">레슨 편집기로 만들거나 레슨 파일(JSON)을 불러오면 여기에 나옵니다. 이 브라우저에만 저장됩니다.</p>
+            )}
+            <div className="lesson-actions">
+              {onEdit && <button onClick={() => onEdit(null)}>✏️ 레슨 편집기</button>}{" "}
+              <label className="file-btn small" title="레슨 JSON 파일을 내 레슨에 추가합니다">
+                레슨 파일 불러오기
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  multiple
+                  hidden
+                  data-testid="lesson-import"
+                  onChange={(e) => {
+                    void importLessons([...(e.target.files ?? [])]);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
+            {importErrors.map((e) => (
+              <div key={e} className="error" role="alert">
+                {e}
+              </div>
+            ))}
+          </section>
+          {onTeacher && (
+            <p>
+              <button onClick={onTeacher} title="여러 학생의 결과 파일을 한 표로 모아 봅니다 (파일은 이 브라우저 밖으로 나가지 않습니다)">
+                👩‍🏫 선생님용 결과 모아보기
+              </button>
+            </p>
+          )}
           {hasBackup && onRestoreBackup && (
             <p>
               <button onClick={onRestoreBackup} title="실습을 시작하기 전에 열려 있던 프로젝트">
@@ -327,6 +493,12 @@ export function LessonPanel({ runner, project, netlist, onStart, onSetProp, onRe
       ) : (
         <>
           <h2 className="lesson-title">{lesson.title}</h2>
+          {lesson.id === PREVIEW_ID && (
+            <div className="lesson-preview" data-testid="lesson-preview">
+              편집 중인 레슨을 <b>지금 회로와 펌웨어</b>로 실행합니다 (시작 회로는 불러오지 않음).{" "}
+              {onEdit && <button onClick={() => onEdit(null)}>편집기로 돌아가기</button>}
+            </div>
+          )}
           <p className="hint">
             <span className="lesson-level">{lesson.level}</span> {lesson.goal}
           </p>
@@ -404,6 +576,11 @@ export function LessonPanel({ runner, project, netlist, onStart, onSetProp, onRe
             {message && (
               <div className="error" role="alert">
                 {message}
+              </div>
+            )}
+            {marks && !grading && (
+              <div className="hint lesson-marks" data-testid="lesson-marks">
+                🔴 틀린 배선 검사 {marks.length}개와 관련된 핀·넷을 회로도와 브레드보드에 빨갛게 표시했습니다.
               </div>
             )}
           </div>

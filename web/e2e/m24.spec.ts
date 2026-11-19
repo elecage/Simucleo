@@ -1,0 +1,274 @@
+import { expect, test, type Browser, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+
+// M24 classroom features: the teacher's results view (results exported by
+// two students in their own browsers, one file edited afterwards), the
+// lesson editor (checks generated from the circuit, saved to "내 레슨",
+// started again after a reload and graded), and grading marks on the
+// schematic for failed wiring checks.
+
+const status = (page: Page) => page.getByTestId("run-status");
+const panel = (page: Page) => page.getByRole("complementary", { name: "실습" });
+const check = (page: Page, key: string) => panel(page).locator(`[data-check="${key}"]`);
+const teacher = (page: Page) => page.getByRole("dialog", { name: "선생님용 결과 모아보기" });
+const editor = (page: Page) => page.getByRole("dialog", { name: "레슨 편집기" });
+
+const board = { id: "nucleo", kind: "nucleo-f401re", x: 4, y: 2, props: {} };
+const led = { id: "myLed", kind: "led-5mm", x: 46, y: 9, props: { color: "red" } };
+const res = { id: "R7", kind: "resistor", x: 46, y: 20, props: { ohms: "220" } };
+/** D13 → R7 → LED → GND: lesson 1 wired right. */
+const RIGHT = {
+  parts: [board, led, res],
+  wires: [
+    { id: "w1", a: { part: "nucleo", pin: "D13" }, b: { part: "R7", pin: "1" } },
+    { id: "w2", a: { part: "R7", pin: "2" }, b: { part: "myLed", pin: "A" } },
+    { id: "w3", a: { part: "myLed", pin: "K" }, b: { part: "nucleo", pin: "GND_D" } },
+  ],
+};
+/** The same chain on D12 (PA6). */
+const WRONG_PIN = { ...RIGHT, wires: RIGHT.wires.map((w) => (w.id === "w1" ? { ...w, a: { part: "nucleo", pin: "D12" } } : w)) };
+/** No resistor: D13 → LED → GND. */
+const NO_RESISTOR = {
+  parts: [board, led],
+  wires: [
+    { id: "w1", a: { part: "nucleo", pin: "D13" }, b: { part: "myLed", pin: "A" } },
+    { id: "w2", a: { part: "myLed", pin: "K" }, b: { part: "nucleo", pin: "GND_D" } },
+  ],
+};
+
+async function ready(page: Page) {
+  await page.goto("/");
+  await expect(status(page)).toContainText("예제를");
+}
+
+async function openProject(page: Page, project: object) {
+  await page.getByTestId("project-input").setInputFiles({
+    name: "p.simucleo.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify({ format: "simucleo-project", version: 1, ...project })),
+  });
+}
+
+async function startLesson(page: Page, id: string) {
+  await page.getByRole("button", { name: "📝 실습" }).click();
+  await panel(page).locator(`[data-lesson="${id}"]`).getByRole("button", { name: "시작" }).click();
+  await expect(panel(page).locator(".lesson-title")).toBeVisible();
+}
+
+async function grade(page: Page) {
+  await panel(page).getByRole("button", { name: "채점", exact: true }).click();
+  await expect(panel(page).getByTestId("grade-progress")).toBeVisible();
+  await expect(panel(page).getByTestId("grade-progress")).toHaveCount(0, { timeout: 30_000 });
+}
+
+/** The JSON results file of the student in `page`, through the real export button. */
+async function exportJson(page: Page, student: string): Promise<{ name: string; text: string }> {
+  await panel(page).getByRole("button", { name: "← 목록" }).click();
+  await panel(page).getByLabel("학생 이름").fill(student);
+  const dl = page.waitForEvent("download");
+  await panel(page).getByRole("button", { name: "JSON", exact: true }).click();
+  const d = await dl;
+  return { name: d.suggestedFilename(), text: readFileSync((await d.path())!, "utf8") };
+}
+
+/** A student in a browser of their own. */
+async function student(browser: Browser, name: string, project: object, graded: boolean) {
+  const context = await browser.newContext({ baseURL: test.info().project.use.baseURL, viewport: { width: 1400, height: 820 } });
+  const page = await context.newPage();
+  await ready(page);
+  await startLesson(page, "led-blink");
+  await openProject(page, project);
+  if (graded) {
+    await expect(check(page, "1.0")).toHaveAttribute("data-status", "pass");
+    await grade(page);
+    await expect(panel(page).getByTestId("lesson-complete")).toBeVisible();
+  } else {
+    await expect(check(page, "0.1")).toHaveAttribute("data-status", "fail");
+  }
+  const file = await exportJson(page, name);
+  await context.close();
+  return file;
+}
+
+const asFile = (name: string, text: string) => ({ name, mimeType: "application/json", buffer: Buffer.from(text) });
+const row = (page: Page, name: string) => teacher(page).locator(`tbody tr[data-student="${name}"]`);
+
+test("teacher view: two students' exports in one table, pass rates, duplicates, a tampered and an old file", async ({ page, browser }) => {
+  test.setTimeout(90_000);
+  const kim = await student(browser, "kim 01", RIGHT, true);
+  const park = await student(browser, "park 02", NO_RESISTOR, false);
+  expect(kim.name).toBe("lesson-results_kim_01.json");
+  expect(JSON.parse(kim.text).integrity.hash).toMatch(/^[0-9a-f]{64}$/);
+
+  await ready(page);
+  await page.getByRole("button", { name: "📝 실습" }).click();
+  await panel(page).getByRole("button", { name: "👩‍🏫 선생님용 결과 모아보기" }).click();
+  await teacher(page).getByTestId("teacher-input").setInputFiles([asFile(kim.name, kim.text), asFile(park.name, park.text)]);
+
+  const table = teacher(page).getByTestId("teacher-table");
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  await expect(table.locator("thead")).toContainText("LED 깜빡이 배선");
+  await expect(table.locator("thead")).toContainText("2. D13 → 저항 → LED → GND");
+  // kim did everything; park placed only the LED and wired it without a resistor.
+  await expect(row(page, "kim 01").locator('[data-cell="led-blink:score"]')).toContainText("✅ 100% (7/7)");
+  await expect(row(page, "kim 01").locator('[data-cell="led-blink:time"]')).not.toContainText("미완료");
+  await expect(row(page, "park 02").locator('[data-cell="led-blink:0"]')).toHaveAttribute("data-status", "partial");
+  await expect(row(page, "park 02").locator('[data-cell="led-blink:1"]')).toHaveAttribute("data-status", "fail");
+  await expect(row(page, "park 02").locator('[data-cell="led-blink:time"]')).toContainText("미완료");
+  for (const r of ["kim 01", "park 02"]) await expect(row(page, r).getByTestId("row-integrity")).toHaveAttribute("data-integrity", "verified");
+  const rates = teacher(page).getByTestId("pass-rates");
+  await expect(rates.locator("td").nth(1)).toHaveText("50% (1/2)"); // completed
+  await expect(rates.locator('[data-rate="led-blink:0"]')).toHaveText("50%");
+  await expect(rates.locator('[data-rate="led-blink:1"]')).toHaveText("50%");
+
+  // Sorting by score: highest first, then the other way round.
+  await table.getByRole("columnheader", { name: "점수" }).click();
+  await expect(table.locator("tbody tr").first()).toHaveAttribute("data-student", "kim 01");
+  await table.getByRole("columnheader", { name: /점수/ }).click();
+  await expect(table.locator("tbody tr").first()).toHaveAttribute("data-student", "park 02");
+  await teacher(page).getByLabel("학생 검색").fill("park");
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  await teacher(page).getByLabel("학생 검색").fill("");
+
+  // park "fixes" the file by hand (same export time: it replaces the original),
+  // and an old copy of kim's file without the hash turns up.
+  const edited = JSON.parse(park.text);
+  for (const c of edited.lessons[0].checks) c.pass = true;
+  const old = JSON.parse(kim.text);
+  delete old.integrity;
+  old.exportedAt = "2020-01-01T00:00:00.000Z";
+  await teacher(page)
+    .getByTestId("teacher-input")
+    .setInputFiles([asFile("park-edited.json", JSON.stringify(edited, null, 2)), asFile("kim-old.json", JSON.stringify(old))]);
+  await expect(teacher(page).getByTestId("teacher-file")).toHaveCount(4);
+  await expect(teacher(page).locator('[data-testid=teacher-file][data-integrity="tampered"]')).toContainText("park-edited.json");
+  await expect(teacher(page).locator('[data-testid=teacher-file][data-integrity="unverified"]')).toContainText("검증 안 됨");
+  await expect(teacher(page).getByTestId("teacher-duplicates").locator("li")).toHaveCount(2);
+  await expect(teacher(page).getByTestId("teacher-duplicates")).toContainText("kim 01 · led-blink — " + kim.name + " 사용, kim-old.json 무시");
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  await expect(row(page, "park 02").getByTestId("row-integrity")).toHaveAttribute("data-integrity", "tampered");
+  await expect(row(page, "park 02").getByTestId("row-integrity")).toContainText("변조됨");
+  await expect(row(page, "kim 01").getByTestId("row-integrity")).toHaveAttribute("data-integrity", "verified");
+  await teacher(page).getByLabel("변조 의심만").check();
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  await teacher(page).getByLabel("변조 의심만").uncheck();
+
+  const dl = page.waitForEvent("download");
+  await teacher(page).getByRole("button", { name: "표 CSV로 내보내기" }).click();
+  const csv = readFileSync((await (await dl).path())!, "utf8");
+  expect(csv).toMatch(/^﻿student,integrity,files,LED 깜빡이 배선 점수/);
+  expect(csv).toMatch(/\r\nkim 01,검증됨,lesson-results_kim_01\.json,100,7\/7,yes,\d+,1,pass,pass,pass\r\n/);
+  expect(csv).toMatch(/\r\npark 02,변조됨,park-edited\.json,100,/);
+  expect(csv).toContain("통과율");
+});
+
+test("lesson editor: checks from the current wiring, saved to 내 레슨, started after a reload and graded", async ({ page }) => {
+  test.setTimeout(60_000);
+  await ready(page);
+  await openProject(page, RIGHT);
+  await expect(page.locator('[data-id="R7"]')).toHaveCount(1);
+  await page.getByRole("button", { name: "📝 실습" }).click();
+  await panel(page).getByRole("button", { name: "✏️ 레슨 편집기" }).click();
+  const ed = editor(page);
+  await expect(ed.getByTestId("editor-errors")).toContainText("'goal'가 없습니다");
+  await ed.getByLabel("레슨 id").fill("led-blink");
+  await expect(ed.getByTestId("editor-errors")).toContainText("기본 실습의 id");
+  await ed.getByLabel("레슨 id").fill("my-blink");
+  await ed.getByLabel("레슨 제목").fill("내 LED 실습");
+  await ed.getByLabel("목표").fill("D13에 저항과 LED를 달고 1초 주기로 깜빡입니다.");
+  await ed.getByLabel("시작 회로").selectOption("project");
+  await expect(ed).toContainText("부품 3개 · 와이어 3개");
+  await ed.getByLabel("펌웨어").selectOption("hal-blinky.elf");
+  await ed.getByLabel("단계 1 제목").fill("배선하고 채점");
+
+  await ed.getByRole("button", { name: "현재 배선에서 검사 만들기" }).click();
+  await expect(ed.getByTestId("editor-note")).toContainText("배선 검사 3개");
+  await expect(ed.locator(".editor-check")).toHaveCount(3);
+  await expect(ed.locator(".editor-check").nth(2)).toHaveAttribute("data-type", "series");
+  // A behaviour check by form: the period of PA5.
+  await ed.getByRole("button", { name: "+ 검사" }).click();
+  const last = ed.locator(".editor-check").last();
+  await last.getByLabel("검사 종류").selectOption("period");
+  await expect(last.getByLabel("주기 (ms)")).toHaveValue("1000");
+  // A broken field shows up as an error, and saving waits for it.
+  await last.getByLabel("주기 (ms)").fill("");
+  await expect(ed.getByTestId("editor-errors")).toContainText("단계 1 검사 4 (period): 'ms'가 없습니다");
+  await expect(ed.getByRole("button", { name: "내 레슨에 저장" })).toBeDisabled();
+  await last.getByLabel("주기 (ms)").fill("1000");
+  await expect(ed.getByTestId("editor-errors")).toHaveText("✅ 레슨 형식이 맞습니다");
+
+  const dl = page.waitForEvent("download");
+  await ed.getByRole("button", { name: "JSON 파일로 내려받기" }).click();
+  const d = await dl;
+  expect(d.suggestedFilename()).toBe("my-blink.json");
+  const saved = JSON.parse(readFileSync((await d.path())!, "utf8"));
+  expect(saved.steps[0].checks).toEqual([
+    { type: "part", kind: "led-5mm" },
+    { type: "part", kind: "resistor" },
+    { type: "series", from: "PA5", to: "GND", through: ["resistor", "led-5mm"] },
+    { type: "period", pin: "PA5", ms: 1000, tolerance: 0.05 },
+  ]);
+  expect(saved.start.project.parts).toHaveLength(3);
+
+  // Preview on the current project: the wiring checks are already green.
+  await ed.getByRole("button", { name: "미리 보기 (현재 프로젝트로)" }).click();
+  await expect(panel(page).getByTestId("lesson-preview")).toBeVisible();
+  await expect(check(page, "0.2")).toHaveAttribute("data-status", "pass");
+  await panel(page).getByRole("button", { name: "편집기로 돌아가기" }).click();
+  await editor(page).getByRole("button", { name: "내 레슨에 저장" }).click();
+  await editor(page).getByRole("button", { name: "레슨 편집기 닫기" }).click();
+
+  // A reload: the lesson is in 내 레슨; starting it loads its circuit and firmware.
+  await page.waitForTimeout(600);
+  await page.reload();
+  await expect(status(page)).toContainText("예제를");
+  if (!(await panel(page).count())) await page.getByRole("button", { name: "📝 실습" }).click();
+  if (await panel(page).getByRole("button", { name: "← 목록" }).count()) await panel(page).getByRole("button", { name: "← 목록" }).click();
+  const mine = panel(page).getByRole("region", { name: "내 레슨" }).locator('[data-lesson="my-blink"]');
+  await expect(mine).toContainText("내 LED 실습");
+  await openProject(page, { parts: [board], wires: [] }); // nothing wired now
+  await mine.getByRole("button", { name: "시작" }).click();
+  await expect(panel(page).locator(".lesson-title")).toHaveText("내 LED 실습");
+  await expect(status(page)).toContainText("hal-blinky");
+  for (const k of ["0.0", "0.1", "0.2"]) await expect(check(page, k)).toHaveAttribute("data-status", "pass");
+  await expect(check(page, "0.3")).toHaveAttribute("data-status", "pending");
+  await grade(page);
+  await expect(check(page, "0.3")).toHaveAttribute("data-status", "pass");
+  await expect(check(page, "0.3")).toContainText(/측정 주기 100\d ms/);
+  await expect(panel(page).getByTestId("lesson-complete")).toBeVisible();
+
+  // And it can be removed.
+  await panel(page).getByRole("button", { name: "← 목록" }).click();
+  page.once("dialog", (d) => void d.accept());
+  await panel(page).getByRole("button", { name: "내 LED 실습 삭제" }).click();
+  await expect(panel(page).locator('[data-lesson="my-blink"]')).toHaveCount(0);
+});
+
+test("a wiring check that fails at grading marks its pins and nets on the schematic and the breadboard", async ({ page }) => {
+  test.setTimeout(60_000);
+  await ready(page);
+  await startLesson(page, "led-blink");
+  await openProject(page, WRONG_PIN);
+  await expect(check(page, "1.0")).toHaveAttribute("data-status", "fail");
+  // Not before grading.
+  await expect(page.locator(".pin.marked")).toHaveCount(0);
+  await grade(page);
+  await expect(panel(page).getByTestId("lesson-marks")).toContainText("1개");
+  await expect(page.locator('[data-pins="R7"] [data-pin="1"]')).toHaveClass(/marked/);
+  await expect(page.locator('[data-pins="nucleo"] [data-pin="D12"]')).toHaveClass(/marked/);
+  await expect(page.locator('[data-pins="nucleo"] [data-pin="D13"]')).toHaveClass(/marked/); // where it should go
+
+  await page.getByRole("button", { name: "회로도" }).click();
+  await expect(page.getByTestId("sch-marks")).toBeVisible();
+  const sch = page.locator("svg.schematic");
+  await expect(sch.locator('[data-part="R7"] [data-mark="fail"]')).toHaveCount(2);
+  await expect(sch.locator('[data-part="myLed"] [data-mark="fail"]')).toHaveCount(2);
+  // The wrong MCU net (PA6, where the resistor is) is marked.
+  await expect(sch.locator('[data-part="nucleo"] [data-pin*="D12"]')).toHaveAttribute("data-mark", "fail");
+
+  // Wired right, the check passes and the marks go.
+  await openProject(page, RIGHT);
+  await expect(check(page, "1.0")).toHaveAttribute("data-status", "pass");
+  await expect(sch.locator("[data-mark]")).toHaveCount(0);
+  await expect(page.getByTestId("sch-marks")).toHaveCount(0);
+});

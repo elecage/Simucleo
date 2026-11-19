@@ -36,7 +36,7 @@ const SHORT: Record<string, string> = {
 export const shortName = (ctx: Pick<WiringContext, "nameOf">, kind: string) => SHORT[kind] ?? ctx.nameOf(kind);
 
 /** Two-terminal paths through a part: [from pin, to pin, polarised, label]. */
-function terminals(part: WiringContext["parts"][number]): [string, string, boolean, string][] {
+export function terminals(part: WiringContext["parts"][number]): [string, string, boolean, string][] {
   switch (part.kind) {
     case "resistor":
       return [["1", "2", false, "resistor"]];

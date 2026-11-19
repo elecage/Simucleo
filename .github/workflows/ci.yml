@@ -35,7 +35,31 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi cmake
+      # The toolchain packages are cached: some Ubuntu mirrors serve them at
+      # tens of KB/s, which alone can use up the job's time.
+      - uses: actions/cache@v4
+        with:
+          path: ~/apt-cache
+          key: apt-arm-toolchain-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: apt-arm-toolchain-${{ runner.os }}-
+      - name: Install the ARM toolchain
+        timeout-minutes: 15
+        run: |
+          mkdir -p ~/apt-cache
+          sudo cp ~/apt-cache/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+          pkgs="gcc-arm-none-eabi libnewlib-arm-none-eabi cmake"
+          sudo apt-get update
+          # A stalled mirror: switch to the main archive and go on (partial
+          # downloads resume).
+          if ! sudo timeout 420 apt-get install -y --no-install-recommends $pkgs; then
+            echo "Slow mirror: retrying from archive.ubuntu.com"
+            if [ -f /etc/apt/apt-mirrors.txt ]; then
+              echo "http://archive.ubuntu.com/ubuntu/" | sudo tee /etc/apt/apt-mirrors.txt
+            fi
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends $pkgs
+          fi
+          cp /var/cache/apt/archives/*.deb ~/apt-cache/
       - run: make -C firmware/bare-blinky
       - run: make -C firmware/exceptions
       - run: make -C firmware/difftest
@@ -74,9 +98,33 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
         working-directory: web
+      # The toolchain packages are cached: some Ubuntu mirrors serve them at
+      # tens of KB/s, which alone can use up the job's time.
+      - uses: actions/cache@v4
+        with:
+          path: ~/apt-cache
+          key: apt-arm-toolchain-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: apt-arm-toolchain-${{ runner.os }}-
+      - name: Install the ARM toolchain
+        timeout-minutes: 15
+        run: |
+          mkdir -p ~/apt-cache
+          sudo cp ~/apt-cache/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+          pkgs="gcc-arm-none-eabi libnewlib-arm-none-eabi cmake"
+          sudo apt-get update
+          # A stalled mirror: switch to the main archive and go on (partial
+          # downloads resume).
+          if ! sudo timeout 420 apt-get install -y --no-install-recommends $pkgs; then
+            echo "Slow mirror: retrying from archive.ubuntu.com"
+            if [ -f /etc/apt/apt-mirrors.txt ]; then
+              echo "http://archive.ubuntu.com/ubuntu/" | sudo tee /etc/apt/apt-mirrors.txt
+            fi
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends $pkgs
+          fi
+          cp /var/cache/apt/archives/*.deb ~/apt-cache/
       - name: Build the example firmware bundled with the site
         run: |
-          sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi
           make -C firmware/bare-blinky
           make -C firmware/hal-blinky variants
           make -C firmware/hal-uart-printf

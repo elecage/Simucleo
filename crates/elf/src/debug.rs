@@ -571,6 +571,17 @@ impl DebugInfo {
         crate::expr::Evaluator::new(self, self.dwarf(), frame, read).value(expr)
     }
 
+    /// Where `target` (an expression naming an object) is in memory: its
+    /// address and size in bytes.
+    pub fn address_of(
+        &self,
+        target: &str,
+        frame: &Frame,
+        read: ReadMem<'_>,
+    ) -> Result<(u32, u32), String> {
+        crate::expr::Evaluator::new(self, self.dwarf(), frame, read).address(target)
+    }
+
     /// What setting `target` (an expression naming a number, enum or
     /// pointer: a variable, member, element or dereference) to the value
     /// of `value` writes.

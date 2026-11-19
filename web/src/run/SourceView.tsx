@@ -4,7 +4,7 @@
 // example sources or from files the user adds.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Runner } from "../sim/useRunner";
-import type { BreakpointSpec, DebugValue } from "../sim/protocol";
+import type { BreakpointSpec, DebugValue, WatchpointSpec } from "../sim/protocol";
 
 const base = "./";
 
@@ -99,6 +99,23 @@ function ValueTree({
   );
 }
 
+const KIND_TEXT = { write: "쓰기", read: "읽기", access: "읽기·쓰기" } as const;
+
+/** Why execution paused, for the status line. */
+function pauseText(reason: string): string {
+  const fixed: Record<string, string> = {
+    breakpoint: "중단점",
+    done: "스텝",
+    pause: "일시정지",
+    limit: "스텝이 너무 길어 멈춤",
+  };
+  if (fixed[reason]) return fixed[reason];
+  // "watchpoint write 0x20000010"
+  const w = /^watchpoint (write|read) (0x[0-9a-f]+)$/.exec(reason);
+  if (w) return `감시점 — ${w[2]}에 ${w[1] === "write" ? "쓰기" : "읽기"}`;
+  return reason;
+}
+
 export function SourceView({ runner }: { runner: Runner }) {
   const files = runner.debugFiles;
   const [texts, setTexts] = useState<Record<string, string>>({});
@@ -111,6 +128,8 @@ export function SourceView({ runner }: { runner: Runner }) {
   const [watches, setWatches] = useState<string[]>([]);
   const [newWatch, setNewWatch] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
+  const [watchpoints, setWatchpoints] = useState<WatchpointSpec[]>([]);
+  const [newWp, setNewWp] = useState<WatchpointSpec>({ expr: "", kind: "write" });
   const codeRef = useRef<HTMLDivElement>(null);
   const upload = useRef<HTMLInputElement>(null);
   const { setBreakpoints, requestDebugState, debugState, pauseEvent: pause, running } = runner;
@@ -134,6 +153,7 @@ export function SourceView({ runner }: { runner: Runner }) {
     const main = withSource.find((f) => baseName(f.path) === "main.c") ?? withSource[0];
     setFileIdx(main ? main.index : (files[0]?.index ?? null));
     setWanted([]);
+    setWatchpoints([]);
     setFrame(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files, available]);
@@ -154,6 +174,10 @@ export function SourceView({ runner }: { runner: Runner }) {
   }, [key, texts, uploaded]);
 
   useEffect(() => setBreakpoints(wanted), [wanted, setBreakpoints]);
+  // Watchpoints: the memory each expression names, seen from the shown
+  // frame (locals only while stopped where they live).
+  const { setWatchpoints: placeWatchpoints } = runner;
+  useEffect(() => placeWatchpoints(watchpoints, frame), [watchpoints, placeWatchpoints]); // eslint-disable-line react-hooks/exhaustive-deps
   const setCondition = (b: BreakpointSpec, condition: string) =>
     setWanted((w) => w.map((x) => (x.file === b.file && x.line === b.line ? { ...x, condition } : x)));
 
@@ -267,7 +291,7 @@ export function SourceView({ runner }: { runner: Runner }) {
             }}
           />
           <span className="hint" data-testid="debug-status">
-            {running ? "실행 중 — 중단점에서 멈춥니다" : paused ? `멈춤: ${({ breakpoint: "중단점", done: "스텝", pause: "일시정지", limit: "스텝이 너무 길어 멈춤" } as Record<string, string>)[pause.reason] ?? pause.reason}` : ""}
+            {running ? "실행 중 — 중단점에서 멈춥니다" : paused ? `멈춤: ${pauseText(pause.reason)}` : ""}
           </span>
         </div>
         <div className="source-code" ref={codeRef}>
@@ -373,6 +397,59 @@ export function SourceView({ runner }: { runner: Runner }) {
                 ) : (
                   <span className="var-name">{x}</span>
                 )}
+              </li>
+            );
+          })}
+        </ul>
+        <h4>감시점 (메모리 접근)</h4>
+        <form
+          className="watch-add"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const expr = newWp.expr.trim();
+            if (expr && !watchpoints.some((w) => w.expr === expr && w.kind === newWp.kind))
+              setWatchpoints((l) => [...l, { expr, kind: newWp.kind }]);
+            setNewWp((w) => ({ ...w, expr: "" }));
+          }}
+        >
+          <input
+            aria-label="감시점 식"
+            placeholder="예: current, buf[3], htim2.Instance->CNT"
+            value={newWp.expr}
+            onChange={(e) => setNewWp((w) => ({ ...w, expr: e.target.value }))}
+          />
+          <select
+            aria-label="감시점 종류"
+            value={newWp.kind}
+            onChange={(e) => setNewWp((w) => ({ ...w, kind: e.target.value as WatchpointSpec["kind"] }))}
+          >
+            <option value="write">쓰기</option>
+            <option value="read">읽기</option>
+            <option value="access">읽기·쓰기</option>
+          </select>
+          <button type="submit">추가</button>
+        </form>
+        <ul className="bp-list" data-testid="watchpoints">
+          {watchpoints.map((w, i) => {
+            const p = runner.watchpoints[i];
+            return (
+              <li key={`${w.expr}:${w.kind}`}>
+                <button
+                  className="watch-del"
+                  title="감시점 지우기"
+                  onClick={() => setWatchpoints((l) => l.filter((x) => x !== w))}
+                >
+                  ×
+                </button>
+                <span className="bp-at">{w.expr}</span>
+                <span className="var-type">{KIND_TEXT[w.kind]}</span>
+                {p && "error" in p ? (
+                  <span className="watch-error">{p.error}</span>
+                ) : p ? (
+                  <span className="var-type">
+                    0x{p.addr.toString(16).padStart(8, "0")} · {p.len}바이트
+                  </span>
+                ) : null}
               </li>
             );
           })}

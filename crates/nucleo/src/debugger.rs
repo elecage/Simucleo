@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use simucleo_core::cpu::{RunResult, StopReason};
+use simucleo_core::cpu::{RunResult, StopReason, Watchpoint};
 use simucleo_elf::debug::{DebugInfo, Frame, Value, Write};
 
 use crate::Nucleo;
@@ -33,6 +33,8 @@ pub enum StepEnd {
     Stopped(StopReason),
     /// It ran for too long without getting there (an endless loop).
     Limit,
+    /// A data watchpoint was hit on the way.
+    Watchpoint { addr: u32, write: bool },
 }
 
 /// Instructions a line step may take one at a time.
@@ -67,6 +69,14 @@ impl DebugState {
                     .map(std::rc::Rc::new)
             })
             .clone()
+    }
+}
+
+/// A step ended by the firmware: a watchpoint hit, or why it stopped.
+fn stopped(stop: StopReason) -> StepEnd {
+    match stop {
+        StopReason::Watchpoint { addr, write } => StepEnd::Watchpoint { addr, write },
+        other => StepEnd::Stopped(other),
     }
 }
 
@@ -113,6 +123,21 @@ impl Nucleo {
                     .push(c.to_string());
             }
         }
+    }
+
+    /// Replace the data watchpoints.
+    pub fn set_watchpoints(&mut self, watchpoints: &[Watchpoint]) {
+        self.cpu.set_watchpoints(watchpoints);
+    }
+
+    /// The memory `target` (a variable, member, element, `*pointer`) seen
+    /// from frame `frame` occupies: address and size, for a watchpoint.
+    pub fn address_of(&self, target: &str, frame: usize) -> Result<(u32, u32), String> {
+        let info = self.debug.get().ok_or("no debug information")?;
+        let frames = self.call_stack();
+        let f = frames.get(frame).ok_or("no such frame")?;
+        let read = |a: u32, n: usize| self.read_mem(a, n);
+        info.address_of(target, f, &read)
     }
 
     /// Evaluate a C expression (variables, members, indexing, arithmetic,
@@ -335,7 +360,7 @@ impl Nucleo {
                 | StopReason::BudgetExhausted
                 | StopReason::Sleeping
                 | StopReason::Yield => {}
-                other => break StepEnd::Stopped(other),
+                other => break stopped(other),
             }
             if self.time_ns() - start > RUN_LIMIT_NS {
                 break StepEnd::Limit;
@@ -352,13 +377,13 @@ impl Nucleo {
         let Some(info) = self.debug.get() else {
             return match self.step_instruction() {
                 Ok(()) => StepEnd::Done,
-                Err(e) => StepEnd::Stopped(e),
+                Err(e) => stopped(e),
             };
         };
         match kind {
             Step::Instruction => match self.step_instruction() {
                 Ok(()) => StepEnd::Done,
-                Err(e) => StepEnd::Stopped(e),
+                Err(e) => stopped(e),
             },
             Step::Out => {
                 let frames = self.call_stack();
@@ -377,7 +402,7 @@ impl Nucleo {
                     .unwrap_or_default();
                 for _ in 0..STEP_LIMIT {
                     if let Err(e) = self.step_instruction() {
-                        return StepEnd::Stopped(e);
+                        return stopped(e);
                     }
                     let pc = self.pc();
                     if self.debug.breakpoints.contains(&pc) && self.breakpoint_stops(pc) {

@@ -199,6 +199,34 @@ impl<'a, 'r> Evaluator<'a, 'r> {
         })
     }
 
+    /// Where `target` is in memory: its address and size in bytes.
+    pub(crate) fn address(&mut self, target: &str) -> Result<(u32, u32), String> {
+        let Val::Obj {
+            unit,
+            ty,
+            src,
+            skip,
+            bits,
+        } = self.parse_all(target)?
+        else {
+            return Err(format!("{target} is not a variable"));
+        };
+        let Src::Addr(addr) = src else {
+            return Err(format!(
+                "{target} is not in memory (it is in a register or computed)"
+            ));
+        };
+        if let Some((first, width)) = bits {
+            return Ok((addr, (first + width).div_ceil(8)));
+        }
+        let u = self.unit(unit)?;
+        let (_, off) = self.resolve(unit, ty)?.ok_or("void value")?;
+        let total = self.info.size_of(&u, Some(off)).ok_or("unknown size")?;
+        // Indexed dimensions of a multi-dimensional array.
+        let done: u32 = self.info.dims_of(&u, off).iter().take(skip).product();
+        Ok((addr, total / done.max(1)))
+    }
+
     /// What setting `target` to `value` writes.
     pub(crate) fn assign(&mut self, target: &str, value: &str) -> Result<Write, String> {
         let lhs = self.parse_all(target)?;

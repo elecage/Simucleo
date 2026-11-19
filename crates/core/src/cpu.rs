@@ -68,6 +68,38 @@ pub enum StopReason {
     Halted { pc: u32 },
     /// The bus rejected an access in a way the core could not report.
     BusError(BusError),
+    /// An instruction accessed watched memory (a data watchpoint); the core
+    /// stops after that instruction, as with the DWT on the chip.
+    Watchpoint { addr: u32, write: bool },
+}
+
+/// What a data watchpoint reacts to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchKind {
+    Write,
+    Read,
+    /// Reads and writes.
+    Access,
+}
+
+/// A data watchpoint: `len` bytes from `addr`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Watchpoint {
+    pub addr: u32,
+    pub len: u32,
+    pub kind: WatchKind,
+}
+
+impl Watchpoint {
+    /// Whether an access of `len` bytes at `addr` hits it.
+    pub fn hits(&self, addr: u32, len: u32, write: bool) -> bool {
+        let kind = match self.kind {
+            WatchKind::Write => write,
+            WatchKind::Read => !write,
+            WatchKind::Access => true,
+        };
+        kind && addr < self.addr.wrapping_add(self.len) && self.addr < addr.wrapping_add(len)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,4 +129,7 @@ pub trait CpuBackend {
 
     fn add_breakpoint(&mut self, addr: u32);
     fn remove_breakpoint(&mut self, addr: u32);
+
+    /// Replace the data watchpoints (backends without them ignore this).
+    fn set_watchpoints(&mut self, _watchpoints: &[Watchpoint]) {}
 }

@@ -1378,6 +1378,88 @@ fn breakpoints_steps_call_stack_and_variables() {
         stack.iter().any(|f| f.function.as_deref() == Some("main")),
         "{stack:?}"
     );
+    // Data watchpoints: writes to `current` happen only in the callback,
+    // right after it computes the next digit.
+    board.set_breakpoints(&[]);
+    use simucleo_core::cpu::{WatchKind, Watchpoint};
+    let (addr, len) = board.address_of("current", 0).unwrap();
+    assert_eq!(len, 4);
+    assert_eq!(board.address_of("digits[2]", 0).unwrap().1, 1);
+    assert_eq!(board.address_of("KEYS[1]", 0).unwrap().1, 4);
+    assert_eq!(board.address_of("htim10.Init", 0).unwrap().1, 24);
+    assert!(board.address_of("1 + 2", 0).is_err());
+    board.set_watchpoints(&[Watchpoint {
+        addr,
+        len,
+        kind: WatchKind::Write,
+    }]);
+    let before = board
+        .evaluate("current", 0)
+        .unwrap()
+        .value
+        .parse::<i64>()
+        .unwrap();
+    let r = board.run_for_ns_debug(10e6);
+    assert_eq!(
+        r.stop,
+        simucleo_core::cpu::StopReason::Watchpoint { addr, write: true }
+    );
+    assert_eq!(
+        func(&board).as_deref(),
+        Some("HAL_TIM_PeriodElapsedCallback")
+    );
+    assert_eq!(line(&board), Some(47), "stopped after the store on line 46");
+    let after = board
+        .evaluate("current", 0)
+        .unwrap()
+        .value
+        .parse::<i64>()
+        .unwrap();
+    assert_eq!(after, (before + 1) & 3);
+    // A read watchpoint on the digit patterns: line 47 reads one.
+    let (daddr, dlen) = board.address_of("digits", 0).unwrap();
+    board.set_watchpoints(&[Watchpoint {
+        addr: daddr,
+        len: dlen,
+        kind: WatchKind::Read,
+    }]);
+    let r = board.run_for_ns_debug(10e6);
+    assert!(
+        matches!(r.stop, simucleo_core::cpu::StopReason::Watchpoint { addr: a, write: false } if (daddr..daddr + 4).contains(&a)),
+        "{r:?}"
+    );
+    // Stepping: the rest of this callback no longer writes `current`;
+    // stepping over line 46 next time does.
+    board.set_watchpoints(&[Watchpoint {
+        addr,
+        len,
+        kind: WatchKind::Write,
+    }]);
+    assert_eq!(board.step(Step::Out), StepEnd::Done);
+    board.set_watchpoints(&[]);
+    let (_, l46) = board
+        .debug_info()
+        .unwrap()
+        .breakpoint_addresses(main_c, 46)
+        .unwrap();
+    board.set_breakpoints(&l46);
+    let r = board.run_for_ns_debug(10e6);
+    assert!(
+        matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_)),
+        "{r:?}"
+    );
+    board.set_breakpoints(&[]);
+    board.set_watchpoints(&[Watchpoint {
+        addr,
+        len,
+        kind: WatchKind::Write,
+    }]);
+    assert_eq!(
+        board.step(Step::Over),
+        StepEnd::Watchpoint { addr, write: true }
+    );
+    board.set_watchpoints(&[]);
+
     // Conditional breakpoints: the timer callback runs every millisecond
     // and steps `current` through 0..3; stop only where it is 2.
     let bp = |c: &str| [(cb, Some(c.to_string()))];

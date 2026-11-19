@@ -8,8 +8,8 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
-use simucleo_core::cpu::StopReason;
-use simucleo_nucleo::{Nucleo, Step};
+use simucleo_core::cpu::{StopReason, WatchKind, Watchpoint};
+use simucleo_nucleo::{Nucleo, Step, StepEnd};
 
 /// The register layout GDB sees: the M-profile core, the stack pointers,
 /// the FPU (as d0–d15) and the special registers.
@@ -219,6 +219,8 @@ pub struct Server {
     pub board: Nucleo,
     /// Software breakpoints GDB inserted.
     breakpoints: std::collections::BTreeSet<u32>,
+    /// Data watchpoints GDB inserted (Z2 write, Z3 read, Z4 access).
+    watchpoints: Vec<Watchpoint>,
     /// Print the virtual COM port on stdout.
     pub echo_console: bool,
 }
@@ -228,6 +230,7 @@ impl Server {
         Self {
             board,
             breakpoints: Default::default(),
+            watchpoints: Vec::new(),
             echo_console: true,
         }
     }
@@ -245,6 +248,7 @@ impl Server {
     fn stop_reply(&self, stop: &StopReason) -> String {
         match stop {
             StopReason::Breakpoint(_) => "T05swbreak:;".into(),
+            &StopReason::Watchpoint { addr, write } => self.watch_reply(addr, write),
             StopReason::Lockup { .. }
             | StopReason::Halted { .. }
             | StopReason::Unimplemented { .. } => {
@@ -252,6 +256,26 @@ impl Server {
                 "T05".into()
             }
             _ => "T05".into(),
+        }
+    }
+
+    /// Stop reply for a data access that hit a watchpoint: GDB wants the
+    /// watched address and the kind of watchpoint.
+    fn watch_reply(&self, addr: u32, write: bool) -> String {
+        match self
+            .watchpoints
+            .iter()
+            .find(|w| w.hits(addr, 1, write) || w.hits(addr, 4, write))
+        {
+            Some(w) => {
+                let kind = match w.kind {
+                    WatchKind::Write => "watch",
+                    WatchKind::Read => "rwatch",
+                    WatchKind::Access => "awatch",
+                };
+                format!("T05{kind}:{:x};", w.addr)
+            }
+            None => "T05".into(),
         }
     }
 
@@ -296,9 +320,12 @@ impl Server {
             "g" => (0..NUM_REGS).map(|n| hex_le(read_reg(&self.board, n).unwrap_or(0), reg_size(n))).collect(),
             "c" | "vCont;c" => self.cont(conn)?,
             "s" | "vCont;s" | "vCont;s:1" | "vCont;s:1;c" => {
-                self.board.step(Step::Instruction);
+                let end = self.board.step(Step::Instruction);
                 self.flush_console();
-                "T05".into()
+                match end {
+                    StepEnd::Watchpoint { addr, write } => self.watch_reply(addr, write),
+                    _ => "T05".into(),
+                }
             }
             "vCont?" => "vCont;c;s;t".into(),
             "qC" => "QC1".into(),
@@ -392,6 +419,29 @@ impl Server {
                         "OK".into()
                     }
                     None => "E01".into(),
+                }
+            }
+            _ if p.len() > 3 && (p.starts_with('Z') || p.starts_with('z')) && matches!(&p[1..3], "2," | "3," | "4,") => {
+                let mut f = p[3..].split(',');
+                let addr = f.next().and_then(|a| u32::from_str_radix(a, 16).ok());
+                let len = f.next().and_then(|a| u32::from_str_radix(a, 16).ok());
+                let kind = match &p[1..2] {
+                    "2" => WatchKind::Write,
+                    "3" => WatchKind::Read,
+                    _ => WatchKind::Access,
+                };
+                match (addr, len) {
+                    (Some(addr), Some(len)) => {
+                        let w = Watchpoint { addr, len, kind };
+                        if p.starts_with('Z') {
+                            self.watchpoints.push(w);
+                        } else if let Some(i) = self.watchpoints.iter().position(|x| *x == w) {
+                            self.watchpoints.remove(i);
+                        }
+                        self.board.set_watchpoints(&self.watchpoints);
+                        "OK".into()
+                    }
+                    _ => "E01".into(),
                 }
             }
             _ if p.starts_with("qRcmd,") => {
@@ -521,10 +571,9 @@ mod tests {
     #[ignore = "needs arm-none-eabi-gcc build of firmware/hal-7seg-keypad"]
     fn rsp_breakpoint_continue_registers_memory_step() {
         let elf = firmware().expect("built firmware");
-        let main = simucleo_elf::FirmwareImage::parse(&elf)
-            .unwrap()
-            .symbol("main")
-            .unwrap();
+        let image = simucleo_elf::FirmwareImage::parse(&elf).unwrap();
+        let main = image.symbol("main").unwrap();
+        let cur = image.symbol("current").unwrap();
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = std::thread::spawn(move || {
@@ -571,6 +620,10 @@ mod tests {
         assert_eq!(c.cmd(&format!("z0,{main:x},2")), "OK");
         assert_eq!(c.cmd("s"), "T05");
         assert_ne!(c.cmd("pf"), hex_le(main as u64, 4));
+        // A write watchpoint on `current` (the timer callback updates it).
+        assert_eq!(c.cmd(&format!("Z2,{cur:x},4")), "OK");
+        assert_eq!(c.cmd("c"), format!("T05watch:{cur:x};"));
+        assert_eq!(c.cmd(&format!("z2,{cur:x},4")), "OK");
         assert_eq!(c.cmd("qRcmd,74696d65"), "OK"); // "time"
         c.0.write_all(b"$k#6b").unwrap();
         server.join().unwrap();

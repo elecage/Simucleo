@@ -246,6 +246,18 @@ main { position: relative; }
 .enc-turn circle { fill: #f3f4f6; stroke: #6b7280; stroke-width: 0.5; }
 .enc-turn text { font: 700 8px sans-serif; fill: #111; pointer-events: none; }
 .ntc-body { fill: #1e3a8a; stroke: #0f172a; }
+/* Tier 6 parts (M13) */
+.imu-pad { cursor: grab; }
+.imu-dial { fill: #0f172a; stroke: #93c5fd; stroke-width: 0.5; }
+.imu-axis { stroke: #334155; stroke-width: 0.5; pointer-events: none; }
+.imu-board { fill: #1e40af; stroke: #bfdbfe; stroke-width: 0.8; opacity: 0.9; pointer-events: none; }
+.imu-ball { fill: #facc15; stroke: #713f12; stroke-width: 0.4; pointer-events: none; }
+.dot-face { fill: #111; }
+.dot-led { fill: #3a0d0d; }
+.dot-led.lit { fill: #ff2a2a; }
+.remote-body { fill: #1f2937; stroke: #000; }
+.remote-led { fill: #6b7280; }
+.ir-dome { fill: #111; stroke: #000; }
 .sonar-can { fill: #d1d5db; stroke: #6b7280; }
 .sonar-mesh { fill: #4b5563; }
 .lcd-pcb { fill: #166534; stroke: #052e16; }

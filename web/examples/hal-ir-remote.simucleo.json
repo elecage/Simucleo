@@ -1,0 +1,63 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "IR 리모컨 (NEC) 수신",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "ir",
+      "kind": "ir-receiver",
+      "x": 52,
+      "y": 4,
+      "props": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "ir",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "ir",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D3"
+      },
+      "b": {
+        "part": "ir",
+        "pin": "OUT"
+      },
+      "color": "#fb8c00"
+    }
+  ],
+  "firmware": {
+    "name": "hal-ir-remote",
+    "example": "hal-ir-remote.elf"
+  }
+}

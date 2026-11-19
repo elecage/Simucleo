@@ -1,0 +1,152 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "MPU-6050 기울기 + MAX7219 도트 매트릭스",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "imu",
+      "kind": "mpu6050",
+      "x": 50,
+      "y": 6,
+      "props": {
+        "address": "0x68",
+        "roll": 0,
+        "pitch": 0,
+        "gx": 0,
+        "gy": 0,
+        "gz": 0,
+        "temp": 25
+      }
+    },
+    {
+      "id": "mx",
+      "kind": "max7219",
+      "x": 66,
+      "y": 8,
+      "props": {
+        "count": 1
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "imu",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "imu",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D15"
+      },
+      "b": {
+        "part": "imu",
+        "pin": "SCL"
+      },
+      "color": "#fdd835"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D14"
+      },
+      "b": {
+        "part": "imu",
+        "pin": "SDA"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "mx",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "mx",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "nucleo",
+        "pin": "D11"
+      },
+      "b": {
+        "part": "mx",
+        "pin": "DIN"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "nucleo",
+        "pin": "D10"
+      },
+      "b": {
+        "part": "mx",
+        "pin": "CS"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "nucleo",
+        "pin": "D13"
+      },
+      "b": {
+        "part": "mx",
+        "pin": "CLK"
+      },
+      "color": "#8e24aa"
+    }
+  ],
+  "firmware": {
+    "name": "hal-imu-matrix",
+    "example": "hal-imu-matrix.elf"
+  }
+}

@@ -36,7 +36,14 @@ type Drag =
   | { kind: "wire"; sx: number; sy: number; moved: boolean }
   | { kind: "point"; wire: string; index: number }
   | { kind: "end"; wire: string; end: "a" | "b" }
-  | { kind: "prop"; part: string; prop: string; sy: number; start: number; min: number; max: number };
+  | { kind: "prop"; part: string; prop: string; sy: number; start: number; min: number; max: number }
+  /** Tilting a motion sensor: roll from horizontal, pitch from vertical travel. */
+  | { kind: "tilt"; part: string; sx: number; sy: number; roll0: number; pitch0: number; roll: number; pitch: number; t: number };
+
+/** Largest tilt a drag sets (degrees). */
+const MAX_TILT = 90;
+/** The rotation rate falls back to 0 this long (ms) after the drag stops moving. */
+const GYRO_HOLD = 150;
 
 interface Pending {
   start: PinRef;
@@ -90,6 +97,8 @@ export function Canvas({
   const [mouse, setMouse] = useState({ x: 0, y: 0 });
   const [hover, setHover] = useState<{ pin: PinRef; label: string } | null>(null);
   const [pressed, setPressed] = useState<{ part: string; action: string } | null>(null);
+  const gyroStop = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => clearTimeout(gyroStop.current ?? undefined), []);
 
   // Release a pressed board button wherever the pointer goes up.
   useEffect(() => {
@@ -315,6 +324,28 @@ export function Canvas({
       const span = drag.max - drag.min;
       const v = Math.min(drag.max, Math.max(drag.min, drag.start + ((drag.sy - e.clientY) / 150) * span));
       onPropChange?.(drag.part, drag.prop, Math.round(v * 1000) / 1000);
+    } else if (drag?.kind === "tilt" && onPropChange) {
+      // About 1° per pixel; while moving, the angle's rate of change is
+      // what the gyroscope measures.
+      const clamp = (v: number) => Math.max(-MAX_TILT, Math.min(MAX_TILT, Math.round(v)));
+      const roll = clamp(drag.roll0 + (e.clientX - drag.sx));
+      const pitch = clamp(drag.pitch0 + (e.clientY - drag.sy));
+      if (roll !== drag.roll || pitch !== drag.pitch) {
+        const now = performance.now();
+        const dt = Math.max(8, now - drag.t) / 1000;
+        const rate = (d: number) => Math.max(-2000, Math.min(2000, Math.round(d / dt)));
+        onPropChange(drag.part, "roll", roll);
+        onPropChange(drag.part, "pitch", pitch);
+        onPropChange(drag.part, "gx", rate(roll - drag.roll));
+        onPropChange(drag.part, "gy", rate(pitch - drag.pitch));
+        setDrag({ ...drag, roll, pitch, t: now });
+        clearTimeout(gyroStop.current ?? undefined);
+        const part = drag.part;
+        gyroStop.current = setTimeout(() => {
+          onPropChange(part, "gx", 0);
+          onPropChange(part, "gy", 0);
+        }, GYRO_HOLD);
+      }
     } else if (drag?.kind === "point" && onUpdateWire) {
       const w = project.wires.find((x) => x.id === drag.wire);
       if (w?.points) {
@@ -350,6 +381,15 @@ export function Canvas({
               e.stopPropagation();
               if (pending) {
                 wiringClick(toCanvas(e));
+                return;
+              }
+              if ((e.target as Element).closest("[data-drag-tilt]") && onPropChange) {
+                // Operate the sensor; the part moves by its edge.
+                onSelect(part.id);
+                const props = { ...def.props, ...part.props };
+                const roll = Number(props.roll ?? 0),
+                  pitch = Number(props.pitch ?? 0);
+                startDrag(e, { kind: "tilt", part: part.id, sx: e.clientX, sy: e.clientY, roll0: roll, pitch0: pitch, roll, pitch, t: performance.now() });
                 return;
               }
               const knob = (e.target as Element).closest("[data-drag-prop]");

@@ -24,7 +24,7 @@ const EXAMPLES = [
   ["hal-7seg-keypad", "hal-7seg-keypad.elf", "HAL: 4-digit 7-segment display multiplexed by a timer interrupt; digits typed on a 4×4 keypad"],
   ["hal-encoder-stepper-lcd", "hal-encoder-stepper-lcd.elf", "HAL: rotary encoder (TIM3 encoder mode) turns a stepper; 16×2 I2C LCD shows the angle and a thermistor's temperature"],
   ["hal-sonar-onewire", "hal-sonar-onewire.elf", "HAL: HC-SR04 distance by input capture and a DS18B20 over bit-banged 1-Wire with DWT delays"],
-  ["hal-imu-matrix", "hal-imu-matrix.elf", "HAL: MPU-6050 tilt over I2C rolls a dot on a MAX7219 8×8 LED matrix driven by SPI1 — drag the sensor to tilt it"],
+  ["hal-imu-matrix", "hal-imu-matrix.elf", "HAL: MPU-6050 tilt over I2C rolls a dot on a MAX7219 8×8 LED matrix driven by SPI1, a second matrix on its DOUT shows |a| — drag the sensor to tilt it, press 흔들기 to shake it"],
   ["hal-ir-remote", "hal-ir-remote.elf", "HAL: NEC IR remote decoded with TIM2 input capture; prints each code and the repeat codes"],
   ["freertos-two-tasks", "freertos-two-tasks.elf", "FreeRTOS (CMSIS-RTOS v2): Blink, Count and Button threads; B1 releases a semaphore — see the RTOS tab"],
   ["freertos-queue-uart", "freertos-queue-uart.elf", "FreeRTOS: UART RX ISR → queue → echo task; sensor → queue → logger with heap/stack stats"],

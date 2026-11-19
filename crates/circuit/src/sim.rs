@@ -54,6 +54,8 @@ const R_LED: f64 = 15.0;
 const MOTOR_MAX_RPM: f64 = 200.0;
 /// Absolute maximum current of an I/O pin (datasheet: ±25 mA).
 const PIN_MAX: f64 = 0.025;
+/// Most voltage changes logged for analog probes between two drains.
+const VOLTAGE_LOG_MAX: usize = 1 << 18;
 
 /// How the MCU drives one pin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -419,6 +421,11 @@ pub struct CircuitSim {
     board_id: String,
     /// Node of each net-attached pin (for probes): canonical pin → node.
     pin_nodes: HashMap<PinRef, usize>,
+    /// Pins whose net voltage is logged whenever the operating point
+    /// changes (analog probes), the values last logged and the log.
+    voltage_probes: Vec<String>,
+    voltage_last: Vec<Option<f64>>,
+    voltage_log: Vec<(Cycles, Vec<Option<f64>>)>,
     /// Bus device parts and where their pins are.
     bus_parts: Vec<BusPart>,
     /// Their state (display RAM, clock, …), by part id.
@@ -760,6 +767,9 @@ impl CircuitSim {
             value_warnings: Vec::new(),
             board_id: String::new(),
             pin_nodes: HashMap::new(),
+            voltage_probes: Vec::new(),
+            voltage_last: Vec::new(),
+            voltage_log: Vec::new(),
             bus_parts: Vec::new(),
             spi_parts: Vec::new(),
             wire_parts: Vec::new(),
@@ -2760,6 +2770,9 @@ impl CircuitSim {
             }
         };
         let old = self.current.replace(sol.clone());
+        if !self.voltage_probes.is_empty() {
+            self.log_voltages(time);
+        }
         for (i, slot) in self.visuals.iter_mut().enumerate() {
             if sol.over[i] {
                 slot.overcurrent = true;
@@ -4021,6 +4034,51 @@ impl CircuitSim {
         Some(self.current.as_ref().map_or(0.0, |s| s.v[node]))
     }
 
+    /// The pin an analog probe names: `"PA1"` (an MCU pin) or
+    /// `"part.pin"` (`"pot.W"`).
+    pub fn probe_pin(&self, name: &str) -> PinRef {
+        match name.split_once('.') {
+            Some((part, pin)) => PinRef::new(part, pin),
+            None => PinRef::new(&self.board_id, name),
+        }
+    }
+
+    /// Log the voltages of these pins (see [`CircuitSim::probe_pin`])
+    /// whenever the operating point changes; the present values are logged
+    /// at `time` at once. An empty list stops logging.
+    pub fn set_voltage_probes(&mut self, names: &[String], time: Cycles) {
+        self.voltage_probes = names.to_vec();
+        self.voltage_last.clear();
+        self.voltage_log.clear();
+        if !self.voltage_probes.is_empty() {
+            self.log_voltages(time);
+        }
+    }
+
+    /// Voltages of the probed pins (`None`: the pin is on no net).
+    pub fn probe_voltages(&self) -> Vec<Option<f64>> {
+        // Resolved each time: the board's id comes with the circuit.
+        self.voltage_probes
+            .iter()
+            .map(|n| self.voltage(&self.probe_pin(n)))
+            .collect()
+    }
+
+    fn log_voltages(&mut self, time: Cycles) {
+        let v = self.probe_voltages();
+        if v == self.voltage_last || self.voltage_log.len() >= VOLTAGE_LOG_MAX {
+            return;
+        }
+        self.voltage_last.clone_from(&v);
+        self.voltage_log.push((time, v));
+    }
+
+    /// The voltages logged since the last call: (time, one per probe) at
+    /// each change of the operating point that changed one of them.
+    pub fn take_voltage_log(&mut self) -> Vec<(Cycles, Vec<Option<f64>>)> {
+        std::mem::take(&mut self.voltage_log)
+    }
+
     /// Voltage of the net a pin is on (for probes), from the present
     /// operating point.
     pub fn voltage(&self, pin: &PinRef) -> Option<f64> {
@@ -4567,6 +4625,60 @@ mod tests {
         settle(&mut s);
         let v = s.mcu_voltage(0, 0).unwrap();
         assert!((v - 0.25 * VDD).abs() < 0.01, "{v}");
+    }
+
+    #[test]
+    fn voltage_probes_log_each_change_of_the_operating_point() {
+        // D7 → 220 Ω → LED → GND, probed at the resistor's far end and at
+        // the MCU pin; a third probe names a pin on no net.
+        let mut s = sim(
+            vec![
+                part("r1", "resistor", &[("ohms", "220")]),
+                part("led1", "led-5mm", &[("color", "red")]),
+            ],
+            vec![
+                wire(("mcu", "D7"), ("r1", "1")),
+                wire(("r1", "2"), ("led1", "A")),
+                wire(("led1", "K"), ("mcu", "GND_1")),
+            ],
+        );
+        let hi = drives(&s, |p| {
+            if p == (0, 8) {
+                Drive::High
+            } else {
+                Drive::Float
+            }
+        });
+        let lo = drives(&s, |p| {
+            if p == (0, 8) {
+                Drive::Low
+            } else {
+                Drive::Float
+            }
+        });
+        s.update(0, &lo);
+        s.set_voltage_probes(&["led1.A".into(), "PA8".into(), "PC3".into()], 10);
+        // PWM: two changes per period; repeating a drive state logs nothing.
+        for k in 1..=3 {
+            s.update(k * 100, &hi);
+            s.update(k * 100 + 25, &lo);
+            s.update(k * 100 + 50, &lo);
+        }
+        let log = s.take_voltage_log();
+        assert_eq!(log.len(), 7, "{log:?}");
+        assert_eq!(log[0].0, 10);
+        assert_eq!(log[1].0, 100);
+        assert_eq!(log[2].0, 125);
+        let (a_hi, pin_hi) = (log[1].1[0].unwrap(), log[1].1[1].unwrap());
+        // The LED's forward voltage on its anode, the driver's drop on the pin.
+        assert!((1.6..2.4).contains(&a_hi), "{a_hi}");
+        assert!(pin_hi > 3.0 && pin_hi < VDD, "{pin_hi}");
+        assert!(log[2].1[0].unwrap() < 0.1);
+        assert_eq!(log[1].1[2], None, "PC3 is on no net");
+        assert!(s.take_voltage_log().is_empty());
+        s.set_voltage_probes(&[], 1000);
+        s.update(1100, &hi);
+        assert!(s.take_voltage_log().is_empty());
     }
 
     #[test]

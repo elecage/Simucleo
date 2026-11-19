@@ -23,6 +23,7 @@ pub mod svd_types;
 pub mod sysctl;
 pub mod timer;
 pub mod usart;
+pub mod wire;
 
 use std::collections::BTreeSet;
 
@@ -41,6 +42,7 @@ use spi::{Spi, SpiBus};
 use sysctl::{FlashIf, Pwr, Syscfg};
 use timer::{Timer, TIMERS};
 use usart::{TerminalByte, Usart, UsartEventKind};
+use wire::{WireEvent, WireSignal};
 
 /// Peripheral events on the virtual clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -198,14 +200,31 @@ struct CircuitI2c<'a> {
     circuit: Option<&'a mut Box<dyn ExternalCircuit>>,
     pins: Option<((u8, u8), (u8, u8))>,
     time: Cycles,
+    /// Where to log the operations for probes, with the SCL period and
+    /// the end of the last one logged.
+    log: Option<(&'a mut Vec<WireEvent>, f64, &'a mut f64)>,
 }
 
 impl I2cBus for CircuitI2c<'_> {
     fn transfer(&mut self, op: I2cOp) -> I2cReply {
-        match (&mut self.circuit, self.pins) {
+        let reply = match (&mut self.circuit, self.pins) {
             (Some(c), Some((scl, sda))) => c.i2c(self.time, scl, sda, op),
             _ => i2c::NoDevices.transfer(op),
+        };
+        if let (Some((log, period, last)), Some((scl, sda))) = (&mut self.log, self.pins) {
+            let ev = WireEvent::I2c {
+                scl,
+                sda,
+                time: self.time,
+                period: *period,
+                op,
+                reply,
+                after: **last,
+            };
+            **last = ev.end();
+            log.push(ev);
         }
+        reply
     }
 }
 
@@ -278,14 +297,20 @@ struct CircuitSpi<'a> {
     circuit: Option<&'a mut Box<dyn ExternalCircuit>>,
     pins: Option<SpiPins>,
     time: Cycles,
+    /// Bytes exchanged (MOSI, MISO), logged for probes.
+    log: Option<Vec<(u8, u8)>>,
 }
 
 impl SpiBus for CircuitSpi<'_> {
     fn exchange(&mut self, out: u8) -> u8 {
-        match (&mut self.circuit, self.pins) {
+        let inp = match (&mut self.circuit, self.pins) {
             (Some(c), Some((sck, mosi, miso))) => c.spi(self.time, sck, mosi, miso, out),
             _ => 0xFF,
+        };
+        if let Some(log) = &mut self.log {
+            log.push((out, inp));
         }
+        inp
     }
 }
 
@@ -363,6 +388,12 @@ pub struct Stm32f401Bus {
     /// The owner drains it.
     pub level_events: Vec<PinEvent>,
     pub probe_mask: [u16; 8],
+    /// Bytes USART, I2C and SPI moved on probed pins, to draw them bit by
+    /// bit (see [`wire`]). The owner drains it with
+    /// [`Stm32f401Bus::take_wire_events`].
+    pub wire_events: Vec<WireEvent>,
+    /// End of the last I2C operation logged, per controller.
+    i2c_wire_end: [f64; 3],
     /// An SRAM word whose writes are logged in `watch_log` as (time, new
     /// value), e.g. the RTOS's current-task pointer to record context
     /// switches. The owner drains the log.
@@ -426,6 +457,8 @@ impl Stm32f401Bus {
             pin_events: Vec::new(),
             level_events: Vec::new(),
             probe_mask: [0; 8],
+            wire_events: Vec::new(),
+            i2c_wire_end: [0.0; 3],
             watch: None,
             watch_log: Vec::new(),
             rcc,
@@ -708,6 +741,91 @@ impl Stm32f401Bus {
         self.usart[i].baud(&self.clocks)
     }
 
+    /// Whether a probe watches the pin.
+    fn probed(&self, (port, pin): (u8, u8)) -> bool {
+        self.probe_mask[port as usize] & (1 << pin) != 0
+    }
+
+    /// The SCL period (core cycles) to log I2C `i`'s operations with, when
+    /// a probe watches its pins.
+    fn i2c_log_period(&self, i: usize, pins: Option<((u8, u8), (u8, u8))>) -> Option<f64> {
+        let (scl, sda) = pins?;
+        (self.probed(scl) || self.probed(sda))
+            .then(|| self.i2c[i].byte_cycles(&self.clocks) as f64 / 9.0)
+    }
+
+    /// Let each USART log its frames when a probe watches one of the pins
+    /// its TX or RX can be routed to (call after changing `probe_mask`; the
+    /// routing is looked up when the frames are taken).
+    pub fn sync_wire_logging(&mut self) {
+        for i in 0..self.usart.len() {
+            let on = USART_PINS
+                .iter()
+                .any(|&(u, port, pin, ..)| u == i && self.probed((port, pin)));
+            self.usart[i].wire_log = on;
+            if !on {
+                self.usart[i].wire.clear();
+            }
+        }
+    }
+
+    /// The byte-level transfers logged since the last call (see [`wire`]).
+    pub fn take_wire_events(&mut self) -> Vec<WireEvent> {
+        let mut out = std::mem::take(&mut self.wire_events);
+        for i in 0..self.usart.len() {
+            if self.usart[i].wire.is_empty() {
+                continue;
+            }
+            let (tx, rx) = self.usart_pins(i);
+            for f in std::mem::take(&mut self.usart[i].wire) {
+                let Some(pin) = (if f.tx { tx } else { rx }) else {
+                    continue;
+                };
+                out.push(WireEvent::Uart {
+                    pin,
+                    start: f.start,
+                    bit: f.bit,
+                    data: f.data,
+                    data_bits: f.data_bits,
+                    parity: f.parity,
+                    stop_halves: f.stop_halves,
+                });
+            }
+        }
+        out
+    }
+
+    /// The byte-level signal a pin is routed to (alternate function of a
+    /// USART, I2C or SPI), whose probe shows synthesized edges.
+    pub fn wire_signal(&self, port: u8, pin: u8) -> Option<WireSignal> {
+        let g = &self.gpio[port as usize];
+        if g.mode(pin) != gpio::PinMode::Alternate {
+            return None;
+        }
+        let af = g.af(pin);
+        if USART_PINS
+            .iter()
+            .any(|&(_, p, n, a, _)| (p, n, a) == (port, pin, af))
+        {
+            return Some(WireSignal::Uart);
+        }
+        let on = |pins: I2cPins| pins.contains(&(port, pin, af));
+        if I2CS.iter().any(|c| on(c.scl) || on(c.sda)) {
+            return Some(WireSignal::I2c);
+        }
+        for (i, c) in SPIS.iter().enumerate() {
+            if on(c.sck) {
+                return Some(WireSignal::SpiSck {
+                    cpol: self.spi[i].cr1 & 2 != 0,
+                });
+            }
+            if on(c.mosi) || on(c.miso) {
+                return Some(WireSignal::SpiData);
+            }
+        }
+        None
+    }
+
     /// The pins an SPI controller is routed to: SCK and MOSI must be, MISO
     /// may be left out (transmit-only wiring).
     fn spi_pins(&self, i: usize) -> Option<SpiPins> {
@@ -869,10 +987,13 @@ impl Stm32f401Bus {
                     let i = idx as usize;
                     if self.i2c[i].gen == gen {
                         let pins = self.i2c_pins(i);
+                        let period = self.i2c_log_period(i, pins);
                         let mut bus = CircuitI2c {
                             circuit: self.circuit.as_mut(),
                             pins,
                             time: at,
+                            log: period
+                                .map(|p| (&mut self.wire_events, p, &mut self.i2c_wire_end[i])),
                         };
                         self.i2c[i].event(at, &clocks, &mut self.sched, idx, &mut bus);
                     }
@@ -881,12 +1002,33 @@ impl Stm32f401Bus {
                     let i = idx as usize;
                     if self.spi[i].gen == gen {
                         let (pins, cycles) = (self.spi_pins(i), self.spi_frame_cycles(i));
+                        let logging = pins.is_some_and(|(sck, mosi, miso)| {
+                            self.probed(sck)
+                                || self.probed(mosi)
+                                || miso.is_some_and(|m| self.probed(m))
+                        });
                         let mut bus = CircuitSpi {
                             circuit: self.circuit.as_mut(),
                             pins,
                             time: at,
+                            log: logging.then(Vec::new),
                         };
                         self.spi[i].event(at, cycles, &mut self.sched, idx, &mut bus);
+                        if let (Some(bytes), Some((sck, mosi, miso))) = (bus.log, pins) {
+                            if !bytes.is_empty() {
+                                let cr1 = self.spi[i].cr1;
+                                self.wire_events.push(WireEvent::Spi {
+                                    sck,
+                                    mosi,
+                                    miso,
+                                    start: at.saturating_sub(cycles),
+                                    end: at,
+                                    cpol: cr1 & 2 != 0,
+                                    cpha: cr1 & 1 != 0,
+                                    bytes,
+                                });
+                            }
+                        }
                     }
                 }
                 Event::Circuit { gen } => {
@@ -1268,10 +1410,12 @@ impl Stm32f401Bus {
             }
             let v = self.i2c[i].read(off);
             let (now, clocks, pins) = (self.now, self.clocks, self.i2c_pins(i));
+            let period = self.i2c_log_period(i, pins);
             let mut bus = CircuitI2c {
                 circuit: self.circuit.as_mut(),
                 pins,
                 time: now,
+                log: period.map(|p| (&mut self.wire_events, p, &mut self.i2c_wire_end[i])),
             };
             self.i2c[i].after_read(off, now, &clocks, &mut self.sched, i as u8, &mut bus);
             return v;
@@ -1383,10 +1527,12 @@ impl Stm32f401Bus {
             let c = &I2CS[i];
             if !self.gated(0x40, c.enable_bit, c.name, c.enable_name) {
                 let (now, clocks, pins) = (self.now, self.clocks, self.i2c_pins(i));
+                let period = self.i2c_log_period(i, pins);
                 let mut bus = CircuitI2c {
                     circuit: self.circuit.as_mut(),
                     pins,
                     time: now,
+                    log: period.map(|p| (&mut self.wire_events, p, &mut self.i2c_wire_end[i])),
                 };
                 self.i2c[i].write(
                     off,

@@ -76,6 +76,25 @@ pub struct Usart {
     /// Baud rate of the connected terminal.
     pub host_baud: u32,
     pub terminal: Vec<TerminalByte>,
+    /// Log the frames on the wire (`wire`), for probes on the pins.
+    pub wire_log: bool,
+    /// Frames sent (`tx`) and received since the owner last drained them.
+    pub wire: Vec<WireFrame>,
+}
+
+/// A frame on the wire, for drawing it on a probed pin (see `crate::wire`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WireFrame {
+    /// Transmitted (TX pin) or received (RX pin).
+    pub tx: bool,
+    /// Start bit.
+    pub start: Cycles,
+    /// Core cycles per bit.
+    pub bit: f64,
+    pub data: u16,
+    pub data_bits: u32,
+    pub parity: crate::wire::Parity,
+    pub stop_halves: u32,
 }
 
 impl Usart {
@@ -99,16 +118,21 @@ impl Usart {
             gen: 0,
             host_baud: 115_200,
             terminal: Vec::new(),
+            wire_log: false,
+            wire: Vec::new(),
         }
     }
 
     /// Peripheral reset (keeps the terminal connection and its log).
     pub fn reset(&mut self) {
         let (host_baud, terminal) = (self.host_baud, std::mem::take(&mut self.terminal));
+        let (wire_log, wire) = (self.wire_log, std::mem::take(&mut self.wire));
         let gen = self.gen + 1;
         *self = Self::new(self.name, self.irq, self.apb2);
         self.host_baud = host_baud;
         self.terminal = terminal;
+        self.wire_log = wire_log;
+        self.wire = wire;
         self.gen = gen;
     }
 
@@ -281,6 +305,24 @@ impl Usart {
         self.shifting = Some(data);
         self.sr |= TXE;
         self.sr &= !TC;
+        if self.wire_log {
+            if let Some(baud) = self.baud(clocks) {
+                let parity = match (self.cr1 & (1 << 10) != 0, self.cr1 & (1 << 9) != 0) {
+                    (false, _) => crate::wire::Parity::None,
+                    (true, false) => crate::wire::Parity::Even,
+                    (true, true) => crate::wire::Parity::Odd,
+                };
+                self.wire.push(WireFrame {
+                    tx: true,
+                    start: now,
+                    bit: clocks.hclk as f64 / baud,
+                    data,
+                    data_bits: self.data_bits(),
+                    parity,
+                    stop_halves: self.stop_halves(),
+                });
+            }
+        }
         if let Some(frame) = self.frame_cycles(clocks) {
             sched.schedule_at(
                 now + frame,
@@ -364,6 +406,19 @@ impl Usart {
             UsartEventKind::RxDeliver => {
                 self.rx_busy = false;
                 if let Some(b) = self.rx_queue.pop_front() {
+                    if self.wire_log {
+                        // The terminal sends 8N1 at its own baud rate.
+                        let bit = clocks.hclk as f64 / self.host_baud as f64;
+                        self.wire.push(WireFrame {
+                            tx: false,
+                            start: now.saturating_sub((10.0 * bit).round() as Cycles),
+                            bit,
+                            data: b as u16,
+                            data_bits: 8,
+                            parity: crate::wire::Parity::None,
+                            stop_halves: 2,
+                        });
+                    }
                     let data = self.received_from_host(b, clocks);
                     if self.sr & RXNE != 0 {
                         self.sr |= ORE; // previous byte not read: this one is lost

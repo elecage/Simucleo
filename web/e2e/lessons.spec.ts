@@ -233,3 +233,40 @@ test("starting a lesson over unsaved work asks first and keeps a backup", async 
   await panel(page).getByRole("button", { name: "실습 전 프로젝트 되돌리기" }).click();
   await expect(page.locator("[data-id^=led]")).toHaveCount(1);
 });
+
+test("button presses keep their length when grading at full speed", async ({ page }) => {
+  await startLesson(page, "button-exti");
+  await expect(status(page)).toContainText("hal-button-exti");
+  await page.getByTestId("project-input").setInputFiles("public/examples/hal-button-exti.simucleo.json");
+  // At "최대" a frame could hold both the press and the release: the
+  // firmware would never see the button down.
+  await page.getByLabel("실행 속도").selectOption("최대");
+  await grade(page);
+  expect(await panel(page).locator('[data-status="fail"]').allTextContents()).toEqual([]);
+  await expect(panel(page).getByTestId("lesson-complete")).toBeVisible();
+});
+
+test("stopping grading during a button press lets the button go", async ({ page }) => {
+  await startLesson(page, "button-exti");
+  await expect(status(page)).toContainText("hal-button-exti");
+  await page.getByTestId("project-input").setInputFiles("public/examples/hal-button-exti.simucleo.json");
+  await panel(page).getByRole("button", { name: "채점", exact: true }).click();
+  // Stop while the first automatic press (500–650 ms) is held down.
+  await page.waitForFunction(() => {
+    const p = document.querySelector<HTMLProgressElement>("[data-testid=grade-progress]");
+    if (!p || p.value < 540 || p.value > 620) return false;
+    [...document.querySelectorAll("button")].find((b) => b.textContent === "중지")!.click();
+    return true;
+  }, undefined, { polling: 5, timeout: 20_000 });
+  await expect(panel(page).getByTestId("grade-progress")).toHaveCount(0);
+  await expect(page.getByTestId("console-output")).toContainText("D2 pressed (1)");
+  // A press by hand now reaches the firmware: the switch was released.
+  await page.getByRole("button", { name: "▶ 실행" }).click();
+  const sw = await partId(page, "sw");
+  const cap = (await page.locator(`[data-id="${sw}"] [data-action=press] circle`).first().boundingBox())!;
+  await page.mouse.move(cap.x + cap.width / 2, cap.y + cap.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(150);
+  await page.mouse.up();
+  await expect(page.getByTestId("console-output")).toContainText("D2 pressed (2)", { timeout: 5000 });
+});

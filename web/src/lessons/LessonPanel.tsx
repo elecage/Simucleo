@@ -173,17 +173,29 @@ export function LessonPanel({ runner, project, netlist, onStart, onSetProp, onRe
     const partOf = (kind: string) => project.parts.find((p) => p.kind === kind)?.id;
     setGrading({ elapsed: 0, total });
     runner.setProbes(probedPins(lesson), "lesson");
+    // Stimuli are timed on frames: at ×1 a frame covers at most ~100 ms of
+    // simulated time, so a press never starts and ends in one frame (which
+    // would give the firmware no time to see it) at a faster setting.
+    runner.setSpeedCap(1);
     let finished = false;
-    const finish = () => {
-      if (finished) return;
+    /** Let go of whatever grading still holds and stop the run. */
+    const stop = () => {
       finished = true;
       unsubscribe();
       cancelGrade.current = null;
       runner.pause();
+      runner.setSpeedCap(Infinity);
       runner.setProbes([], "lesson");
       for (const st of stimuli) {
-        if ("press" in st.s && st.done && !st.released) runner.press(st.s.press === "B1" ? "B1" : (partOf(st.s.press) ?? st.s.press), false);
+        if ("press" in st.s && st.done && !st.released) {
+          st.released = true;
+          runner.press(st.s.press === "B1" ? "B1" : (partOf(st.s.press) ?? st.s.press), false);
+        }
       }
+    };
+    const finish = () => {
+      if (finished) return;
+      stop();
       const partsOfKind = (kind: string) => project.parts.filter((p) => p.kind === kind).map((p) => p.id);
       const results: { key: string; step: number; label: string; result: CheckResult }[] = [];
       lesson.steps.forEach((s, i) =>
@@ -221,10 +233,7 @@ export function LessonPanel({ runner, project, netlist, onStart, onSetProp, onRe
       if (t >= total || rec.stopped) finish();
     });
     cancelGrade.current = () => {
-      finished = true;
-      unsubscribe();
-      runner.pause();
-      runner.setProbes([], "lesson");
+      stop();
       setGrading(null);
     };
     runner.resetEpoch(epoch);

@@ -43,6 +43,8 @@ export interface Runner {
    */
   onFrame(listener: FrameListener): () => void;
   setSpeed(v: number): void;
+  /** Cap the speed (Infinity lifts it), e.g. while grading times button presses. */
+  setSpeedCap(v: number): void;
   /** Press or release a switch: a tact-switch part id, or "B1". */
   press(part: string, pressed: boolean): void;
   setWiring(circuit: CircuitJson): void;
@@ -211,6 +213,7 @@ export function useRunner(): Runner {
         return () => void listeners.current.delete(l);
       },
       setSpeed: (value: number) => send({ type: "speed", value }),
+      setSpeedCap: (value: number) => send({ type: "speedCap", value }),
       press: (part: string, pressed: boolean) => send({ type: "press", part, pressed }),
       setWiring: (circuit: CircuitJson) =>
         send({ type: "wiring", circuit: JSON.stringify(circuit), catalog: CATALOG, signals: SIGNALS }),

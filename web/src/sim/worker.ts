@@ -10,6 +10,8 @@ let sim: Simulator | null = null;
 let loaded = false;
 let running = false;
 let speed = 1;
+/** Upper bound on `speed` while grading needs fine-grained frames (Infinity: none). */
+let speedCap = Infinity;
 let lastWall = 0;
 let achieved = 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -31,7 +33,8 @@ function tick() {
   const wallDt = Math.min(now - lastWall, 100);
   lastWall = now;
   const startSim = sim.timeMs();
-  let target = Number.isFinite(speed) ? wallDt * speed : Infinity;
+  const sp = Math.min(speed, speedCap);
+  let target = Number.isFinite(sp) ? wallDt * sp : Infinity;
   while (target > 0 && performance.now() - now < WORK_BUDGET_MS) {
     const step = Math.min(target, 10);
     const stopped = sim.runForMs(step);
@@ -102,6 +105,9 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     }
     case "speed":
       speed = m.value;
+      break;
+    case "speedCap":
+      speedCap = m.value;
       break;
     case "press":
       sim.press(m.part, m.pressed);

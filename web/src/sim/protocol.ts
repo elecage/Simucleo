@@ -100,6 +100,7 @@ export type ToWorker =
    * can tell frames after its reset from the ones already on the way. */
   | { type: "reset"; epoch?: number }
   | { type: "speed"; value: number } // simulated ms per wall ms; Infinity = as fast as possible
+  | { type: "speedCap"; value: number } // upper bound on speed (Infinity: none)
   | { type: "press"; part: string; pressed: boolean } // a tact-switch part id, or "B1"
   | { type: "wiring"; circuit: string; catalog: string; signals: string } // JSON
   | { type: "probes"; pins: string[] }

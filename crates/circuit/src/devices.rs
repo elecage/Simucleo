@@ -1648,6 +1648,402 @@ impl I2cDevice for CharLcd {
     fn stop(&mut self, _now: Seconds) {}
 }
 
+// ------------------------------------------------------------- MPU-6050
+
+/// MPU-6050 accelerometer and gyroscope (I2C 0x68, 0x69 with AD0 high).
+/// The host writes a register pointer and then reads or writes from there
+/// with auto-increment. It starts asleep (PWR_MGMT_1 = 0x40), when the
+/// data registers read 0. Readings come from the board's tilt (roll,
+/// pitch), its rotation rates and the temperature.
+#[derive(Debug, Clone)]
+pub struct Mpu6050 {
+    pub address: u8,
+    /// Rotation about X and Y (degrees): gravity seen in the chip's axes.
+    pub roll: f64,
+    pub pitch: f64,
+    /// Rotation rates about X, Y, Z (°/s).
+    pub gyro: [f64; 3],
+    pub temp: f64,
+    pub regs: [u8; 0x80],
+    pointer: u8,
+    /// The next byte written is the register pointer.
+    expect_pointer: bool,
+    /// ACCEL_XOUT_H … GYRO_ZOUT_L, sampled when a read starts.
+    sample: [u8; 14],
+}
+
+impl Mpu6050 {
+    pub const WHO_AM_I: u8 = 0x75;
+    pub const PWR_MGMT_1: u8 = 0x6B;
+    pub const SMPLRT_DIV: u8 = 0x19;
+    pub const CONFIG: u8 = 0x1A;
+    pub const GYRO_CONFIG: u8 = 0x1B;
+    pub const ACCEL_CONFIG: u8 = 0x1C;
+    pub const ACCEL_XOUT_H: u8 = 0x3B;
+    pub const GYRO_ZOUT_L: u8 = 0x48;
+
+    pub fn new(address: u8) -> Self {
+        let mut s = Self {
+            address,
+            roll: 0.0,
+            pitch: 0.0,
+            gyro: [0.0; 3],
+            temp: 25.0,
+            regs: [0; 0x80],
+            pointer: 0,
+            expect_pointer: true,
+            sample: [0; 14],
+        };
+        s.reset_registers();
+        s
+    }
+
+    /// Power-on register values: everything 0 except SLEEP and WHO_AM_I.
+    fn reset_registers(&mut self) {
+        self.regs = [0; 0x80];
+        self.regs[Self::PWR_MGMT_1 as usize] = 0x40;
+        self.regs[Self::WHO_AM_I as usize] = 0x68;
+    }
+
+    pub fn asleep(&self) -> bool {
+        self.regs[Self::PWR_MGMT_1 as usize] & 0x40 != 0
+    }
+
+    /// Acceleration (g) along X, Y, Z: gravity turned by roll and pitch.
+    pub fn accel_g(&self) -> [f64; 3] {
+        let (r, p) = (self.roll.to_radians(), self.pitch.to_radians());
+        [-p.sin(), r.sin() * p.cos(), r.cos() * p.cos()]
+    }
+
+    /// LSB per g for ACCEL_CONFIG.AFS_SEL (±2/4/8/16 g).
+    pub fn accel_scale(&self) -> f64 {
+        16384.0 / (1 << (self.regs[Self::ACCEL_CONFIG as usize] >> 3 & 3)) as f64
+    }
+
+    /// LSB per °/s for GYRO_CONFIG.FS_SEL (±250/500/1000/2000 °/s).
+    pub fn gyro_scale(&self) -> f64 {
+        [131.0, 65.5, 32.8, 16.4][(self.regs[Self::GYRO_CONFIG as usize] >> 3 & 3) as usize]
+    }
+
+    /// The 14 data bytes (big-endian int16): accel X/Y/Z, temperature,
+    /// gyro X/Y/Z; all 0 while asleep.
+    pub fn data(&self) -> [u8; 14] {
+        let mut out = [0u8; 14];
+        if self.asleep() {
+            return out;
+        }
+        let raw = |v: f64| v.round().clamp(-32768.0, 32767.0) as i16;
+        let a = self.accel_g();
+        let words = [
+            raw(a[0] * self.accel_scale()),
+            raw(a[1] * self.accel_scale()),
+            raw(a[2] * self.accel_scale()),
+            // Datasheet: °C = raw / 340 + 36.53.
+            raw((self.temp - 36.53) * 340.0),
+            raw(self.gyro[0] * self.gyro_scale()),
+            raw(self.gyro[1] * self.gyro_scale()),
+            raw(self.gyro[2] * self.gyro_scale()),
+        ];
+        for (i, w) in words.iter().enumerate() {
+            out[2 * i..2 * i + 2].copy_from_slice(&w.to_be_bytes());
+        }
+        out
+    }
+
+    fn write_register(&mut self, r: u8, v: u8) {
+        match r {
+            Self::WHO_AM_I => {} // read-only
+            Self::PWR_MGMT_1 if v & 0x80 != 0 => self.reset_registers(),
+            _ => self.regs[r as usize & 0x7F] = v,
+        }
+    }
+}
+
+impl I2cDevice for Mpu6050 {
+    fn address(&self) -> u8 {
+        self.address
+    }
+    fn start(&mut self, read: bool, _now: Seconds) {
+        self.expect_pointer = !read;
+        if read {
+            self.sample = self.data();
+        }
+    }
+    fn write(&mut self, b: u8, _now: Seconds) -> bool {
+        if self.expect_pointer {
+            self.pointer = b & 0x7F;
+            self.expect_pointer = false;
+        } else {
+            self.write_register(self.pointer, b);
+            self.pointer = (self.pointer + 1) & 0x7F;
+        }
+        true
+    }
+    fn read(&mut self, _now: Seconds) -> u8 {
+        let r = self.pointer;
+        self.pointer = (r + 1) & 0x7F;
+        match r {
+            Self::ACCEL_XOUT_H..=Self::GYRO_ZOUT_L => {
+                self.sample[(r - Self::ACCEL_XOUT_H) as usize]
+            }
+            _ => self.regs[r as usize],
+        }
+    }
+    fn stop(&mut self, _now: Seconds) {}
+}
+
+// ------------------------------------------------------------- MAX7219
+
+/// Code-B font of the MAX7219 (decode mode) as segments DP A B C D E F G
+/// (bit 7 … bit 0): 0–9, −, E, H, L, P, blank.
+const CODE_B: [u8; 16] = [
+    0x7E, 0x30, 0x6D, 0x79, 0x33, 0x5B, 0x5F, 0x70, 0x7F, 0x7B, 0x01, 0x4F, 0x37, 0x0E, 0x67, 0x00,
+];
+
+/// A chain of up to 4 MAX7219 LED drivers, each with an 8×8 matrix (the
+/// FC-16 module). 16-bit frames (address nibble, data byte) are shifted in
+/// MSB first on CLK rising edges while CS is low and taken on the CS rising
+/// edge; with N chips the last 16·N bits count, the first frame shifted
+/// ending up in the farthest chip.
+#[derive(Debug, Clone)]
+pub struct Max7219 {
+    pub count: usize,
+    /// The chained shift registers, the nearest chip in the low 16 bits.
+    shift: u64,
+    /// Registers 0x0–0xF of each chip (0x1–0x8 digits, 0x9 decode mode,
+    /// 0xA intensity, 0xB scan limit, 0xC shutdown, 0xF display test).
+    pub regs: [[u8; 16]; 4],
+    last_clk: Option<bool>,
+    last_cs: Option<bool>,
+    /// Frames latched so far.
+    pub latches: u32,
+}
+
+impl Max7219 {
+    pub const MAX_CHAIN: usize = 4;
+
+    /// Power-up: all registers 0, so the chips start in shutdown.
+    pub fn new(count: usize) -> Self {
+        Self {
+            count: count.clamp(1, Self::MAX_CHAIN),
+            shift: 0,
+            regs: [[0; 16]; 4],
+            last_clk: None,
+            last_cs: None,
+            latches: 0,
+        }
+    }
+
+    fn mask(&self) -> u64 {
+        if self.count >= 4 {
+            u64::MAX
+        } else {
+            (1u64 << (16 * self.count)) - 1
+        }
+    }
+
+    /// One bit into DIN.
+    pub fn shift_bit(&mut self, bit: bool) {
+        self.shift = (self.shift << 1 | bit as u64) & self.mask();
+    }
+
+    /// Eight bits, MSB first (an SPI byte).
+    pub fn byte(&mut self, b: u8) {
+        for i in (0..8).rev() {
+            self.shift_bit(b >> i & 1 != 0);
+        }
+    }
+
+    /// CS rising edge: every chip takes the frame in its shift register.
+    pub fn latch(&mut self) {
+        for i in 0..self.count {
+            let frame = (self.shift >> (16 * i)) as u16;
+            let addr = (frame >> 8 & 0xF) as usize;
+            if addr != 0 {
+                self.regs[i][addr] = frame as u8;
+            }
+        }
+        self.latches += 1;
+    }
+
+    /// The levels of CLK, CS and DIN now (bit-banged or not): shift on a
+    /// CLK rising edge with CS low, latch on a CS rising edge.
+    pub fn pins(&mut self, clk: bool, cs: bool, din: bool) {
+        if self.last_clk == Some(false) && clk && !cs {
+            self.shift_bit(din);
+        }
+        if self.last_cs == Some(false) && cs {
+            self.latch();
+        }
+        self.last_clk = Some(clk);
+        self.last_cs = Some(cs);
+    }
+
+    /// Rows (digits 0–7, top first) of chip `i` as displayed: blank in
+    /// shutdown, all on in display test, digits past the scan limit dark,
+    /// Code-B decoded where the decode mode says so. Bit 7 is the left
+    /// column.
+    pub fn rows(&self, i: usize) -> [u8; 8] {
+        let r = &self.regs[i];
+        if r[0xF] & 1 != 0 {
+            return [0xFF; 8];
+        }
+        let mut out = [0u8; 8];
+        if r[0xC] & 1 == 0 {
+            return out;
+        }
+        for (d, row) in out.iter_mut().enumerate() {
+            if d > (r[0xB] & 7) as usize {
+                break;
+            }
+            let v = r[1 + d];
+            *row = if r[0x9] >> d & 1 != 0 {
+                CODE_B[(v & 0xF) as usize] | (v & 0x80)
+            } else {
+                v
+            };
+        }
+        out
+    }
+
+    /// Duty setting 0–15 of chip `i` (15 in display test).
+    pub fn intensity(&self, i: usize) -> u8 {
+        if self.regs[i][0xF] & 1 != 0 {
+            15
+        } else {
+            self.regs[i][0xA] & 0xF
+        }
+    }
+}
+
+// ------------------------------------------------------------ IR remote
+
+/// Buttons of the 17-key remote (NEC, address 0x00) and their commands.
+pub const IR_KEYS: [(&str, u8); 17] = [
+    ("1", 0x45),
+    ("2", 0x46),
+    ("3", 0x47),
+    ("4", 0x44),
+    ("5", 0x40),
+    ("6", 0x43),
+    ("7", 0x07),
+    ("8", 0x15),
+    ("9", 0x09),
+    ("*", 0x16),
+    ("0", 0x19),
+    ("#", 0x0D),
+    ("UP", 0x18),
+    ("LEFT", 0x08),
+    ("OK", 0x1C),
+    ("RIGHT", 0x5A),
+    ("DOWN", 0x52),
+];
+
+/// NEC address the remote sends.
+pub const IR_ADDRESS: u8 = 0x00;
+
+/// An IR receiver (VS1838B class) with its remote: a pressed button makes
+/// the receiver's active-low output carry the demodulated NEC frame — 9 ms
+/// mark, 4.5 ms space, 32 bits LSB first (address, ~address, command,
+/// ~command), each a 562.5 µs mark then a 562.5 µs (0) or 1687.5 µs (1)
+/// space, and a final mark. While the button is held, a repeat code
+/// (9 ms mark, 2.25 ms space, mark) follows every 108 ms.
+#[derive(Debug, Clone, Default)]
+pub struct IrRemote {
+    /// Planned output changes: (time, output pulled low).
+    plan: VecDeque<(Seconds, bool)>,
+    /// The output is low (a mark) now.
+    pub low: bool,
+    /// The command of the button held down.
+    held: Option<u8>,
+    next_repeat: Option<Seconds>,
+    /// The last frame sent: (command, repeat).
+    pub last: Option<(u8, bool)>,
+}
+
+impl IrRemote {
+    pub const MARK: Seconds = 562.5e-6;
+    pub const REPEAT_PERIOD: Seconds = 0.108;
+
+    /// The command of a button label ("5", "OK", …).
+    pub fn command(key: &str) -> Option<u8> {
+        IR_KEYS.iter().find(|(k, _)| *k == key).map(|&(_, c)| c)
+    }
+
+    fn push(&mut self, t: Seconds, low: bool) {
+        self.plan.push_back((t, low));
+    }
+
+    /// The pulse train of one full frame from `t`; returns its end.
+    fn frame(&mut self, mut t: Seconds, cmd: u8) -> Seconds {
+        let bytes = [IR_ADDRESS, !IR_ADDRESS, cmd, !cmd];
+        self.push(t, true);
+        t += 9e-3;
+        self.push(t, false);
+        t += 4.5e-3;
+        for byte in bytes {
+            for bit in 0..8 {
+                self.push(t, true);
+                t += Self::MARK;
+                self.push(t, false);
+                t += if byte >> bit & 1 != 0 {
+                    3.0 * Self::MARK
+                } else {
+                    Self::MARK
+                };
+            }
+        }
+        self.push(t, true);
+        t += Self::MARK;
+        self.push(t, false);
+        t
+    }
+
+    /// A button goes down at `now`.
+    pub fn press(&mut self, now: Seconds, cmd: u8) {
+        // After a frame still going out.
+        let start = self.plan.back().map_or(now, |&(t, _)| t.max(now));
+        self.frame(start, cmd);
+        self.held = Some(cmd);
+        self.next_repeat = Some(start + Self::REPEAT_PERIOD);
+        self.last = Some((cmd, false));
+    }
+
+    /// The button is let go: the frame going out finishes, no more repeats.
+    pub fn release(&mut self) {
+        self.held = None;
+        self.next_repeat = None;
+    }
+
+    pub fn advance(&mut self, now: Seconds) {
+        while let (Some(t), Some(cmd)) = (self.next_repeat, self.held) {
+            if t > now + 1e-12 {
+                break;
+            }
+            self.push(t, true);
+            self.push(t + 9e-3, false);
+            self.push(t + 11.25e-3, true);
+            self.push(t + 11.25e-3 + Self::MARK, false);
+            self.next_repeat = Some(t + Self::REPEAT_PERIOD);
+            self.last = Some((cmd, true));
+        }
+        while let Some(&(t, low)) = self.plan.front() {
+            if t > now + 1e-12 {
+                break;
+            }
+            self.low = low;
+            self.plan.pop_front();
+        }
+    }
+
+    pub fn next(&self) -> Option<Seconds> {
+        match (self.plan.front().map(|&(t, _)| t), self.next_repeat) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+}
+
 /// A bus device part's state, kept across circuit edits.
 #[derive(Debug, Clone)]
 pub enum Device {
@@ -1661,6 +2057,9 @@ pub enum Device {
     Sonar(Sonar),
     Thermo(Ds18b20),
     Lcd(Box<CharLcd>),
+    Imu(Box<Mpu6050>),
+    Matrix(Max7219),
+    Ir(IrRemote),
 }
 
 impl Device {
@@ -1671,6 +2070,7 @@ impl Device {
             Device::Rtc(d) => Some(d),
             Device::Aht(d) => Some(d),
             Device::Lcd(d) => Some(d.as_mut()),
+            Device::Imu(d) => Some(d.as_mut()),
             _ => None,
         }
     }
@@ -1684,6 +2084,7 @@ impl Device {
             Device::Encoder(e) => e.advance(now),
             Device::Sonar(s) => s.advance(now),
             Device::Thermo(d) => d.advance(now),
+            Device::Ir(d) => d.advance(now),
             _ => {}
         }
     }
@@ -1696,6 +2097,7 @@ impl Device {
             Device::Thermo(d) => d.pulling.then_some(false),
             Device::Encoder(e) => e.closed[index.min(1)].then_some(false),
             Device::Sonar(s) => Some(s.echo),
+            Device::Ir(d) => d.low.then_some(false),
             _ => None,
         }
     }
@@ -1707,6 +2109,7 @@ impl Device {
             Device::Encoder(e) => e.next(),
             Device::Sonar(s) => s.next(),
             Device::Thermo(d) => d.next(),
+            Device::Ir(d) => d.next(),
             _ => None,
         }
     }
@@ -1717,6 +2120,7 @@ impl Device {
             Device::Rtc(_) => 0x68,
             Device::Aht(_) => 0x38,
             Device::Lcd(d) => d.address,
+            Device::Imu(d) => d.address,
             _ => 0,
         }
     }
@@ -2205,5 +2609,158 @@ mod tests {
         assert_eq!(&l.rows()[0][..6], b" Hello");
         send(&mut l, 0x18, false);
         assert_eq!(&l.rows()[0][..5], b"Hello");
+    }
+
+    /// HAL_I2C_Mem_Read: pointer write, repeated START, burst read.
+    fn mem_read(d: &mut dyn I2cDevice, reg: u8, n: usize) -> Vec<u8> {
+        d.start(false, 0.0);
+        assert!(d.write(reg, 0.0));
+        d.start(true, 0.0);
+        let out = (0..n).map(|_| d.read(0.0)).collect();
+        d.stop(0.0);
+        out
+    }
+
+    #[test]
+    fn mpu6050_wakes_up_and_reads_tilt_rates_and_temperature() {
+        let mut m = Mpu6050::new(0x68);
+        assert_eq!(mem_read(&mut m, 0x75, 1), [0x68]);
+        assert_eq!(mem_read(&mut m, 0x6B, 1), [0x40], "starts asleep");
+        m.roll = 30.0;
+        m.gyro = [10.0, -250.0, 300.0];
+        m.temp = 25.0;
+        assert_eq!(mem_read(&mut m, 0x3B, 14), [0; 14], "asleep: zeros");
+        // Wake up, ±4 g, ±500 °/s.
+        i2c_write(&mut m, &[0x6B, 0x00], 0.0);
+        i2c_write(&mut m, &[0x1B, 0x08, 0x08], 0.0);
+        assert_eq!(mem_read(&mut m, 0x19, 4), [0, 0, 0x08, 0x08]);
+        let d = mem_read(&mut m, 0x3B, 14);
+        let w = |i: usize| i16::from_be_bytes([d[2 * i], d[2 * i + 1]]);
+        assert_eq!(w(0), 0);
+        assert_eq!(w(1), 4096, "sin 30° · 8192");
+        assert_eq!(w(2), (30f64.to_radians().cos() * 8192.0).round() as i16);
+        assert!(((w(3) as f64 / 340.0 + 36.53) - 25.0).abs() < 0.01);
+        assert_eq!(w(4), 655);
+        assert_eq!(w(5), -16375);
+        assert_eq!(w(6), 19650);
+        // Pitch forward: X sees −sin θ; the gyro clamps at full scale.
+        m.roll = 0.0;
+        m.pitch = 90.0;
+        m.gyro = [0.0, 0.0, 2000.0];
+        let d = mem_read(&mut m, 0x3B, 14);
+        let w = |i: usize| i16::from_be_bytes([d[2 * i], d[2 * i + 1]]);
+        assert_eq!((w(0), w(1), w(2)), (-8192, 0, 0));
+        assert_eq!(w(6), 32767);
+        // Reads run on past the data into the next registers.
+        assert_eq!(mem_read(&mut m, 0x47, 2)[0], 0x7F);
+        // DEVICE_RESET puts it back to sleep with the defaults.
+        i2c_write(&mut m, &[0x6B, 0x80], 0.0);
+        assert_eq!(mem_read(&mut m, 0x1B, 2), [0, 0]);
+        assert_eq!(mem_read(&mut m, 0x6B, 1), [0x40]);
+        assert!(m.asleep());
+    }
+
+    #[test]
+    fn max7219_chain_shifts_latches_and_shows_rows() {
+        let mut m = Max7219::new(2);
+        let send = |m: &mut Max7219, frames: &[u16]| {
+            for f in frames {
+                m.byte((f >> 8) as u8);
+                m.byte(*f as u8);
+            }
+            m.latch();
+        };
+        // Starts in shutdown: nothing shows.
+        send(&mut m, &[0x0181, 0x0118]);
+        assert_eq!(m.rows(0), [0; 8]);
+        // The first frame goes to the far chip, the second to the near one.
+        assert_eq!((m.regs[1][1], m.regs[0][1]), (0x81, 0x18));
+        send(&mut m, &[0x0C01, 0x0C01]);
+        send(&mut m, &[0x0B07, 0x0B07]);
+        send(&mut m, &[0x0A03, 0x0A08]);
+        assert_eq!(m.rows(0)[0], 0x18);
+        assert_eq!(m.rows(1)[0], 0x81);
+        assert_eq!((m.intensity(0), m.intensity(1)), (8, 3));
+        // No-op (address 0) for the far chip, display test on the near one.
+        send(&mut m, &[0x0000, 0x0F01]);
+        assert_eq!(m.rows(0), [0xFF; 8]);
+        assert_eq!(m.rows(1)[0], 0x81);
+        send(&mut m, &[0x0000, 0x0F00]);
+        // Scan limit 0: only digit 0 is shown.
+        send(&mut m, &[0x0B00, 0x0B00]);
+        send(&mut m, &[0x0255, 0x0255]);
+        assert_eq!(m.rows(0)[1], 0);
+        // Code-B decode on digit 0: "3" with the decimal point.
+        send(&mut m, &[0x0901, 0x0901]);
+        send(&mut m, &[0x0183, 0x0183]);
+        assert_eq!(m.rows(0)[0], 0x79 | 0x80);
+
+        // Bit-banged: shift on CLK rising edges while CS is low.
+        let mut m = Max7219::new(1);
+        m.pins(false, true, false);
+        let frame = |m: &mut Max7219, f: u16| {
+            m.pins(false, false, false);
+            for i in (0..16).rev() {
+                let b = f >> i & 1 != 0;
+                m.pins(false, false, b);
+                m.pins(true, false, b);
+            }
+            m.pins(false, false, false);
+            m.pins(false, true, false);
+        };
+        frame(&mut m, 0x0C01);
+        frame(&mut m, 0x0B07);
+        frame(&mut m, 0x0842);
+        assert_eq!(m.rows(0)[7], 0x42);
+        assert_eq!(m.latches, 3);
+        // Clocks with CS high shift nothing.
+        m.pins(true, true, true);
+        m.pins(false, true, true);
+        m.pins(true, true, true);
+        m.pins(false, false, false);
+        m.pins(false, true, false);
+        assert_eq!(m.rows(0)[7], 0x42);
+    }
+
+    #[test]
+    fn ir_remote_sends_nec_frames_and_repeats_while_held() {
+        let mut r = IrRemote::default();
+        let cmd = IrRemote::command("OK").unwrap();
+        assert_eq!(cmd, 0x1C);
+        r.press(1.0, cmd);
+        // Collect (time, low) changes until the button is let go at 1.25 s.
+        let mut edges = Vec::new();
+        let mut released = false;
+        while let Some(t) = r.next() {
+            if t > 1.25 && !released {
+                r.release();
+                released = true;
+                continue;
+            }
+            let before = r.low;
+            r.advance(t);
+            if r.low != before {
+                edges.push((t - 1.0, r.low));
+            }
+        }
+        assert!(!r.low);
+        // Durations of the levels after each change.
+        let widths: Vec<f64> = edges.windows(2).map(|w| (w[1].0 - w[0].0) * 1e6).collect();
+        assert!((widths[0] - 9000.0).abs() < 1e-3 && (widths[1] - 4500.0).abs() < 1e-3);
+        let mut bits = 0u32;
+        for i in 0..32 {
+            assert!((widths[2 + 2 * i] - 562.5).abs() < 1e-3);
+            let space = widths[3 + 2 * i];
+            assert!((space - 562.5).abs() < 1e-3 || (space - 1687.5).abs() < 1e-3);
+            bits |= ((space > 1000.0) as u32) << i;
+        }
+        assert_eq!(bits.to_le_bytes(), [0x00, 0xFF, 0x1C, 0xE3]);
+        // Then two repeat codes (at 108 and 216 ms), none after the release.
+        let rest: Vec<f64> = edges[68..].iter().map(|e| e.0 * 1e3).collect();
+        assert_eq!(rest.len(), 8, "{rest:?}");
+        assert!((rest[0] - 108.0).abs() < 1e-6 && (rest[4] - 216.0).abs() < 1e-6);
+        assert!((rest[1] - rest[0] - 9.0).abs() < 1e-6);
+        assert!((rest[2] - rest[1] - 2.25).abs() < 1e-6);
+        assert_eq!(r.last, Some((0x1C, true)));
     }
 }

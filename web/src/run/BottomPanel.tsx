@@ -11,6 +11,11 @@ const hex = (v: number, w = 8) => "0x" + (v >>> 0).toString(16).toUpperCase().pa
 
 export function BottomPanel({ runner }: { runner: Runner }) {
   const [tab, setTab] = useState<Tab>("console");
+  // The waveform view keeps its trigger and capture once opened.
+  const [scopeOpened, setScopeOpened] = useState(false);
+  useEffect(() => {
+    if (tab === "waveform") setScopeOpened(true);
+  }, [tab]);
   const phones = Object.keys(runner.bluetooth).sort();
   const btTabs: [Tab, string][] = phones.map((id) => [
     `bt:${id}`,
@@ -47,7 +52,11 @@ export function BottomPanel({ runner }: { runner: Runner }) {
         <div className="tab-keep" hidden={tab !== "source"}>
           <SourceView runner={runner} />
         </div>
-        {tab === "waveform" && <Waveform runner={runner} />}
+        {(tab === "waveform" || scopeOpened) && (
+          <div className="tab-keep" hidden={tab !== "waveform"}>
+            <Waveform runner={runner} active={tab === "waveform"} />
+          </div>
+        )}
         {tab === "rtos" && <RtosView runner={runner} />}
         {tab === "registers" && <Registers runner={runner} />}
         {tab === "memory" && <Memory runner={runner} />}

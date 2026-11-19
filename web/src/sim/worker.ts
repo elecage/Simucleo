@@ -39,6 +39,11 @@ function tick() {
       running = false;
       break;
     }
+    if (sim.atBreakpoint()) {
+      running = false;
+      post({ type: "paused", reason: "breakpoint" });
+      break;
+    }
   }
   const simDt = sim.timeMs() - startSim;
   const ratio = wallDt > 0 ? simDt / wallDt : 0;
@@ -83,6 +88,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case "pause":
       stop();
+      post({ type: "paused", reason: "pause" });
       break;
     case "reset": {
       const was = running;
@@ -119,6 +125,22 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     case "rotate":
       sim.rotate(m.part, m.detents);
       if (!running) sendFrame();
+      break;
+    case "debugFiles":
+      post({ type: "debugFiles", files: JSON.parse(sim.debugFiles()) });
+      break;
+    case "breakpoints":
+      post({ type: "breakpoints", placed: JSON.parse(sim.setBreakpoints(JSON.stringify(m.list))) });
+      break;
+    case "step": {
+      stop();
+      const r = sim.step(m.kind);
+      sendFrame();
+      post({ type: "paused", reason: r });
+      break;
+    }
+    case "debugState":
+      post({ type: "debugState", state: JSON.parse(sim.debugState(m.frame, m.globalsFile)) });
       break;
     case "sdImage":
       post({ type: "sdImage", part: m.part, bytes: sim.sdImage(m.part) });

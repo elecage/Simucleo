@@ -2,6 +2,8 @@
 //! (STM32CubeIDE / CubeMX Makefile / CMake projects, or hand-written
 //! bare-metal startup code).
 
+pub mod debug;
+
 use std::collections::{BTreeMap, HashMap};
 
 use object::elf::{EM_ARM, PT_LOAD};

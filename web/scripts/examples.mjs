@@ -1,7 +1,7 @@
 // Copy the built example firmware into public/examples/ with an index, so
 // the site can offer them without a toolchain. Build them first, e.g.
 //   make -C ../firmware/hal-blinky variants && make -C ../firmware/hal-uart-printf
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -49,4 +49,27 @@ for (const [project, file, description] of EXAMPLES) {
   index.push(entry);
 }
 writeFileSync(join(out, "index.json"), JSON.stringify(index, null, 2) + "\n");
+
+// The examples' own sources (not the vendored libraries), for the source
+// view: public/examples/src/<path under firmware/> and a list of them.
+const sources = [];
+const srcOut = join(out, "src");
+function copySources(rel) {
+  const dir = join(root, rel);
+  if (!existsSync(dir)) return;
+  for (const name of readdirSync(dir)) {
+    const r = `${rel}/${name}`;
+    const full = join(root, r);
+    if (statSync(full).isDirectory()) {
+      if (name !== "build") copySources(r);
+    } else if (/\.(c|h|s)$/i.test(name)) {
+      mkdirSync(dirname(join(srcOut, r)), { recursive: true });
+      copyFileSync(full, join(srcOut, r));
+      sources.push(r);
+    }
+  }
+}
+for (const project of new Set([...EXAMPLES.map(([p]) => p), "hal-common", "freertos-common"])) copySources(project);
+writeFileSync(join(out, "sources.json"), JSON.stringify(sources.sort()) + "\n");
+console.log(`${sources.length} source files → public/examples/src`);
 console.log(`${index.length} examples → public/examples`);

@@ -1166,3 +1166,111 @@ fn sonar_and_ds18b20_are_timed_in_microseconds() {
         board.circuit_warnings()
     );
 }
+
+// ----------------------------------------------- source-level debugging (M9)
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-7seg-keypad"]
+fn breakpoints_steps_call_stack_and_variables() {
+    use simucleo_nucleo::{Step, StepEnd};
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-7seg-keypad", "hal-7seg-keypad"))
+        .unwrap();
+    let info = board.debug_info().expect("DWARF");
+    let main_c = info
+        .files
+        .iter()
+        .position(|f| f.ends_with("hal-7seg-keypad/main.c"))
+        .unwrap() as u32;
+    let line = |b: &Nucleo| {
+        b.debug_info()
+            .unwrap()
+            .location(b.cpu.registers().pc())
+            .map(|l| l.1)
+    };
+    let func = |b: &Nucleo| b.call_stack().first().and_then(|f| f.function.clone());
+
+    // Break on SystemClock_Config(); (line 92).
+    let (l, addrs) = info.breakpoint_addresses(main_c, 92).unwrap();
+    assert_eq!(l, 92);
+    board.set_breakpoints(&addrs);
+    let r = board.run_for_ns(100e6);
+    assert!(
+        matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_)),
+        "{r:?}"
+    );
+    assert_eq!(line(&board), Some(92));
+
+    // Over: the clock set-up runs, we are on the next line.
+    assert_eq!(board.step(Step::Over), StepEnd::Done);
+    assert_eq!(line(&board), Some(93));
+    assert_eq!(board.clock_hz(), 84_000_000, "SystemClock_Config ran");
+    // Into MX_GPIO_Init, then out again.
+    assert_eq!(board.step(Step::Into), StepEnd::Done);
+    assert_eq!(func(&board).as_deref(), Some("MX_GPIO_Init"));
+    let stack: Vec<_> = board
+        .call_stack()
+        .iter()
+        .map(|f| f.function.clone().unwrap_or_default())
+        .collect();
+    assert_eq!(stack[..2], ["MX_GPIO_Init", "main"]);
+    assert_eq!(board.step(Step::Out), StepEnd::Done);
+    assert_eq!(func(&board).as_deref(), Some("main"));
+    // Instruction steps move the pc.
+    let pc = board.cpu.registers().pc();
+    assert_eq!(board.step(Step::Instruction), StepEnd::Done);
+    assert_ne!(board.cpu.registers().pc(), pc);
+
+    // Run on to the keypad loop and read variables.
+    board.set_breakpoints(&[]);
+    let (_, addrs) = board
+        .debug_info()
+        .unwrap()
+        .breakpoint_addresses(main_c, 102)
+        .unwrap();
+    board.set_breakpoints(&addrs);
+    let r = board.run_for_ns(100e6);
+    assert!(
+        matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_)),
+        "{r:?}"
+    );
+    let locals = board.locals(0);
+    let names: Vec<&str> = locals.iter().map(|v| v.name.as_str()).collect();
+    assert!(
+        names.contains(&"value") && names.contains(&"len"),
+        "{names:?}"
+    );
+    let globals = board.globals(&[main_c]);
+    let keys = globals.iter().find(|g| g.name == "KEYS").unwrap();
+    assert_eq!(keys.ty, "const char[4][4]");
+    assert_eq!(keys.children[1].value, "\"456B\"");
+    let htim = globals.iter().find(|g| g.name == "htim10").unwrap();
+    let inst = htim.children.iter().find(|c| c.name == "Instance").unwrap();
+    assert_eq!(inst.value, "0x40014400");
+    // A breakpoint inside the timer interrupt shows the interrupted code.
+    board.set_breakpoints(&[]);
+    let cb = board
+        .debug_info()
+        .unwrap()
+        .functions
+        .iter()
+        .find(|f| f.name == "HAL_TIM_PeriodElapsedCallback")
+        .unwrap()
+        .low;
+    board.set_breakpoints(&[cb]);
+    board.run_for_ns(10e6);
+    let stack = board.call_stack();
+    assert_eq!(
+        stack[0].function.as_deref(),
+        Some("HAL_TIM_PeriodElapsedCallback")
+    );
+    assert!(
+        stack.iter().any(|f| f.exception),
+        "an exception frame: {stack:?}"
+    );
+    assert!(
+        stack.iter().any(|f| f.function.as_deref() == Some("main")),
+        "{stack:?}"
+    );
+}

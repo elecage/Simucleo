@@ -441,3 +441,85 @@ fn analog_channel_on_the_pot_wiper_shows_its_voltage() {
     let pot: f64 = last.split_whitespace().nth(1).unwrap().parse().unwrap();
     assert!((pot - 819.0).abs() < 15.0, "{last}");
 }
+
+// ---------------------------------------------------------------- M23
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-bldc-pwm"]
+fn tim1_dead_time_shows_between_pa8_falling_and_pa7_rising() {
+    // The example project as the web loads it.
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../web/examples/hal-bldc-pwm.simucleo.json"
+    );
+    let project: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let mut sim = Simulator::new();
+    sim.load_elf(&firmware("hal-bldc-pwm")).unwrap();
+    wired(
+        &mut sim,
+        project,
+        &[
+            ("D7", "PA8"),
+            ("D11", "PA7"),
+            ("D8", "PA9"),
+            ("A3", "PB0"),
+            ("D2", "PA10"),
+            ("CN10_24", "PB1"),
+            ("D3", "PB3"),
+            ("D4", "PB5"),
+            ("D6", "PB10"),
+            ("A0", "PA0"),
+            ("GND_P1", "GND"),
+            ("GND_P2", "GND"),
+            ("5V", "5V"),
+            ("3V3", "3V3"),
+        ],
+    );
+    sim.set_probes(r#"["PA8","PA7"]"#).unwrap();
+    sim.run_for_ms(300.0);
+    let console = sim.take_console();
+    assert!(console.contains("dead time 500 ns"), "{console}");
+    // CH1 falling, 10 µs/div (two PWM periods), 10 % before.
+    sim.set_trigger(
+        r#"{"source":"PA8","edge":"falling","mode":"single","windowNs":100000,"pre":0.1}"#,
+    )
+    .unwrap();
+    let cap = next_capture(&mut sim, 200.0).expect("a capture");
+    let (h0, high) = channel(&cap, "PA8");
+    let (l0, low) = channel(&cap, "PA7");
+    assert!(h0, "CH1 high before the trigger");
+    assert_eq!(high.first(), Some(&(0.0, false)));
+    // CH1N turns on DTG = 42 ticks of 84 MHz later: 500 ns.
+    let dead = 42.0 * CYCLE_NS;
+    assert!(!l0 || !h0, "never both on");
+    let rise = low.iter().find(|e| e.0 >= 0.0 && e.1).expect("CH1N rises");
+    assert!(
+        (rise.0 - dead).abs() <= CYCLE_NS,
+        "CH1N rose {} ns after CH1 fell",
+        rise.0
+    );
+    // And the other way round: CH1N off, CH1 on 500 ns later.
+    let fall = low
+        .iter()
+        .find(|e| e.0 > rise.0 && !e.1)
+        .expect("CH1N falls");
+    let up = high
+        .iter()
+        .find(|e| e.0 > fall.0 && e.1)
+        .expect("CH1 rises");
+    assert!(
+        (up.0 - fall.0 - dead).abs() <= CYCLE_NS,
+        "{} vs {}",
+        up.0,
+        fall.0
+    );
+    // At no time are both on.
+    let mut times: Vec<f64> = high.iter().chain(&low).map(|e| e.0).collect();
+    times.sort_by(f64::total_cmp);
+    for t in times {
+        assert!(
+            !(level_at(h0, &high, t) && level_at(l0, &low, t)),
+            "both on at {t} ns"
+        );
+    }
+}

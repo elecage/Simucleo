@@ -11,10 +11,17 @@
 //! Modelled: up/down counting, prescaler and auto-reload with preload,
 //! one-pulse mode, UG/CCxG, update and compare interrupts, output compare
 //! (frozen, active/inactive/toggle on match, force) and PWM modes 1/2 with
-//! polarity, BDTR.MOE on TIM1, and DMA requests on update and compare events
-//! (CCDS). Not yet: center-aligned counting (counts up), the repetition
-//! counter, slave modes other than reset and encoder, and complementary
-//! outputs.
+//! polarity, and DMA requests on update and compare events (CCDS).
+//! TIM1's advanced-control features (RM0368 §12.3.11–12.3.13): the
+//! complementary outputs CH1N–CH3N (CCxNE/CCxNP) with dead-time insertion
+//! (BDTR.DTG, its four ranges, tDTS from CR1.CKD), MOE/AOE/OSSR/OSSI with
+//! the idle levels CR2.OISx/OISxN, the break (BKIN pin with BKE/BKP, or
+//! EGR.BG) that clears MOE and sets BIF, and the preloaded CCxE/CCxNE/OCxM
+//! bits (CR2.CCPC) taken over at a COM event (EGR.COMG, COMIF). A dead-time
+//! edge lies between counter ticks, so it is scheduled in core cycles.
+//! Not yet: center-aligned counting (counts up), the repetition counter,
+//! slave modes other than reset and encoder, BDTR.LOCK and the COM event
+//! from TRGI (CCUS).
 //! Input capture (direct/indirect TI mapping, edge polarity, prescaler,
 //! overcapture) and the reset slave mode take pin edges from the bus.
 
@@ -34,10 +41,54 @@ const CC_OF: [u32; 4] = [1 << 9, 1 << 10, 1 << 11, 1 << 12];
 // DIER DMA enables
 const UDE: u32 = 1 << 8;
 const CC_DE: [u32; 4] = [1 << 9, 1 << 10, 1 << 11, 1 << 12];
+// CR1 clock division (tDTS) for the dead-time generator.
+const CKD_SHIFT: u32 = 8;
+// SR / DIER: TIM1 COM, trigger and break.
+pub const COMIF: u32 = 1 << 5;
+pub const BIF: u32 = 1 << 7;
+const TIF: u32 = 1 << 6;
+// EGR
+const COMG: u32 = 1 << 5;
+const BG: u32 = 1 << 7;
 // CR2
+const CCPC: u32 = 1 << 0;
 const CCDS: u32 = 1 << 3;
+/// OISx (bit 8 + 2x) and OISxN (bit 9 + 2x).
+const OIS_SHIFT: u32 = 8;
 // BDTR
-const MOE: u32 = 1 << 15;
+pub const MOE: u32 = 1 << 15;
+const AOE: u32 = 1 << 14;
+const BKP: u32 = 1 << 13;
+const BKE: u32 = 1 << 12;
+const OSSR: u32 = 1 << 11;
+const OSSI: u32 = 1 << 10;
+/// CCER bits preloaded while CR2.CCPC is set: CCxE and CCxNE of CH1–CH3.
+const PRE_CCER: u32 = 0x555;
+/// CCMR bits preloaded while CR2.CCPC is set: OC1M, OC2M / OC3M.
+const PRE_CCMR: [u32; 2] = [0x7070, 0x0070];
+
+/// Dead time in timer kernel clock periods (tCK_INT) for a BDTR.DTG value
+/// and CR1.CKD (tDTS = 1, 2 or 4 tCK_INT), RM0368 §12.4.18:
+/// DTG[7:5] = 0xx: DTG × tDTS; 10x: (64 + DTG[5:0]) × 2 tDTS;
+/// 110: (32 + DTG[4:0]) × 8 tDTS; 111: (32 + DTG[4:0]) × 16 tDTS.
+pub fn dead_time_ticks(dtg: u32, ckd: u32) -> u64 {
+    let dtg = dtg & 0xFF;
+    let tdts: u64 = match ckd & 3 {
+        0 => 1,
+        1 => 2,
+        _ => 4,
+    };
+    let (n, mult) = if dtg & 0x80 == 0 {
+        (dtg, 1)
+    } else if dtg & 0xC0 == 0x80 {
+        (64 + (dtg & 0x3F), 2)
+    } else if dtg & 0xE0 == 0xC0 {
+        (32 + (dtg & 0x1F), 8)
+    } else {
+        (32 + (dtg & 0x1F), 16)
+    };
+    n as u64 * mult * tdts
+}
 
 /// Static description of a timer instance.
 #[derive(Debug, Clone, Copy)]
@@ -202,6 +253,20 @@ pub const PIN_MAP: &[(u8, u8, u8, u8, u8)] = &[
     (1, 9, 3, 7, 0),
 ];
 
+/// TIM1 complementary outputs on pins: (port, pin, alternate function,
+/// channel 0–2). CH1N PA7/PB13, CH2N PB0/PB14, CH3N PB1/PB15 (AF1).
+pub const PIN_MAP_N: &[(u8, u8, u8, u8)] = &[
+    (0, 7, 1, 0),
+    (1, 13, 1, 0),
+    (1, 0, 1, 1),
+    (1, 14, 1, 1),
+    (1, 1, 1, 2),
+    (1, 15, 1, 2),
+];
+
+/// TIM1 break input BKIN: PA6 and PB12 (AF1).
+pub const BKIN_PINS: &[(u8, u8, u8)] = &[(0, 6, 1), (1, 12, 1)];
+
 #[derive(Debug, Clone)]
 pub struct Timer {
     pub info: TimerInfo,
@@ -238,6 +303,20 @@ pub struct Timer {
     pub dma_req: u32,
     /// Input-capture edges counted per channel (for ICxPSC).
     ic_count: [u32; 4],
+    /// CCER / CCMR bits in effect while CR2.CCPC preloads them (taken
+    /// over at a COM event); equal to the registers otherwise.
+    ccer_sh: u32,
+    ccmr_sh: [u32; 2],
+    /// Time of the last `sync` / `write`: the outputs are those at `now`.
+    now: Cycles,
+    /// OCxREF as last seen, and when it last changed (for dead time).
+    ref_prev: [bool; 4],
+    ref_at: [Option<Cycles>; 4],
+    /// When the references were last looked at.
+    track_time: Cycles,
+    /// BKIN: routed to a pin in its alternate function, and that pin's level.
+    bk_routed: bool,
+    bk_level: bool,
 }
 
 impl Timer {
@@ -270,6 +349,14 @@ impl Timer {
             gated: false,
             dma_req: 0,
             ic_count: [0; 4],
+            ccer_sh: 0,
+            ccmr_sh: [0; 2],
+            now: 0,
+            ref_prev: [false; 4],
+            ref_at: [None; 4],
+            track_time: 0,
+            bk_routed: false,
+            bk_level: false,
         }
     }
 
@@ -281,6 +368,8 @@ impl Timer {
         self.gen = gen;
         self.gated = gated;
         self.ref_cycle = now;
+        self.now = now;
+        self.track_time = now;
     }
 
     fn max(&self) -> u32 {
@@ -306,8 +395,38 @@ impl Timer {
     /// Output compare mode of a channel (OCxM), or `None` if the channel is
     /// configured as an input.
     fn oc_mode(&self, ch: usize) -> Option<u32> {
-        let r = self.ccmr[ch / 2] >> (8 * (ch % 2));
+        let r = self.ccmr_eff(ch / 2) >> (8 * (ch % 2));
         (r & 3 == 0).then_some((r >> 4) & 7)
+    }
+
+    /// CR2.CCPC: CCxE, CCxNE and OCxM are preloaded (TIM1).
+    fn com_preload(&self) -> bool {
+        self.info.advanced && self.cr2 & CCPC != 0
+    }
+
+    /// CCMRx as in effect (the preloaded OCxM bits until a COM event).
+    fn ccmr_eff(&self, i: usize) -> u32 {
+        if self.com_preload() {
+            (self.ccmr[i] & !PRE_CCMR[i]) | (self.ccmr_sh[i] & PRE_CCMR[i])
+        } else {
+            self.ccmr[i]
+        }
+    }
+
+    /// CCER as in effect (the preloaded enable bits until a COM event).
+    fn ccer_eff(&self) -> u32 {
+        if self.com_preload() {
+            (self.ccer & !PRE_CCER) | (self.ccer_sh & PRE_CCER)
+        } else {
+            self.ccer
+        }
+    }
+
+    /// COM event: the preloaded bits take effect.
+    fn com_event(&mut self) {
+        self.ccer_sh = self.ccer;
+        self.ccmr_sh = self.ccmr;
+        self.sr |= COMIF;
     }
 
     fn preload(&self, ch: usize) -> bool {
@@ -403,6 +522,47 @@ impl Timer {
                 self.ccr_act[ch] = self.ccr[ch];
             }
         }
+        // AOE: MOE is set again at the update event once the break input
+        // is inactive.
+        if self.info.advanced && self.bdtr & AOE != 0 && !self.break_active() {
+            self.bdtr |= MOE;
+        }
+    }
+
+    /// The break input is active: BKE set and BKIN (routed to its pin) at
+    /// the level BKP selects.
+    fn break_active(&self) -> bool {
+        self.info.advanced
+            && self.bdtr & BKE != 0
+            && self.bk_routed
+            && self.bk_level == (self.bdtr & BKP != 0)
+    }
+
+    /// A break: MOE cleared, BIF set (asynchronously, RM0368 §12.3.12).
+    fn apply_break(&mut self) {
+        if self.break_active() {
+            self.bdtr &= !MOE;
+            self.sr |= BIF;
+        }
+    }
+
+    /// The BKIN pin: whether it is routed (in its alternate function) and
+    /// its level, at `now`. Returns whether anything changed.
+    pub fn set_break_input(&mut self, routed: bool, level: bool, now: Cycles) -> bool {
+        if !self.info.advanced || (self.bk_routed, self.bk_level) == (routed, level) {
+            return false;
+        }
+        self.sync(now);
+        self.bk_routed = routed;
+        self.bk_level = level;
+        self.apply_break();
+        self.track();
+        true
+    }
+
+    /// The dead time in core cycles (BDTR.DTG with tDTS from CR1.CKD).
+    pub fn dead_time(&self) -> Cycles {
+        dead_time_ticks(self.bdtr, self.cr1 >> CKD_SHIFT) * self.clk_div
     }
 
     fn shadows_settled(&self) -> bool {
@@ -526,8 +686,60 @@ impl Timer {
         (1..=3).contains(&(self.smcr & 7))
     }
 
-    /// Bring the counter and flags up to `now`.
+    /// Bring the counter, flags and outputs up to `now`.
     pub fn sync(&mut self, now: Cycles) {
+        self.advance_to(now);
+        self.now = now;
+        self.track();
+    }
+
+    /// Note the time of OCxREF changes since the last look (for dead time).
+    /// A PWM reference changed when the counter took its value; anything
+    /// else (a forced level, a mode written) changed now.
+    fn track(&mut self) {
+        if !self.info.advanced {
+            return;
+        }
+        for ch in 0..self.info.channels as usize {
+            let r = self.reference(ch);
+            if r != self.ref_prev[ch] {
+                self.ref_prev[ch] = r;
+                let at = self
+                    .pwm_edge_time(ch)
+                    .filter(|&t| t >= self.track_time && t <= self.now)
+                    .unwrap_or(self.now);
+                self.ref_at[ch] = Some(at);
+            }
+        }
+        self.track_time = self.now;
+    }
+
+    /// When a PWM reference last changed, from the counter.
+    fn pwm_edge_time(&self, ch: usize) -> Option<Cycles> {
+        if !matches!(self.oc_mode(ch), Some(6 | 7)) || !self.running() {
+            return None;
+        }
+        let (cnt, ccr, arr) = (
+            self.cnt as u64,
+            self.ccr_act[ch] as u64,
+            self.arr_act as u64,
+        );
+        let back = if self.down() {
+            if cnt <= ccr && ccr < arr {
+                ccr - cnt
+            } else {
+                arr.saturating_sub(cnt)
+            }
+        } else if cnt < ccr {
+            cnt
+        } else {
+            cnt - ccr
+        };
+        Some(self.ref_cycle.saturating_sub(back * self.tick()))
+    }
+
+    /// Bring the counter and flags up to `now`.
+    fn advance_to(&mut self, now: Cycles) {
         if !self.running() || self.gated || self.encoder_mode() {
             self.ref_cycle = now;
             return;
@@ -591,8 +803,32 @@ impl Timer {
         self.clk_div = (hclk as u64 / timclk.max(1) as u64).max(1);
     }
 
+    /// CCxE, CCxP, CCxNE, CCxNP of a channel (as in effect).
+    fn cc_bits(&self, ch: usize) -> (bool, bool, bool, bool) {
+        let c = self.ccer_eff() >> (4 * ch);
+        let n = self.info.advanced && ch < 3;
+        (c & 1 != 0, c & 2 != 0, n && c & 4 != 0, n && c & 8 != 0)
+    }
+
+    fn moe(&self) -> bool {
+        self.bdtr & MOE != 0
+    }
+
+    /// The channel's output stage drives a pin from OCxREF (an edge on the
+    /// reference shows on a pin).
     fn output_enabled(&self, ch: usize) -> bool {
-        self.ccer & (1 << (4 * ch)) != 0 && (!self.info.advanced || self.bdtr & MOE != 0)
+        let (e, _, ne, _) = self.cc_bits(ch);
+        if self.info.advanced {
+            self.moe() && (e || ne)
+        } else {
+            e
+        }
+    }
+
+    /// Both outputs of a complementary pair are on: dead time is inserted.
+    fn complementary(&self, ch: usize) -> bool {
+        let (e, _, ne, _) = self.cc_bits(ch);
+        self.moe() && e && ne
     }
 
     /// OCxREF of a channel at the current counter value.
@@ -614,19 +850,84 @@ impl Timer {
         }
     }
 
+    /// Levels driven on a channel's pins OCx and OCxN (`None`: not driven),
+    /// RM0368 table 75.
+    fn outputs(&self, ch: usize) -> (Option<bool>, Option<bool>) {
+        // An input-capture channel drives nothing (CCxE enables capture).
+        if ch >= self.info.channels as usize || self.is_input(ch) {
+            return (None, None);
+        }
+        let (e, p, ne, np) = self.cc_bits(ch);
+        if !self.info.advanced {
+            return (e.then(|| self.reference(ch) ^ p), None);
+        }
+        let has_n = ch < 3;
+        if !self.moe() {
+            // Off: idle levels with OSSI, else not driven.
+            if self.bdtr & OSSI != 0 && (e || ne) {
+                let ois = |k: u32| self.cr2 & (1 << (OIS_SHIFT + 2 * ch as u32 + k)) != 0;
+                return (Some(ois(0)), has_n.then(|| ois(1)));
+            }
+            return (None, None);
+        }
+        let r = self.reference(ch);
+        let (x, xn) = if e && ne {
+            // Dead time: the output that goes active waits for it.
+            let waited =
+                self.ref_at[ch].is_none_or(|t| self.now.saturating_sub(t) >= self.dead_time());
+            (r && waited, !r && waited)
+        } else {
+            (r, r)
+        };
+        let ossr = self.bdtr & OSSR != 0;
+        let ox = if e {
+            Some(x ^ p)
+        } else if ossr && ne {
+            Some(p)
+        } else {
+            None
+        };
+        let oxn = if ne {
+            Some(xn ^ np)
+        } else if ossr && e && has_n {
+            Some(np)
+        } else {
+            None
+        };
+        (ox, oxn)
+    }
+
     /// Level driven on a channel's output pin, or `None` if the output is
     /// disabled.
     pub fn output(&self, ch: usize) -> Option<bool> {
-        // An input-capture channel drives nothing (CCxE enables capture).
-        if ch >= self.info.channels as usize || !self.output_enabled(ch) || self.is_input(ch) {
-            return None;
-        }
-        let polarity = self.ccer & (2 << (4 * ch)) != 0;
-        Some(self.reference(ch) ^ polarity)
+        self.outputs(ch).0
+    }
+
+    /// Level driven on a channel's complementary output pin (CHxN).
+    pub fn output_n(&self, ch: usize) -> Option<bool> {
+        self.outputs(ch).1
     }
 
     /// Core cycle of the next event worth scheduling, if any.
     pub fn next_event(&self) -> Option<Cycles> {
+        if self.gated {
+            return None;
+        }
+        // A dead-time edge still to come.
+        let dt = self.dead_time();
+        let dead = (0..self.info.channels as usize)
+            .filter(|&ch| self.info.advanced && self.complementary(ch))
+            .filter_map(|ch| self.ref_at[ch].map(|t| t + dt))
+            .filter(|&t| t > self.now)
+            .min();
+        let counter = self.counter_event();
+        match (dead, counter) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    fn counter_event(&self) -> Option<Cycles> {
         if !self.running() || self.gated || self.encoder_mode() {
             return None;
         }
@@ -640,11 +941,14 @@ impl Timer {
             .any(|ch| self.output_enabled(ch) && matches!(self.oc_mode(ch), Some(6 | 7)));
         let dma_on_update =
             self.dier & UDE != 0 || (self.cr2 & CCDS != 0 && self.dier & 0x1E00 != 0);
+        // AOE sets MOE again at the next update.
+        let aoe = self.info.advanced && self.bdtr & (AOE | MOE) == AOE && !self.break_active();
         if self.dier & UIF != 0
             || dma_on_update
             || !self.shadows_settled()
             || self.cr1 & OPM != 0
             || any_pwm
+            || aoe
         {
             consider(Some(self.ticks_to_wrap()));
         }
@@ -663,6 +967,16 @@ impl Timer {
     /// Update interrupt request line.
     pub fn irq_update(&self) -> bool {
         self.sr & self.dier & UIF != 0
+    }
+
+    /// TIM1 break interrupt request line (TIM1_BRK_TIM9).
+    pub fn irq_break(&self) -> bool {
+        self.sr & self.dier & BIF != 0
+    }
+
+    /// TIM1 trigger and commutation interrupt line (TIM1_TRG_COM_TIM11).
+    pub fn irq_trg_com(&self) -> bool {
+        self.sr & self.dier & (COMIF | TIF) != 0
     }
 
     /// Capture/compare interrupt request line.
@@ -744,6 +1058,19 @@ impl Timer {
                         self.sr |= flag;
                     }
                 }
+                if self.info.advanced {
+                    if v & COMG != 0 {
+                        self.com_event();
+                    }
+                    if v & TIF != 0 {
+                        self.sr |= TIF;
+                    }
+                    if v & BG != 0 {
+                        // Software break.
+                        self.bdtr &= !MOE;
+                        self.sr |= BIF;
+                    }
+                }
             }
             0x18 | 0x1C => {
                 let i = ((offset - 0x18) / 4) as usize;
@@ -770,11 +1097,19 @@ impl Timer {
                     self.load_unbuffered_ccr();
                 }
             }
-            0x44 if self.info.advanced => self.bdtr = merge(self.bdtr),
+            0x44 if self.info.advanced => self.bdtr = merge(self.bdtr) & 0xFFFF,
             0x48 => self.dcr = merge(self.dcr),
             0x50 => self.or = merge(self.or),
             _ => {}
         }
+        if !self.com_preload() {
+            self.ccer_sh = self.ccer;
+            self.ccmr_sh = self.ccmr;
+        }
+        // The break input holds MOE low and BIF set while it is active.
+        self.apply_break();
+        self.now = now;
+        self.track();
     }
 
     fn load_unbuffered_ccr(&mut self) {
@@ -956,5 +1291,251 @@ mod tests {
         assert_eq!(t.read(0x24), 92); // 4 − 12, wrapped at ARR 99
         assert_ne!(t.read(0x00) & DIR, 0);
         assert_ne!(t.sr & UIF, 0, "underflow is an update event");
+    }
+
+    // ------------------------------------------------ TIM1 advanced (M23)
+
+    fn tim1() -> Timer {
+        Timer::new(TIMERS[0])
+    }
+
+    /// TIM1 at one tick per cycle: period 100, CH1 PWM1 at `ccr`, both
+    /// outputs on, dead time `dtg`, MOE.
+    fn tim1_pwm(ccr: u32, dtg: u32, ccer: u32) -> Timer {
+        let mut t = tim1();
+        t.write(0x2C, 99, u32::MAX, 0);
+        t.write(0x34, ccr, u32::MAX, 0);
+        t.write(0x18, 6 << 4, u32::MAX, 0);
+        t.write(0x20, ccer, u32::MAX, 0);
+        t.write(0x44, MOE | dtg, u32::MAX, 0);
+        t.write(0x00, CEN, u32::MAX, 0);
+        t
+    }
+
+    /// Run event by event up to `until`: every change of (CH1, CH1N).
+    fn edges(t: &mut Timer, until: Cycles) -> Vec<(Cycles, Option<bool>, Option<bool>)> {
+        let mut out = vec![(t.now, t.output(0), t.output_n(0))];
+        while let Some(at) = t.next_event().filter(|&a| a <= until) {
+            t.sync(at);
+            let o = (at, t.output(0), t.output_n(0));
+            let last = out.last().unwrap();
+            if (last.1, last.2) != (o.1, o.2) {
+                out.push(o);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn dead_time_generator_decodes_the_four_dtg_ranges_with_ckd() {
+        // DTG[7:5] = 0xx: DTG × tDTS.
+        assert_eq!(dead_time_ticks(0, 0), 0);
+        assert_eq!(dead_time_ticks(42, 0), 42);
+        assert_eq!(dead_time_ticks(0x7F, 0), 127);
+        // 10x: (64 + DTG[5:0]) × 2.
+        assert_eq!(dead_time_ticks(0x80, 0), 128);
+        assert_eq!(dead_time_ticks(0xBF, 0), 254);
+        // 110: (32 + DTG[4:0]) × 8.
+        assert_eq!(dead_time_ticks(0xC0, 0), 256);
+        assert_eq!(dead_time_ticks(0xDF, 0), 504);
+        // 111: (32 + DTG[4:0]) × 16.
+        assert_eq!(dead_time_ticks(0xE0, 0), 512);
+        assert_eq!(dead_time_ticks(0xFF, 0), 1008);
+        // CKD: tDTS = 2 or 4 tCK_INT.
+        assert_eq!(dead_time_ticks(42, 1), 84);
+        assert_eq!(dead_time_ticks(0xFF, 2), 4032);
+        // In core cycles, through CR1.CKD and the timer clock.
+        let mut t = tim1();
+        t.write(0x44, 0xC5, u32::MAX, 0);
+        t.write(0x00, 1 << CKD_SHIFT, u32::MAX, 0);
+        assert_eq!(t.dead_time(), (32 + 5) * 8 * 2);
+        t.set_clock(84_000_000, 42_000_000, 0);
+        assert_eq!(t.dead_time(), (32 + 5) * 8 * 2 * 2);
+    }
+
+    #[test]
+    fn complementary_outputs_have_the_dead_time_between_them() {
+        // CCR1 = 40 of 100, dead time 10 cycles: CH1 rises 10 after the
+        // reference, CH1N 10 after it falls.
+        let mut t = tim1_pwm(40, 10, 1 | 4);
+        let e = edges(&mut t, 250);
+        let s = Some(true);
+        let c = Some(false);
+        assert_eq!(
+            e,
+            vec![
+                (0, c, c),
+                (10, s, c),
+                (40, c, c),
+                (50, c, s),
+                (100, c, c),
+                (110, s, c),
+                (140, c, c),
+                (150, c, s),
+                (200, c, c),
+                (210, s, c),
+                (240, c, c),
+                (250, c, s),
+            ]
+        );
+        // No dead time: exact complements, switching at the same cycle.
+        let mut t = tim1_pwm(40, 0, 1 | 4);
+        let e = edges(&mut t, 150);
+        assert_eq!(e, vec![(0, s, c), (40, c, s), (100, s, c), (140, c, s)]);
+        // A dead time longer than the pulse swallows it.
+        let mut t = tim1_pwm(5, 10, 1 | 4);
+        let e = edges(&mut t, 99);
+        assert_eq!(e, vec![(0, c, c), (15, c, s)]);
+    }
+
+    #[test]
+    fn complementary_polarity_inverts_only_chxn() {
+        // CC1NP: CH1N active low.
+        let mut t = tim1_pwm(40, 10, 1 | 4 | 8);
+        let e = edges(&mut t, 99);
+        let (s, c) = (Some(true), Some(false));
+        assert_eq!(e, vec![(0, c, s), (10, s, s), (40, c, s), (50, c, c)]);
+        // CC1P as well: both active low, never both low (on) together.
+        let mut t = tim1_pwm(40, 10, 1 | 2 | 4 | 8);
+        let e = edges(&mut t, 99);
+        assert_eq!(e, vec![(0, s, s), (10, c, s), (40, s, s), (50, s, c)]);
+        // CH1N alone (CC1E off): OC1N follows OCxREF, not its complement.
+        let mut t = tim1_pwm(40, 10, 4);
+        let e = edges(&mut t, 99);
+        assert_eq!(e, vec![(0, None, s), (40, None, c)]);
+        // ... and with OSSR the disabled CH1 is driven inactive.
+        t.write(0x44, MOE | OSSR | 10, u32::MAX, 99);
+        assert_eq!(t.output(0), Some(false));
+    }
+
+    #[test]
+    fn moe_off_drives_the_idle_levels_with_ossi() {
+        let mut t = tim1_pwm(40, 10, 1 | 4);
+        t.sync(20);
+        assert_eq!((t.output(0), t.output_n(0)), (Some(true), Some(false)));
+        // MOE off, OSSI off: not driven.
+        t.write(0x44, 10, u32::MAX, 20);
+        assert_eq!((t.output(0), t.output_n(0)), (None, None));
+        // OSSI: the idle levels OIS1 = 0, OIS1N = 1.
+        t.write(0x04, 1 << 9, u32::MAX, 20);
+        t.write(0x44, OSSI | 10, u32::MAX, 20);
+        assert_eq!((t.output(0), t.output_n(0)), (Some(false), Some(true)));
+        // OIS1 = 1, OIS1N = 0; a channel with both outputs off stays off.
+        t.write(0x04, 1 << 8, u32::MAX, 20);
+        assert_eq!((t.output(0), t.output_n(0)), (Some(true), Some(false)));
+        assert_eq!((t.output(1), t.output_n(1)), (None, None));
+        // No edges are scheduled for idle outputs.
+        t.write(0x18, 0, u32::MAX, 20); // CH1 frozen
+        assert_eq!(t.next_event(), None);
+    }
+
+    #[test]
+    fn break_from_bkin_or_bg_clears_moe_and_sets_bif() {
+        // BKIN active high, break interrupt on.
+        let mut t = tim1_pwm(40, 10, 1 | 4);
+        t.write(0x0C, BIF, u32::MAX, 0);
+        t.write(0x04, 0, u32::MAX, 0);
+        t.write(0x44, MOE | OSSI | BKE | BKP | 10, u32::MAX, 0);
+        assert!(t.set_break_input(true, false, 0));
+        assert!(t.moe());
+        t.sync(20);
+        assert_eq!(t.output(0), Some(true));
+        assert!(t.set_break_input(true, true, 25));
+        assert!(!t.moe());
+        assert_ne!(t.sr & BIF, 0);
+        assert!(t.irq_break());
+        assert_eq!((t.output(0), t.output_n(0)), (Some(false), Some(false)));
+        // While the input is active MOE cannot be set and BIF stays.
+        t.write(0x44, MOE | OSSI | BKE | BKP | 10, u32::MAX, 30);
+        t.write(0x10, 0, u32::MAX, 30);
+        assert!(!t.moe());
+        assert_ne!(t.sr & BIF, 0);
+        // Released: BIF clears, MOE can be set again.
+        t.set_break_input(true, false, 40);
+        t.write(0x10, 0, u32::MAX, 40);
+        assert!(!t.irq_break());
+        t.write(0x44, MOE | OSSI | BKE | BKP | 10, u32::MAX, 40);
+        assert!(t.moe());
+        // BKP = 0: active low.
+        t.write(0x44, MOE | BKE | 10, u32::MAX, 41);
+        assert!(!t.moe(), "the pin is low: break");
+        // Without BKE the pin does nothing, but EGR.BG breaks.
+        let mut t = tim1_pwm(40, 10, 1 | 4);
+        t.set_break_input(true, true, 0);
+        t.write(0x44, MOE | BKP | 10, u32::MAX, 0);
+        assert!(t.moe());
+        t.write(0x14, BG, u32::MAX, 5);
+        assert!(!t.moe());
+        assert_ne!(t.sr & BIF, 0);
+        assert_eq!((t.output(0), t.output_n(0)), (None, None));
+    }
+
+    #[test]
+    fn aoe_sets_moe_again_at_the_next_update() {
+        let mut t = tim1_pwm(40, 10, 1 | 4);
+        t.write(0x44, MOE | AOE | BKE | BKP | 10, u32::MAX, 0);
+        t.set_break_input(true, true, 10);
+        assert!(!t.moe());
+        // Still active at the update: stays off.
+        t.sync(100);
+        assert!(!t.moe());
+        t.set_break_input(true, false, 130);
+        assert!(!t.moe(), "not before the update");
+        // The outputs are off, but the update at 200 is scheduled: it
+        // sets MOE.
+        assert_eq!(t.next_event(), Some(200));
+        t.sync(200);
+        assert!(t.moe());
+        // Without AOE it stays off.
+        let mut t = tim1_pwm(40, 10, 1 | 4);
+        t.write(0x14, BG, u32::MAX, 10);
+        t.sync(500);
+        assert!(!t.moe());
+    }
+
+    #[test]
+    fn forced_levels_get_dead_time_too() {
+        let mut t = tim1();
+        t.write(0x20, 1 | 4, u32::MAX, 0);
+        t.write(0x44, MOE | 20, u32::MAX, 0);
+        // Force inactive: CH1N on after the dead time.
+        t.write(0x18, 4 << 4, u32::MAX, 0);
+        assert_eq!((t.output(0), t.output_n(0)), (Some(false), Some(true)));
+        t.write(0x18, 5 << 4, u32::MAX, 100);
+        assert_eq!((t.output(0), t.output_n(0)), (Some(false), Some(false)));
+        // The edge is scheduled though the counter is stopped.
+        assert_eq!(t.next_event(), Some(120));
+        t.sync(120);
+        assert_eq!((t.output(0), t.output_n(0)), (Some(true), Some(false)));
+        t.write(0x18, 4 << 4, u32::MAX, 300);
+        assert_eq!((t.output(0), t.output_n(0)), (Some(false), Some(false)));
+        t.sync(320);
+        assert_eq!((t.output(0), t.output_n(0)), (Some(false), Some(true)));
+    }
+
+    #[test]
+    fn com_event_takes_over_the_preloaded_enables_and_modes() {
+        let mut t = tim1();
+        t.write(0x44, MOE, u32::MAX, 0);
+        t.write(0x18, 5 << 4, u32::MAX, 0); // CH1 forced active
+        t.write(0x20, 1, u32::MAX, 0);
+        t.write(0x0C, COMIF, u32::MAX, 0);
+        assert_eq!(t.output(0), Some(true));
+        // CCPC: the next step is written ahead and has no effect yet.
+        t.write(0x04, CCPC, u32::MAX, 0);
+        t.write(0x18, 4 << 4 | 5 << 12, u32::MAX, 10); // CH1 inactive, CH2 active
+        t.write(0x20, 1 << 4 | 1 << 6, u32::MAX, 10); // CH2 and CH2N
+        assert_eq!(t.output(0), Some(true));
+        assert_eq!(t.output(1), None);
+        assert_eq!(t.sr & COMIF, 0);
+        // COMG: all at once.
+        t.write(0x14, COMG, u32::MAX, 20);
+        assert_eq!(t.output(0), None);
+        assert_eq!((t.output(1), t.output_n(1)), (Some(true), Some(false)));
+        assert_ne!(t.sr & COMIF, 0);
+        assert!(t.irq_trg_com());
+        // Polarity is not preloaded.
+        t.write(0x20, 1 << 4 | 1 << 5 | 1 << 6, u32::MAX, 30);
+        assert_eq!(t.output(1), Some(false));
     }
 }

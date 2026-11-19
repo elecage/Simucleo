@@ -27,7 +27,8 @@ use crate::devices::{
 
 use crate::tier8::{Bmp280, Hc595, Pir, Tm1637, PIR_VMIN};
 use crate::tier9::{
-    l298n_bridge, BipolarStepper, CoilDrive, Esc, EscState, HallBldc, PhaseDrive, StepDriver,
+    l298n_bridge, BipolarStepper, CoilDrive, Esc, EscState, HallBldc, PhaseBridge, PhaseDrive,
+    StepDriver,
 };
 
 use crate::netlist::{build_netlist, BusCatalog, Circuit, PartCatalog, PartInstance, PinRef, Wire};
@@ -283,6 +284,10 @@ pub struct MotorView {
     /// ESC: throttle 0–1 and the beeps so far.
     pub throttle: f64,
     pub beeps: u32,
+    /// 3-phase bridge (M23): on fraction of each switch over the frame,
+    /// INH A–C then INL A–C, and a shoot-through in the frame.
+    pub duty: Vec<f64>,
+    pub shoot_through: bool,
 }
 
 /// What a 74HC595 holds.
@@ -458,6 +463,9 @@ pub struct CircuitSim {
     phase_bridges: Vec<PhaseBridgePart>,
     /// What each 3-phase bridge does with its outputs, and its supply.
     phase_out: HashMap<String, ([PhaseDrive; 3], f64)>,
+    /// M23: what each 3-phase bridge saw on its inputs (PWM duties,
+    /// overlaps).
+    phase_state: HashMap<String, PhaseBridge>,
     steppers: HashMap<String, BipolarStepper>,
     drivers: HashMap<String, DriverState>,
     bridges: HashMap<String, BridgeState>,
@@ -788,6 +796,7 @@ impl CircuitSim {
             bldc_parts: Vec::new(),
             phase_bridges: Vec::new(),
             phase_out: HashMap::new(),
+            phase_state: HashMap::new(),
             steppers: HashMap::new(),
             drivers: HashMap::new(),
             bridges: HashMap::new(),
@@ -858,6 +867,9 @@ impl CircuitSim {
         }
         for b in self.bridges.values_mut() {
             *b = BridgeState::default();
+        }
+        for b in self.phase_state.values_mut() {
+            *b = PhaseBridge::new(0.0);
         }
         for (e, last) in self.escs.values_mut() {
             e.rebase(0.0);
@@ -1927,6 +1939,9 @@ impl CircuitSim {
                             });
                         }
                     }
+                    self.phase_state
+                        .entry(p.id.clone())
+                        .or_insert_with(|| PhaseBridge::new(now_s));
                     phase_bridges.push(PhaseBridgePart {
                         id: p.id.clone(),
                         inh,
@@ -2364,6 +2379,8 @@ impl CircuitSim {
         self.esc_parts = esc_parts;
         self.phase_out
             .retain(|id, _| phase_bridges.iter().any(|b| &b.id == id));
+        self.phase_state
+            .retain(|id, _| phase_bridges.iter().any(|b| &b.id == id));
         self.bldc_parts = bldc_parts;
         self.phase_bridges = phase_bridges;
         self.nodes = nodes;
@@ -2752,6 +2769,7 @@ impl CircuitSim {
         key.extend(self.device_key(now_s));
         let drives = &key[..];
         if self.drives.as_deref() == Some(drives) {
+            self.phase_bridges_due(now_s);
             return;
         }
         self.integrate(time);
@@ -2871,6 +2889,55 @@ impl CircuitSim {
             self.update_inner(time, &key[..mcu]);
             self.depth -= 1;
         }
+    }
+
+    /// The 3-phase bridges' outputs from what their inputs did (PWM
+    /// averaged), and the BLDCs on them driven by those.
+    fn drive_phases(&mut self, now: f64) {
+        for part in &self.phase_bridges {
+            let Some(st) = self.phase_state.get(&part.id) else {
+                continue;
+            };
+            let out = if st.supply >= PHASE_BRIDGE_VMIN {
+                st.drive(now)
+            } else {
+                [PhaseDrive::Float; 3]
+            };
+            self.phase_out.insert(part.id.clone(), (out, st.supply));
+        }
+        for part in &self.bldc_parts {
+            let Some(Device::Bldc(b)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            let mut drive = [PhaseDrive::Float; 3];
+            let mut supply: f64 = 0.0;
+            for k in 0..3 {
+                if let Some((id, o)) = &part.links[k] {
+                    if let Some((out, s)) = self.phase_out.get(id) {
+                        drive[k] = out[*o];
+                        supply = supply.max(*s);
+                    }
+                }
+            }
+            b.set_drive(now, drive, supply);
+        }
+    }
+
+    /// A bridge input stopped switching (no edge for a PWM period): the
+    /// phase follows its static level from now on.
+    fn phase_bridges_due(&mut self, now: f64) {
+        let due = self
+            .phase_state
+            .values()
+            .any(|st| st.next_change().is_some_and(|t| t <= now + 1e-9));
+        if !due {
+            return;
+        }
+        for st in self.phase_state.values_mut() {
+            let levels = st.levels();
+            st.inputs(now, levels);
+        }
+        self.drive_phases(now);
     }
 
     /// Relay coils follow their input; the contacts follow the coil after
@@ -3108,44 +3175,25 @@ impl CircuitSim {
         }
         for part in &self.phase_bridges {
             let rel = |n: usize| v(n) - v(part.gnd);
-            let supply = rel(part.pvdd);
             let high = |n: usize| rel(n) > 2.0;
-            let mut out = [PhaseDrive::Float; 3];
-            if supply >= PHASE_BRIDGE_VMIN {
-                for (k, o) in out.iter_mut().enumerate() {
-                    *o = match (high(part.inh[k]), high(part.inl[k])) {
-                        (true, true) => {
-                            self.warnings.insert(format!(
-                                "{}: INH{ph} and INL{ph} are both high — shoot-through: both switches of phase {ph} would short the supply (the module turns the phase off)",
-                                part.id,
-                                ph = ["A", "B", "C"][k]
-                            ));
-                            PhaseDrive::Float
-                        }
-                        (true, false) => PhaseDrive::High,
-                        (false, true) => PhaseDrive::Low,
-                        _ => PhaseDrive::Float,
-                    };
-                }
-            }
-            self.phase_out.insert(part.id.clone(), (out, supply));
+            let Some(st) = self.phase_state.get_mut(&part.id) else {
+                continue;
+            };
+            st.supply = rel(part.pvdd);
+            let levels = std::array::from_fn(|k| (high(part.inh[k]), high(part.inl[k])));
+            let shoot = st.inputs(now, levels);
+            shoot_through_warnings(&part.id, shoot, &mut self.warnings);
         }
+        for part in &self.bldc_parts {
+            if let Some(Device::Bldc(b)) = self.devices.get_mut(&part.id) {
+                b.powered = v(part.vcc) - v(part.gnd) >= HALL_VMIN;
+            }
+        }
+        self.drive_phases(now);
         for part in &self.bldc_parts {
             let Some(Device::Bldc(b)) = self.devices.get_mut(&part.id) else {
                 continue;
             };
-            let mut drive = [PhaseDrive::Float; 3];
-            let mut supply: f64 = 0.0;
-            for k in 0..3 {
-                if let Some((id, o)) = &part.links[k] {
-                    if let Some((out, s)) = self.phase_out.get(id) {
-                        drive[k] = out[*o];
-                        supply = supply.max(*s);
-                    }
-                }
-            }
-            b.powered = v(part.vcc) - v(part.gnd) >= HALL_VMIN;
-            b.set_drive(now, drive, supply);
             hall_pull_ups(part, b, now, sol, &self.mcu, &mut self.warnings);
             bldc_warnings(&part.id, b, &mut self.warnings);
         }
@@ -3400,6 +3448,15 @@ impl CircuitSim {
                         });
                     } else if let Some((out, supply)) = self.phase_out.get(&slot.id) {
                         v.unpowered = *supply < PHASE_BRIDGE_VMIN;
+                        let (duty, shoot) = match self.phase_state.get_mut(&slot.id) {
+                            Some(st) => {
+                                let levels = st.levels();
+                                let sh = st.inputs(now, levels);
+                                shoot_through_warnings(&slot.id, sh, &mut self.warnings);
+                                st.end_frame(now)
+                            }
+                            None => (Vec::new(), false),
+                        };
                         v.motor = Some(MotorView {
                             coils: out
                                 .iter()
@@ -3407,9 +3464,13 @@ impl CircuitSim {
                                     PhaseDrive::High => 1.0,
                                     PhaseDrive::Low => -1.0,
                                     PhaseDrive::Float => 0.0,
+                                    // Chopped: the switched (high) side.
+                                    PhaseDrive::Duty(_) => 1.0,
                                 })
                                 .collect(),
                             state: if v.unpowered { "no-power" } else { "on" }.into(),
+                            duty,
+                            shoot_through: shoot,
                             ..Default::default()
                         });
                     } else if let Some((e, _)) = self.escs.get_mut(&slot.id) {
@@ -3699,6 +3760,7 @@ impl CircuitSim {
             .map(|(id, _, _)| id)
             .chain(self.relay_parts.iter().map(|r| &r.id))
             .filter_map(|id| self.devices.get(id).and_then(|d| d.next_change()))
+            .chain(self.phase_state.values().filter_map(|b| b.next_change()))
             .map(|t| c + ((t - s) * hz).ceil().max(0.0) as Cycles)
             .min()
     }
@@ -4114,6 +4176,17 @@ fn hall_pull_ups(
                 ["A", "B", "C"][k]
             ));
         }
+    }
+}
+
+/// Shoot-through on the phases of a 3-phase bridge.
+fn shoot_through_warnings(id: &str, shoot: [bool; 3], warnings: &mut BTreeSet<String>) {
+    for (k, _) in shoot.iter().enumerate().filter(|(_, s)| **s) {
+        let ph = ["A", "B", "C"][k];
+        warnings.insert(format!(
+            "{id}: 데드타임 없이 상·하단이 동시에 켜짐(관통 전류) — INH{ph} and INL{ph} were on together (or one turned on less than {:.0} ns after the other turned off): shoot-through shorts the supply; insert dead time (TIM1 BDTR.DTG) and check the CHxN polarity",
+            crate::tier9::SWITCH_OFF_TIME * 1e9
+        ));
     }
 }
 
@@ -6395,9 +6468,213 @@ mod tests {
         });
         s.update(at(0.2), &d);
         assert!(
+            !s.warnings.iter().any(|w| w.contains("shoot-through")),
+            "not for an overlap of no time yet"
+        );
+        // A millisecond later: the display frame sees it still on.
+        let br = motor(&mut s, 0.201, "br").motor.unwrap();
+        assert!(br.shoot_through);
+        assert!(
             s.warnings.iter().any(|w| w.contains("shoot-through")),
             "{:?}",
             s.warnings
         );
+    }
+
+    // ------------------------------------------------- M23: PWM on the bridge
+
+    /// Six-step with PWM, as TIM1 does it: the phase to the supply chops
+    /// at `duty` of a `period` with its low side the complement (`dead`
+    /// time between them; `invert_low`: the low side's polarity wrong),
+    /// the phase to ground on. The table is read at each period start.
+    fn commutate_pwm(
+        s: &mut CircuitSim,
+        t: &mut f64,
+        secs: f64,
+        duty: f64,
+        dead: f64,
+        invert_low: bool,
+    ) {
+        use crate::tier9::COMMUTATION;
+        let period = 50e-6;
+        let hall = |s: &CircuitSim, pin: u8| s.mcu_voltage(0, pin).is_some_and(|v| v > VDD / 2.0);
+        let end = *t + secs;
+        let mut start = *t;
+        while start < end {
+            let code = hall(s, 8) as u8 | (hall(s, 9) as u8) << 1 | (hall(s, 10) as u8) << 2;
+            let (h, l) = COMMUTATION
+                .iter()
+                .find(|x| x.0 == code)
+                .map_or((9, 9), |x| x.1);
+            // (time, high-side on, its low side on) through one period.
+            let on = duty * period;
+            let steps = [
+                (0.0, false, false),
+                (dead, true, false),
+                (on, false, false),
+                (on + dead, false, true),
+            ];
+            for (dt, hi, lo) in steps {
+                let lo = lo ^ invert_low;
+                let d = drives(s, |p| match p {
+                    (1, i @ 0..=5) => {
+                        let (ph, low) = (i as usize / 2, i % 2 == 1);
+                        let level = if ph == h {
+                            if low {
+                                lo
+                            } else {
+                                hi
+                            }
+                        } else {
+                            ph == l && low
+                        };
+                        if level {
+                            Drive::High
+                        } else {
+                            Drive::Low
+                        }
+                    }
+                    (0, 8..=10) => Drive::PullUp,
+                    _ => Drive::Float,
+                });
+                s.update(at(start + dt), &d);
+            }
+            start += period;
+        }
+        *t = end;
+    }
+
+    #[test]
+    fn bridge_averages_pwm_so_the_bldc_speed_follows_the_duty() {
+        let rpm_at = |duty: f64| {
+            let mut s = bldc_sim();
+            let mut t = 0.01;
+            commutate_pwm(&mut s, &mut t, 0.6, duty, 500e-9, false);
+            let frame = s.end_frame(at(t), 0.6);
+            let v = visual(&frame, "mot").clone();
+            let br = visual(&frame, "br").motor.clone().unwrap();
+            assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+            assert!(!br.shoot_through);
+            (v.rpm.unwrap(), br)
+        };
+        let (slow, _) = rpm_at(0.25);
+        let (half, br) = rpm_at(0.5);
+        let (fast, _) = rpm_at(0.9);
+        assert!(
+            slow > 300.0 && slow < half && half < fast,
+            "{slow} {half} {fast}"
+        );
+        // Speed about proportional to the duty (no-load 3300 rpm at 12 V).
+        assert!((half - 0.5 * 3300.0).abs() < 400.0, "{half}");
+        assert!((fast - 0.9 * 3300.0).abs() < 400.0, "{fast}");
+        // The duty bars: each high side chops at 50 % for a third of the
+        // time and its low side the rest of those periods; each low side is
+        // also on for a third.
+        assert_eq!(br.duty.len(), 6);
+        for k in 0..3 {
+            assert!(br.duty[k] > 0.0 && br.duty[k] < 0.5, "{:?}", br.duty);
+            assert!(br.duty[3 + k] > br.duty[k], "{:?}", br.duty);
+        }
+    }
+
+    #[test]
+    fn overlapping_switches_warn_of_shoot_through_and_dead_time_does_not() {
+        // No dead time: the low side turns on as the high side turns off —
+        // faster than the switch turns off.
+        let mut s = bldc_sim();
+        let mut t = 0.01;
+        commutate_pwm(&mut s, &mut t, 0.02, 0.5, 0.0, false);
+        let shoot = |s: &CircuitSim| s.warnings.iter().any(|w| w.contains("관통 전류"));
+        assert!(shoot(&s), "{:?}", s.warnings);
+        let br = motor(&mut s, t, "br").motor.unwrap();
+        assert!(br.shoot_through);
+        // 100 ns is shorter than the switch's turn-off time too.
+        let mut s = bldc_sim();
+        let mut t = 0.01;
+        commutate_pwm(&mut s, &mut t, 0.02, 0.5, 100e-9, false);
+        assert!(shoot(&s));
+        // The low side's polarity inverted: on together with the high side.
+        let mut s = bldc_sim();
+        let mut t = 0.01;
+        commutate_pwm(&mut s, &mut t, 0.02, 0.5, 500e-9, true);
+        assert!(shoot(&s), "{:?}", s.warnings);
+        // 500 ns of dead time: fine, and the frame says so.
+        let mut s = bldc_sim();
+        let mut t = 0.01;
+        commutate_pwm(&mut s, &mut t, 0.05, 0.5, 500e-9, false);
+        assert!(!shoot(&s), "{:?}", s.warnings);
+        assert!(!motor(&mut s, t, "br").motor.unwrap().shoot_through);
+    }
+
+    #[test]
+    fn a_bridge_whose_pwm_stops_lets_the_motor_coast() {
+        let mut s = bldc_sim();
+        let mut t = 0.01;
+        commutate_pwm(&mut s, &mut t, 0.3, 0.6, 500e-9, false);
+        let before = motor(&mut s, t, "mot").rpm.unwrap();
+        assert!(before > 1000.0, "{before}");
+        // Every input low (a break): one wake-up a PWM period later
+        // finds the phases static — no more current.
+        let d = drives(&s, |p| match p {
+            (0, 8..=10) => Drive::PullUp,
+            (1, 0..=5) => Drive::Low,
+            _ => Drive::Float,
+        });
+        s.update(at(t), &d);
+        let wake = s.next_event().expect("a wake-up for the stopped PWM");
+        assert!(wake <= at(t + 60e-6), "{wake}");
+        s.update(wake, &d);
+        let v = motor(&mut s, t + 0.2, "mot");
+        assert!(v.motor.unwrap().coils.iter().all(|c| c.abs() < 1e-9));
+        let after = v.rpm.unwrap();
+        assert!(
+            after > 0.0 && after < before,
+            "coasting down: {before} → {after}"
+        );
+    }
+
+    #[test]
+    fn a_bridge_whose_pwm_stops_wakes_the_simulation_to_let_go() {
+        // Only a bridge: nothing else would look at it again.
+        let mut s = sim(
+            vec![
+                part("br", "bridge-3ph", &[]),
+                part("bat", "battery", &[("voltage", "12")]),
+            ],
+            vec![
+                wire(("bat", "+"), ("br", "PVDD")),
+                wire(("bat", "-"), ("mcu", "GND")),
+                wire(("br", "GND"), ("mcu", "GND")),
+                wire(("mcu", "PB0"), ("br", "INHA")),
+            ],
+        );
+        let level = |s: &CircuitSim, on: bool| {
+            drives(s, |p| match p {
+                (1, 0) if on => Drive::High,
+                (1, 0) => Drive::Low,
+                _ => Drive::Float,
+            })
+        };
+        let mut t = 0.01;
+        for _ in 0..4 {
+            let on = level(&s, true);
+            s.update(at(t), &on);
+            let off = level(&s, false);
+            s.update(at(t + 15e-6), &off);
+            t += 50e-6;
+        }
+        let duty = |s: &CircuitSim| match s.phase_out["br"].0[0] {
+            PhaseDrive::Duty(d) => d,
+            d => panic!("{d:?}"),
+        };
+        assert!((299..=301).contains(&duty(&s)), "{}", duty(&s));
+        // No more edges: a wake-up just after the next one is overdue.
+        let wake = s.next_event().expect("a wake-up for the stopped PWM");
+        assert!(wake > at(t) && wake <= at(t + 20e-6), "{wake} vs {}", at(t));
+        assert!((299..=301).contains(&duty(&s)));
+        let off = level(&s, false);
+        s.update(wake, &off);
+        assert_eq!(s.phase_out["br"].0[0], PhaseDrive::Float);
+        assert_eq!(s.next_event(), None);
     }
 }

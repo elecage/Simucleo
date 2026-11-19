@@ -784,6 +784,12 @@ const BLDC_STALL_TIME: Seconds = 0.3;
 const HALL_HYST: f64 = 2.0 * PI / 180.0;
 /// Look ahead for the next hall edge at most this far (s).
 const HALL_HORIZON: Seconds = 0.02;
+/// ... and this far while a phase is chopped by PWM.
+const PWM_HORIZON: Seconds = 0.25e-3;
+/// Look ahead at most this often when the drive keeps changing (a PWM
+/// bridge settling after a commutation); the hall edges are still found
+/// when the motor is brought up to date.
+const PREDICT_MIN_INTERVAL: Seconds = 50e-6;
 
 /// What a 3-phase bridge does with one phase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -795,6 +801,235 @@ pub enum PhaseDrive {
     High,
     /// Low-side switch on: the phase at ground.
     Low,
+    /// Switched by PWM faster than the motor follows: the phase at this
+    /// fraction (‰) of the supply on average (M23).
+    Duty(u16),
+}
+
+impl PhaseDrive {
+    /// The phase's average voltage as a fraction of the supply, if driven.
+    pub fn fraction(self) -> Option<f64> {
+        match self {
+            PhaseDrive::Float => None,
+            PhaseDrive::High => Some(1.0),
+            PhaseDrive::Low => Some(0.0),
+            PhaseDrive::Duty(d) => Some(d as f64 / 1000.0),
+        }
+    }
+}
+
+/// Slowest PWM a bridge input is averaged at (period, s): a switch that
+/// turns on again within this is chopping, slower is commutation.
+pub const PWM_MAX_PERIOD: Seconds = 0.5e-3;
+/// How long a MOSFET of the bridge takes to turn off: the other switch of
+/// the phase turning on sooner shorts the supply (shoot-through).
+pub const SWITCH_OFF_TIME: Seconds = 150e-9;
+
+/// The duty of one switch input, measured period by period.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PwmMeter {
+    pub level: bool,
+    last_edge: Seconds,
+    rise: Option<Seconds>,
+    pub fall: Option<Seconds>,
+    /// Period and on fraction of the last whole period.
+    period: Option<Seconds>,
+    duty: f64,
+}
+
+impl PwmMeter {
+    /// The input is `level` at `now`.
+    pub fn set(&mut self, now: Seconds, level: bool) {
+        if level == self.level {
+            return;
+        }
+        if level {
+            self.period = None;
+            if let Some(r) = self.rise {
+                let p = now - r;
+                if p > 0.0 && p <= PWM_MAX_PERIOD {
+                    let high = self.fall.filter(|&f| f > r).map_or(p, |f| f - r);
+                    self.period = Some(p);
+                    self.duty = (high / p).clamp(0.0, 1.0);
+                }
+            }
+            self.rise = Some(now);
+        } else {
+            self.fall = Some(now);
+        }
+        self.level = level;
+        self.last_edge = now;
+    }
+
+    /// Still switching: an edge within the last period.
+    pub fn live(&self, now: Seconds) -> bool {
+        self.period
+            .is_some_and(|p| now - self.last_edge <= p * 1.05 + 1e-7)
+    }
+
+    /// The on fraction now: over the last period while switching, else
+    /// the level.
+    pub fn duty(&self, now: Seconds) -> f64 {
+        if self.live(now) {
+            self.duty
+        } else if self.level {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    /// When it counts as static if no edge comes (just past `live`).
+    pub fn stale_at(&self) -> Option<Seconds> {
+        self.period.map(|p| self.last_edge + p * 1.05 + 2e-7)
+    }
+}
+
+/// What a 3-phase bridge module sees on its inputs (M23): a duty meter
+/// per switch, overlaps of the two switches of a phase, and the on time
+/// of each switch over the display frame.
+#[derive(Debug, Clone, Default)]
+pub struct PhaseBridge {
+    /// Per phase: INH, INL.
+    pub meters: [[PwmMeter; 2]; 3],
+    /// Since when both switches of a phase are on.
+    both: [Option<Seconds>; 3],
+    /// When each phase last had both switches on at once (the module
+    /// then cuts the phase off for that PWM period).
+    cut: [Option<Seconds>; 3],
+    /// Shoot-through seen in this frame.
+    pub shoot: bool,
+    /// On time per switch in this frame, and since when.
+    acc: [[f64; 2]; 3],
+    since: Seconds,
+    frame_start: Seconds,
+    pub supply: f64,
+}
+
+impl PhaseBridge {
+    pub fn new(now: Seconds) -> Self {
+        Self {
+            since: now,
+            frame_start: now,
+            ..Default::default()
+        }
+    }
+
+    /// The inputs (INH, INL) of each phase at `now`. Returns the phases
+    /// where both switches were on at once for a while: together for
+    /// longer than nothing, or one turned on before the other could turn
+    /// off.
+    pub fn inputs(&mut self, now: Seconds, levels: [(bool, bool); 3]) -> [bool; 3] {
+        let dt = (now - self.since).max(0.0);
+        for (acc, m) in self.acc.iter_mut().zip(&self.meters) {
+            for s in 0..2 {
+                if m[s].level {
+                    acc[s] += dt;
+                }
+            }
+        }
+        self.since = self.since.max(now);
+        let mut shoot = [false; 3];
+        for k in 0..3 {
+            let (h, l) = levels[k];
+            let [mh, ml] = self.meters[k];
+            // The last time each switch turned off, counting this moment.
+            let off = |m: &PwmMeter, on: bool| if m.level && !on { Some(now) } else { m.fall };
+            let soon = |f: Option<Seconds>| f.is_some_and(|f| now - f < SWITCH_OFF_TIME);
+            let early =
+                (l && !ml.level && soon(off(&mh, h))) || (h && !mh.level && soon(off(&ml, l)));
+            let long = match (h && l, self.both[k]) {
+                (true, None) => {
+                    self.both[k] = Some(now);
+                    false
+                }
+                (true, Some(s)) => now > s,
+                (false, s) => {
+                    self.both[k] = None;
+                    s.is_some_and(|s| now > s)
+                }
+            };
+            shoot[k] = early || long;
+            if shoot[k] {
+                self.cut[k] = Some(now);
+            }
+            self.shoot |= shoot[k];
+            self.meters[k][0].set(now, h);
+            self.meters[k][1].set(now, l);
+        }
+        shoot
+    }
+
+    /// What each phase does at `now`: the switches' duties averaged,
+    /// static levels as they are. Both switches on: the module turns the
+    /// phase off.
+    pub fn drive(&self, now: Seconds) -> [PhaseDrive; 3] {
+        std::array::from_fn(|k| {
+            let [mh, ml] = &self.meters[k];
+            if !mh.live(now) && !ml.live(now) {
+                return match (mh.level, ml.level) {
+                    (true, false) => PhaseDrive::High,
+                    (false, true) => PhaseDrive::Low,
+                    _ => PhaseDrive::Float,
+                };
+            }
+            // Both switches were on at once within the last period (say
+            // the same PWM on both): the module cuts the phase off, as it
+            // does for both inputs on statically, rather than averaging.
+            let period = mh.period.into_iter().chain(ml.period).fold(0.0, f64::max);
+            if self.cut[k].is_some_and(|t| now - t <= period * 1.05 + 1e-7) {
+                return PhaseDrive::Float;
+            }
+            let (h, l) = (mh.duty(now), ml.duty(now));
+            if h + l <= 0.0 || (h >= 1.0 && l >= 1.0) {
+                return PhaseDrive::Float;
+            }
+            // Between the high side's on times the motor current goes on
+            // through the low side (switched on as the complement, or its
+            // diode during the dead time): the phase averages to the high
+            // side's duty. A low side chopping alone averages to 1 − its
+            // duty (the current goes on through the high side's diode).
+            let f = if h > 0.0 { h } else { 1.0 - l };
+            PhaseDrive::Duty((f * 1000.0).round() as u16)
+        })
+    }
+
+    /// When a switching input next counts as static, after the last look.
+    pub fn next_change(&self) -> Option<Seconds> {
+        self.meters
+            .iter()
+            .flatten()
+            .filter_map(|m| m.stale_at())
+            // (Within a nanosecond is now: the wake-up went through core
+            // cycles and may land a hair early.)
+            .filter(|&t| t > self.since + 1e-9)
+            .reduce(f64::min)
+    }
+
+    /// The inputs as last seen.
+    pub fn levels(&self) -> [(bool, bool); 3] {
+        self.meters.map(|[h, l]| (h.level, l.level))
+    }
+
+    /// The frame up to `now` (after [`PhaseBridge::inputs`] at `now`): on
+    /// fraction of each switch (INH A–C, then INL A–C), and whether there
+    /// was a shoot-through; starts the next frame.
+    pub fn end_frame(&mut self, now: Seconds) -> (Vec<f64>, bool) {
+        let len = now - self.frame_start;
+        let mut out = vec![0.0; 6];
+        for k in 0..3 {
+            for s in 0..2 {
+                out[3 * s + k] = if len > 0.0 {
+                    (self.acc[k][s] / len).clamp(0.0, 1.0)
+                } else {
+                    self.meters[k][s].level as u8 as f64
+                };
+            }
+        }
+        self.acc = [[0.0; 2]; 3];
+        self.frame_start = now;
+        (out, std::mem::take(&mut self.shoot))
+    }
 }
 
 /// The shape of phase k's back-EMF (and torque) at electrical angle `e`:
@@ -853,6 +1088,8 @@ pub struct HallBldc {
     halls: u8,
     /// Since when each hall line floats while released (no pull-up).
     pub float_since: [Option<Seconds>; 3],
+    /// When the halls were last looked ahead.
+    predicted_at: Seconds,
 }
 
 impl Default for HallBldc {
@@ -879,6 +1116,7 @@ impl HallBldc {
             hall_edges: 0,
             halls: hall_code(0.3 * BLDC_POLE_PAIRS),
             float_since: [None; 3],
+            predicted_at: f64::NEG_INFINITY,
         }
     }
 
@@ -887,6 +1125,7 @@ impl HallBldc {
         self.float_since = [None; 3];
         self.stuck_since = None;
         self.next_hall = None;
+        self.predicted_at = f64::NEG_INFINITY;
     }
 
     /// Electrical angle.
@@ -929,11 +1168,35 @@ impl HallBldc {
 
     /// New bridge state from `now` on.
     pub fn set_drive(&mut self, now: Seconds, drive: [PhaseDrive; 3], supply: f64) {
+        if drive == self.drive && (supply - self.supply).abs() <= 0.05 {
+            // Nothing new (a PWM edge the bridge averages away).
+            self.advance_if_due(now);
+            return;
+        }
         self.advance(now);
-        if drive != self.drive || (supply - self.supply).abs() > 0.05 {
+        {
             self.drive = drive;
             self.supply = supply;
-            self.predict();
+            let soon = self.predicted_at + PREDICT_MIN_INTERVAL;
+            if self.time < soon {
+                // Changed again just after a look ahead: look again then.
+                self.next_hall = Some(self.next_hall.map_or(soon, |n| n.min(soon)));
+            } else {
+                self.predict();
+            }
+        }
+    }
+
+    /// Bring it up to date only if a hall output may have changed by
+    /// `now`: the next hall edge is due (or it is moving without a look
+    /// ahead). Calls at every PWM edge then cost nothing.
+    pub fn advance_if_due(&mut self, now: Seconds) {
+        let quiet = match self.next_hall {
+            Some(t) => now < t - 1e-9,
+            None => self.omega == 0.0 && self.idle(),
+        };
+        if !quiet {
+            self.advance(now);
         }
     }
 
@@ -992,14 +1255,12 @@ impl HallBldc {
 
     /// No current can flow (fewer than two phases driven, or no supply).
     fn idle(&self) -> bool {
-        let driven = self
-            .drive
-            .iter()
-            .filter(|d| **d != PhaseDrive::Float)
-            .count();
-        let differ =
-            self.drive.contains(&PhaseDrive::High) && self.drive.contains(&PhaseDrive::Low);
-        driven < 2 || !differ || self.supply <= 0.0
+        let mut driven = self.drive.iter().filter_map(|d| d.fraction());
+        let Some(first) = driven.next() else {
+            return true;
+        };
+        let differ = driven.any(|f| (f - first).abs() > 1e-9);
+        !differ || self.supply <= 0.0
     }
 
     /// Phase currents for the drive at the present speed and angle: the
@@ -1011,11 +1272,7 @@ impl HallBldc {
             return cur;
         }
         let emf = |k: usize| BLDC_KE * self.omega * phase_shape(e, k);
-        let volts = |k: usize| match self.drive[k] {
-            PhaseDrive::High => Some(self.supply),
-            PhaseDrive::Low => Some(0.0),
-            PhaseDrive::Float => None,
-        };
+        let volts = |k: usize| self.drive[k].fraction().map(|f| f * self.supply);
         let driven: Vec<usize> = (0..3).filter(|&k| volts(k).is_some()).collect();
         let star = driven
             .iter()
@@ -1058,13 +1315,21 @@ impl HallBldc {
     /// ahead.
     fn predict(&mut self) {
         self.next_hall = None;
+        self.predicted_at = self.time;
         if self.omega == 0.0 && self.idle() {
             return;
         }
         let mut probe = self.clone();
         let h = probe.hall();
         let mut t = 0.0;
-        while t < HALL_HORIZON {
+        // A chopping bridge brings the motor up to date every PWM edge,
+        // which finds the hall edge then: only look a little ahead.
+        let horizon = if self.drive.iter().any(|d| matches!(d, PhaseDrive::Duty(_))) {
+            PWM_HORIZON
+        } else {
+            HALL_HORIZON
+        };
+        while t < horizon {
             probe.step(DT);
             t += DT;
             if probe.hall() != h {
@@ -1076,7 +1341,7 @@ impl HallBldc {
             }
         }
         // Not yet: look again then.
-        self.next_hall = Some(self.time + HALL_HORIZON);
+        self.next_hall = Some(self.time + horizon);
     }
 }
 
@@ -1500,5 +1765,77 @@ mod tests {
             let low = code >> k & 1 == 0;
             assert_eq!(m.hall_output(k), low.then_some(false));
         }
+    }
+
+    #[test]
+    fn phase_bridge_measures_duties_and_falls_back_to_static_levels() {
+        // Drive phase A's inputs (INH, INL) through `periods` of 50 µs:
+        // INH on for `h`, then INL on for `l` after a gap.
+        fn run(b: &mut PhaseBridge, t: &mut f64, periods: usize, h: f64, l: f64) {
+            let p = 50e-6;
+            for _ in 0..periods {
+                // INL from 5 % after INH turns off, for `l` (so 5 % or
+                // more dead time before INH's next turn-on too).
+                let pts = [
+                    (0.0, true, false),
+                    (h * p, false, false),
+                    ((h + 0.05) * p, false, l > 0.0),
+                    ((h + 0.05 + l) * p, false, false),
+                ];
+                for (dt, hi, lo) in pts {
+                    if dt == 0.0 && !hi {
+                        continue;
+                    }
+                    b.inputs(
+                        *t + dt,
+                        [(hi && h > 0.0, lo), (false, true), (false, false)],
+                    );
+                }
+                *t += p;
+            }
+        }
+        let mut b = PhaseBridge::new(0.0);
+        let mut t = 0.0;
+        // High side 30 %, its complement 60 % (5 % dead time each side).
+        run(&mut b, &mut t, 4, 0.3, 0.6);
+        assert!(!b.shoot, "dead time on both sides");
+        let d = b.drive(t);
+        assert_eq!(d[0], PhaseDrive::Duty(300));
+        assert_eq!(d[1], PhaseDrive::Low, "a static low side");
+        assert_eq!(d[2], PhaseDrive::Float);
+        // The high side alone (diode freewheeling): its duty too.
+        run(&mut b, &mut t, 4, 0.7, 0.0);
+        assert_eq!(b.drive(t)[0], PhaseDrive::Duty(700));
+        // Stops: still the duty within a period, static after it, and it
+        // asks to be looked at then.
+        b.inputs(t, [(false, false), (false, true), (false, false)]);
+        assert_eq!(b.drive(t + 10e-6)[0], PhaseDrive::Duty(700));
+        let stale = b.next_change().expect("a look when the PWM is overdue");
+        assert!(stale > t && stale < t + 60e-6, "{stale} vs {t}");
+        assert_eq!(b.drive(stale)[0], PhaseDrive::Float);
+        // Looked at a hair early (the wake-up went through core cycles):
+        // done, no wake-up again at the same moment.
+        let levels = b.levels();
+        b.inputs(stale - 1e-12, levels);
+        assert_eq!(b.next_change(), None);
+        // The same PWM on both inputs: a shoot-through every period, and
+        // the phase is cut off instead of averaged to the duty.
+        let mut b = PhaseBridge::new(0.0);
+        let mut t = 0.0;
+        for _ in 0..4 {
+            b.inputs(t, [(true, true), (false, true), (false, false)]);
+            b.inputs(t + 25e-6, [(false, false), (false, true), (false, false)]);
+            t += 50e-6;
+        }
+        assert!(b.shoot);
+        assert_eq!(b.drive(t)[0], PhaseDrive::Float);
+        assert_eq!(b.drive(t)[1], PhaseDrive::Low);
+        // Slower than 2 kHz is not PWM: the levels as they are.
+        let mut b = PhaseBridge::new(0.0);
+        b.inputs(0.0, [(true, false), (false, true), (false, false)]);
+        b.inputs(1e-3, [(false, false), (false, true), (false, false)]);
+        b.inputs(2e-3, [(true, false), (false, true), (false, false)]);
+        assert_eq!(b.drive(2e-3)[0], PhaseDrive::High);
+        assert_eq!(b.next_change(), None);
     }
 }

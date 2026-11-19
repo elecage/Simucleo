@@ -2487,7 +2487,7 @@ impl Device {
             Device::Ir(d) => d.advance(now),
             Device::Relay(r) => r.advance(now),
             Device::Pir(p) => p.advance(now),
-            Device::Bldc(b) => b.advance(now),
+            Device::Bldc(b) => b.advance_if_due(now),
             _ => {}
         }
     }

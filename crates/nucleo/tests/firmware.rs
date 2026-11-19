@@ -1218,6 +1218,162 @@ fn sonar_and_ds18b20_are_timed_in_microseconds() {
     );
 }
 
+// ------------------------------------------------ IMU, matrix, IR (M13)
+
+fn imu_matrix_circuit(roll: f64, pitch: f64) -> simucleo_nucleo::Circuit {
+    let n = "nucleo";
+    m8_circuit(
+        serde_json::json!([
+            {"id": "imu", "kind": "mpu6050", "props": {"roll": roll, "pitch": pitch, "gz": 12.5, "temp": 28.0}},
+            {"id": "mx", "kind": "max7219", "props": {"count": 1}}
+        ]),
+        vec![
+            wire_json((n, "3V3"), ("imu", "VCC")),
+            wire_json(("imu", "GND"), (n, "GND")),
+            wire_json((n, "D15"), ("imu", "SCL")),
+            wire_json((n, "D14"), ("imu", "SDA")),
+            wire_json((n, "5V"), ("mx", "VCC")),
+            wire_json(("mx", "GND"), (n, "GND")),
+            wire_json((n, "D13"), ("mx", "CLK")),
+            wire_json((n, "D11"), ("mx", "DIN")),
+            wire_json((n, "D10"), ("mx", "CS")),
+        ],
+    )
+}
+
+/// The matrix's lit dot as (row, column), bit 7 the left column.
+fn matrix_dot(board: &mut Nucleo) -> Vec<(usize, usize)> {
+    let v = board.circuit_frame(0.1);
+    let m = v
+        .iter()
+        .find(|p| p.id == "mx")
+        .unwrap()
+        .matrix
+        .clone()
+        .expect("matrix view");
+    assert_eq!(m.intensity, [4]);
+    let mut dots = Vec::new();
+    for (r, row) in m.rows.iter().enumerate() {
+        for c in 0..8 {
+            if row & (0x80 >> c) != 0 {
+                dots.push((r, c));
+            }
+        }
+    }
+    dots
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-imu-matrix"]
+fn mpu6050_tilt_moves_the_dot_on_the_max7219_matrix() {
+    use simucleo_nucleo::BusCatalog;
+    let mut signals = arduino_signals();
+    signals.insert("D13".into(), "PA5".into());
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-imu-matrix", "hal-imu-matrix"))
+        .unwrap();
+    board.set_circuit(
+        &imu_matrix_circuit(0.0, 0.0),
+        &BusCatalog::default(),
+        &signals,
+    );
+    board.run_for_ns(400e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("WHO_AM_I 0x68\r\n"), "{text}");
+    assert!(
+        text.contains("roll 0.0 pitch 0.0 | gyro 0.0 0.0 12.5 dps | 28.0 C | dot row 3 col 3"),
+        "{text}"
+    );
+    assert_eq!(matrix_dot(&mut board), [(3, 3)]);
+
+    // Tilt left and forward: the readings follow, the dot rolls.
+    board.set_circuit(
+        &imu_matrix_circuit(-30.0, 20.0),
+        &BusCatalog::default(),
+        &signals,
+    );
+    board.run_for_ns(300e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("roll -30.0 pitch 20.0 |"), "{text}");
+    let line = text.lines().rev().find(|l| l.starts_with("roll")).unwrap();
+    assert!(line.ends_with("dot row 5 col 1"), "{line}");
+    assert_eq!(matrix_dot(&mut board), [(5, 1)]);
+
+    board.set_circuit(
+        &imu_matrix_circuit(90.0, -45.0),
+        &BusCatalog::default(),
+        &signals,
+    );
+    board.run_for_ns(300e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("roll 90.0 pitch -45.0 |"), "{text}");
+    assert_eq!(matrix_dot(&mut board), [(0, 7)]);
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-ir-remote"]
+fn nec_remote_is_decoded_with_input_capture() {
+    use simucleo_nucleo::BusCatalog;
+    let n = "nucleo";
+    let circuit = m8_circuit(
+        serde_json::json!([{"id": "ir", "kind": "ir-receiver"}]),
+        vec![
+            wire_json((n, "3V3"), ("ir", "VCC")),
+            wire_json(("ir", "GND"), (n, "GND")),
+            wire_json((n, "D3"), ("ir", "OUT")),
+        ],
+    );
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-ir-remote", "hal-ir-remote"))
+        .unwrap();
+    board.set_circuit(&circuit, &BusCatalog::default(), &arduino_signals());
+    board.run_for_ns(100e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("NEC IR receiver on D3"), "{text}");
+
+    // A short press: one frame, no repeat.
+    board.press("ir:5", true);
+    board.run_for_ns(50e6);
+    board.press("ir:5", false);
+    board.run_for_ns(150e6);
+    let text = console_text(&mut board);
+    assert_eq!(text, "NEC addr 0x00 cmd 0x40 key 5\r\n");
+
+    // Held for 300 ms: the frame, then repeat codes at 108 and 216 ms.
+    board.press("ir:OK", true);
+    board.run_for_ns(300e6);
+    board.press("ir:OK", false);
+    board.run_for_ns(200e6);
+    let text = console_text(&mut board);
+    assert_eq!(
+        text,
+        "NEC addr 0x00 cmd 0x1C key OK\r\nrepeat\r\nrepeat\r\n"
+    );
+
+    for (key, cmd) in [("0", 0x19), ("#", 0x0D), ("RIGHT", 0x5A), ("DOWN", 0x52)] {
+        board.press(&format!("ir:{key}"), true);
+        board.run_for_ns(20e6);
+        board.press(&format!("ir:{key}"), false);
+        board.run_for_ns(120e6);
+        let text = console_text(&mut board);
+        assert_eq!(text, format!("NEC addr 0x00 cmd 0x{cmd:02X} key {key}\r\n"));
+    }
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
 // ----------------------------------------------- source-level debugging (M9)
 
 #[test]

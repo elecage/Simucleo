@@ -27,6 +27,7 @@ export interface PartFrame {
   /** NeoPixel colours, 0xRRGGBB per LED. */
   leds?: number[];
   lcd?: import("../parts/types").LcdView;
+  matrix?: import("../parts/types").MatrixView;
 }
 
 /** Level changes of a probed pin within one frame. */

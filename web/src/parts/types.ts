@@ -64,6 +64,8 @@ export interface VisualState {
   leds?: number[];
   /** Character LCD contents. */
   lcd?: LcdView;
+  /** LED dot-matrix contents (MAX7219 chain). */
+  matrix?: MatrixView;
   /** The pressable element held down now (`data-action`). */
   action?: string;
   pressed?: boolean;
@@ -79,4 +81,12 @@ export interface LcdView {
   backlight: boolean;
   cursor?: [number, number];
   blink: boolean;
+}
+
+/** What a MAX7219 chain shows (`simucleo_circuit::sim::MatrixView`). */
+export interface MatrixView {
+  /** 8 rows per module (top first, bit 7 = left column), the module nearest DIN first. */
+  rows: number[];
+  /** Intensity 0–15 per module. */
+  intensity: number[];
 }

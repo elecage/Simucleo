@@ -21,7 +21,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
 use crate::devices::{
-    Aht20, CharLcd, Device, Dht, Ds18b20, Ds3231, Encoder, NeoPixel, SdCard, Sonar, Ssd1306,
+    Aht20, CharLcd, Device, Dht, Ds18b20, Ds3231, Encoder, IrRemote, Max7219, Mpu6050, NeoPixel,
+    SdCard, Sonar, Ssd1306,
 };
 
 use crate::netlist::{build_netlist, BusCatalog, Circuit, PartCatalog, PartInstance, PinRef, Wire};
@@ -215,6 +216,19 @@ pub struct PartVisual {
     /// Character LCD contents.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lcd: Option<LcdView>,
+    /// LED dot-matrix contents (MAX7219 chain).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matrix: Option<MatrixView>,
+}
+
+/// What a chain of MAX7219 8×8 matrices shows.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct MatrixView {
+    /// 8 rows per module (top first, bit 7 = left column), the module
+    /// nearest DIN first.
+    pub rows: Vec<u8>,
+    /// Intensity setting 0–15 per module.
+    pub intensity: Vec<u8>,
 }
 
 /// What a character LCD shows.
@@ -324,6 +338,8 @@ pub struct CircuitSim {
     spi_parts: Vec<SpiPart>,
     /// Single-wire parts (DHT, NeoPixel) and their data line.
     wire_parts: Vec<WirePart>,
+    /// LED matrix drivers, whose CLK and CS edges are watched.
+    matrix_parts: Vec<MatrixPart>,
     /// Lines devices pull low on their own: (part id, node).
     dev_outputs: Vec<(String, usize, usize)>,
     /// Last level each single-wire part saw on its line.
@@ -343,6 +359,18 @@ struct WirePart {
     vcc: usize,
     gnd: usize,
     data: usize,
+    vmin: f64,
+}
+
+/// A MAX7219 chain: its serial lines as nets (bit-banged or SPI).
+#[derive(Debug, Clone)]
+struct MatrixPart {
+    id: String,
+    vcc: usize,
+    gnd: usize,
+    din: usize,
+    clk: usize,
+    cs: usize,
     vmin: f64,
 }
 
@@ -436,6 +464,7 @@ impl CircuitSim {
             bus_parts: Vec::new(),
             spi_parts: Vec::new(),
             wire_parts: Vec::new(),
+            matrix_parts: Vec::new(),
             dev_outputs: Vec::new(),
             line_levels: HashMap::new(),
             devices: HashMap::new(),
@@ -468,6 +497,14 @@ impl CircuitSim {
                     *x = Ds18b20::new(x.temp, 0);
                     x.rom = rom;
                 }
+                Device::Imu(m) => {
+                    let mut fresh = Mpu6050::new(m.address);
+                    (fresh.roll, fresh.pitch) = (m.roll, m.pitch);
+                    (fresh.gyro, fresh.temp) = (m.gyro, m.temp);
+                    **m = fresh;
+                }
+                Device::Matrix(m) => *m = Max7219::new(m.count),
+                Device::Ir(r) => *r = IrRemote::default(),
             }
         }
         self.i2c_active.clear();
@@ -512,10 +549,35 @@ impl CircuitSim {
             self.pressed.remove(part)
         };
         if changed {
+            // A remote button ("ir:OK") sends its code to the receiver.
+            if let Some((id, key)) = part.split_once(':') {
+                self.remote_button(id, key, pressed, time);
+            }
             self.integrate(time);
             self.rebuild();
         }
         changed
+    }
+
+    /// Press or release button `key` of the remote that belongs to IR
+    /// receiver `id`; a powered receiver puts the NEC frames on its output.
+    fn remote_button(&mut self, id: &str, key: &str, pressed: bool, time: Cycles) {
+        let now = self.seconds_at(time);
+        let powered = self
+            .wire_parts
+            .iter()
+            .any(|w| w.id == id && self.node_voltage(w.vcc) - self.node_voltage(w.gnd) >= w.vmin);
+        let Some(Device::Ir(r)) = self.devices.get_mut(id) else {
+            return;
+        };
+        match (pressed, IrRemote::command(key)) {
+            (true, Some(cmd)) if powered => {
+                r.advance(now);
+                r.press(now, cmd);
+            }
+            (false, _) => r.release(),
+            _ => {}
+        }
     }
 
     /// MCU pins the circuit observes, in the order [`CircuitSim::update`]
@@ -662,6 +724,7 @@ impl CircuitSim {
         let mut bus_parts = Vec::new();
         let mut spi_parts = Vec::new();
         let mut wire_parts = Vec::new();
+        let mut matrix_parts = Vec::new();
         let mut dev_outputs = Vec::new();
         let now_s = self.seconds_at(self.last_time);
         let mut map = std::mem::take(&mut self.pin_nodes);
@@ -1137,6 +1200,85 @@ impl CircuitSim {
                             .insert(p.id.clone(), Device::Pixels(NeoPixel::new(count)));
                     }
                 }
+                "ir-receiver" => {
+                    // VS1838B module: open-collector output with a 10 kΩ
+                    // pull-up, low while a carrier burst arrives.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    let out = node(pin("OUT"), &mut map);
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: 2.5,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    elements.push(Element::Resistor {
+                        a: vcc,
+                        b: out,
+                        r: 10_000.0,
+                    });
+                    wire_parts.push(WirePart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        data: out,
+                        vmin: 2.5,
+                    });
+                    dev_outputs.push((p.id.clone(), out, 0));
+                    if !matches!(self.devices.get(&p.id), Some(Device::Ir(_))) {
+                        self.devices
+                            .insert(p.id.clone(), Device::Ir(IrRemote::default()));
+                    }
+                }
+                "max7219" => {
+                    // FC-16 module(s): DIN, CLK, CS (LOAD); taken from
+                    // hardware SPI bytes or from bit-banged CLK edges.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    let (din, clk, cs) = (
+                        node(pin("DIN"), &mut map),
+                        node(pin("CLK"), &mut map),
+                        node(pin("CS"), &mut map),
+                    );
+                    node(pin("DOUT"), &mut map);
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: 3.0,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    spi_parts.push(SpiPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        sck: clk,
+                        mosi: din,
+                        miso: None,
+                        cs,
+                        dc: None,
+                        res: None,
+                        vmin: 3.0,
+                    });
+                    matrix_parts.push(MatrixPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        din,
+                        clk,
+                        cs,
+                        vmin: 3.0,
+                    });
+                    let count = prop_f64(p, "count", 1.0).clamp(1.0, 4.0) as usize;
+                    let keep = matches!(self.devices.get(&p.id), Some(Device::Matrix(m)) if m.count == count);
+                    if !keep {
+                        self.devices
+                            .insert(p.id.clone(), Device::Matrix(Max7219::new(count)));
+                    }
+                }
                 "oled-ssd1306-spi" | "sd-card" => {
                     let vis = add_visual(&p.id, VisualKind::Sensor, 1);
                     let pin = |n: &str| PinRef::new(&p.id, n);
@@ -1179,7 +1321,7 @@ impl CircuitSim {
                         self.devices.insert(p.id.clone(), fresh);
                     }
                 }
-                "oled-ssd1306" | "rtc-ds3231" | "aht20" | "lcd-i2c" => {
+                "oled-ssd1306" | "rtc-ds3231" | "aht20" | "lcd-i2c" | "mpu6050" => {
                     // Breakout module: the chip plus 4.7 kΩ pull-ups from
                     // its VCC to SCL and SDA.
                     let vis = add_visual(&p.id, VisualKind::Sensor, 1);
@@ -1226,6 +1368,15 @@ impl CircuitSim {
                             .unwrap_or(0x27);
                             Device::Lcd(Box::new(CharLcd::new(addr)))
                         }
+                        "mpu6050" => {
+                            // AD0 high: 0x69.
+                            let addr = if prop_str(p, "address", "0x68") == "0x69" {
+                                0x69
+                            } else {
+                                0x68
+                            };
+                            Device::Imu(Box::new(Mpu6050::new(addr)))
+                        }
                         _ => Device::Aht(Aht20::new(temp, prop_f64(p, "humidity", 50.0))),
                     };
                     let keep = self.devices.get(&p.id).is_some_and(|d| {
@@ -1241,6 +1392,12 @@ impl CircuitSim {
                         Some(Device::Aht(a)) => {
                             a.temp = temp;
                             a.humidity = prop_f64(p, "humidity", 50.0).clamp(0.0, 100.0);
+                        }
+                        Some(Device::Imu(m)) => {
+                            m.temp = temp;
+                            m.roll = prop_f64(p, "roll", 0.0);
+                            m.pitch = prop_f64(p, "pitch", 0.0);
+                            m.gyro = ["gx", "gy", "gz"].map(|k| prop_f64(p, k, 0.0));
                         }
                         _ => {}
                     }
@@ -1315,6 +1472,7 @@ impl CircuitSim {
         self.line_levels
             .retain(|id, _| wire_parts.iter().any(|w| &w.id == id));
         self.wire_parts = wire_parts;
+        self.matrix_parts = matrix_parts;
         self.dev_outputs = dev_outputs;
         self.nodes = nodes;
         self.elements = elements;
@@ -1744,6 +1902,7 @@ impl CircuitSim {
         }
         self.drives = Some(drives.to_vec());
         self.observe_lines(now_s, &sol);
+        self.observe_matrices(&sol);
         let changed = old.is_none_or(|o| o.inputs != sol.inputs);
         changed.then(|| sol.inputs.clone())
     }
@@ -1846,6 +2005,28 @@ impl CircuitSim {
                             v.text = Some(r.display(t));
                         }
                         Some(Device::Aht(a)) if !powered_now => *a = Aht20::new(a.temp, a.humidity),
+                        Some(Device::Imu(m)) if !powered_now && !m.asleep() => {
+                            let mut fresh = Mpu6050::new(m.address);
+                            (fresh.roll, fresh.pitch) = (m.roll, m.pitch);
+                            (fresh.gyro, fresh.temp) = (m.gyro, m.temp);
+                            **m = fresh;
+                        }
+                        Some(Device::Matrix(m)) => {
+                            v.matrix = Some(MatrixView {
+                                rows: (0..m.count).flat_map(|i| m.rows(i)).collect(),
+                                intensity: (0..m.count).map(|i| m.intensity(i)).collect(),
+                            });
+                        }
+                        Some(Device::Ir(r)) => {
+                            v.text = r.last.map(|(cmd, repeat)| {
+                                format!("0x{cmd:02X}{}", if repeat { " ⟳" } else { "" })
+                            });
+                            v.on = Some(if r.low || r.next().is_some() {
+                                1.0
+                            } else {
+                                0.0
+                            });
+                        }
                         Some(Device::Lcd(l)) => {
                             if !powered_now {
                                 **l = CharLcd::new(l.address);
@@ -1950,6 +2131,24 @@ impl CircuitSim {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// LED matrix drivers watch CLK and CS: bit-banged frames shift in on
+    /// CLK rising edges, and every frame (SPI too) is taken when CS rises.
+    fn observe_matrices(&mut self, sol: &Solution) {
+        for part in &self.matrix_parts {
+            let Some(Device::Matrix(m)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            if sol.v[part.vcc] - sol.v[part.gnd] < part.vmin {
+                if m.latches > 0 || m.regs != [[0; 16]; 4] {
+                    *m = Max7219::new(m.count);
+                }
+                continue;
+            }
+            let high = |n: usize| sol.v[n] > VDD / 2.0;
+            m.pins(high(part.clk), high(part.cs), high(part.din));
         }
     }
 
@@ -2131,6 +2330,7 @@ impl CircuitSim {
                         o.command(out);
                     }
                 }
+                Some(Device::Matrix(m)) => m.byte(out),
                 Some(Device::Sd(sd)) => {
                     let r = sd.exchange(out);
                     match (part.miso, miso_n) {
@@ -2818,5 +3018,162 @@ mod tests {
         s.set_pressed("B1", true, 10);
         s.update(10, &drives(&s, |_| Drive::Float));
         assert!(s.i2c_write(10, scl, 0x33), "still addressed");
+    }
+
+    #[test]
+    fn mpu6050_on_i2c_follows_the_tilt_inputs() {
+        let wires = vec![
+            wire(("imu", "VCC"), ("mcu", "3V3")),
+            wire(("imu", "GND"), ("mcu", "GND")),
+            wire(("imu", "SCL"), ("mcu", "PB8")),
+            wire(("imu", "SDA"), ("mcu", "PB9")),
+        ];
+        let imu = |roll: &str| part("imu", "mpu6050", &[("address", "0x69"), ("roll", roll)]);
+        let mut s = sim(vec![imu("0")], wires.clone());
+        let (scl, sda) = ((1, 8), (1, 9));
+        s.update(0, &drives(&s, |_| Drive::Float));
+        assert!(!s.i2c_start(0, scl, sda, 0x68, false), "AD0 high: 0x69");
+        assert!(s.i2c_start(0, scl, sda, 0x69, false));
+        s.i2c_write(0, scl, 0x6B);
+        s.i2c_write(0, scl, 0x00);
+        s.i2c_stop(0, scl);
+        let read_ay = |s: &mut CircuitSim| {
+            s.i2c_start(0, scl, sda, 0x69, false);
+            s.i2c_write(0, scl, 0x3D);
+            s.i2c_start(0, scl, sda, 0x69, true);
+            let v = i16::from_be_bytes([s.i2c_read(0, scl), s.i2c_read(0, scl)]);
+            s.i2c_stop(0, scl);
+            v
+        };
+        assert_eq!(read_ay(&mut s), 0);
+        // The slider moves: the chip stays awake, Y sees sin(roll).
+        s.set_circuit(
+            &Circuit {
+                parts: vec![part("mcu", BOARD_KIND, &[]), imu("-30")],
+                wires,
+            },
+            0,
+        );
+        s.update(0, &drives(&s, |_| Drive::Float));
+        assert_eq!(read_ay(&mut s), -8192);
+    }
+
+    #[test]
+    fn max7219_takes_spi_bytes_and_bit_banged_frames() {
+        let mut s = sim(
+            vec![part("mx", "max7219", &[("count", "2")])],
+            vec![
+                wire(("mx", "VCC"), ("mcu", "5V")),
+                wire(("mx", "GND"), ("mcu", "GND")),
+                wire(("mx", "CLK"), ("mcu", "PA5")),
+                wire(("mx", "DIN"), ("mcu", "PA7")),
+                wire(("mx", "CS"), ("mcu", "PB6")),
+            ],
+        );
+        let (sck, mosi, cs) = ((0, 5), (0, 7), (1, 6));
+        let set = |s: &mut CircuitSim, t: Cycles, clk: bool, din: bool, cs_high: bool| {
+            let d = drives(s, |p| {
+                let high = if p == sck {
+                    clk
+                } else if p == mosi {
+                    din
+                } else if p == cs {
+                    cs_high
+                } else {
+                    return Drive::Float;
+                };
+                if high {
+                    Drive::High
+                } else {
+                    Drive::Low
+                }
+            });
+            s.update(t, &d);
+        };
+        // Hardware SPI: the clock and data pins are the peripheral's, CS
+        // a GPIO.
+        let spi_frames = |s: &mut CircuitSim, t: &mut Cycles, frames: [u16; 2]| {
+            set(s, *t, false, false, false);
+            for f in frames {
+                s.spi(*t, sck, mosi, None, (f >> 8) as u8);
+                s.spi(*t, sck, mosi, None, f as u8);
+            }
+            *t += 10;
+            set(s, *t, false, false, true);
+            *t += 10;
+        };
+        let mut t = 0;
+        set(&mut s, t, false, false, true);
+        for f in [
+            [0x0C01, 0x0C01],
+            [0x0B07, 0x0B07],
+            [0x0A0F, 0x0A04],
+            [0x0118, 0x0181],
+        ] {
+            spi_frames(&mut s, &mut t, f);
+        }
+        let v = s.end_frame(t, 0.01);
+        let m = visual(&v, "mx").matrix.clone().unwrap();
+        assert_eq!(m.rows.len(), 16);
+        assert_eq!(
+            (m.rows[0], m.rows[8]),
+            (0x81, 0x18),
+            "first frame → far module"
+        );
+        assert_eq!(m.intensity, [4, 15]);
+        // Bit-banged: the same pins as GPIO outputs.
+        for f in [0x0842u16, 0x0000] {
+            for i in (0..16).rev() {
+                let b = f >> i & 1 != 0;
+                set(&mut s, t, false, b, false);
+                set(&mut s, t + 1, true, b, false);
+                t += 2;
+            }
+        }
+        set(&mut s, t, false, false, true);
+        let v = s.end_frame(t + 10, 0.01);
+        let m = visual(&v, "mx").matrix.clone().unwrap();
+        assert_eq!((m.rows[7], m.rows[15]), (0, 0x42));
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    }
+
+    #[test]
+    fn ir_receiver_output_carries_the_remote_frames() {
+        let mut s = sim(
+            vec![part("ir", "ir-receiver", &[])],
+            vec![
+                wire(("ir", "VCC"), ("mcu", "3V3")),
+                wire(("ir", "GND"), ("mcu", "GND")),
+                wire(("ir", "OUT"), ("mcu", "PA10")),
+            ],
+        );
+        s.set_clock(0, 0.0, 1e6);
+        let float = drives(&s, |_| Drive::Float);
+        let level = |s: &CircuitSim, inputs: &[Option<bool>]| {
+            let i = s.mcu_pins().iter().position(|&p| p == (0, 10)).unwrap();
+            inputs[i]
+        };
+        let inputs = s.update(0, &float).unwrap();
+        assert_eq!(level(&s, &inputs), Some(true), "idle high (pull-up)");
+        assert_eq!(s.next_event(), None);
+        s.set_pressed("ir:5", true, 1000);
+        // Follow the output's changes: 9 ms low, 4.5 ms high, …
+        let mut changes = Vec::new();
+        while let Some(t) = s.next_event() {
+            if t > 1000 + 90_000 {
+                break;
+            }
+            if let Some(i) = s.update(t, &float) {
+                changes.push((t - 1000, level(&s, &i)));
+            }
+        }
+        assert_eq!(changes[0], (0, Some(false)));
+        assert_eq!(changes[1], (9000, Some(true)));
+        assert_eq!(changes[2], (13_500, Some(false)));
+        assert_eq!(changes.len(), 68);
+        s.set_pressed("ir:5", false, 100_000);
+        let v = s.end_frame(100_000, 0.1);
+        assert_eq!(visual(&v, "ir").text.as_deref(), Some("0x40"));
+        assert_eq!(s.next_event(), None, "released before the repeat");
     }
 }

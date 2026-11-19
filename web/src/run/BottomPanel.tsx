@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import type { Runner } from "../sim/useRunner";
 import { Waveform } from "./Waveform";
 import { RtosView } from "./RtosView";
+import { SourceView } from "./SourceView";
 
-type Tab = "console" | "waveform" | "rtos" | "registers" | "memory";
+type Tab = "console" | "source" | "waveform" | "rtos" | "registers" | "memory";
 
 const hex = (v: number, w = 8) => "0x" + (v >>> 0).toString(16).toUpperCase().padStart(w, "0");
 
@@ -15,6 +16,7 @@ export function BottomPanel({ runner }: { runner: Runner }) {
         {(
           [
             ["console", "가상 콘솔 (USART2)"],
+            ["source", "소스 (디버그)"],
             ["waveform", "파형 (프로브)"],
             ["rtos", "RTOS"],
             ["registers", "레지스터"],
@@ -28,6 +30,7 @@ export function BottomPanel({ runner }: { runner: Runner }) {
       </nav>
       <div className="tab-body">
         {tab === "console" && <Console runner={runner} />}
+        {tab === "source" && <SourceView runner={runner} />}
         {tab === "waveform" && <Waveform runner={runner} />}
         {tab === "rtos" && <RtosView runner={runner} />}
         {tab === "registers" && <Registers runner={runner} />}

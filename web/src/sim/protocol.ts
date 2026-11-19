@@ -102,6 +102,10 @@ export type ToWorker =
   | { type: "readMemory"; addr: number; len: number }
   | { type: "sdImage"; part: string }
   | { type: "rotate"; part: string; detents: number }
+  | { type: "debugFiles" }
+  | { type: "breakpoints"; list: { file: number; line: number }[] }
+  | { type: "step"; kind: "instruction" | "into" | "over" | "out" }
+  | { type: "debugState"; frame: number; globalsFile: number }
   | { type: "sdLoad"; part: string; bytes: ArrayBuffer };
 
 export type FromWorker =
@@ -117,4 +121,43 @@ export type FromWorker =
       speed: number;
     }
   | { type: "memory"; addr: number; bytes: Uint8Array }
-  | { type: "sdImage"; part: string; bytes: Uint8Array };
+  | { type: "sdImage"; part: string; bytes: Uint8Array }
+  | { type: "debugFiles"; files: DebugFile[] }
+  | { type: "breakpoints"; placed: ({ file: number; line: number } | null)[] }
+  | { type: "debugState"; state: DebugState }
+  /** Execution paused by the debugger (breakpoint, step done, …). */
+  | { type: "paused"; reason: string };
+
+/** A source file of the firmware (DWARF), with the lines that have code. */
+export interface DebugFile {
+  index: number;
+  path: string;
+  lines: number[];
+}
+
+/** A variable's value (`simucleo_elf::debug::Value`). */
+export interface DebugValue {
+  name: string;
+  type: string;
+  value: string;
+  children?: DebugValue[];
+  addr?: number;
+}
+
+export interface DebugFrameInfo {
+  pc: number;
+  function: string | null;
+  file: number | null;
+  line: number | null;
+  exception: boolean;
+}
+
+/** Where a paused program is and what it holds. */
+export interface DebugState {
+  pc: number;
+  file?: number | null;
+  line?: number | null;
+  frames: DebugFrameInfo[];
+  locals?: DebugValue[];
+  globals?: DebugValue[];
+}

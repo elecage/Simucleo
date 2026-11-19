@@ -10,7 +10,7 @@ use simucleo_circuit::netlist::{build_netlist, BusCatalog, Circuit};
 use simucleo_circuit::sim::parse_mcu_pin;
 
 use simucleo_core::cortexm::exc;
-use simucleo_nucleo::Nucleo;
+use simucleo_nucleo::{Nucleo, Step, StepEnd};
 
 /// Level history of one GPIO pin within the current display frame.
 #[derive(Debug, Clone, Copy, Default)]
@@ -38,6 +38,8 @@ pub struct Simulator {
     probes: Vec<((u8, u8), bool)>,
     /// RTOS task running at the start of the frame (TCB address).
     rtos_current: Option<u32>,
+    /// The last run stopped at a breakpoint.
+    at_breakpoint: bool,
 }
 
 /// Most context switches reported per frame.
@@ -64,6 +66,7 @@ impl Simulator {
             frame_start_ns: 0.0,
             probes: Vec::new(),
             rtos_current: None,
+            at_breakpoint: false,
         }
     }
 
@@ -120,6 +123,7 @@ impl Simulator {
             return why.clone();
         }
         let r = self.board.run_for_ns(ms * 1e6);
+        self.at_breakpoint = matches!(r.stop, simucleo_core::cpu::StopReason::Breakpoint(_));
         match self.board.diagnose(&r) {
             Some(d) => {
                 let why = d.to_string();
@@ -128,6 +132,119 @@ impl Simulator {
             }
             None => String::new(),
         }
+    }
+
+    /// The last `runForMs` stopped at a breakpoint (the caller pauses).
+    #[wasm_bindgen(js_name = atBreakpoint)]
+    pub fn at_breakpoint(&self) -> bool {
+        self.at_breakpoint
+    }
+
+    /// Source files with code, as JSON `[{index, path, lines: [n, …]}]`
+    /// (`[]` without debug information).
+    #[wasm_bindgen(js_name = debugFiles)]
+    pub fn debug_files(&self) -> String {
+        let Some(info) = self.board.debug_info() else {
+            return "[]".into();
+        };
+        let files: Vec<serde_json::Value> = info
+            .files
+            .iter()
+            .enumerate()
+            .filter_map(|(i, path)| {
+                let lines = info.lines_with_code(i as u32);
+                (!lines.is_empty())
+                    .then(|| serde_json::json!({"index": i, "path": path, "lines": lines}))
+            })
+            .collect();
+        serde_json::to_string(&files).unwrap_or_default()
+    }
+
+    /// Set the breakpoints from JSON `[{file, line}]`. Returns where each
+    /// one landed, `[{file, line} | null]` (the next line with code).
+    #[wasm_bindgen(js_name = setBreakpoints)]
+    pub fn set_breakpoints(&mut self, json: &str) -> Result<String, JsError> {
+        #[derive(serde::Deserialize)]
+        struct Bp {
+            file: u32,
+            line: u32,
+        }
+        let bps: Vec<Bp> = serde_json::from_str(json)?;
+        let Some(info) = self.board.debug_info() else {
+            return Ok("[]".into());
+        };
+        let mut addrs = Vec::new();
+        let placed: Vec<serde_json::Value> = bps
+            .iter()
+            .map(|b| match info.breakpoint_addresses(b.file, b.line) {
+                Some((line, a)) => {
+                    addrs.extend(a);
+                    serde_json::json!({"file": b.file, "line": line})
+                }
+                None => serde_json::Value::Null,
+            })
+            .collect();
+        self.board.set_breakpoints(&addrs);
+        Ok(serde_json::to_string(&placed)?)
+    }
+
+    /// Step: `"instruction"`, `"into"`, `"over"` or `"out"`. Returns
+    /// `"done"`, `"breakpoint"`, `"limit"` or why the firmware stopped.
+    pub fn step(&mut self, kind: &str) -> String {
+        if let Some(why) = &self.stopped {
+            return why.clone();
+        }
+        let kind = match kind {
+            "into" => Step::Into,
+            "over" => Step::Over,
+            "out" => Step::Out,
+            _ => Step::Instruction,
+        };
+        match self.board.step(kind) {
+            StepEnd::Done => "done".into(),
+            StepEnd::Breakpoint => "breakpoint".into(),
+            StepEnd::Limit => "limit".into(),
+            StepEnd::Stopped(stop) => {
+                let r = simucleo_core::cpu::RunResult { cycles: 0, stop };
+                match self.board.diagnose(&r) {
+                    Some(d) => {
+                        let why = d.to_string();
+                        self.stopped = Some(why.clone());
+                        why
+                    }
+                    None => "done".into(),
+                }
+            }
+        }
+    }
+
+    /// Where the program is and what it holds, as JSON: `{ pc, file,
+    /// line, frames: [{pc, function, file, line, exception}], locals,
+    /// globals }`; locals are those of call-stack frame `frame`, globals
+    /// those declared in file `globals_file` (−1: none).
+    #[wasm_bindgen(js_name = debugState)]
+    pub fn debug_state(&self, frame: usize, globals_file: i32) -> String {
+        let pc = self.board.cpu.registers().pc();
+        let Some(info) = self.board.debug_info() else {
+            return serde_json::json!({"pc": pc, "frames": []}).to_string();
+        };
+        let loc = info.location(pc);
+        let frames = self.board.call_stack();
+        let locals = self.board.locals(frame);
+        let globals = if globals_file >= 0 {
+            self.board.globals(&[globals_file as u32])
+        } else {
+            Vec::new()
+        };
+        serde_json::json!({
+            "pc": pc,
+            "file": loc.map(|l| l.0),
+            "line": loc.map(|l| l.1),
+            "frames": frames,
+            "locals": locals,
+            "globals": globals,
+        })
+        .to_string()
     }
 
     /// Snapshot for one display frame, as JSON:

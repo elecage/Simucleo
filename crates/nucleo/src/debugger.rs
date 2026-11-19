@@ -57,7 +57,12 @@ impl DebugState {
 
     fn get(&self) -> Option<std::rc::Rc<DebugInfo>> {
         self.info
-            .get_or_init(|| self.elf.as_ref().and_then(|b| DebugInfo::load(b)).map(std::rc::Rc::new))
+            .get_or_init(|| {
+                self.elf
+                    .as_ref()
+                    .and_then(|b| DebugInfo::load(b))
+                    .map(std::rc::Rc::new)
+            })
             .clone()
     }
 }

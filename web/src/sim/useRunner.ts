@@ -1,6 +1,6 @@
 // React hook around the simulation worker.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FromWorker, SimFrame, ToWorker } from "./protocol";
+import type { DebugFile, DebugState, FromWorker, SimFrame, ToWorker } from "./protocol";
 import type { CircuitJson } from "../editor/model";
 import { boardSignals, busCatalog } from "../parts";
 
@@ -37,6 +37,16 @@ export interface Runner {
   sdLoad(part: string, bytes: ArrayBuffer): void;
   /** Turn a rotary encoder by detents (negative: counter-clockwise). */
   rotate(part: string, detents: number): void;
+  /** Source files of the loaded firmware (from its debug information). */
+  debugFiles: DebugFile[];
+  /** Where each breakpoint landed (the line with code). */
+  breakpoints: { file: number; line: number }[];
+  setBreakpoints(list: { file: number; line: number }[]): void;
+  step(kind: "instruction" | "into" | "over" | "out"): void;
+  /** Bumped whenever the debugger paused execution; with the reason. */
+  pauseEvent: { n: number; reason: string };
+  debugState: DebugState | null;
+  requestDebugState(frame: number, globalsFile: number): void;
 }
 
 export function useRunner(): Runner {
@@ -52,6 +62,10 @@ export function useRunner(): Runner {
   const [consoleText, setConsole] = useState("");
   const [memory, setMemory] = useState<{ addr: number; bytes: Uint8Array } | null>(null);
   const sdWaiters = useRef(new Map<string, (b: Uint8Array) => void>());
+  const [debugFiles, setDebugFiles] = useState<DebugFile[]>([]);
+  const [breakpoints, setPlaced] = useState<{ file: number; line: number }[]>([]);
+  const [pauseEvent, setPause] = useState({ n: 0, reason: "" });
+  const [debugState, setDebugState] = useState<DebugState | null>(null);
 
   useEffect(() => {
     const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
@@ -66,6 +80,21 @@ export function useRunner(): Runner {
           setFirmware(m.error ? null : m.name);
           setLoadError(m.error ?? null);
           setConsole("");
+          setDebugState(null);
+          setPlaced([]);
+          w.postMessage({ type: "debugFiles" } satisfies ToWorker);
+          break;
+        case "debugFiles":
+          setDebugFiles(m.files);
+          break;
+        case "breakpoints":
+          setPlaced(m.placed.filter((p): p is { file: number; line: number } => p !== null));
+          break;
+        case "paused":
+          setPause((p) => ({ n: p.n + 1, reason: m.reason }));
+          break;
+        case "debugState":
+          setDebugState(m.state);
           break;
         case "frame":
           setFrame(m.frame);
@@ -113,9 +142,15 @@ export function useRunner(): Runner {
         }),
       sdLoad: (part: string, bytes: ArrayBuffer) => send({ type: "sdLoad", part, bytes }, [bytes]),
       rotate: (part: string, detents: number) => send({ type: "rotate", part, detents }),
+      setBreakpoints: (list: { file: number; line: number }[]) => send({ type: "breakpoints", list }),
+      step: (kind: "instruction" | "into" | "over" | "out") => send({ type: "step", kind }),
+      requestDebugState: (frame: number, globalsFile: number) => send({ type: "debugState", frame, globalsFile }),
     }),
     [send],
   );
 
-  return { ready, firmware, firmwareBytes, firmwareExample, loadError, running, speed, frame, console: consoleText, memory, ...actions };
+  return {
+    ready, firmware, firmwareBytes, firmwareExample, loadError, running, speed, frame, console: consoleText, memory,
+    debugFiles, breakpoints, pauseEvent, debugState, ...actions,
+  };
 }

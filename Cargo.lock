@@ -339,6 +339,7 @@ name = "simucleo-cli"
 version = "0.1.0"
 dependencies = [
  "simucleo-core",
+ "simucleo-elf",
  "simucleo-nucleo",
  "simucleo-periph-stm32f4",
 ]

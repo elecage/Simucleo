@@ -5,7 +5,10 @@
 //! simucleo run  <firmware.elf> [--ms <millis>] [--input <text>] [--baud <rate>]
 //!     # run; print the ST-LINK virtual COM port (USART2), pin changes,
 //!     # warnings and, if the firmware got stuck, why
+//! simucleo gdb  <firmware.elf> [--port 3333]   # GDB remote server
 //! ```
+
+mod gdb;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
@@ -17,12 +20,17 @@ use simucleo_nucleo::Nucleo;
 use simucleo_periph_stm32f4::{map, regmap};
 
 const USAGE: &str = "usage: simucleo info <firmware.elf>
-       simucleo run <firmware.elf> [--ms <millis>] [--input <text>] [--input-at <millis>] [--baud <terminal baud>]";
+       simucleo run <firmware.elf> [--ms <millis>] [--input <text>] [--input-at <millis>] [--baud <terminal baud>]
+       simucleo gdb <firmware.elf> [--port <tcp port, default 3333>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("info") if args.len() == 2 => info(&args[1]),
+        Some("gdb") if args.len() == 2 || (args.len() == 4 && args[2] == "--port") => {
+            let port = args.get(3).and_then(|p| p.parse().ok()).unwrap_or(3333);
+            load(&args[1]).and_then(|b| gdb::serve(b, port))
+        }
         Some("run") if args.len() >= 2 => match parse_run_options(&args[2..]) {
             Some(opts) => run(&args[1], opts),
             None => Err(USAGE.into()),

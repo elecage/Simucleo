@@ -43,7 +43,9 @@ jobs:
       - run: make -C firmware/hal-uart-printf
       - run: for d in hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture hal-7seg-keypad hal-encoder-stepper-lcd hal-sonar-onewire freertos-two-tasks freertos-queue-uart; do make -C firmware/$d; done
       - name: Run firmware on the simulator
-        run: cargo test --release -p simucleo-nucleo --test firmware -- --include-ignored
+        run: |
+          cargo test --release -p simucleo-nucleo --test firmware -- --include-ignored
+          cargo test --release -p simucleo-cli -- --include-ignored
       - name: CLI smoke test
         run: |
           cargo run --release -p simucleo-cli -- run firmware/bare-blinky/build/bare-blinky.elf --ms 500

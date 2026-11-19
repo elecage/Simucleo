@@ -1663,6 +1663,8 @@ pub struct Mpu6050 {
     pub pitch: f64,
     /// Rotation rates about X, Y, Z (°/s).
     pub gyro: [f64; 3],
+    /// Acceleration on top of gravity along X, Y, Z (g): a shake.
+    pub extra: [f64; 3],
     pub temp: f64,
     pub regs: [u8; 0x80],
     pointer: u8,
@@ -1688,6 +1690,7 @@ impl Mpu6050 {
             roll: 0.0,
             pitch: 0.0,
             gyro: [0.0; 3],
+            extra: [0.0; 3],
             temp: 25.0,
             regs: [0; 0x80],
             pointer: 0,
@@ -1709,10 +1712,12 @@ impl Mpu6050 {
         self.regs[Self::PWR_MGMT_1 as usize] & 0x40 != 0
     }
 
-    /// Acceleration (g) along X, Y, Z: gravity turned by roll and pitch.
+    /// Acceleration (g) along X, Y, Z: gravity turned by roll and pitch,
+    /// plus any shake.
     pub fn accel_g(&self) -> [f64; 3] {
         let (r, p) = (self.roll.to_radians(), self.pitch.to_radians());
-        [-p.sin(), r.sin() * p.cos(), r.cos() * p.cos()]
+        let g = [-p.sin(), r.sin() * p.cos(), r.cos() * p.cos()];
+        [0, 1, 2].map(|i| g[i] + self.extra[i])
     }
 
     /// LSB per g for ACCEL_CONFIG.AFS_SEL (±2/4/8/16 g).
@@ -1804,12 +1809,18 @@ const CODE_B: [u8; 16] = [
 /// FC-16 module). 16-bit frames (address nibble, data byte) are shifted in
 /// MSB first on CLK rising edges while CS is low and taken on the CS rising
 /// edge; with N chips the last 16·N bits count, the first frame shifted
-/// ending up in the farthest chip.
+/// ending up in the farthest chip. What falls out of the farthest chip's
+/// register comes out on DOUT (its MSB, 16·N clocks after it went in,
+/// changing on the CLK falling edge), so a further module on DOUT carries
+/// the chain on.
 #[derive(Debug, Clone)]
 pub struct Max7219 {
     pub count: usize,
     /// The chained shift registers, the nearest chip in the low 16 bits.
     shift: u64,
+    /// The level on DOUT: the register's MSB as of the last CLK falling
+    /// edge (or the end of the last SPI byte).
+    pub dout: bool,
     /// Registers 0x0–0xF of each chip (0x1–0x8 digits, 0x9 decode mode,
     /// 0xA intensity, 0xB scan limit, 0xC shutdown, 0xF display test).
     pub regs: [[u8; 16]; 4],
@@ -1827,6 +1838,7 @@ impl Max7219 {
         Self {
             count: count.clamp(1, Self::MAX_CHAIN),
             shift: 0,
+            dout: false,
             regs: [[0; 16]; 4],
             last_clk: None,
             last_cs: None,
@@ -1842,16 +1854,29 @@ impl Max7219 {
         }
     }
 
-    /// One bit into DIN.
-    pub fn shift_bit(&mut self, bit: bool) {
-        self.shift = (self.shift << 1 | bit as u64) & self.mask();
+    /// The register's MSB: the bit the next clock pushes out.
+    fn msb(&self) -> bool {
+        self.shift >> (16 * self.count - 1) & 1 != 0
     }
 
-    /// Eight bits, MSB first (an SPI byte).
-    pub fn byte(&mut self, b: u8) {
+    /// One bit into DIN; returns the bit pushed out of the far end.
+    pub fn shift_bit(&mut self, bit: bool) -> bool {
+        let out = self.msb();
+        self.shift = (self.shift << 1 | bit as u64) & self.mask();
+        out
+    }
+
+    /// Eight bits, MSB first (an SPI byte). Returns the eight bits that
+    /// left on DOUT meanwhile, first one in the MSB: what a module chained
+    /// on DOUT receives. The clock idles low afterwards (SPI mode 0), so
+    /// DOUT already shows the new MSB.
+    pub fn byte(&mut self, b: u8) -> u8 {
+        let mut out = 0;
         for i in (0..8).rev() {
-            self.shift_bit(b >> i & 1 != 0);
+            out = out << 1 | self.shift_bit(b >> i & 1 != 0) as u8;
         }
+        self.dout = self.msb();
+        out
     }
 
     /// CS rising edge: every chip takes the frame in its shift register.
@@ -1867,10 +1892,14 @@ impl Max7219 {
     }
 
     /// The levels of CLK, CS and DIN now (bit-banged or not): shift on a
-    /// CLK rising edge with CS low, latch on a CS rising edge.
+    /// CLK rising edge with CS low, latch on a CS rising edge, DOUT
+    /// follows the MSB on a CLK falling edge.
     pub fn pins(&mut self, clk: bool, cs: bool, din: bool) {
         if self.last_clk == Some(false) && clk && !cs {
             self.shift_bit(din);
+        }
+        if self.last_clk == Some(true) && !clk {
+            self.dout = self.msb();
         }
         if self.last_cs == Some(false) && cs {
             self.latch();
@@ -2098,6 +2127,7 @@ impl Device {
             Device::Encoder(e) => e.closed[index.min(1)].then_some(false),
             Device::Sonar(s) => Some(s.echo),
             Device::Ir(d) => d.low.then_some(false),
+            Device::Matrix(m) => Some(m.dout),
             _ => None,
         }
     }
@@ -2661,6 +2691,25 @@ mod tests {
     }
 
     #[test]
+    fn mpu6050_shake_adds_to_gravity_and_saturates_at_full_scale() {
+        let mut m = Mpu6050::new(0x68);
+        i2c_write(&mut m, &[0x6B, 0x00], 0.0);
+        let accel = |m: &mut Mpu6050| {
+            let d = mem_read(m, 0x3B, 6);
+            [0, 1, 2].map(|i| i16::from_be_bytes([d[2 * i], d[2 * i + 1]]))
+        };
+        assert_eq!(accel(&mut m), [0, 0, 16384]);
+        m.extra = [0.5, -0.25, 0.75];
+        assert_eq!(accel(&mut m), [8192, -4096, 16384 + 12288]);
+        // ±2 g: a hard knock clips.
+        m.extra = [3.0, 0.0, 0.0];
+        assert_eq!(accel(&mut m)[0], 32767);
+        // ±8 g has room for it.
+        i2c_write(&mut m, &[0x1C, 0x10], 0.0);
+        assert_eq!(accel(&mut m), [12288, 0, 4096]);
+    }
+
+    #[test]
     fn max7219_chain_shifts_latches_and_shows_rows() {
         let mut m = Max7219::new(2);
         let send = |m: &mut Max7219, frames: &[u16]| {
@@ -2720,6 +2769,49 @@ mod tests {
         m.pins(false, false, false);
         m.pins(false, true, false);
         assert_eq!(m.rows(0)[7], 0x42);
+    }
+
+    #[test]
+    fn max7219_dout_carries_the_bits_pushed_out_16_clocks_later() {
+        // One module: a 16-bit frame comes out of DOUT 16 clocks later.
+        let mut a = Max7219::new(1);
+        assert_eq!((a.byte(0x0C), a.byte(0x01)), (0, 0));
+        assert!(!a.dout);
+        assert_eq!((a.byte(0x0A), a.byte(0x07)), (0x0C, 0x01));
+        // Two separate modules, B on A's DOUT: B ends up with the frame
+        // sent first, A with the last; both take them on the shared CS.
+        let mut a = Max7219::new(1);
+        let mut b = Max7219::new(1);
+        for byte in [0x01, 0x81, 0x01, 0x18] {
+            let over = a.byte(byte);
+            b.byte(over);
+        }
+        a.latch();
+        b.latch();
+        assert_eq!((b.regs[0][1], a.regs[0][1]), (0x81, 0x18));
+        // The same as one part with count 2.
+        let mut c = Max7219::new(2);
+        for byte in [0x01, 0x81, 0x01, 0x18] {
+            assert_eq!(c.byte(byte), 0);
+        }
+        c.latch();
+        assert_eq!((c.regs[1][1], c.regs[0][1]), (0x81, 0x18));
+
+        // Bit-banged: DOUT shows the MSB from the CLK falling edge on.
+        let mut a = Max7219::new(1);
+        a.pins(false, false, false);
+        let mut seen = Vec::new();
+        for i in 0..32 {
+            let bit = i == 0 || i == 15; // 0x8001, then zeros
+            a.pins(false, false, bit);
+            seen.push(a.dout); // what a module on DOUT samples now
+            a.pins(true, false, bit);
+            assert_eq!(a.dout, seen[i], "DOUT holds while CLK is high");
+        }
+        a.pins(false, false, false);
+        // Bit i went in at clock i and is sampled downstream at clock i + 16.
+        let ones: Vec<usize> = (0..32).filter(|&i| seen[i]).collect();
+        assert_eq!(ones, [16, 31]);
     }
 
     #[test]

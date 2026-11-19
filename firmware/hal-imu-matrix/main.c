@@ -1,11 +1,13 @@
 /*
  * CubeMX-style HAL example: an MPU-6050 tilt sensor rolls a dot across an
- * 8×8 LED matrix driven by a MAX7219.
+ * 8×8 LED matrix driven by a MAX7219; a second matrix chained on the
+ * first one's DOUT shows how hard the sensor is shaken (|a| as a bar).
  *
  *   D15 (PB8), D14 (PB9)   I2C1 → MPU-6050 at 0x68 (AD0 low), VCC 3V3
- *   D13 (PA5)              SPI1 SCK  → MAX7219 CLK
- *   D11 (PA7)              SPI1 MOSI → MAX7219 DIN
- *   D10 (PB6)              GPIO      → MAX7219 CS (LOAD), VCC 5V
+ *   D13 (PA5)              SPI1 SCK  → MAX7219 CLK (both modules)
+ *   D11 (PA7)              SPI1 MOSI → MAX7219 DIN (first module)
+ *   D10 (PB6)              GPIO      → MAX7219 CS (LOAD, both), VCC 5V
+ *   first module's DOUT    → second module's DIN
  *
  * The MPU-6050 wakes up (PWR_MGMT_1 = 0) with ±2 g and ±250 °/s, then 14
  * bytes are read from ACCEL_XOUT_H every 100 ms with HAL_I2C_Mem_Read.
@@ -15,6 +17,10 @@
  * The MAX7219 takes 16-bit frames (address, data) MSB first while CS is
  * low and acts on them when CS goes high: here two 8-bit SPI bytes each.
  * Digit registers 1–8 are the rows, top first, bit 7 the left column.
+ * What is shifted through one chip comes out of its DOUT 16 clocks later,
+ * so with two chained chips one CS low period carries two frames: the
+ * first one sent ends up in the far chip. With a single module the far
+ * frame simply falls off DOUT.
  */
 #include <math.h>
 #include <stdio.h>
@@ -35,12 +41,19 @@ static void MX_USART2_UART_Init(void);
 
 /* ------------------------------------------------------------ MAX7219 */
 
+/* One register in both chips: `near` for the one on D11, `far` for the
+ * one on its DOUT. */
+static void max7219_write2(uint8_t reg, uint8_t near, uint8_t far)
+{
+  uint8_t frames[4] = {reg, far, reg, near};
+  HAL_GPIO_WritePin(MAX_CS_PORT, MAX_CS_PIN, GPIO_PIN_RESET);
+  HAL_SPI_Transmit(&hspi1, frames, 4, 10);
+  HAL_GPIO_WritePin(MAX_CS_PORT, MAX_CS_PIN, GPIO_PIN_SET); /* both latch */
+}
+
 static void max7219_write(uint8_t reg, uint8_t value)
 {
-  uint8_t frame[2] = {reg, value};
-  HAL_GPIO_WritePin(MAX_CS_PORT, MAX_CS_PIN, GPIO_PIN_RESET);
-  HAL_SPI_Transmit(&hspi1, frame, 2, 10);
-  HAL_GPIO_WritePin(MAX_CS_PORT, MAX_CS_PIN, GPIO_PIN_SET); /* latch */
+  max7219_write2(reg, value, value);
 }
 
 static void max7219_init(void)
@@ -56,11 +69,11 @@ static void max7219_init(void)
   max7219_write(0x0C, 0x01); /* leave shutdown */
 }
 
-static void max7219_show(const uint8_t rows[8])
+static void max7219_show(const uint8_t near[8], const uint8_t far[8])
 {
   for (int r = 0; r < 8; r++)
   {
-    max7219_write((uint8_t)(r + 1), rows[r]);
+    max7219_write2((uint8_t)(r + 1), near[r], far[r]);
   }
 }
 
@@ -98,6 +111,13 @@ static int mpu_read(MpuRaw *m)
   return 0;
 }
 
+/* Hundredths of a non-negative value. */
+static void hundredths(char *out, size_t n, float v)
+{
+  int h = (int)lroundf(v * 100.0f);
+  snprintf(out, n, "%d.%02d", h / 100, h % 100);
+}
+
 /* Tenths, with the sign kept for -0.x. */
 static void tenths(char *out, size_t n, float v)
 {
@@ -118,7 +138,7 @@ int main(void)
   MX_I2C1_Init();
   MX_SPI1_Init();
   MX_USART2_UART_Init();
-  printf("MPU-6050 on I2C1 (D15/D14), MAX7219 8x8 matrix on SPI1 (CS D10)\r\n");
+  printf("MPU-6050 on I2C1 (D15/D14), two chained MAX7219 8x8 matrices on SPI1 (CS D10)\r\n");
 
   max7219_init();
   uint8_t who = mpu_read_reg(0x75);
@@ -148,17 +168,28 @@ int main(void)
     int row = clamp7((int)lroundf(3.5f - ax / 0.7071f * 4.0f - 0.01f));
     uint8_t rows[8] = {0};
     rows[row] = (uint8_t)(0x80 >> col);
-    max7219_show(rows);
 
-    char r[12], p[12], t[12], g[3][12];
+    /* Second matrix: |a| as a bar from the bottom, 3 rows per g (1 g at
+     * rest lights 3 rows; shaking lights more). */
+    float mag = sqrtf(ax * ax + ay * ay + az * az);
+    int bar = (int)lroundf(mag * 3.0f);
+    uint8_t bars[8] = {0};
+    for (int r = 0; r < 8; r++)
+    {
+      bars[r] = 7 - r < bar ? 0xFF : 0x00;
+    }
+    max7219_show(rows, bars);
+
+    char r[12], p[12], t[12], g[3][12], a[12];
     tenths(r, sizeof r, roll);
     tenths(p, sizeof p, pitch);
     tenths(t, sizeof t, temp);
     tenths(g[0], sizeof g[0], m.gx / 131.0f);
     tenths(g[1], sizeof g[1], m.gy / 131.0f);
     tenths(g[2], sizeof g[2], m.gz / 131.0f);
-    printf("roll %s pitch %s | gyro %s %s %s dps | %s C | dot row %d col %d\r\n", r, p, g[0], g[1], g[2], t, row,
-           col);
+    hundredths(a, sizeof a, mag);
+    printf("roll %s pitch %s | gyro %s %s %s dps | %s C | dot row %d col %d | |a| %s g\r\n", r, p, g[0], g[1], g[2], t,
+           row, col, a);
     HAL_Delay(100);
   }
 }

@@ -371,6 +371,8 @@ struct MatrixPart {
     din: usize,
     clk: usize,
     cs: usize,
+    /// Driven by the chip: the bit leaving its shift register.
+    dout: usize,
     vmin: f64,
 }
 
@@ -1243,7 +1245,12 @@ impl CircuitSim {
                         node(pin("CLK"), &mut map),
                         node(pin("CS"), &mut map),
                     );
-                    node(pin("DOUT"), &mut map);
+                    // DOUT is a push-pull output: a further module on it
+                    // shifts in what leaves this one (bit-banged chains
+                    // work through the nets; SPI bytes are forwarded, see
+                    // `spi`).
+                    let dout = node(pin("DOUT"), &mut map);
+                    dev_outputs.push((p.id.clone(), dout, 0));
                     elements.push(Element::Sense {
                         a: vcc,
                         b: gnd,
@@ -1270,6 +1277,7 @@ impl CircuitSim {
                         din,
                         clk,
                         cs,
+                        dout,
                         vmin: 3.0,
                     });
                     let count = prop_f64(p, "count", 1.0).clamp(1.0, 4.0) as usize;
@@ -1398,6 +1406,8 @@ impl CircuitSim {
                             m.roll = prop_f64(p, "roll", 0.0);
                             m.pitch = prop_f64(p, "pitch", 0.0);
                             m.gyro = ["gx", "gy", "gz"].map(|k| prop_f64(p, k, 0.0));
+                            // A shake: acceleration on top of gravity (g).
+                            m.extra = ["ax", "ay", "az"].map(|k| prop_f64(p, k, 0.0));
                         }
                         _ => {}
                     }
@@ -2304,6 +2314,8 @@ impl CircuitSim {
         let name = |(port, pin): (u8, u8)| format!("P{}{}", (b'A' + port) as char, pin);
         let mut reply = 0xFF;
         let mut drivers = Vec::new();
+        // Bits that left a matrix on DOUT during this byte, by part.
+        let mut overflow = Vec::new();
         for i in 0..self.spi_parts.len() {
             let part = self.spi_parts[i].clone();
             if part.sck == mn && part.mosi == kn {
@@ -2330,7 +2342,7 @@ impl CircuitSim {
                         o.command(out);
                     }
                 }
-                Some(Device::Matrix(m)) => m.byte(out),
+                Some(Device::Matrix(m)) => overflow.push((part.id.clone(), m.byte(out))),
                 Some(Device::Sd(sd)) => {
                     let r = sd.exchange(out);
                     match (part.miso, miso_n) {
@@ -2350,7 +2362,39 @@ impl CircuitSim {
                 drivers.join(" and ")
             ));
         }
+        self.forward_matrix_chain(kn, overflow);
         reply
+    }
+
+    /// Hardware SPI moves whole bytes without clock edges on the nets, so a
+    /// MAX7219 whose DIN is another one's DOUT (and whose CLK is the same
+    /// SCK) gets, as one byte, the eight bits that left the module before
+    /// it during this byte — and passes its own overflow on down the chain.
+    fn forward_matrix_chain(&mut self, sck: usize, mut queue: Vec<(String, u8)>) {
+        // Each module once per byte, whatever loops the wiring has.
+        let mut fed: BTreeSet<String> = queue.iter().map(|(id, _)| id.clone()).collect();
+        while let Some((id, byte)) = queue.pop() {
+            let Some(from) = self.matrix_parts.iter().find(|m| m.id == id) else {
+                continue;
+            };
+            let dout = from.dout;
+            let next: Vec<MatrixPart> = self
+                .matrix_parts
+                .iter()
+                .filter(|m| m.din == dout && m.clk == sck && !fed.contains(&m.id))
+                .cloned()
+                .collect();
+            for m in next {
+                let v = |n: usize| self.node_voltage(n);
+                if v(m.vcc) - v(m.gnd) < m.vmin || v(m.cs) >= 0.3 * VDD {
+                    continue;
+                }
+                if let Some(Device::Matrix(d)) = self.devices.get_mut(&m.id) {
+                    queue.push((m.id.clone(), d.byte(byte)));
+                    fed.insert(m.id);
+                }
+            }
+        }
     }
 
     /// The SD card in part `id` as a disk image.
@@ -3050,12 +3094,29 @@ mod tests {
         s.set_circuit(
             &Circuit {
                 parts: vec![part("mcu", BOARD_KIND, &[]), imu("-30")],
-                wires,
+                wires: wires.clone(),
             },
             0,
         );
         s.update(0, &drives(&s, |_| Drive::Float));
         assert_eq!(read_ay(&mut s), -8192);
+        // A shake from the UI: extra acceleration (g) on top of gravity.
+        s.set_circuit(
+            &Circuit {
+                parts: vec![
+                    part("mcu", BOARD_KIND, &[]),
+                    part(
+                        "imu",
+                        "mpu6050",
+                        &[("address", "0x69"), ("roll", "-30"), ("ay", "0.75")],
+                    ),
+                ],
+                wires,
+            },
+            0,
+        );
+        s.update(0, &drives(&s, |_| Drive::Float));
+        assert_eq!(read_ay(&mut s), -8192 + 12288);
     }
 
     #[test]
@@ -3135,6 +3196,135 @@ mod tests {
         let m = visual(&v, "mx").matrix.clone().unwrap();
         assert_eq!((m.rows[7], m.rows[15]), (0, 0x42));
         assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    }
+
+    #[test]
+    fn separate_max7219_parts_chain_dout_to_din() {
+        // Two parts: A on the MCU, B's DIN on A's DOUT, CLK and CS shared.
+        let mut s = sim(
+            vec![
+                part("a", "max7219", &[("count", "1")]),
+                part("b", "max7219", &[("count", "1")]),
+            ],
+            vec![
+                wire(("a", "VCC"), ("mcu", "5V")),
+                wire(("a", "GND"), ("mcu", "GND")),
+                wire(("b", "VCC"), ("mcu", "5V")),
+                wire(("b", "GND"), ("mcu", "GND")),
+                wire(("a", "CLK"), ("mcu", "PA5")),
+                wire(("a", "DIN"), ("mcu", "PA7")),
+                wire(("a", "CS"), ("mcu", "PB6")),
+                wire(("a", "DOUT"), ("b", "DIN")),
+                wire(("b", "CLK"), ("a", "CLK")),
+                wire(("b", "CS"), ("a", "CS")),
+            ],
+        );
+        let (sck, mosi, cs) = ((0, 5), (0, 7), (1, 6));
+        let set = |s: &mut CircuitSim, t: Cycles, clk: bool, din: bool, cs_high: bool| {
+            let d = drives(s, |p| {
+                let high = if p == sck {
+                    clk
+                } else if p == mosi {
+                    din
+                } else if p == cs {
+                    cs_high
+                } else {
+                    return Drive::Float;
+                };
+                if high {
+                    Drive::High
+                } else {
+                    Drive::Low
+                }
+            });
+            s.update(t, &d);
+        };
+        let rows = |s: &mut CircuitSim, t: Cycles, id: &str| {
+            let v = s.end_frame(t, 0.01);
+            let m = visual(&v, id).matrix.clone().unwrap();
+            (m.rows, m.intensity)
+        };
+        // Hardware SPI: frames for B first, then A's.
+        let mut t = 0;
+        set(&mut s, t, false, false, true);
+        for f in [
+            [0x0C01, 0x0C01],
+            [0x0B07, 0x0B07],
+            [0x0A02, 0x0A09],
+            [0x0181, 0x0118],
+        ] {
+            set(&mut s, t, false, false, false);
+            for w in f {
+                s.spi(t, sck, mosi, None, (w >> 8) as u8);
+                s.spi(t, sck, mosi, None, w as u8);
+            }
+            t += 10;
+            set(&mut s, t, false, false, true);
+            t += 10;
+        }
+        let (ra, ia) = rows(&mut s, t, "a");
+        let (rb, ib) = rows(&mut s, t, "b");
+        assert_eq!((ra[0], ia[0]), (0x18, 9), "A keeps the last frame");
+        assert_eq!((rb[0], ib[0]), (0x81, 2), "B gets the one pushed through A");
+        assert_eq!(ra.len(), 8);
+
+        // Bit-banged: B samples A's DOUT on the shared CLK.
+        for f in [0x0842u16, 0x0824] {
+            for i in (0..16).rev() {
+                let b = f >> i & 1 != 0;
+                set(&mut s, t, false, b, false);
+                set(&mut s, t + 1, true, b, false);
+                t += 2;
+            }
+        }
+        set(&mut s, t, false, false, false);
+        set(&mut s, t + 1, false, false, true);
+        t += 10;
+        assert_eq!(rows(&mut s, t, "a").0[7], 0x24);
+        assert_eq!(rows(&mut s, t, "b").0[7], 0x42);
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+
+        // `count` still chains inside a part: B with two modules.
+        let mut s2 = sim(
+            vec![
+                part("a", "max7219", &[]),
+                part("b", "max7219", &[("count", "2")]),
+            ],
+            vec![
+                wire(("a", "VCC"), ("mcu", "5V")),
+                wire(("a", "GND"), ("mcu", "GND")),
+                wire(("b", "VCC"), ("mcu", "5V")),
+                wire(("b", "GND"), ("mcu", "GND")),
+                wire(("a", "CLK"), ("mcu", "PA5")),
+                wire(("a", "DIN"), ("mcu", "PA7")),
+                wire(("a", "CS"), ("mcu", "PB6")),
+                wire(("a", "DOUT"), ("b", "DIN")),
+                wire(("b", "CLK"), ("a", "CLK")),
+                wire(("b", "CS"), ("a", "CS")),
+            ],
+        );
+        set(&mut s2, 0, false, false, true);
+        set(&mut s2, 1, false, false, false);
+        for w in [0x0C01u16, 0x0C01, 0x0C01] {
+            s2.spi(2, sck, mosi, None, (w >> 8) as u8);
+            s2.spi(2, sck, mosi, None, w as u8);
+        }
+        set(&mut s2, 3, false, false, true);
+        set(&mut s2, 4, false, false, false);
+        for w in [0x0133u16, 0x0122, 0x0111] {
+            s2.spi(5, sck, mosi, None, (w >> 8) as u8);
+            s2.spi(5, sck, mosi, None, w as u8);
+        }
+        set(&mut s2, 6, false, false, true);
+        set(&mut s2, 7, false, false, false);
+        for w in [0x0B07u16, 0x0B07, 0x0B07] {
+            s2.spi(8, sck, mosi, None, (w >> 8) as u8);
+            s2.spi(8, sck, mosi, None, w as u8);
+        }
+        set(&mut s2, 9, false, false, true);
+        let (rb, _) = rows(&mut s2, 20, "b");
+        assert_eq!((rb[0], rb[8]), (0x22, 0x33), "far module of B: first frame");
+        assert_eq!(rows(&mut s2, 20, "a").0[0], 0x11);
     }
 
     #[test]

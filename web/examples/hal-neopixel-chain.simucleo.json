@@ -1,0 +1,110 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "NeoPixel 링 → 스트립 체인 (DOUT → DIN)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "ring",
+      "kind": "neopixel-ring",
+      "x": 50,
+      "y": 6,
+      "props": {
+        "count": 12
+      }
+    },
+    {
+      "id": "strip",
+      "kind": "neopixel-strip",
+      "x": 66,
+      "y": 20,
+      "props": {
+        "count": 8
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "ring",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "ring",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D5"
+      },
+      "b": {
+        "part": "ring",
+        "pin": "DIN"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "strip",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "strip",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P2"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "ring",
+        "pin": "DOUT"
+      },
+      "b": {
+        "part": "strip",
+        "pin": "DIN"
+      },
+      "color": "#00acc1"
+    }
+  ],
+  "firmware": {
+    "name": "hal-neopixel-chain",
+    "example": "hal-neopixel-chain.elf"
+  }
+}

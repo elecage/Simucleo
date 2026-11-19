@@ -39,11 +39,11 @@ function leds(visual: VisualState, n: number): number[] {
 const pixelPins = (pins: { id: string; x: number; y: number }[]) =>
   pins.map((p) => ({
     ...p,
-    label: { VCC: "5V (VCC)", DIN: "DIN (데이터 입력)", GND: "GND" }[p.id] ?? p.id,
+    label: { VCC: "5V (VCC)", DIN: "DIN (데이터 입력)", GND: "GND", DOUT: "DOUT (데이터 출력 → 다음 NeoPixel의 DIN)" }[p.id] ?? p.id,
   }));
 
 const PIXEL_HINT =
-  "WS2812B: 800 kHz로 LED마다 24비트(G, R, B 순서, 상위 비트 먼저)를 보냅니다. 비트 0은 0.4 µs, 1은 0.8 µs High이고, 50 µs 이상 Low면 표시가 바뀝니다. VCC는 5V(3.5 V 이상).";
+  "WS2812B: 800 kHz로 LED마다 24비트(G, R, B 순서, 상위 비트 먼저)를 보냅니다. 비트 0은 0.4 µs, 1은 0.8 µs High이고, 50 µs 이상 Low면 표시가 바뀝니다. LED는 처음 24비트씩 갖고 나머지는 DOUT으로 넘기므로, DOUT을 다른 NeoPixel의 DIN에 이으면 한 줄로 이어집니다(앞 부품의 LED 다음 번호부터). VCC는 5V(3.5 V 이상).";
 
 export const neopixelRing: PartDef = {
   kind: "neopixel-ring",
@@ -56,6 +56,7 @@ export const neopixelRing: PartDef = {
     { id: "VCC", x: 4, y: 11 },
     { id: "DIN", x: 5, y: 11 },
     { id: "GND", x: 6, y: 11 },
+    { id: "DOUT", x: 7, y: 11 },
   ]),
   props: { count: 12 },
   propOptions: { count: ["12", "16", "24"] },
@@ -74,6 +75,7 @@ export const neopixelRing: PartDef = {
         <line x1={4 * P} y1={9.6 * P} x2={4 * P} y2={11 * P} className="lead" />
         <line x1={5 * P} y1={9.6 * P} x2={5 * P} y2={11 * P} className="lead" />
         <line x1={6 * P} y1={9.6 * P} x2={6 * P} y2={11 * P} className="lead" />
+        <line x1={7 * P} y1={9.3 * P} x2={7 * P} y2={11 * P} className="lead" />
         {visual.unpowered && <NoPower x={c} y={c + 2} />}
       </g>
     );
@@ -91,6 +93,7 @@ export const neopixelStrip: PartDef = {
     { id: "GND", x: 0, y: 1 },
     { id: "DIN", x: 0, y: 2 },
     { id: "VCC", x: 0, y: 3 },
+    { id: "DOUT", x: 17, y: 2 },
   ]),
   props: { count: 8 },
   render: (_props, visual) => (
@@ -115,6 +118,7 @@ export const neopixelMatrix: PartDef = {
     { id: "VCC", x: 7, y: 17 },
     { id: "DIN", x: 8, y: 17 },
     { id: "GND", x: 9, y: 17 },
+    { id: "DOUT", x: 10, y: 17 },
   ]),
   props: { count: 64 },
   render: (_props, visual) => (
@@ -123,7 +127,7 @@ export const neopixelMatrix: PartDef = {
       {leds(visual, 64).map((col, i) => (
         <Pixel key={i} i={i} c={col} x={(1 + 2 * (i % 8)) * P} y={(1 + 2 * Math.floor(i / 8)) * P} />
       ))}
-      {[7, 8, 9].map((x) => (
+      {[7, 8, 9, 10].map((x) => (
         <line key={x} x1={x * P} y1={16 * P} x2={x * P} y2={17 * P} className="lead" />
       ))}
       {visual.unpowered && <NoPower x={8 * P} y={18.4 * P} />}

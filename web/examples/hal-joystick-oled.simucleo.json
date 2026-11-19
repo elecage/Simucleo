@@ -1,0 +1,146 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "조이스틱으로 OLED 점 움직이기 (ADC)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "js",
+      "kind": "joystick",
+      "x": 50,
+      "y": 14,
+      "props": {
+        "x": 0.5,
+        "y": 0.5,
+        "sw": 0
+      }
+    },
+    {
+      "id": "oled",
+      "kind": "oled-ssd1306",
+      "x": 64,
+      "y": 6,
+      "props": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "js",
+        "pin": "+5V"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "js",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "A0"
+      },
+      "b": {
+        "part": "js",
+        "pin": "VRx"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "A1"
+      },
+      "b": {
+        "part": "js",
+        "pin": "VRy"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "D4"
+      },
+      "b": {
+        "part": "js",
+        "pin": "SW"
+      },
+      "color": "#8e24aa"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "oled",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "nucleo",
+        "pin": "D15"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "SCL"
+      },
+      "color": "#fdd835"
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "nucleo",
+        "pin": "D14"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "SDA"
+      },
+      "color": "#fb8c00"
+    }
+  ],
+  "firmware": {
+    "name": "hal-joystick-oled",
+    "example": "hal-joystick-oled.elf"
+  }
+}

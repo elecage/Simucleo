@@ -41,7 +41,7 @@ function segPath(seg: number, w: number, h: number): string {
   }
 }
 
-function Digit({ x, y, levels, color }: { x: number; y: number; levels: number[]; color: string }) {
+export function Digit({ x, y, levels, color }: { x: number; y: number; levels: number[]; color: string }) {
   const w = 3 * P,
     h = 5 * P;
   // Multiplexed digits are lit part of the time: boost so they read clearly.

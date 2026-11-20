@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { btLinked, type Runner } from "../sim/useRunner";
 import { Waveform } from "./Waveform";
+import type { ScopeSettings } from "./scopeSettings";
 import { RtosView } from "./RtosView";
 import { SourceView } from "./SourceView";
 
@@ -9,7 +10,20 @@ type Tab = "console" | "source" | "waveform" | "rtos" | "registers" | "memory" |
 
 const hex = (v: number, w = 8) => "0x" + (v >>> 0).toString(16).toUpperCase().padStart(w, "0");
 
-export function BottomPanel({ runner, parts = [] }: { runner: Runner; parts?: { id: string; kind: string }[] }) {
+export function BottomPanel({
+  runner,
+  parts = [],
+  scope,
+  scopeSeq,
+  onScope,
+}: {
+  runner: Runner;
+  parts?: { id: string; kind: string }[];
+  /** The project's waveform settings (M25), see `Waveform`. */
+  scope?: ScopeSettings;
+  scopeSeq?: number;
+  onScope?: (s: ScopeSettings) => void;
+}) {
   const [tab, setTab] = useState<Tab>("console");
   // The waveform view keeps its trigger and capture once opened.
   const [scopeOpened, setScopeOpened] = useState(false);
@@ -54,7 +68,14 @@ export function BottomPanel({ runner, parts = [] }: { runner: Runner; parts?: { 
         </div>
         {(tab === "waveform" || scopeOpened) && (
           <div className="tab-keep" hidden={tab !== "waveform"}>
-            <Waveform runner={runner} active={tab === "waveform"} parts={parts} />
+            <Waveform
+              runner={runner}
+              active={tab === "waveform"}
+              parts={parts}
+              settings={scope}
+              settingsSeq={scopeSeq}
+              onSettings={onScope}
+            />
           </div>
         )}
         {tab === "rtos" && <RtosView runner={runner} />}

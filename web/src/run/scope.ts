@@ -39,7 +39,7 @@ export function levelAt(ch: { level0: boolean; edges: [number, boolean][] }, t: 
 }
 
 /** Index of the first edge at or after `t`. */
-export function lowerBound(edges: [number, boolean][], t: number): number {
+export function lowerBound(edges: readonly (readonly [number, unknown])[], t: number): number {
   let lo = 0;
   let hi = edges.length;
   while (lo < hi) {

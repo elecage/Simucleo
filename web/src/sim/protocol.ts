@@ -205,7 +205,8 @@ export interface SimFrame {
 export type ToWorker =
   | { type: "load"; name: string; bytes: ArrayBuffer }
   | { type: "run" }
-  | { type: "pause" }
+  /** Pause; `reason` (default "pause") is what the `paused` message says. */
+  | { type: "pause"; reason?: string }
   /** `epoch` (optional) is carried by every frame from then on, so a caller
    * can tell frames after its reset from the ones already on the way. */
   | { type: "reset"; epoch?: number }

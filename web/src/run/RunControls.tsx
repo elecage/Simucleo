@@ -88,7 +88,7 @@ export function RunControls({
         </select>
       )}
       {runner.running ? (
-        <button onClick={runner.pause}>⏸ 일시정지</button>
+        <button onClick={() => runner.pause()}>⏸ 일시정지</button>
       ) : (
         <button onClick={runner.run} disabled={!loaded || !!f?.stopped}>
           ▶ 실행

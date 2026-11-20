@@ -89,7 +89,8 @@ export interface Runner {
   memory: { addr: number; bytes: Uint8Array } | null;
   load(name: string, bytes: ArrayBuffer, example?: string): void;
   run(): void;
-  pause(): void;
+  /** Pause; `reason` "trigger" for the waveform view's content trigger. */
+  pause(reason?: string): void;
   reset(): void;
   /** Reset, tagging the frames that follow with `epoch` (see `onFrame`). */
   resetEpoch(epoch: number): void;
@@ -277,7 +278,8 @@ export function useRunner(): Runner {
         send({ type: "load", name, bytes }, [bytes]);
       },
       run: () => send({ type: "run" }),
-      pause: () => send({ type: "pause" }),
+      // (A button's click event is no reason.)
+      pause: (reason?: unknown) => send({ type: "pause", ...(typeof reason === "string" ? { reason } : {}) }),
       reset: () => send({ type: "reset" }),
       resetEpoch: (epoch: number) => send({ type: "reset", epoch }),
       onFrame: (l: FrameListener) => {

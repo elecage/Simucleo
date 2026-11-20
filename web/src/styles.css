@@ -621,6 +621,8 @@ main.schematic-on .notice { top: 44px; }
 .lane .err rect { fill: #fee2e2; stroke: #dc2626; }
 .lane .err text { fill: #b91c1c; }
 .dec-mark line { stroke: #7c3aed; stroke-width: 2; }
+.lane .pixel text { fill: #111; paint-order: stroke; stroke: #fff; stroke-width: 2.5px; }
+.scope-controls .err { color: #dc2626; font-size: 12px; }
 .dec-mark text { fill: #7c3aed; font-weight: 700; }
 .decode-table { max-height: 220px; overflow: auto; font-size: 12px; }
 .decode-table table { border-collapse: collapse; }
@@ -628,3 +630,5 @@ main.schematic-on .notice { top: 44px; }
 .decode-table th, .decode-table td { padding: 1px 12px 1px 0; text-align: left; font-variant-numeric: tabular-nums; }
 .decode-table tr.err td, .decode-table .err { color: #dc2626; }
 .decode-text { font-weight: 400; font-family: ui-monospace, monospace; white-space: pre-wrap; }
+.decode-table .swatch { display: inline-block; width: 12px; height: 12px; margin-right: 3px; vertical-align: -2px; border: 1px solid #0003; border-radius: 2px; }
+.decode-table caption .swatch { margin-right: 1px; }

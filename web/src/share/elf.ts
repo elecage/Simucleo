@@ -37,6 +37,8 @@ export interface ElfInfo {
 
 export class ElfError extends Error {}
 
+import { t } from "../i18n/index.ts";
+
 const cstr = (b: Uint8Array, at: number) => {
   let end = at;
   while (end < b.length && b[end] !== 0) end++;
@@ -46,33 +48,33 @@ const cstr = (b: Uint8Array, at: number) => {
 /** Read what a 32-bit little-endian ARM ELF has to load. Throws ElfError. */
 export function readElf(bytes: Uint8Array): ElfInfo {
   if (bytes.length < 52 || bytes[0] !== 0x7f || bytes[1] !== 0x45 || bytes[2] !== 0x4c || bytes[3] !== 0x46) {
-    throw new ElfError("ELF 파일이 아닙니다.");
+    throw new ElfError(t("ELF 파일이 아닙니다."));
   }
-  if (bytes[4] !== 1 || bytes[5] !== 1) throw new ElfError("32비트 리틀 엔디언 ELF가 아닙니다.");
+  if (bytes[4] !== 1 || bytes[5] !== 1) throw new ElfError(t("32비트 리틀 엔디언 ELF가 아닙니다."));
   const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const u16 = (o: number) => v.getUint16(o, true);
   const u32 = (o: number) => v.getUint32(o, true);
   const inside = (off: number, len: number) => off >= 0 && len >= 0 && off + len <= bytes.length;
-  if (u16(18) !== EM_ARM) throw new ElfError("ARM용 ELF가 아닙니다.");
+  if (u16(18) !== EM_ARM) throw new ElfError(t("ARM용 ELF가 아닙니다."));
   const phoff = u32(28);
   const phentsize = u16(42);
   const phnum = u16(44);
-  if (phnum && (phentsize < 32 || !inside(phoff, phentsize * phnum))) throw new ElfError("프로그램 헤더가 파일 밖을 가리킵니다.");
+  if (phnum && (phentsize < 32 || !inside(phoff, phentsize * phnum))) throw new ElfError(t("프로그램 헤더가 파일 밖을 가리킵니다."));
   // What is copied out of the file is bounded by the file itself: segments
   // (and symbol tables) pointing at the same bytes again and again would
   // otherwise turn a small link into any amount of memory.
   let budget = bytes.length;
   const take = (len: number, what: string) => {
     budget -= len;
-    if (budget < 0) throw new ElfError(`${what}이(가) 겹쳐 파일보다 많은 데이터를 가리킵니다.`);
+    if (budget < 0) throw new ElfError(t("{what}이(가) 겹쳐 파일보다 많은 데이터를 가리킵니다.", { what }));
   };
   const segments: ElfSegment[] = [];
   for (let i = 0; i < phnum; i++) {
     const o = phoff + i * phentsize;
     if (u32(o) !== PT_LOAD) continue;
     const [off, paddr, filesz, memsz] = [u32(o + 4), u32(o + 12), u32(o + 16), u32(o + 20)];
-    if (!inside(off, filesz)) throw new ElfError(`세그먼트 ${i}가 파일 밖을 가리킵니다.`);
-    take(filesz, "세그먼트");
+    if (!inside(off, filesz)) throw new ElfError(t("세그먼트 {i}가 파일 밖을 가리킵니다.", { i }));
+    take(filesz, t("세그먼트"));
     segments.push({ paddr, vaddr: u32(o + 8), memsz, flags: u32(o + 24), align: u32(o + 28), data: bytes.slice(off, off + filesz) });
   }
   const symbols: ElfSymbol[] = [];
@@ -89,7 +91,7 @@ export function readElf(bytes: Uint8Array): ElfInfo {
       const [stroff, strsize] = [u32(str + 16), u32(str + 20)];
       if (!inside(stroff, strsize)) continue;
       const strtab = bytes.subarray(stroff, stroff + strsize);
-      take(size, "심볼 표");
+      take(size, t("심볼 표"));
       for (let e = off + entsize; e + 16 <= off + size; e += entsize) {
         const info = bytes[e + 12];
         const type = info & 0xf;

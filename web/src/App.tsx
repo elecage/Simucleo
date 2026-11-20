@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LangSelect } from "./i18n/LangSelect";
+import { t, tr } from "./i18n";
+import { DATA } from "./i18n/en/data";
 import { Canvas } from "./editor/Canvas";
 import { buildSchematic } from "./schematic/layout";
 import { SchematicView, type SchEnd } from "./schematic/SchematicView";
 import { boardExit, choosePin, routePoints } from "./schematic/wiring";
-import { josa } from "./lessons/korean";
 import { defaultProject, newId, pinKey, pinPosition, toCircuit, type PinRef, type Project } from "./editor/model";
 import { PARTS, PART_BY_KIND } from "./parts";
 import { nucleoSignal } from "./parts/nucleo";
@@ -45,27 +46,37 @@ import type { WiredPart, WiredPins } from "./cube/wiring";
 
 const WIRE_COLORS = ["#e53935", "#1e88e5", "#43a047", "#fdd835", "#fb8c00", "#8e24aa", "#212121"];
 const CATEGORY_LABEL: Record<string, string> = {
-  board: "보드", basic: "기본", input: "입력", output: "출력",
-  actuator: "구동", display: "디스플레이", sensor: "센서", module: "모듈",
+  board: t("보드"), basic: t("기본"), input: t("입력"), output: t("출력"),
+  actuator: t("구동"), display: t("디스플레이"), sensor: t("센서"), module: t("모듈"),
 };
 
+/**
+ * A project's name in this page's language: an example's name or the
+ * default one (i18n/en/data.ts), in either language as a page in the other
+ * one saved it, comes back in this one; any other name is kept.
+ */
+function localName(name: string): string {
+  for (const [ko, en] of Object.entries(DATA)) if (name === ko || name === en) return tr(ko);
+  return name;
+}
+
 const PROP_LABEL: Record<string, string> = {
-  bands: "색띠 수",
-  tolerance: "오차",
-  tempco: "온도계수 (ppm/K, 6띠)",
-  color: "색",
-  common: "공통 단자",
-  address: "I2C 주소",
-  size: "카드 용량 (MB)",
-  model: "모델",
-  layout: "모양",
-  count: "LED 수",
-  beta: "B 상수",
+  bands: t("색띠 수"),
+  tolerance: t("오차"),
+  tempco: t("온도계수 (ppm/K, 6띠)"),
+  color: t("색"),
+  common: t("공통 단자"),
+  address: t("I2C 주소"),
+  size: t("카드 용량 (MB)"),
+  model: t("모델"),
+  layout: t("모양"),
+  count: t("LED 수"),
+  beta: t("B 상수"),
 };
 
 const BAND_KO: Record<string, string> = {
-  black: "검정", brown: "갈색", red: "빨강", orange: "주황", yellow: "노랑", green: "초록", blue: "파랑",
-  violet: "보라", grey: "회색", white: "흰색", gold: "금색", silver: "은색", pink: "분홍",
+  black: t("검정"), brown: t("갈색"), red: t("빨강"), orange: t("주황"), yellow: t("노랑"), green: t("초록"), blue: t("파랑"),
+  violet: t("보라"), grey: t("회색"), white: t("흰색"), gold: t("금색"), silver: t("은색"), pink: t("분홍"),
 };
 
 /** Parsed resistance, its colour code in words and its E series. */
@@ -73,7 +84,7 @@ function OhmsInfo({ r, props }: { r: number | null; props: Record<string, string
   if (!r) {
     return (
       <span className="error" data-testid="ohms-parsed">
-        알 수 없는 값 (예: 220, 4.7k, 4k7, 1M)
+        {t("알 수 없는 값 (예: 220, 4.7k, 4k7, 1M)")}
       </span>
     );
   }
@@ -85,25 +96,25 @@ function OhmsInfo({ r, props }: { r: number | null; props: Record<string, string
     <span className="dim" data-testid="ohms-parsed">
       {formatOhms(r)} · {code.colors.map((c) => BAND_KO[c] ?? c).join("-")}
       <br />
-      {series ? `표준값 ${series}` : "E 계열 표준값이 아닙니다"}
+      {series ? t("표준값 {series}", { series }) : t("E 계열 표준값이 아닙니다")}
       {code.rounded && (
         <>
           <br />
           <span className="error">
-            {bands}띠로는 {formatOhms(code.coded)}로 표시됩니다 (유효숫자 {bands >= 5 ? 3 : 2}자리)
+            {t("{bands}띠로는 {value}로 표시됩니다 (유효숫자 {digits}자리)", { bands, value: formatOhms(code.coded), digits: bands >= 5 ? 3 : 2 })}
           </span>
         </>
       )}
       {code.outOfRange && (
         <>
           <br />
-          <span className="error">색띠로 나타낼 수 있는 범위를 벗어났습니다</span>
+          <span className="error">{t("색띠로 나타낼 수 있는 범위를 벗어났습니다")}</span>
         </>
       )}
       {bands === 3 && (
         <>
           <br />
-          3띠는 오차 띠가 없습니다 (±20%)
+          {t("3띠는 오차 띠가 없습니다 (±20%)")}
         </>
       )}
     </span>
@@ -126,7 +137,7 @@ export function App() {
   const runner = useRunner();
   const lite = usePerfLite();
   const examples = useExamples();
-  const [projectName, setProjectName] = useState("새 프로젝트");
+  const [projectName, setProjectName] = useState(() => t("새 프로젝트"));
   const [notice, setNotice] = useState<string | null>(null);
   const [fitKey, setFitKey] = useState(0);
   // The editor fits the circuit into its viewport: not while hidden (it has
@@ -169,7 +180,7 @@ export function App() {
       setScopeSeq((k) => k + 1);
       setFitKey((k) => k + 1);
       setSelected(null);
-      setProjectName(l.name ?? "프로젝트");
+      setProjectName(l.name ? localName(l.name) : t("프로젝트"));
       setNotice(l.notes.length ? l.notes.join("\n") : null);
       const fw = l.firmware;
       if (fw?.data) {
@@ -186,7 +197,7 @@ export function App() {
           const bytes = r.ok ? await r.arrayBuffer() : null;
           if (gen !== fwGen.current) return;
           if (bytes) load(fw.name, bytes, fw.example);
-          else setNotice(`예제 펌웨어 ${fw.example}을 찾지 못했습니다.`);
+          else setNotice(t("예제 펌웨어 {name}을 찾지 못했습니다.", { name: fw.example }));
         } finally {
           if (gen === fwGen.current) setFwPending(false);
         }
@@ -201,20 +212,20 @@ export function App() {
       try {
         void applyLoaded(parse(text));
       } catch (e) {
-        setNotice(`프로젝트를 열지 못했습니다: ${(e as Error).message}`);
+        setNotice(t("프로젝트를 열지 못했습니다: {error}", { error: (e as Error).message }));
       }
     },
     [applyLoaded],
   );
   const dirty = project.wires.length > 0 || project.parts.length > defaultProject().parts.length || !!project.code;
-  const confirmReplace = () => !dirty || window.confirm("지금 배선을 바꿀까요? 저장하지 않은 내용은 사라집니다.");
+  const confirmReplace = () => !dirty || window.confirm(t("지금 배선을 바꿀까요? 저장하지 않은 내용은 사라집니다."));
   const onNew = () => {
     if (!confirmReplace()) return;
     schOrder.current = [];
     setProject(defaultProject());
     setScopeSeq((k) => k + 1);
     setCodeSeq((k) => k + 1);
-    setProjectName("새 프로젝트");
+    setProjectName(t("새 프로젝트"));
     setSelected(null);
   };
   // ------------------------------------------------------------ lessons
@@ -266,9 +277,10 @@ export function App() {
     if (
       dirty &&
       !window.confirm(
-        `실습 '${lesson.title}'을(를) 시작하면 지금 회로가 실습의 시작 회로로 바뀝니다.\n` +
-          "지금 프로젝트는 백업해 두며, 실습 목록의 '실습 전 프로젝트 되돌리기'로 다시 열 수 있습니다. " +
-          "파일로 남기려면 취소하고 먼저 '저장'하세요.",
+        t(
+          "실습 '{title}'을(를) 시작하면 지금 회로가 실습의 시작 회로로 바뀝니다.\n지금 프로젝트는 백업해 두며, 실습 목록의 '실습 전 프로젝트 되돌리기'로 다시 열 수 있습니다. 파일로 남기려면 취소하고 먼저 '저장'하세요.",
+          { title: lesson.title },
+        ),
       )
     ) {
       return false;
@@ -284,24 +296,24 @@ export function App() {
       if (st === "empty") loaded = { project: defaultProject(), notes: [] };
       else if ("example" in st) {
         const r = await fetch(`./examples/${st.example}`);
-        if (!r.ok) throw new Error(`${st.example}을(를) 찾지 못했습니다`);
+        if (!r.ok) throw new Error(t("{name}을(를) 찾지 못했습니다", { name: st.example }));
         loaded = parse(await r.text());
       } else loaded = parse(JSON.stringify(st.project));
     } catch (e) {
-      setNotice(`실습을 시작하지 못했습니다: ${(e as Error).message}`);
+      setNotice(t("실습을 시작하지 못했습니다: {error}", { error: (e as Error).message }));
       return false;
     }
     const fw = lesson.firmware;
     loaded = {
       ...loaded,
-      name: `실습: ${lesson.title}`,
+      name: t("실습: {title}", { title: lesson.title }),
       firmware: fw && fw !== "upload" ? { name: fw.example.replace(/\.elf$/, ""), example: fw.example } : undefined,
     };
     // M33: a "write the code" lesson starts the code tab from its starter.
     if (lesson.code) {
       const files = await lessonStarter(lesson.code, examples);
       if (!files) {
-        setNotice(`실습의 시작 코드를 받지 못했습니다 (${lesson.code.example}).`);
+        setNotice(t("실습의 시작 코드를 받지 못했습니다 ({name}).", { name: lesson.code.example }));
         return false;
       }
       loaded = { ...loaded, project: { ...loaded.project, code: { template: "hal", base: lesson.code.example, files, active: files[0].path } } };
@@ -428,7 +440,7 @@ export function App() {
       if (!files(e) || e.defaultPrevented) return;
       e.preventDefault();
       void fromDataTransfer(e.dataTransfer!).then(uploadBundle, (err: Error) =>
-        setNotice(`끌어다 놓은 것을 읽지 못했습니다: ${err.message}`),
+        setNotice(t("끌어다 놓은 것을 읽지 못했습니다: {error}", { error: err.message })),
       );
     };
     window.addEventListener("dragenter", enter);
@@ -448,13 +460,13 @@ export function App() {
   const { firmware, firmwareBytes, firmwareExample } = runner;
   useEffect(() => {
     if (!restored.current) return;
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       const fw = firmware
         ? { name: firmware, example: firmwareExample ?? undefined, data: firmwareBytes ? toBase64(firmwareBytes) : undefined }
         : undefined;
       void idbSet("autosave", serialize(project, projectName, fw));
     }, 400);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [project, projectName, firmware, firmwareBytes, firmwareExample]);
 
   // What each part shows, from the circuit simulation. The board's LD2 is
@@ -632,7 +644,9 @@ export function App() {
     if (same) {
       const n = netOfEnd(a);
       setNotice(
-        `${josa(endLabel(a), "와/과")} ${endLabel(b)}는 이미 같은 넷${n ? `(${n})` : ""}에 연결되어 있어 와이어를 더하지 않았습니다.`,
+        n
+          ? t("{a|와/과} {b}는 이미 같은 넷({net})에 연결되어 있어 와이어를 더하지 않았습니다.", { a: endLabel(a), b: endLabel(b), net: n })
+          : t("{a|와/과} {b}는 이미 같은 넷에 연결되어 있어 와이어를 더하지 않았습니다.", { a: endLabel(a), b: endLabel(b) }),
       );
       return;
     }
@@ -685,10 +699,22 @@ export function App() {
     }
     if (still) {
       setNotice(
-        `${removed.length ? `와이어 ${removed.length}개를 지웠지만 ` : ""}${josa(name, "은/는")} 아직 브레드보드(같은 줄이나 같은 구멍)를 통해 ${still}에 연결되어 있습니다. 브레드보드 보기에서 부품을 옮겨 연결을 끊으세요.`,
+        removed.length
+          ? t(
+              "와이어 {n}개를 지웠지만 {name|은/는} 아직 브레드보드(같은 줄이나 같은 구멍)를 통해 {net}에 연결되어 있습니다. 브레드보드 보기에서 부품을 옮겨 연결을 끊으세요.",
+              { n: removed.length, name, net: still },
+            )
+          : t(
+              "{name|은/는} 아직 브레드보드(같은 줄이나 같은 구멍)를 통해 {net}에 연결되어 있습니다. 브레드보드 보기에서 부품을 옮겨 연결을 끊으세요.",
+              { name, net: still },
+            ),
       );
     } else {
-      setNotice(removed.length ? `${name}에서 와이어 ${removed.length}개를 지웠습니다.` : `${name}에는 연결된 와이어가 없습니다.`);
+      setNotice(
+        removed.length
+          ? t("{name}에서 와이어 {n}개를 지웠습니다.", { name, n: removed.length })
+          : t("{name}에는 연결된 와이어가 없습니다.", { name }),
+      );
     }
   };
 
@@ -803,15 +829,15 @@ export function App() {
             className="project-name"
             value={projectName}
             onChange={(e) => setProjectName(e.target.value)}
-            aria-label="프로젝트 이름"
+            aria-label={t("프로젝트 이름")}
           />
           <button
             className="share-btn"
             onClick={() => setShare({ mode: "share", lesson: activeLesson })}
-            aria-label="🔗 공유"
-            title="회로·펌웨어·설정을 링크나 QR 코드로 보내기 (주소의 # 뒤에 담겨 서버로 가지 않습니다)"
+            aria-label={t("🔗 공유")}
+            title={t("회로·펌웨어·설정을 링크나 QR 코드로 보내기 (주소의 # 뒤에 담겨 서버로 가지 않습니다)")}
           >
-            🔗 공유
+            {t("🔗 공유")}
           </button>
         </span>
         <ProjectMenu project={project} name={projectName} runner={runner} onNew={onNew} onOpenText={openText} />
@@ -823,11 +849,11 @@ export function App() {
             setLessonOpen(!lessonOpen);
           }}
           aria-pressed={lessonOpen}
-          title="단계별 실습과 자동 채점"
+          title={t("단계별 실습과 자동 채점")}
         >
-          📝 실습
+          {t("📝 실습")}
         </button>
-        <label className="sound-toggle" title="부저 소리 (브라우저 정책상 클릭으로 켜야 합니다)">
+        <label className="sound-toggle" title={t("부저 소리 (브라우저 정책상 클릭으로 켜야 합니다)")}>
           <input
             type="checkbox"
             checked={sound}
@@ -836,11 +862,11 @@ export function App() {
               setSound(e.target.checked);
             }}
           />{" "}
-          🔊 소리
+          {t("🔊 소리")}
         </label>
         <LangSelect />
-        <span className="version" title="시뮬레이터 코어 버전">
-          {simError ? `WASM 로드 실패: ${simError}` : sim ? `core v${sim.version}` : "WASM 로딩 중…"}
+        <span className="version" title={t("시뮬레이터 코어 버전")}>
+          {simError ? t("WASM 로드 실패: {error}", { error: simError }) : sim ? `core v${sim.version}` : t("WASM 로딩 중…")}
         </span>
       </header>
       <UpdateBanner running={runner.running} />
@@ -855,7 +881,7 @@ export function App() {
           </section>
         ))}
         <section>
-          <h3>와이어 색</h3>
+          <h3>{t("와이어 색")}</h3>
           <div className="swatches">
             {WIRE_COLORS.map((c) => (
               <button
@@ -871,12 +897,12 @@ export function App() {
       </aside>
 
       <main className={view === "schematic" ? "schematic-on" : undefined}>
-        <div className="view-toggle" role="group" aria-label="보기">
+        <div className="view-toggle" role="group" aria-label={t("보기")}>
           <button className={view === "board" ? "on" : ""} onClick={() => setView("board")}>
-            브레드보드
+            {t("브레드보드")}
           </button>
           <button className={view === "schematic" ? "on" : ""} onClick={() => setView("schematic")}>
-            회로도
+            {t("회로도")}
           </button>
         </div>
         {view === "schematic" && (
@@ -935,18 +961,18 @@ export function App() {
         </div>
         {runner.frame?.stopped && (
           <div className="diagnosis" role="alert">
-            <b>펌웨어가 멈췄습니다.</b> {runner.frame.stopped}
+            <b>{t("펌웨어가 멈췄습니다.")}</b> {runner.frame.stopped}
           </div>
         )}
         {notice && (
           <div className="notice" role="status">
-            {notice} <button onClick={() => setNotice(null)} aria-label="닫기">×</button>
+            {notice} <button onClick={() => setNotice(null)} aria-label={t("닫기")}>×</button>
           </div>
         )}
         <div className="warnings">
           {runner.frame?.circuitWarnings.map((w) => (
             <div key={w} className="warning circuit" data-testid="circuit-warning">
-              ⚡ 전기 규칙: {w}
+              {t("⚡ 전기 규칙:")} {w}
             </div>
           ))}
           {runner.frame?.warnings.map((w) => (
@@ -971,7 +997,7 @@ export function App() {
       />
       {dropping && !teacherOpen && (
         <div className="drop-overlay" data-testid="drop-overlay">
-          📁 프로젝트 폴더나 zip(ELF·소스)을 놓으면 불러옵니다
+          {t("📁 프로젝트 폴더나 zip(ELF·소스)을 놓으면 불러옵니다")}
         </div>
       )}
 
@@ -1049,7 +1075,7 @@ export function App() {
       )}
 
       <aside className="inspector">
-        <h3>속성</h3>
+        <h3>{t("속성")}</h3>
         {selectedPart && selectedDef ? (
           <>
             <p><b>{selectedPart.id}</b> · {selectedDef.name}</p>
@@ -1096,7 +1122,7 @@ export function App() {
                 const r = parseOhms(v);
                 return (
                   <label key={k} className="prop">
-                    저항값 (Ω)
+                    {t("저항값 (Ω)")}
                     <input value={String(v)} onChange={(e) => set(e.target.value)} list="ohms-list" aria-label={k} />
                     <datalist id="ohms-list">
                       {options?.map((o) => <option key={o} value={o} />)}
@@ -1121,12 +1147,12 @@ export function App() {
               );
             })}
             {selectedPart.kind === "sd-card" && <SdImageButtons part={selectedPart.id} runner={runner} onWipe={sdCards.wipe} />}
-            <button onClick={deleteSelected}>삭제</button>
+            <button onClick={deleteSelected}>{t("삭제")}</button>
           </>
         ) : selectedWire ? (
           <>
             <p>
-              <b>와이어</b> {selectedWire.a.part}.{selectedWire.a.pin} — {selectedWire.b.part}.{selectedWire.b.pin}
+              <b>{t("와이어")}</b> {selectedWire.a.part}.{selectedWire.a.pin} — {selectedWire.b.part}.{selectedWire.b.pin}
             </p>
             <div className="swatches">
               {WIRE_COLORS.map((c) => (
@@ -1134,37 +1160,37 @@ export function App() {
                   key={c}
                   className={c === selectedWire.color ? "swatch on" : "swatch"}
                   style={{ background: c }}
-                  aria-label={`와이어 색 ${c}`}
+                  aria-label={t("와이어 색 {color}", { color: c })}
                   onClick={() =>
                     setProject((p) => ({ ...p, wires: p.wires.map((w) => (w.id === selectedWire.id ? { ...w, color: c } : w)) }))
                   }
                 />
               ))}
             </div>
-            <p className="hint">양 끝의 네모를 끌어 다른 핀에 놓으면 끝점이 옮겨집니다. 꺾는 점은 끌어서 옮기고, 더블클릭하면 지웁니다.</p>
+            <p className="hint">{t("양 끝의 네모를 끌어 다른 핀에 놓으면 끝점이 옮겨집니다. 꺾는 점은 끌어서 옮기고, 더블클릭하면 지웁니다.")}</p>
             {(selectedWire.points?.length ?? 0) > 0 && (
               <button
                 onClick={() =>
                   setProject((p) => ({ ...p, wires: p.wires.map((w) => (w.id === selectedWire.id ? { ...w, points: [] } : w)) }))
                 }
               >
-                꺾는 점 모두 지우기
+                {t("꺾는 점 모두 지우기")}
               </button>
             )}{" "}
-            <button onClick={deleteSelected}>삭제</button>
+            <button onClick={deleteSelected}>{t("삭제")}</button>
           </>
         ) : (
           <p className="hint">
-            부품이나 와이어를 선택하세요.
+            {t("부품이나 와이어를 선택하세요.")}
             <br />
-            배선: 핀을 클릭한 뒤 다른 핀을 클릭하거나, 핀에서 끌어다 놓기. 가는 길에 빈 곳을 클릭하면 꺾는 점.
+            {t("배선: 핀을 클릭한 뒤 다른 핀을 클릭하거나, 핀에서 끌어다 놓기. 가는 길에 빈 곳을 클릭하면 꺾는 점.")}
             <br />
-            회로도에서도 배선: 핀 끝에서 다른 핀 끝으로 끌어 놓기. 핀 끝을 클릭해 고르면 연결 끊기.
+            {t("회로도에서도 배선: 핀 끝에서 다른 핀 끝으로 끌어 놓기. 핀 끝을 클릭해 고르면 연결 끊기.")}
             <br />
-            Delete 삭제 · 휠/＋−로 확대·축소 · 빈 곳 끌기로 이동
+            {t("Delete 삭제 · 휠/＋−로 확대·축소 · 빈 곳 끌기로 이동")}
           </p>
         )}
-        <h3>넷리스트 ({visibleNets.length})</h3>
+        <h3>{t("넷리스트 ({n})", { n: visibleNets.length })}</h3>
         <ul className="nets">
           {visibleNets.map((n) => (
             <li key={n}>{n}</li>
@@ -1189,32 +1215,32 @@ function SdImageButtons({
   const [msg, setMsg] = useState<string | null>(null);
   return (
     <div className="prop">
-      카드 내용 (디스크 이미지)
+      {t("카드 내용 (디스크 이미지)")}
       <div>
         <button
           onClick={async () => {
             const img = await runner.sdImage(part);
-            if (!img.length) return setMsg("카드가 아직 회로에 없습니다.");
+            if (!img.length) return setMsg(t("카드가 아직 회로에 없습니다."));
             const url = URL.createObjectURL(new Blob([img], { type: "application/octet-stream" }));
             const a = document.createElement("a");
             a.href = url;
             a.download = `${part}.img`;
             a.click();
             setTimeout(() => URL.revokeObjectURL(url), 1000);
-            setMsg(`${(img.length / 1048576).toFixed(0)} MB 이미지를 내려받았습니다.`);
+            setMsg(t("{mb} MB 이미지를 내려받았습니다.", { mb: (img.length / 1048576).toFixed(0) }));
           }}
         >
-          이미지 내려받기
+          {t("이미지 내려받기")}
         </button>{" "}
-        <button onClick={() => input.current?.click()}>이미지 넣기</button>{" "}
+        <button onClick={() => input.current?.click()}>{t("이미지 넣기")}</button>{" "}
         <button
           onClick={() => {
-            if (!window.confirm("카드의 내용을 모두 지울까요? 파일 시스템도 지워져 빈 카드가 됩니다.")) return;
+            if (!window.confirm(t("카드의 내용을 모두 지울까요? 파일 시스템도 지워져 빈 카드가 됩니다."))) return;
             onWipe(part);
-            setMsg("카드를 비웠습니다.");
+            setMsg(t("카드를 비웠습니다."));
           }}
         >
-          카드 비우기
+          {t("카드 비우기")}
         </button>
         <input
           ref={input}
@@ -1227,11 +1253,11 @@ function SdImageButtons({
             e.target.value = "";
             if (!f) return;
             runner.sdLoad(part, await f.arrayBuffer());
-            setMsg(`${f.name}을(를) 카드에 넣었습니다.`);
+            setMsg(t("{name}을(를) 카드에 넣었습니다.", { name: f.name }));
           }}
         />
       </div>
-      <span className="hint">카드 내용은 이 브라우저에 프로젝트별로 저장되어, 다시 열면 그대로 들어 있습니다.</span>
+      <span className="hint">{t("카드 내용은 이 브라우저에 프로젝트별로 저장되어, 다시 열면 그대로 들어 있습니다.")}</span>
       {msg && <span className="hint">{msg}</span>}
     </div>
   );

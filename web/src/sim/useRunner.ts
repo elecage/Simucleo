@@ -18,6 +18,7 @@ import type {
 import type { CircuitJson } from "../editor/model";
 import { boardSignals, busCatalog } from "../parts";
 import { dropStaleCaptures } from "./staleCapture";
+import { t } from "../i18n";
 import { connectPerf, perfLongTask, perfRunning, perfUpdate, perfWorkerShare } from "./perfStore";
 
 const CONSOLE_LIMIT = 20_000;
@@ -400,10 +401,10 @@ export function useRunner(): Runner {
           say({
             from: "system",
             text: !chat?.status.powered
-              ? "모듈에 전원이 없어 보내지 못했습니다."
+              ? t("모듈에 전원이 없어 보내지 못했습니다.")
               : chat.status.atMode
-                ? "AT 모드에서는 휴대폰과 통신하지 않습니다."
-                : "휴대폰이 연결되지 않았습니다 — '연결'을 누르세요.",
+                ? t("AT 모드에서는 휴대폰과 통신하지 않습니다.")
+                : t("휴대폰이 연결되지 않았습니다 — '연결'을 누르세요."),
           });
           return;
         }

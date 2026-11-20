@@ -3,131 +3,76 @@
   "version": 1,
   "name": "ESC + BLDC 모터 (가변저항 스로틀)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "esc",
-      "kind": "esc-bldc",
-      "x": 52,
-      "y": 6,
-      "props": {
-        "kv": 1000,
-        "load": 0
-      }
-    },
-    {
-      "id": "bat",
-      "kind": "battery",
-      "x": 62,
-      "y": 22,
-      "props": {
-        "voltage": 11.1
-      }
-    },
-    {
-      "id": "pot",
-      "kind": "potentiometer",
-      "x": 44,
-      "y": 22,
-      "props": {
-        "ohms": "10k",
-        "position": 0.5
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "esc", "kind": "esc-bldc", "x": 80, "y": 6, "props": { "kv": 1000, "load": 0 } },
+    { "id": "bat", "kind": "battery", "x": 82, "y": 22, "props": { "voltage": 11.1 } },
+    { "id": "pot", "kind": "potentiometer", "x": 49, "y": 12, "props": { "ohms": "10k", "position": 0.5 } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "D5"
-      },
-      "b": {
-        "part": "esc",
-        "pin": "SIG"
-      },
-      "color": "#f5f5f5"
+      "a": { "part": "bb1", "pin": "j8" },
+      "b": { "part": "bb1", "pin": "bn8" },
+      "color": "#212121",
+      "points": [{ "x": 51, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "esc",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "j6" },
+      "b": { "part": "bb1", "pin": "bp5" },
+      "color": "#e53935",
+      "points": [{ "x": 49, "y": 22 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "bat",
-        "pin": "+"
-      },
-      "b": {
-        "part": "esc",
-        "pin": "BAT+"
-      },
-      "color": "#e53935"
+      "a": { "part": "bat", "pin": "-" },
+      "b": { "part": "esc", "pin": "GND" },
+      "color": "#212121",
+      "points": [{ "x": 86, "y": 28 }, { "x": 80, "y": 28 }, { "x": 80, "y": 17 }, { "x": 82, "y": 17 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "bat",
-        "pin": "-"
-      },
-      "b": {
-        "part": "esc",
-        "pin": "BAT-"
-      },
-      "color": "#212121"
+      "a": { "part": "bat", "pin": "+" },
+      "b": { "part": "esc", "pin": "BAT+" },
+      "color": "#e53935",
+      "points": [{ "x": 83, "y": 29 }, { "x": 89, "y": 29 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "pot",
-        "pin": "1"
-      },
-      "color": "#e53935"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "pot",
-        "pin": "W"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "A0"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "nucleo", "pin": "3V3" },
+      "b": { "part": "bb1", "pin": "bp1" },
+      "color": "#e53935",
+      "points": [{ "x": 22, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 22 }]
     },
     {
       "id": "w7",
-      "a": {
-        "part": "pot",
-        "pin": "2"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P2"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "A0" },
+      "b": { "part": "bb1", "pin": "j7" },
+      "color": "#fb8c00",
+      "points": [{ "x": 28, "y": 38 }, { "x": 50, "y": 38 }]
+    },
+    {
+      "id": "w8",
+      "a": { "part": "bat", "pin": "-" },
+      "b": { "part": "bb1", "pin": "bn29" },
+      "color": "#212121",
+      "points": [{ "x": 86, "y": 27 }, { "x": 87, "y": 27 }, { "x": 87, "y": 30 }, { "x": 72, "y": 30 }]
+    },
+    {
+      "id": "w9",
+      "a": { "part": "esc", "pin": "SIG" },
+      "b": { "part": "nucleo", "pin": "D5" },
+      "color": "#1e88e5",
+      "points": [{ "x": 81, "y": 16 }, { "x": 74, "y": 16 }, { "x": 74, "y": 0 }, { "x": 28, "y": 0 }]
     }
   ],
-  "firmware": {
-    "name": "hal-esc-bldc",
-    "example": "hal-esc-bldc.elf"
-  }
+  "firmware": { "name": "hal-esc-bldc", "example": "hal-esc-bldc.elf" }
 }

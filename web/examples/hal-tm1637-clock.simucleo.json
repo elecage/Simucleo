@@ -3,73 +3,38 @@
   "version": 1,
   "name": "TM1637 4자리 시계 (비트뱅잉)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "disp",
-      "kind": "tm1637",
-      "x": 50,
-      "y": 8,
-      "props": {}
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "disp", "kind": "tm1637", "x": 46, "y": 12, "props": {} }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "disp",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "disp", "pin": "CLK" },
+      "b": { "part": "nucleo", "pin": "D2" },
+      "color": "#fdd835",
+      "points": [{ "x": 40, "y": 14 }, { "x": 40, "y": 0 }, { "x": 31, "y": 0 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "disp",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "disp", "pin": "DIO" },
+      "b": { "part": "nucleo", "pin": "D3" },
+      "color": "#1e88e5",
+      "points": [{ "x": 41, "y": 15 }, { "x": 41, "y": -1 }, { "x": 30, "y": -1 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D2"
-      },
-      "b": {
-        "part": "disp",
-        "pin": "CLK"
-      },
-      "color": "#fdd835"
+      "a": { "part": "disp", "pin": "GND" },
+      "b": { "part": "nucleo", "pin": "GND_P2" },
+      "color": "#212121",
+      "points": [{ "x": 40, "y": 17 }, { "x": 40, "y": 36 }, { "x": 25, "y": 36 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D3"
-      },
-      "b": {
-        "part": "disp",
-        "pin": "DIO"
-      },
-      "color": "#1e88e5"
+      "a": { "part": "disp", "pin": "VCC" },
+      "b": { "part": "nucleo", "pin": "3V3" },
+      "color": "#e53935",
+      "points": [{ "x": 41, "y": 16 }, { "x": 41, "y": 37 }, { "x": 22, "y": 37 }]
     }
   ],
-  "firmware": {
-    "name": "hal-tm1637-clock",
-    "example": "hal-tm1637-clock.elf"
-  }
+  "firmware": { "name": "hal-tm1637-clock", "example": "hal-tm1637-clock.elf" }
 }

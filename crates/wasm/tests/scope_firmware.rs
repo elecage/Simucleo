@@ -8,6 +8,9 @@ use std::path::PathBuf;
 use serde_json::Value;
 use simucleo_wasm::Simulator;
 
+#[path = "../../nucleo/tests/support/web_project.rs"]
+mod web_project;
+
 fn firmware(name: &str) -> Vec<u8> {
     let path: PathBuf = [
         env!("CARGO_MANIFEST_DIR"),
@@ -242,9 +245,10 @@ fn wired(sim: &mut Simulator, circuit: Value, signals: &[(&str, &str)]) {
         .iter()
         .map(|(a, b)| (a.to_string(), Value::from(*b)))
         .collect();
+    // The breadboard's strips: the examples seat parts in it (M38).
     sim.set_wiring(
         &circuit.to_string(),
-        "{}",
+        &web_project::bus_catalog().to_string(),
         &Value::Object(signals).to_string(),
     )
     .unwrap();
@@ -456,7 +460,7 @@ fn tim1_dead_time_shows_between_pa8_falling_and_pa7_rising() {
     sim.load_elf(&firmware("hal-bldc-pwm")).unwrap();
     wired(
         &mut sim,
-        project,
+        web_project::circuit(&project),
         &[
             ("D7", "PA8"),
             ("D11", "PA7"),
@@ -808,7 +812,7 @@ fn example_project(name: &str, pot: f64) -> Value {
             p["props"]["position"] = pot.into();
         }
     }
-    project
+    web_project::circuit(&project)
 }
 
 /// High pulses (rise, fall) of a captured channel.

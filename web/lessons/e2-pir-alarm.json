@@ -16,11 +16,15 @@
     "project": {
       "parts": [
         { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
-        { "id": "pir", "kind": "pir", "x": 50, "y": 4, "props": { "mode": "H", "delay": 3, "warmup": 3, "person": 0.05, "motion": 0 } },
-        { "id": "r1", "kind": "resistor", "x": 66, "y": 24, "props": { "ohms": "330" } },
-        { "id": "led", "kind": "led-5mm", "x": 72, "y": 21, "props": { "color": "red" } }
+        { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+        { "id": "pir", "kind": "pir", "x": 80, "y": 4, "props": { "mode": "H", "delay": 3, "warmup": 3, "person": 0.05, "motion": 0 } },
+        { "id": "r1", "kind": "resistor", "x": 49, "y": 16, "props": { "ohms": "330" } },
+        { "id": "led", "kind": "led-5mm", "x": 49, "y": 9, "props": { "color": "red" } }
       ],
-      "wires": []
+      "wires": [
+        { "id": "w1", "a": { "part": "nucleo", "pin": "GND_P2" }, "b": { "part": "bb1", "pin": "bn1" }, "color": "#212121", "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }] },
+        { "id": "w2", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "bb1", "pin": "bp1" }, "color": "#e53935", "points": [{ "x": 23, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 22 }] }
+      ]
     }
   },
   "firmware": { "example": "hal-pir-alarm.elf" },

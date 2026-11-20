@@ -180,10 +180,18 @@ test("disconnecting a pin joined by the breadboard says to move it there; bused 
   await expect(wires(page)).toHaveCount(5);
   await expect(sch(page).locator("[data-part=led1] [data-pin=K] .net-end[data-net=GND]")).toHaveCount(1);
 
-  // The switch's 1a/1b terminal: the wire on 1a goes, and D2 with it.
-  await expect(sch(page).locator("[data-part=nucleo]")).toContainText("PA10 (D2)");
+  // The switch straddles the channel (M38): its 1a/1b terminal is joined by the breadboard as well.
   await clickEnd(page, end(page, "sw1", "1a"));
   await expect(page.getByTestId("pin-selection")).toContainText("sw1.1a/1b");
+  await page.getByRole("button", { name: "연결 끊기" }).click();
+  await expect(notice(page)).toContainText("부품을 옮겨");
+  await expect(wires(page)).toHaveCount(5);
+
+  // The board's PA10 terminal stands for the bused pins D2 and CN10_33: the
+  // wire on D2 goes, and the switch with it.
+  await expect(sch(page).locator("[data-part=nucleo]")).toContainText("PA10 (D2)");
+  await clickEnd(page, end(page, "nucleo", "D2"));
+  await expect(page.getByTestId("pin-selection")).toContainText("PA10");
   await page.getByRole("button", { name: "연결 끊기" }).click();
   await expect(wires(page)).toHaveCount(4);
   await expect(sch(page).locator("[data-part=sw1] [data-pin='1a/1b'] .sym-nc")).toHaveCount(1);

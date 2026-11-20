@@ -17,13 +17,13 @@
       "parts": [
         { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
         { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
-        { "id": "tmp", "kind": "temp-sensor", "x": 52, "y": 28, "props": { "model": "TMP36", "temp": 25 } }
+        { "id": "tmp", "kind": "temp-sensor", "x": 51, "y": 9, "props": { "model": "TMP36", "temp": 25 } }
       ],
       "wires": [
-        { "id": "w1", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "bb1", "pin": "tp1" }, "color": "#e53935" },
-        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_P1" }, "b": { "part": "bb1", "pin": "tn1" }, "color": "#212121" },
-        { "id": "w3", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "bb1", "pin": "bp1" }, "color": "#fb8c00" },
-        { "id": "w4", "a": { "part": "nucleo", "pin": "GND_P2" }, "b": { "part": "bb1", "pin": "bn1" }, "color": "#212121" }
+        { "id": "w1", "a": { "part": "bb1", "pin": "tn1" }, "b": { "part": "bb1", "pin": "bn1" }, "color": "#212121", "points": [{ "x": 43, "y": 6 }, { "x": 43, "y": 23 }] },
+        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_P2" }, "b": { "part": "bb1", "pin": "bn2" }, "color": "#212121", "points": [{ "x": 25, "y": 36 }, { "x": 45, "y": 36 }] },
+        { "id": "w3", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "bb1", "pin": "bp1" }, "color": "#e53935", "points": [{ "x": 23, "y": 37 }, { "x": 42, "y": 37 }, { "x": 42, "y": 22 }] },
+        { "id": "w4", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "bb1", "pin": "tp1" }, "color": "#e53935", "points": [{ "x": 22, "y": 38 }, { "x": 41, "y": 38 }, { "x": 41, "y": 5 }] }
       ]
     }
   },

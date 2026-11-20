@@ -3,121 +3,68 @@
   "version": 1,
   "name": "PIR 센서로 LED 켜기 (HC-SR501)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
     {
       "id": "pir",
       "kind": "pir",
-      "x": 50,
+      "x": 80,
       "y": 4,
-      "props": {
-        "mode": "H",
-        "delay": 3,
-        "warmup": 3,
-        "person": 0.05,
-        "motion": 0
-      }
+      "props": { "mode": "H", "delay": 3, "warmup": 3, "person": 0.05, "motion": 0 }
     },
-    {
-      "id": "r1",
-      "kind": "resistor",
-      "x": 66,
-      "y": 24,
-      "props": {
-        "ohms": "330"
-      }
-    },
-    {
-      "id": "led",
-      "kind": "led-5mm",
-      "x": 72,
-      "y": 21,
-      "props": {
-        "color": "red"
-      }
-    }
+    { "id": "r1", "kind": "resistor", "x": 49, "y": 16, "props": { "ohms": "330" } },
+    { "id": "led", "kind": "led-5mm", "x": 52, "y": 12, "props": { "color": "red" } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "5V"
-      },
-      "b": {
-        "part": "pir",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "j9" },
+      "b": { "part": "bb1", "pin": "bn9" },
+      "color": "#212121",
+      "points": [{ "x": 52, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "pir",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#212121"
+      "a": { "part": "pir", "pin": "VCC" },
+      "b": { "part": "bb1", "pin": "bp29" },
+      "color": "#e53935",
+      "points": [{ "x": 85, "y": 22 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D7"
-      },
-      "b": {
-        "part": "pir",
-        "pin": "OUT"
-      },
-      "color": "#43a047"
+      "a": { "part": "pir", "pin": "GND" },
+      "b": { "part": "bb1", "pin": "bn29" },
+      "color": "#212121",
+      "points": [{ "x": 87, "y": 23 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D6"
-      },
-      "b": {
-        "part": "r1",
-        "pin": "1"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "r1",
-        "pin": "2"
-      },
-      "b": {
-        "part": "led",
-        "pin": "A"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "nucleo", "pin": "5V" },
+      "b": { "part": "bb1", "pin": "bp1" },
+      "color": "#e53935",
+      "points": [{ "x": 23, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 22 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "led",
-        "pin": "K"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "D6" },
+      "b": { "part": "bb1", "pin": "f6" },
+      "color": "#fb8c00",
+      "points": [{ "x": 27, "y": 0 }, { "x": 49, "y": 0 }]
+    },
+    {
+      "id": "w7",
+      "a": { "part": "nucleo", "pin": "D7" },
+      "b": { "part": "pir", "pin": "OUT" },
+      "color": "#43a047",
+      "points": [{ "x": 26, "y": -1 }, { "x": 78, "y": -1 }, { "x": 78, "y": 20 }, { "x": 86, "y": 20 }]
     }
   ],
-  "firmware": {
-    "name": "hal-pir-alarm",
-    "example": "hal-pir-alarm.elf"
-  }
+  "firmware": { "name": "hal-pir-alarm", "example": "hal-pir-alarm.elf" }
 }

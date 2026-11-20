@@ -16,9 +16,10 @@
     "project": {
       "parts": [
         { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
-        { "id": "us", "kind": "hc-sr04", "x": 46, "y": 4, "props": { "distance": 80 } },
-        { "id": "r3", "kind": "resistor", "x": 62, "y": 18, "props": { "ohms": "220" } },
-        { "id": "led3", "kind": "led-5mm", "x": 62, "y": 12, "props": { "color": "red" } }
+        { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+        { "id": "us", "kind": "hc-sr04", "x": 60, "y": 10, "props": { "distance": 80 } },
+        { "id": "r3", "kind": "resistor", "x": 47, "y": 16, "props": { "ohms": "220" } },
+        { "id": "led3", "kind": "led-5mm", "x": 47, "y": 9, "props": { "color": "red" } }
       ],
       "wires": []
     }

@@ -3,87 +3,45 @@
   "version": 1,
   "name": "HC-05 블루투스로 LD2 켜고 끄기",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "bt",
-      "kind": "hc05",
-      "x": 56,
-      "y": 10,
-      "props": {
-        "baud": 9600
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bt", "kind": "hc05", "x": 46, "y": 10, "props": { "baud": 9600 } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "5V"
-      },
-      "b": {
-        "part": "bt",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "bt", "pin": "GND" },
+      "b": { "part": "nucleo", "pin": "GND_P2" },
+      "color": "#212121",
+      "points": [{ "x": 50, "y": 36 }, { "x": 25, "y": 36 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "b": {
-        "part": "bt",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "bt", "pin": "TXD" },
+      "b": { "part": "nucleo", "pin": "D2" },
+      "color": "#1e88e5",
+      "points": [{ "x": 49, "y": 24 }, { "x": 40, "y": 24 }, { "x": 40, "y": 0 }, { "x": 31, "y": 0 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D8"
-      },
-      "b": {
-        "part": "bt",
-        "pin": "RXD"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "bt", "pin": "VCC" },
+      "b": { "part": "nucleo", "pin": "5V" },
+      "color": "#e53935",
+      "points": [{ "x": 51, "y": 37 }, { "x": 23, "y": 37 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D2"
-      },
-      "b": {
-        "part": "bt",
-        "pin": "TXD"
-      },
-      "color": "#1e88e5"
+      "a": { "part": "bt", "pin": "STATE" },
+      "b": { "part": "nucleo", "pin": "D7" },
+      "color": "#43a047",
+      "points": [{ "x": 47, "y": 23 }, { "x": 41, "y": 23 }, { "x": 41, "y": -1 }, { "x": 26, "y": -1 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "nucleo",
-        "pin": "D7"
-      },
-      "b": {
-        "part": "bt",
-        "pin": "STATE"
-      },
-      "color": "#43a047"
+      "a": { "part": "bt", "pin": "RXD" },
+      "b": { "part": "nucleo", "pin": "D8" },
+      "color": "#fb8c00",
+      "points": [{ "x": 48, "y": 25 }, { "x": 42, "y": 25 }, { "x": 42, "y": -2 }, { "x": 25, "y": -2 }]
     }
   ],
-  "firmware": {
-    "name": "hal-bluetooth-led",
-    "example": "hal-bluetooth-led.elf"
-  }
+  "firmware": { "name": "hal-bluetooth-led", "example": "hal-bluetooth-led.elf" }
 }

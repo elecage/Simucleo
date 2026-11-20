@@ -147,7 +147,31 @@ for (const l of LESSONS) {
 
 // ------------------------------------------------- the checks discriminate
 
-type Project = { parts: { id: string; kind: string }[]; wires: { a: { part: string; pin: string }; b: { part: string; pin: string } }[] };
+type Project = {
+  parts: { id: string; kind: string; x: number; y: number }[];
+  wires: { id?: string; a: { part: string; pin: string }; b: { part: string; pin: string }; color?: string }[];
+};
+
+// Since M38 the reference circuits seat LEDs, resistors and LDRs in the
+// breadboard, so their legs carry no wires to move. `unseat` lifts such a
+// part off the board and wires each leg to the hole it was in: the same
+// circuit, now with wires on the legs for the edits below.
+const LEGS: Record<string, Record<string, [number, number]>> = {
+  "led-5mm": { A: [1, 3], K: [0, 3] },
+  resistor: { "1": [0, 0], "2": [4, 0] },
+  ldr: { "1": [0, 3], "2": [1, 3] },
+};
+/** Breadboard row by its y in the board (web/src/parts/breadboard.tsx). */
+const BB_ROWS: Record<number, string> = { 1: "tp", 2: "tn", 4: "a", 5: "b", 6: "c", 7: "d", 8: "e", 11: "f", 12: "g", 13: "h", 14: "i", 15: "j", 18: "bp", 19: "bn" };
+const unseat = (p: Project, id: string) => {
+  const part = p.parts.find((q) => q.id === id)!;
+  for (const [pin, [dx, dy]] of Object.entries(LEGS[part.kind])) {
+    const [x, y] = [part.x + dx, part.y + dy];
+    const bb = p.parts.find((q) => q.kind === "breadboard-half" && BB_ROWS[y - q.y] && x - q.x - 1 >= 1 && x - q.x - 1 <= 30)!;
+    p.wires.push({ id: `unseat-${id}-${pin}`, a: { part: id, pin }, b: { part: bb.id, pin: `${BB_ROWS[y - bb.y]}${x - bb.x - 1}` }, color: "#757575" });
+  }
+  part.x += 200;
+};
 
 /** A copy of a project file with `edit` applied, in a temporary folder. */
 function variant(path: string, file: string, edit: (p: Project) => void): string {
@@ -188,7 +212,12 @@ const WRONG: Wrong[] = [
   {
     lesson: "led-on",
     what: "the LED the wrong way round",
-    setup: () => ({ project: variant(example("lesson-led-on"), "reversed", (p) => swap(p, "led1.A", "led1.K")) }),
+    setup: () => ({
+      project: variant(example("lesson-led-on"), "reversed", (p) => {
+        unseat(p, "led1");
+        swap(p, "led1.A", "led1.K");
+      }),
+    }),
     fails: ["D7(PA8) → 저항 → LED → GND", "LED가 켜짐"],
   },
   {
@@ -214,6 +243,8 @@ const WRONG: Wrong[] = [
     what: "the TMP36 output on A1 instead of A2",
     setup: () => ({
       project: variant(example("hal-adc-servo"), "tmp36-a1", (p) => {
+        unseat(p, "r1");
+        unseat(p, "ldr");
         unwire(p, "r1.2");
         unwire(p, "ldr.1");
         rewire(p, "nucleo.A2", "nucleo.A1");

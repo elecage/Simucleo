@@ -3,120 +3,48 @@
   "version": 1,
   "name": "타이머 인터럽트 vs HAL_Delay (D7, D6)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "r1",
-      "kind": "resistor",
-      "x": 50,
-      "y": 16,
-      "props": {
-        "ohms": "220"
-      }
-    },
-    {
-      "id": "led1",
-      "kind": "led-5mm",
-      "x": 50,
-      "y": 10,
-      "props": {
-        "color": "green"
-      }
-    },
-    {
-      "id": "r2",
-      "kind": "resistor",
-      "x": 58,
-      "y": 16,
-      "props": {
-        "ohms": "220"
-      }
-    },
-    {
-      "id": "led2",
-      "kind": "led-5mm",
-      "x": 58,
-      "y": 10,
-      "props": {
-        "color": "red"
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "r1", "kind": "resistor", "x": 49, "y": 16, "props": { "ohms": "220" } },
+    { "id": "led1", "kind": "led-5mm", "x": 52, "y": 12, "props": { "color": "green" } },
+    { "id": "r2", "kind": "resistor", "x": 57, "y": 16, "props": { "ohms": "220" } },
+    { "id": "led2", "kind": "led-5mm", "x": 60, "y": 12, "props": { "color": "red" } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "D7"
-      },
-      "b": {
-        "part": "r1",
-        "pin": "1"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "bb1", "pin": "j9" },
+      "b": { "part": "bb1", "pin": "bn9" },
+      "color": "#212121",
+      "points": [{ "x": 52, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "r1",
-        "pin": "2"
-      },
-      "b": {
-        "part": "led1",
-        "pin": "A"
-      }
+      "a": { "part": "bb1", "pin": "j17" },
+      "b": { "part": "bb1", "pin": "bn17" },
+      "color": "#212121",
+      "points": [{ "x": 60, "y": 21 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "led1",
-        "pin": "K"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D6"
-      },
-      "b": {
-        "part": "r2",
-        "pin": "1"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "nucleo", "pin": "D7" },
+      "b": { "part": "bb1", "pin": "f6" },
+      "color": "#fb8c00",
+      "points": [{ "x": 26, "y": 0 }, { "x": 49, "y": 0 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "r2",
-        "pin": "2"
-      },
-      "b": {
-        "part": "led2",
-        "pin": "A"
-      }
-    },
-    {
-      "id": "w6",
-      "a": {
-        "part": "led2",
-        "pin": "K"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "D6" },
+      "b": { "part": "bb1", "pin": "f14" },
+      "color": "#fb8c00",
+      "points": [{ "x": 27, "y": -1 }, { "x": 57, "y": -1 }]
     }
   ]
 }

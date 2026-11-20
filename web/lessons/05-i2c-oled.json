@@ -16,19 +16,22 @@
     "project": {
       "parts": [
         { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
-        { "id": "oled", "kind": "oled-ssd1306", "x": 46, "y": 4, "props": { "address": "0x3C" } },
-        { "id": "rtc", "kind": "rtc-ds3231", "x": 46, "y": 20, "props": { "temp": 25 } },
-        { "id": "aht", "kind": "aht20", "x": 58, "y": 21, "props": { "temp": 23.5, "humidity": 45 } }
+        { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+        { "id": "oled", "kind": "oled-ssd1306", "x": 80, "y": 6, "props": { "address": "0x3C" } },
+        { "id": "rtc", "kind": "rtc-ds3231", "x": 48, "y": 10, "props": { "temp": 25 } },
+        { "id": "aht", "kind": "aht20", "x": 59, "y": 11, "props": { "temp": 23.5, "humidity": 45 } }
       ],
       "wires": [
-        { "id": "w1", "a": { "part": "nucleo", "pin": "CN7_16" }, "b": { "part": "rtc", "pin": "VCC" }, "color": "#e53935" },
-        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_P1" }, "b": { "part": "rtc", "pin": "GND" }, "color": "#212121" },
-        { "id": "w3", "a": { "part": "nucleo", "pin": "CN10_3" }, "b": { "part": "rtc", "pin": "SCL" }, "color": "#fdd835" },
-        { "id": "w4", "a": { "part": "nucleo", "pin": "CN10_5" }, "b": { "part": "rtc", "pin": "SDA" }, "color": "#1e88e5" },
-        { "id": "w5", "a": { "part": "rtc", "pin": "VCC" }, "b": { "part": "aht", "pin": "VCC" }, "color": "#e53935" },
-        { "id": "w6", "a": { "part": "rtc", "pin": "GND" }, "b": { "part": "aht", "pin": "GND" }, "color": "#212121" },
-        { "id": "w7", "a": { "part": "rtc", "pin": "SCL" }, "b": { "part": "aht", "pin": "SCL" }, "color": "#fdd835" },
-        { "id": "w8", "a": { "part": "rtc", "pin": "SDA" }, "b": { "part": "aht", "pin": "SDA" }, "color": "#1e88e5" }
+        { "id": "w1", "a": { "part": "bb1", "pin": "j16" }, "b": { "part": "bb1", "pin": "bp16" }, "color": "#e53935", "points": [{ "x": 59, "y": 21 }] },
+        { "id": "w2", "a": { "part": "bb1", "pin": "j8" }, "b": { "part": "bb1", "pin": "bp8" }, "color": "#e53935", "points": [{ "x": 51, "y": 21 }] },
+        { "id": "w3", "a": { "part": "bb1", "pin": "j17" }, "b": { "part": "bb1", "pin": "bn17" }, "color": "#212121", "points": [{ "x": 60, "y": 21 }] },
+        { "id": "w4", "a": { "part": "bb1", "pin": "j9" }, "b": { "part": "bb1", "pin": "bn9" }, "color": "#212121", "points": [{ "x": 52, "y": 21 }] },
+        { "id": "w5", "a": { "part": "bb1", "pin": "g18" }, "b": { "part": "bb1", "pin": "g6" }, "color": "#fdd835", "points": [{ "x": 61, "y": 24 }, { "x": 48, "y": 24 }, { "x": 48, "y": 16 }] },
+        { "id": "w6", "a": { "part": "bb1", "pin": "g19" }, "b": { "part": "bb1", "pin": "g7" }, "color": "#1e88e5", "points": [{ "x": 62, "y": 17 }, { "x": 51, "y": 17 }, { "x": 51, "y": 16 }] },
+        { "id": "w7", "a": { "part": "nucleo", "pin": "GND_P2" }, "b": { "part": "bb1", "pin": "bn1" }, "color": "#212121", "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }] },
+        { "id": "w8", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "bb1", "pin": "bp1" }, "color": "#e53935", "points": [{ "x": 22, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 22 }] },
+        { "id": "w9", "a": { "part": "nucleo", "pin": "D15" }, "b": { "part": "bb1", "pin": "h6" }, "color": "#fdd835", "points": [{ "x": 16, "y": 0 }, { "x": 43, "y": 0 }, { "x": 43, "y": 17 }] },
+        { "id": "w10", "a": { "part": "nucleo", "pin": "D14" }, "b": { "part": "bb1", "pin": "h7" }, "color": "#1e88e5", "points": [{ "x": 17, "y": -1 }, { "x": 42, "y": -1 }, { "x": 42, "y": 20 }, { "x": 50, "y": 20 }] }
       ]
     }
   },

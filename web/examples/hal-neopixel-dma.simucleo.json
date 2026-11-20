@@ -3,63 +3,31 @@
   "version": 1,
   "name": "NeoPixel 무지개 (TIM PWM + DMA)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "ring",
-      "kind": "neopixel-ring",
-      "x": 48,
-      "y": 10,
-      "props": {
-        "count": 12
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "ring", "kind": "neopixel-ring", "x": 46, "y": 10, "props": { "count": 12 } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "5V"
-      },
-      "b": {
-        "part": "ring",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "nucleo", "pin": "5V" },
+      "b": { "part": "ring", "pin": "VCC" },
+      "color": "#e53935",
+      "points": [{ "x": 23, "y": 36 }, { "x": 50, "y": 36 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "nucleo",
-        "pin": "D5"
-      },
-      "b": {
-        "part": "ring",
-        "pin": "DIN"
-      },
-      "color": "#43a047"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "ring", "pin": "GND" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 37 }, { "x": 52, "y": 37 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "b": {
-        "part": "ring",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "D5" },
+      "b": { "part": "ring", "pin": "DIN" },
+      "color": "#43a047",
+      "points": [{ "x": 28, "y": 0 }, { "x": 44, "y": 0 }, { "x": 44, "y": 23 }, { "x": 51, "y": 23 }]
     }
   ],
-  "firmware": {
-    "name": "hal-neopixel-dma",
-    "example": "hal-neopixel-dma.elf"
-  }
+  "firmware": { "name": "hal-neopixel-dma", "example": "hal-neopixel-dma.elf" }
 }

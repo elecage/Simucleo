@@ -3,132 +3,62 @@
   "version": 1,
   "name": "조도센서 자동 조명 (LDR A1 → LED D6)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "rl",
-      "kind": "resistor",
-      "x": 48,
-      "y": 22,
-      "props": {
-        "ohms": "10k"
-      }
-    },
-    {
-      "id": "ldr",
-      "kind": "ldr",
-      "x": 54,
-      "y": 22,
-      "props": {
-        "lux": 300
-      }
-    },
-    {
-      "id": "r1",
-      "kind": "resistor",
-      "x": 62,
-      "y": 16,
-      "props": {
-        "ohms": "220"
-      }
-    },
-    {
-      "id": "led1",
-      "kind": "led-5mm",
-      "x": 62,
-      "y": 10,
-      "props": {
-        "color": "yellow"
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "rl", "kind": "resistor", "x": 59, "y": 16, "props": { "ohms": "10k" } },
+    { "id": "ldr", "kind": "ldr", "x": 63, "y": 12, "props": { "lux": 300 } },
+    { "id": "r1", "kind": "resistor", "x": 47, "y": 16, "props": { "ohms": "220" } },
+    { "id": "led1", "kind": "led-5mm", "x": 50, "y": 12, "props": { "color": "yellow" } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "rl",
-        "pin": "1"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "j16" },
+      "b": { "part": "bb1", "pin": "bp16" },
+      "color": "#e53935",
+      "points": [{ "x": 59, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "rl",
-        "pin": "2"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "A1"
-      },
-      "color": "#43a047"
+      "a": { "part": "bb1", "pin": "j21" },
+      "b": { "part": "bb1", "pin": "bn21" },
+      "color": "#212121",
+      "points": [{ "x": 64, "y": 21 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "ldr",
-        "pin": "1"
-      },
-      "b": {
-        "part": "rl",
-        "pin": "2"
-      }
+      "a": { "part": "bb1", "pin": "j7" },
+      "b": { "part": "bb1", "pin": "bn7" },
+      "color": "#212121",
+      "points": [{ "x": 50, "y": 21 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "ldr",
-        "pin": "2"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "nucleo",
-        "pin": "D6"
-      },
-      "b": {
-        "part": "r1",
-        "pin": "1"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "nucleo", "pin": "D6" },
+      "b": { "part": "bb1", "pin": "f4" },
+      "color": "#fb8c00",
+      "points": [{ "x": 27, "y": 0 }, { "x": 47, "y": 0 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "r1",
-        "pin": "2"
-      },
-      "b": {
-        "part": "led1",
-        "pin": "A"
-      }
+      "a": { "part": "nucleo", "pin": "3V3" },
+      "b": { "part": "bb1", "pin": "bp1" },
+      "color": "#e53935",
+      "points": [{ "x": 22, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 22 }]
     },
     {
       "id": "w7",
-      "a": {
-        "part": "led1",
-        "pin": "K"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "j20" },
+      "b": { "part": "nucleo", "pin": "A1" },
+      "color": "#43a047",
+      "points": [{ "x": 63, "y": 35 }, { "x": 29, "y": 35 }]
     }
   ]
 }

@@ -3,247 +3,131 @@
   "version": 1,
   "name": "BLDC 모터 + 홀 센서 (6스텝 정류)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "br",
-      "kind": "bridge-3ph",
-      "x": 48,
-      "y": 8,
-      "props": {}
-    },
-    {
-      "id": "mot",
-      "kind": "bldc-hall",
-      "x": 64,
-      "y": 6,
-      "props": {
-        "load": 0
-      }
-    },
-    {
-      "id": "bat",
-      "kind": "battery",
-      "x": 48,
-      "y": 24,
-      "props": {
-        "voltage": 12
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "br", "kind": "bridge-3ph", "x": 50, "y": 10, "props": {} },
+    { "id": "mot", "kind": "bldc-hall", "x": 66, "y": 8, "props": { "load": 0 } },
+    { "id": "bat", "kind": "battery", "x": 50, "y": 28, "props": { "voltage": 12 } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "D3"
-      },
-      "b": {
-        "part": "br",
-        "pin": "INHA"
-      },
-      "color": "#1e88e5"
+      "a": { "part": "bat", "pin": "-" },
+      "b": { "part": "br", "pin": "GND" },
+      "color": "#212121",
+      "points": [{ "x": 54, "y": 33 }, { "x": 56, "y": 33 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "nucleo",
-        "pin": "D5"
-      },
-      "b": {
-        "part": "br",
-        "pin": "INLA"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "br", "pin": "OUTA" },
+      "b": { "part": "mot", "pin": "U" },
+      "color": "#eab308",
+      "points": [{ "x": 64, "y": 12 }, { "x": 64, "y": 19 }, { "x": 67, "y": 19 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D6"
-      },
-      "b": {
-        "part": "br",
-        "pin": "INHB"
-      },
-      "color": "#8e24aa"
+      "a": { "part": "br", "pin": "OUTB" },
+      "b": { "part": "mot", "pin": "V" },
+      "color": "#16a34a",
+      "points": [{ "x": 63, "y": 13 }, { "x": 63, "y": 20 }, { "x": 68, "y": 20 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D10"
-      },
-      "b": {
-        "part": "br",
-        "pin": "INLB"
-      },
-      "color": "#43a047"
+      "a": { "part": "br", "pin": "OUTC" },
+      "b": { "part": "mot", "pin": "W" },
+      "color": "#2563eb",
+      "points": [{ "x": 62, "y": 14 }, { "x": 62, "y": 21 }, { "x": 69, "y": 21 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "nucleo",
-        "pin": "D15"
-      },
-      "b": {
-        "part": "br",
-        "pin": "INHC"
-      },
-      "color": "#00acc1"
+      "a": { "part": "bat", "pin": "+" },
+      "b": { "part": "br", "pin": "PVDD" },
+      "color": "#e53935",
+      "points": [{ "x": 51, "y": 33 }, { "x": 48, "y": 33 }, { "x": 48, "y": 21 }, { "x": 55, "y": 21 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "nucleo",
-        "pin": "D14"
-      },
-      "b": {
-        "part": "br",
-        "pin": "INLC"
-      },
-      "color": "#fdd835"
+      "a": { "part": "br", "pin": "INHA" },
+      "b": { "part": "nucleo", "pin": "D3" },
+      "color": "#1e88e5",
+      "points": [{ "x": 40, "y": 11 }, { "x": 40, "y": 0 }, { "x": 30, "y": 0 }]
     },
     {
       "id": "w7",
-      "a": {
-        "part": "bat",
-        "pin": "+"
-      },
-      "b": {
-        "part": "br",
-        "pin": "PVDD"
-      },
-      "color": "#e53935"
+      "a": { "part": "br", "pin": "INLA" },
+      "b": { "part": "nucleo", "pin": "D5" },
+      "color": "#fb8c00",
+      "points": [{ "x": 41, "y": 12 }, { "x": 41, "y": -1 }, { "x": 28, "y": -1 }]
     },
     {
       "id": "w8",
-      "a": {
-        "part": "bat",
-        "pin": "-"
-      },
-      "b": {
-        "part": "br",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "br", "pin": "INHB" },
+      "b": { "part": "nucleo", "pin": "D6" },
+      "color": "#8e24aa",
+      "points": [{ "x": 42, "y": 13 }, { "x": 42, "y": -2 }, { "x": 27, "y": -2 }]
     },
     {
       "id": "w9",
-      "a": {
-        "part": "br",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#212121"
+      "a": { "part": "br", "pin": "INLB" },
+      "b": { "part": "nucleo", "pin": "D10" },
+      "color": "#43a047",
+      "points": [{ "x": 43, "y": 14 }, { "x": 43, "y": -3 }, { "x": 23, "y": -3 }]
     },
     {
       "id": "w10",
-      "a": {
-        "part": "br",
-        "pin": "OUTA"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "U"
-      },
-      "color": "#eab308"
+      "a": { "part": "br", "pin": "GND" },
+      "b": { "part": "mot", "pin": "GND" },
+      "color": "#212121",
+      "points": [{ "x": 56, "y": 20 }, { "x": 57, "y": 20 }, { "x": 57, "y": 22 }, { "x": 74, "y": 22 }]
     },
     {
       "id": "w11",
-      "a": {
-        "part": "br",
-        "pin": "OUTB"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "V"
-      },
-      "color": "#16a34a"
+      "a": { "part": "br", "pin": "INHC" },
+      "b": { "part": "nucleo", "pin": "D15" },
+      "color": "#00acc1",
+      "points": [{ "x": 44, "y": 15 }, { "x": 44, "y": -4 }, { "x": 16, "y": -4 }]
     },
     {
       "id": "w12",
-      "a": {
-        "part": "br",
-        "pin": "OUTC"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "W"
-      },
-      "color": "#2563eb"
+      "a": { "part": "br", "pin": "INLC" },
+      "b": { "part": "nucleo", "pin": "D14" },
+      "color": "#fdd835",
+      "points": [{ "x": 45, "y": 16 }, { "x": 45, "y": -5 }, { "x": 17, "y": -5 }]
     },
     {
       "id": "w13",
-      "a": {
-        "part": "mot",
-        "pin": "HA"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "D2"
-      },
-      "color": "#9ca3af"
+      "a": { "part": "mot", "pin": "HA" },
+      "b": { "part": "nucleo", "pin": "D2" },
+      "color": "#9ca3af",
+      "points": [{ "x": 70, "y": 23 }, { "x": 39, "y": 23 }, { "x": 39, "y": 1 }, { "x": 31, "y": 1 }]
     },
     {
       "id": "w14",
-      "a": {
-        "part": "mot",
-        "pin": "HB"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "D7"
-      },
-      "color": "#6b7280"
+      "a": { "part": "bat", "pin": "-" },
+      "b": { "part": "nucleo", "pin": "GND_P2" },
+      "color": "#212121",
+      "points": [{ "x": 54, "y": 36 }, { "x": 25, "y": 36 }]
     },
     {
       "id": "w15",
-      "a": {
-        "part": "mot",
-        "pin": "HC"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "D8"
-      },
-      "color": "#4b5563"
+      "a": { "part": "mot", "pin": "HB" },
+      "b": { "part": "nucleo", "pin": "D7" },
+      "color": "#6b7280",
+      "points": [{ "x": 71, "y": 20 }, { "x": 78, "y": 20 }, { "x": 78, "y": -6 }, { "x": 26, "y": -6 }]
     },
     {
       "id": "w16",
-      "a": {
-        "part": "nucleo",
-        "pin": "5V"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "mot", "pin": "HC" },
+      "b": { "part": "nucleo", "pin": "D8" },
+      "color": "#4b5563",
+      "points": [{ "x": 72, "y": 21 }, { "x": 79, "y": 21 }, { "x": 79, "y": -7 }, { "x": 25, "y": -7 }]
     },
     {
       "id": "w17",
-      "a": {
-        "part": "mot",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P2"
-      },
-      "color": "#212121"
+      "a": { "part": "mot", "pin": "VCC" },
+      "b": { "part": "nucleo", "pin": "5V" },
+      "color": "#e53935",
+      "points": [{ "x": 73, "y": 37 }, { "x": 23, "y": 37 }]
     }
   ],
-  "firmware": {
-    "name": "hal-bldc-hall",
-    "example": "hal-bldc-hall.elf"
-  }
+  "firmware": { "name": "hal-bldc-hall", "example": "hal-bldc-hall.elf" }
 }

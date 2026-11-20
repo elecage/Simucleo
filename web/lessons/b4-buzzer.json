@@ -1,0 +1,59 @@
+{
+  "id": "buzzer-melody",
+  "order": 204,
+  "track": "B. 타이머·PWM",
+  "title": "수동 부저로 음계·멜로디",
+  "level": "초급",
+  "minutes": 30,
+  "goal": "수동 부저를 D8(PA9, TIM1_CH2)에 연결해 PWM 주파수로 도레미를 연주합니다.",
+  "objectives": [
+    "음높이 = 주파수, 음 길이 = 지연 시간임을 안다",
+    "ARR을 바꿔 PWM 주파수를 바꾸는 방법(ARR = 1 MHz / f − 1)을 계산한다",
+    "능동 부저와 수동 부저의 차이를 설명한다"
+  ],
+  "prereq": "**PWM으로 LED 밝기·숨쉬기**.",
+  "start": "empty",
+  "firmware": { "example": "hal-buzzer-melody.elf" },
+  "grade": { "ms": 3000 },
+  "steps": [
+    {
+      "title": "부저 연결",
+      "text": "**수동 부저**를 놓고 **+** 를 **D8** (PA9)에, **−** 를 **GND**에 연결하세요.",
+      "theory": [
+        "**능동 부저**는 안에 발진기가 있어 전원만 넣으면 정해진 음을 냅니다. **수동 부저**는 스피커처럼 우리가 넣어 준 주파수로 진동합니다 —",
+        "그래서 PWM으로 음높이를 바꿀 수 있습니다."
+      ],
+      "checks": [
+        { "type": "part", "kind": "buzzer-passive" },
+        { "type": "connected", "kind": "buzzer-passive", "pin": "+", "to": "PA9", "label": "부저 + → D8(PA9)" },
+        { "type": "connected", "kind": "buzzer-passive", "pin": "-", "to": "GND", "label": "부저 − → GND" }
+      ]
+    },
+    {
+      "title": "음계 듣고 채점",
+      "text": "**▶ 실행**하면 C4(도) D4 E4 … C5와 짧은 곡이 나옵니다(브라우저 소리를 켜세요). 부저 위에 지금 주파수가 표시되고 콘솔에 음 이름이 찍힙니다.",
+      "theory": [
+        "```c",
+        "uint32_t period = 1000000u / hz;          // 1 MHz 타이머 기준",
+        "__HAL_TIM_SET_AUTORELOAD(&htim1, period - 1);",
+        "__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, period / 2); // 듀티 50 %",
+        "```",
+        "A4 = 440 Hz → ARR = 2272 − 1. 한 옥타브 올라가면 주파수가 두 배입니다."
+      ],
+      "hint": "소리가 나지 않으면 부저 방향(+가 D8)과 브라우저의 소리 설정을 보세요.",
+      "checks": [
+        { "type": "running" },
+        { "type": "console", "pattern": "C4 D4 E4 F4 G4", "label": "콘솔에 음계 C4 D4 E4 F4 G4" },
+        { "type": "duty", "pin": "PA9", "min": 0.4, "max": 0.6, "label": "D8 듀티 50 % 근처(사각파)" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "능동 부저를 써서 음높이가 바뀌지 않음 — 부품 목록에서 **수동 부저**를 고르세요.",
+    "TIM1은 고급 타이머라 MOE(주 출력 허용)가 필요 — `HAL_TIM_PWM_Start`가 켜 주지만 레지스터로 직접 쓸 때는 BDTR.MOE를 켜야 합니다."
+  ],
+  "challenges": [
+    "음표 표(`melody[]`)를 바꿔 '학교종'을 연주해 보세요.",
+    "쉼표(\"-\")에서 `HAL_TIM_PWM_Stop`을 부르는 이유는? 듀티 0 %로 두는 것과 무엇이 다른가요?"
+  ]
+}

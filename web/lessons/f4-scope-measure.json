@@ -1,0 +1,88 @@
+{
+  "id": "scope-measure",
+  "order": 604,
+  "track": "F. 고급 (DMA·RTOS·저전력·도구)",
+  "title": "오실로스코프로 PWM 측정·UART 해독",
+  "level": "중급",
+  "minutes": 45,
+  "goal": "이름 모를 신호 네 개의 주파수·듀티를 스코프로 재고, D8의 UART 신호를 디코더로 해독해, 정답 핀 두 곳에 LED를 연결합니다.",
+  "objectives": [
+    "스코프의 프로브, 시간 축, 트리거, 커서·측정값을 쓴다",
+    "주파수 f = 1/T와 듀티 = High 시간 / 주기를 측정한다",
+    "UART 디코더에 보율을 맞춰 바이트를 글자로 읽는다"
+  ],
+  "prereq": "**PWM으로 LED 밝기·숨쉬기**, **UART printf와 명령 파서**.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "r1", "kind": "resistor", "x": 50, "y": 16, "props": { "ohms": "220" } },
+        { "id": "led1", "kind": "led-5mm", "x": 50, "y": 10, "props": { "color": "green" } },
+        { "id": "r2", "kind": "resistor", "x": 58, "y": 16, "props": { "ohms": "220" } },
+        { "id": "led2", "kind": "led-5mm", "x": 58, "y": 10, "props": { "color": "blue" } }
+      ],
+      "wires": []
+    }
+  },
+  "firmware": { "example": "lesson-scope-mystery.elf" },
+  "grade": { "ms": 3000 },
+  "steps": [
+    {
+      "title": "신호 측정",
+      "text": [
+        "**▶ 실행**하고 **오실로스코프** 탭에서 D3, D5, D6, D9(PB3, PB4, PB10, PC7)를 하나씩 프로브로 찍으세요.",
+        "측정 칸의 주파수와 듀티를 표로 적으세요.",
+        "",
+        "**문제 1**: 주파수가 **2 kHz**이고 듀티가 **25 %** 인 신호는 어느 핀일까요?"
+      ],
+      "theory": [
+        "**스코프 사용법**",
+        "- 시간 축(ms/div)을 신호 주기의 몇 배 정도로 맞추면 파형이 몇 개 보입니다. 1 kHz면 0.5 ms/div 정도.",
+        "- **트리거**(상승 에지)를 걸면 파형이 화면에 멈춰 보입니다.",
+        "- 커서 두 개를 상승 에지에 놓으면 ΔT = 주기, 1/ΔT = 주파수입니다."
+      ],
+      "checks": []
+    },
+    {
+      "title": "UART 해독",
+      "text": [
+        "D8 (PA9)에는 250 ms마다 무언가 보내는 **UART** 신호가 있습니다. 스코프에서 PA9를 찍고 **디코더**를 UART로, 보율을 맞춰 보세요.",
+        "(힌트: 비트 하나의 폭을 재면 보율 = 1 / 비트 폭입니다.)",
+        "",
+        "**문제 2**: 해독한 메시지가 LED2를 어디에 연결하라고 하나요?"
+      ],
+      "theory": [
+        "UART 한 글자: 쉬는 상태 High → **시작 비트 Low** → 데이터 8비트(LSB 먼저) → **정지 비트 High**.",
+        "가장 짧은 Low 펄스의 폭이 비트 하나입니다. 104 µs → 9600 baud, 8.7 µs → 115200 baud."
+      ],
+      "checks": []
+    },
+    {
+      "title": "답 연결하고 채점",
+      "text": [
+        "- LED1(초록): **문제 1의 핀** → 저항 → LED → GND",
+        "- LED2(파랑): **문제 2의 핀** → 저항 → LED → GND",
+        "",
+        "정답이면 LED1은 희미하게(25 %), LED2는 1초마다 깜빡입니다. 채점은 연결과 신호를 함께 확인합니다."
+      ],
+      "checks": [
+        { "type": "part", "kind": "led-5mm", "count": 2, "label": "LED 2개" },
+        { "type": "series", "from": "PB4", "to": "GND", "through": ["resistor", "led-5mm"], "label": "LED1: 2 kHz·25 % 신호의 핀", "hint": "LED1이 아직 정답 신호에 연결되지 않았습니다. 스코프로 주파수와 듀티를 다시 재 보세요." },
+        { "type": "series", "from": "PA6", "to": "GND", "through": ["resistor", "led-5mm"], "label": "LED2: 비밀 메시지가 말한 핀", "hint": "LED2가 메시지가 말한 핀에 있지 않습니다. 디코더의 보율을 맞춰 다시 읽어 보세요." },
+        { "type": "running" },
+        { "type": "duty", "pin": "PB4", "min": 0.2, "max": 0.3, "mode": "always", "label": "LED1 쪽 신호의 듀티 20–30 % 유지" },
+        { "type": "period", "pin": "PA6", "ms": 1000, "label": "LED2 쪽 핀이 1초 주기로 깜빡임" },
+        { "type": "brightness", "kind": "led-5mm", "above": 0.5, "below": 0.1, "label": "LED2가 켜졌다 꺼짐" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "시간 축이 너무 길어 파형이 뭉개짐 — 측정이 흔들리면 시간 축을 줄이세요.",
+    "UART 디코더의 보율을 115200으로 둠 — 이 신호는 그보다 느립니다. 비트 폭을 먼저 재세요.",
+    "듀티 25 %와 75 %를 혼동 — High인 시간이 주기의 몇 %인지 보세요(극성)."
+  ],
+  "challenges": [
+    "나머지 세 신호의 주파수와 듀티로 PSC/ARR/CCR 값을 거꾸로 추정해 보세요(타이머 클럭 84 MHz).",
+    "스코프 캡처를 CSV로 내보내 스프레드시트로 듀티를 계산해 보세요."
+  ]
+}

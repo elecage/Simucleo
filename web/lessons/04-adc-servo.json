@@ -1,9 +1,16 @@
 {
   "id": "adc-servo",
-  "order": 4,
+  "order": 302,
+  "track": "C. 아날로그 (ADC)",
   "title": "가변저항(ADC)으로 서보 돌리기",
   "level": "중급",
+  "minutes": 40,
   "goal": "가변저항을 A0(PA0)에 연결해 ADC로 읽고, 그 값으로 D9(PC7)의 서보 각도를 바꿉니다.",
+  "objectives": [
+    "ADC 입력을 서보의 펄스 폭으로 사상(map)한다: 500 + pot × 2000 / 4095 µs",
+    "센서(입력) → 계산 → 액추에이터(출력)의 제어 루프를 만든다"
+  ],
+  "prereq": "**가변저항 ADC → 시리얼 출력**, **서보 각도**.",
   "start": {
     "project": {
       "parts": [
@@ -64,11 +71,21 @@
         "",
         "**채점**은 손잡이를 자동으로 10% → 90%로 돌리고, 콘솔의 pot 값과 서보 각도가 충분히 바뀌는지 봅니다."
       ],
+      "theory": [
+        "**사상(mapping)**: 입력 범위 0–4095를 출력 범위 500–2500 µs로 옮기는 일차식 y = y0 + (x − x0) × (y1 − y0) / (x1 − x0).",
+        "정수 연산에서는 곱셈을 먼저 하고 나눗셈을 나중에 해야 정밀도가 남습니다."
+      ],
       "checks": [
         { "type": "running" },
         { "type": "consoleValues", "pattern": "pot\\s+(\\d+)", "minSpread": 2000, "label": "콘솔의 pot 값이 2000 이상 변함" },
         { "type": "motion", "kind": "servo", "field": "angle", "minSpread": 90 }
       ]
     }
+  ],
+  "mistakes": [
+    "서보 신호를 D9 대신 D5에 연결 — D5(TIM3_CH1)에는 모터 PWM이 나옵니다."
+  ],
+  "challenges": [
+    "손잡이 0–100 %가 서보 45–135°만 움직이도록 사상식을 바꿔 보세요."
   ]
 }

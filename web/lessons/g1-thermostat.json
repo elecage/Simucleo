@@ -1,0 +1,110 @@
+{
+  "id": "thermostat",
+  "order": 701,
+  "track": "G. 프로젝트 (종합)",
+  "title": "프로젝트: 스마트 온도조절기",
+  "level": "고급",
+  "minutes": 60,
+  "goal": "AHT20 온도센서, 릴레이로 켜는 히터(램프), OLED 표시를 합쳐 히스테리시스가 있는 온도조절기를 완성합니다.",
+  "objectives": [
+    "센서 → 판단(히스테리시스) → 액추에이터 → 표시로 이어지는 시스템을 구성한다",
+    "히스테리시스로 릴레이 떨림(chattering)을 막는다",
+    "센서 고장 시 안전한 쪽(히터 끔)으로 동작하는 페일세이프를 안다"
+  ],
+  "prereq": "**I2C OLED에 글자 표시**, **I2C RTC 시계**, **릴레이: 고장 난 회로 고치기**.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "oled", "kind": "oled-ssd1306", "x": 46, "y": 4, "props": { "address": "0x3C" } },
+        { "id": "aht", "kind": "aht20", "x": 46, "y": 20, "props": { "temp": 23.5, "humidity": 45 } },
+        { "id": "k1", "kind": "relay", "x": 66, "y": 18, "props": { "trigger": "low" } },
+        { "id": "rh", "kind": "resistor", "x": 82, "y": 26, "props": { "ohms": "330" } },
+        { "id": "heat", "kind": "led-5mm", "x": 86, "y": 20, "props": { "color": "red" } }
+      ],
+      "wires": [
+        { "id": "w1", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "oled", "pin": "VCC" }, "color": "#e53935" },
+        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_D" }, "b": { "part": "oled", "pin": "GND" }, "color": "#212121" },
+        { "id": "w3", "a": { "part": "nucleo", "pin": "D15" }, "b": { "part": "oled", "pin": "SCL" } },
+        { "id": "w4", "a": { "part": "nucleo", "pin": "D14" }, "b": { "part": "oled", "pin": "SDA" } },
+        { "id": "w5", "a": { "part": "oled", "pin": "VCC" }, "b": { "part": "aht", "pin": "VCC" }, "color": "#e53935" },
+        { "id": "w6", "a": { "part": "oled", "pin": "GND" }, "b": { "part": "aht", "pin": "GND" }, "color": "#212121" },
+        { "id": "w7", "a": { "part": "oled", "pin": "SCL" }, "b": { "part": "aht", "pin": "SCL" } },
+        { "id": "w8", "a": { "part": "oled", "pin": "SDA" }, "b": { "part": "aht", "pin": "SDA" } },
+        { "id": "w13", "a": { "part": "k1", "pin": "NO" }, "b": { "part": "rh", "pin": "1" } },
+        { "id": "w14", "a": { "part": "rh", "pin": "2" }, "b": { "part": "heat", "pin": "A" } },
+        { "id": "w15", "a": { "part": "heat", "pin": "K" }, "b": { "part": "nucleo", "pin": "GND_P2" }, "color": "#212121" }
+      ]
+    }
+  },
+  "firmware": { "example": "lesson-thermostat.elf" },
+  "grade": {
+    "ms": 4600,
+    "stimuli": [
+      { "at": 300, "set": { "kind": "aht20", "prop": "temp", "value": 15 } },
+      { "at": 2300, "set": { "kind": "aht20", "prop": "temp", "value": 30 } },
+      { "at": 3500, "press": "B1", "ms": 200 }
+    ]
+  },
+  "steps": [
+    {
+      "title": "설계 읽기",
+      "text": [
+        "**요구 사항**",
+        "1. 1초마다 온도를 재서 OLED와 콘솔에 표시",
+        "2. 온도 < 설정 − 1 °C → 히터 켬, 온도 > 설정 + 1 °C → 히터 끔, 그 사이는 그대로",
+        "3. B1로 설정 온도 20 → 22 → 24 °C",
+        "4. 센서가 응답하지 않으면 히터 끔",
+        "",
+        "OLED와 AHT20은 I2C 버스(D15/D14)에 연결해 두었습니다."
+      ],
+      "theory": [
+        "**히스테리시스**: 문턱이 하나(22 °C)뿐이면 온도가 22.0 근처에서 오르내릴 때 릴레이가 초마다 붙었다 떨어집니다.",
+        "켜는 문턱(21 °C)과 끄는 문턱(23 °C)을 다르게 두면, 그 사이에서는 이전 상태를 유지해 떨림이 없어집니다."
+      ],
+      "checks": [
+        { "type": "part", "kind": "aht20" },
+        { "type": "part", "kind": "oled-ssd1306" }
+      ]
+    },
+    {
+      "title": "히터 릴레이 연결",
+      "text": [
+        "- 릴레이 **VCC** → **5V**, **GND** → GND",
+        "- **IN** → **D7** (PA8)",
+        "- **COM** → **5V** (램프 전원). NO → 저항 → 램프 LED → GND는 연결되어 있습니다."
+      ],
+      "checks": [
+        { "type": "connected", "kind": "relay", "pin": "VCC", "to": "5V" },
+        { "type": "connected", "kind": "relay", "pin": "GND", "to": "GND" },
+        { "type": "connected", "kind": "relay", "pin": "IN", "to": "PA8", "label": "IN → D7(PA8)" },
+        { "type": "connected", "kind": "relay", "pin": "COM", "to": "5V", "label": "COM → 5V" }
+      ]
+    },
+    {
+      "title": "온도 바꿔 보고 채점",
+      "text": [
+        "**▶ 실행**하고 AHT20의 온도 슬라이더를 15 °C, 30 °C로 바꿔 보세요. 콘솔에 `T 15.0 C  set 22 C  heater ON`이 나오고 램프가 켜집니다.",
+        "",
+        "채점은 온도를 15 °C → 30 °C로 바꾸고 B1을 한 번 누릅니다."
+      ],
+      "checks": [
+        { "type": "running" },
+        { "type": "console", "pattern": "heater ON", "label": "추울 때 히터 ON" },
+        { "type": "console", "pattern": "heater OFF", "label": "더울 때 히터 OFF" },
+        { "type": "console", "pattern": "set point 24 C", "label": "B1 → 설정 24 °C" },
+        { "type": "brightness", "kind": "led-5mm", "above": 0.5, "below": 0.1, "label": "램프가 켜졌다 꺼짐" },
+        { "type": "display", "kind": "oled-ssd1306", "minPixels": 100, "label": "OLED에 온도 표시" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "문턱 하나로 켜고 끔 — 설정 온도 근처에서 릴레이가 떨립니다.",
+    "센서 오류일 때 마지막 상태 유지 — 히터가 계속 켜질 수 있어 위험합니다. 꺼야 합니다.",
+    "릴레이 IN을 액티브 High로 가정 — 이 모듈은 0이 켜짐입니다."
+  ],
+  "challenges": [
+    "DS3231 RTC를 더해 밤 11시–아침 6시에는 설정 온도를 2 °C 낮추는 야간 모드를 만들어 보세요.",
+    "히터가 켜진 누적 시간(분)을 OLED에 표시해 보세요."
+  ]
+}

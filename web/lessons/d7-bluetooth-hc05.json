@@ -1,0 +1,73 @@
+{
+  "id": "bluetooth-hc05",
+  "order": 407,
+  "track": "D. 통신 (UART·I2C·SPI·1-Wire)",
+  "title": "HC-05 블루투스로 원격 제어",
+  "level": "중급",
+  "minutes": 40,
+  "goal": "HC-05 모듈을 USART1(D8 TX, D2 RX)에 교차 연결하고, 휴대폰 화면(블루투스 탭)에서 보낸 명령으로 LD2를 제어합니다.",
+  "objectives": [
+    "TX ↔ RX 교차 연결과 두 번째 UART(USART1, 9600 baud)를 쓴다",
+    "블루투스 SPP가 무선 UART라는 것을 안다",
+    "STATE 핀으로 연결 상태를 감지한다"
+  ],
+  "prereq": "**UART printf와 명령 파서**.",
+  "start": "empty",
+  "firmware": { "example": "hal-bluetooth-led.elf" },
+  "grade": {
+    "ms": 3600,
+    "stimuli": [
+      { "at": 300, "connect": "hc05" },
+      { "at": 800, "send": "on", "to": "hc05" },
+      { "at": 1300, "send": "blink", "to": "hc05" }
+    ]
+  },
+  "steps": [
+    {
+      "title": "HC-05 연결 (교차!)",
+      "text": [
+        "**HC-05 블루투스 모듈**을 놓고 연결하세요.",
+        "- VCC → **5V**, GND → GND",
+        "- 모듈 **RXD** ← 보드 **D8** (PA9, USART1_TX)",
+        "- 모듈 **TXD** → 보드 **D2** (PA10, USART1_RX)",
+        "- **STATE** → **D7** (PA8)"
+      ],
+      "theory": [
+        "UART는 한쪽의 **TX(보냄)** 가 다른 쪽의 **RX(받음)** 로 가야 합니다 — **교차 연결**. TX끼리 이으면 둘 다 말만 하고 아무도 듣지 않습니다.",
+        "HC-05는 휴대폰과의 블루투스 SPP 연결을 9600 baud UART로 바꿔 주는 모듈입니다. MCU 입장에서는 그냥 UART입니다."
+      ],
+      "checks": [
+        { "type": "part", "kind": "hc05" },
+        { "type": "connected", "kind": "hc05", "pin": "VCC", "to": "5V" },
+        { "type": "connected", "kind": "hc05", "pin": "GND", "to": "GND" },
+        { "type": "connected", "kind": "hc05", "pin": "RXD", "to": "PA9", "label": "모듈 RXD ← D8(PA9, TX)" },
+        { "type": "connected", "kind": "hc05", "pin": "TXD", "to": "PA10", "label": "모듈 TXD → D2(PA10, RX)" },
+        { "type": "connected", "kind": "hc05", "pin": "STATE", "to": "PA8", "label": "STATE → D7(PA8)" }
+      ]
+    },
+    {
+      "title": "휴대폰에서 명령 보내고 채점",
+      "text": [
+        "**▶ 실행**하고 아래 **블루투스** 탭에서 **연결**을 누른 뒤 `on`, `off`, `blink`, `status`를 보내 보세요.",
+        "가상 콘솔(USART2)에는 `[BT] rx: on`, `[BT] tx: LED ON` 같은 기록이 남습니다.",
+        "",
+        "채점은 휴대폰을 연결하고 `on`, `blink`를 보냅니다."
+      ],
+      "hint": "휴대폰 화면에 글자가 깨져 나오면 보율(9600)을, 아무 응답이 없으면 TX/RX 교차를 확인하세요.",
+      "checks": [
+        { "type": "running" },
+        { "type": "console", "pattern": "\\[BT\\] phone connected", "label": "STATE로 연결 감지" },
+        { "type": "console", "pattern": "\\[BT\\] rx: on", "label": "휴대폰 명령 수신" },
+        { "type": "console", "pattern": "\\[BT\\] tx: LED BLINK", "label": "휴대폰에 응답" },
+        { "type": "period", "pin": "PA5", "ms": 500, "label": "blink: LD2 2 Hz" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "TXD를 D8(TX)에 연결 — TX끼리 만나 통신이 안 됩니다. 블루투스 탭의 연결 상태 표시를 확인하세요.",
+    "5 V 모듈의 TXD를 그대로 받아도 되나? — HC-05의 TXD는 3.3 V 레벨이라 괜찮지만, RXD 입력은 실제로는 분압을 권장합니다."
+  ],
+  "challenges": [
+    "`bright <0-100>` 명령으로 LD2 밝기를 PWM으로 조절하도록 확장해 보세요."
+  ]
+}

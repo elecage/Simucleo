@@ -1,0 +1,87 @@
+{
+  "id": "led-on",
+  "order": 101,
+  "track": "A. 기초 (GPIO·시간)",
+  "title": "LED 켜기: 첫 GPIO 출력",
+  "level": "입문",
+  "minutes": 20,
+  "goal": "D7(PA8)에 저항과 LED를 직렬로 연결하고, 펌웨어가 핀을 High로 만들어 LED를 켭니다.",
+  "objectives": [
+    "LED의 극성(애노드 A = 긴 다리, 캐소드 K)을 구분한다",
+    "전류 제한 저항이 왜 필요한지 옴의 법칙으로 설명한다",
+    "GPIO 출력 핀이 High(3.3 V)일 때 전류가 흐르는 길을 따라간다"
+  ],
+  "prereq": "없음. Simucleo 화면(부품 목록, 캔버스, ▶ 실행)만 알면 됩니다.",
+  "start": "empty",
+  "firmware": { "example": "lesson-led-on.elf" },
+  "grade": { "ms": 1500 },
+  "steps": [
+    {
+      "title": "부품 놓기",
+      "text": [
+        "왼쪽 부품 목록에서 **LED 5mm** 하나와 **저항** 하나를 캔버스에 놓으세요.",
+        "저항값은 속성 창에서 볼 수 있습니다(기본 220 Ω)."
+      ],
+      "theory": [
+        "**LED**는 한쪽으로만 전류가 흐르는 다이오드입니다. 긴 다리가 **애노드(A, +)**, 짧은 다리가 **캐소드(K, −)** 입니다.",
+        "빨간 LED는 약 2 V가 걸리면 켜지기 시작하고, 그 이상은 전류가 급격히 늘어 타 버립니다."
+      ],
+      "checks": [
+        { "type": "part", "kind": "led-5mm" },
+        { "type": "part", "kind": "resistor" }
+      ]
+    },
+    {
+      "title": "D7 → 저항 → LED → GND",
+      "text": [
+        "- 보드의 **D7** 핀에서 저항의 한쪽 끝으로,",
+        "- 저항의 다른 끝에서 LED의 **A(긴 다리)** 로,",
+        "- LED의 **K** 에서 보드의 **GND** 로 전선을 연결하세요.",
+        "",
+        "브레드보드에 꽂아도 되고, 부품 핀끼리 바로 이어도 됩니다."
+      ],
+      "theory": [
+        "**옴의 법칙** V = I × R. 3.3 V 핀에서 LED가 2.0 V를 가져가면 저항에는 1.3 V가 걸립니다.",
+        "220 Ω이면 I = 1.3 / 220 ≈ **6 mA** — LED가 충분히 밝고 핀(최대 약 25 mA)도 안전합니다.",
+        "저항이 없으면 전류를 막을 것이 없어 LED와 핀이 모두 상할 수 있습니다."
+      ],
+      "hint": "저항은 방향이 없지만 LED는 방향이 있습니다. 캔버스에서 LED 핀에 마우스를 올리면 A/K가 보입니다.",
+      "checks": [
+        { "type": "series", "from": "PA8", "to": "GND", "through": ["resistor", "led-5mm"], "label": "D7(PA8) → 저항 → LED → GND" }
+      ]
+    },
+    {
+      "title": "실행하고 채점하기",
+      "text": [
+        "**▶ 실행**하면 펌웨어가 `HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_SET)` 으로 PA8을 High로 만듭니다.",
+        "LED와 보드의 초록 LED(LD2)가 켜지고, 가상 콘솔에 `D7 (PA8) = 1` 이 나옵니다.",
+        "",
+        "```c",
+        "HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);   // 3.3 V",
+        "```",
+        "",
+        "**채점**을 누르세요."
+      ],
+      "theory": [
+        "**GPIO 출력**: 출력 데이터 레지스터(ODR)의 비트가 1이면 핀이 VDD(3.3 V), 0이면 GND(0 V)에 연결됩니다.",
+        "`HAL_GPIO_WritePin`은 이 비트를 바꾸는 함수입니다. 한 번 바꾼 값은 리셋할 때까지 그대로 유지됩니다."
+      ],
+      "checks": [
+        { "type": "running" },
+        { "type": "console", "pattern": "D7 \\(PA8\\) = 1", "label": "콘솔에 'D7 (PA8) = 1'" },
+        { "type": "brightness", "kind": "led-5mm", "above": 0.5, "label": "LED가 켜짐" },
+        { "type": "duty", "pin": "PA8", "min": 0.95, "max": 1, "label": "PA8이 High(듀티 95 % 이상)" },
+        { "type": "noWarnings" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "LED를 거꾸로 꽂음 — 배선 검사가 \"LED 방향이 반대입니다\"라고 알려 줍니다.",
+    "저항 없이 LED만 연결 — 실행하면 전기 규칙 경고(과전류)가 뜹니다.",
+    "D7 대신 D8이나 A7처럼 비슷한 이름의 핀에 연결 — 보드 그림의 글씨를 확대해서 확인하세요."
+  ],
+  "challenges": [
+    "펌웨어 없이도 LED를 켤 수 있을까요? **3V3** 핀 → 저항 → LED → GND로 연결해 보고 차이를 설명하세요.",
+    "저항을 1 kΩ, 10 kΩ으로 바꾸면 밝기가 어떻게 되나요? 각각의 전류를 계산해 보세요."
+  ]
+}

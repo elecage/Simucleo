@@ -1,0 +1,66 @@
+{
+  "id": "dht-logger",
+  "order": 503,
+  "track": "E. 센서·액추에이터 응용",
+  "title": "DHT22 온습도 로거",
+  "level": "중급",
+  "minutes": 35,
+  "goal": "DHT22를 D3(PB3)에 연결해 단선 프로토콜의 펄스 폭을 타이머 입력 캡처로 읽고, 2초마다 온도·습도를 기록합니다.",
+  "objectives": [
+    "DHT 프로토콜(시작 신호, 40비트, 펄스 폭으로 0/1 구분)을 안다",
+    "입력 캡처로 양쪽 에지의 시각을 잰다",
+    "체크섬으로 데이터를 검증한다"
+  ],
+  "prereq": "**초음파 거리 경보**(입력 캡처).",
+  "start": "empty",
+  "firmware": { "example": "hal-dht-capture.elf" },
+  "grade": {
+    "ms": 3800,
+    "stimuli": [
+      { "at": 200, "set": { "kind": "dht", "prop": "humidity", "value": 30 } },
+      { "at": 2000, "set": { "kind": "dht", "prop": "humidity", "value": 80 } },
+      { "at": 2000, "set": { "kind": "dht", "prop": "temp", "value": 30 } }
+    ]
+  },
+  "steps": [
+    {
+      "title": "센서 연결",
+      "text": "**DHT22** 모듈을 놓고 VCC → **3V3**, DATA → **D3** (PB3), GND → **GND**로 연결하세요.",
+      "theory": [
+        "**DHT22 프로토콜**: MCU가 DATA를 20 ms Low로 당기면(시작), 센서가 응답한 뒤 40비트(습도 16 + 온도 16 + 체크섬 8)를 보냅니다.",
+        "비트마다 50 µs Low 뒤 High가 오는데, High가 **약 27 µs면 0, 약 70 µs면 1**입니다."
+      ],
+      "checks": [
+        { "type": "part", "kind": "dht" },
+        { "type": "connected", "kind": "dht", "pin": "VCC", "to": "3V3" },
+        { "type": "connected", "kind": "dht", "pin": "DATA", "to": "PB3", "label": "DATA → D3(PB3)" },
+        { "type": "connected", "kind": "dht", "pin": "GND", "to": "GND" }
+      ]
+    },
+    {
+      "title": "기록하고 채점",
+      "text": [
+        "**▶ 실행**하면 2초마다 `humidity 48.3 %  temperature 22.5 C`가 나옵니다. 센서의 슬라이더로 값을 바꿔 보세요.",
+        "**B1**을 누른 채 기다리면 40비트의 High 펄스 폭(µs)이 그대로 출력됩니다 — 27과 70 근처 값을 찾아보세요.",
+        "",
+        "채점은 습도를 30 % → 80 %로 바꿉니다."
+      ],
+      "theory": "**체크섬**: 앞 4바이트의 합의 하위 8비트가 다섯째 바이트와 같아야 합니다. 다르면 `checksum error` — 잡음이나 타이밍 오류입니다.",
+      "hint": "'no answer from the sensor'면 DATA 핀(D3)과 전원을 보세요.",
+      "checks": [
+        { "type": "running" },
+        { "type": "console", "pattern": "humidity \\d+\\.\\d %  temperature", "count": 2, "label": "2초마다 기록(두 번 이상)" },
+        { "type": "consoleValues", "pattern": "humidity (\\d+)\\.\\d", "minSpread": 40, "label": "습도 값이 40 %p 이상 변함" },
+        { "type": "console", "pattern": "temperature 30\\.0 C", "label": "온도 30.0 °C를 읽음" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "2초보다 자주 읽음 — DHT22는 최소 2초 간격이 필요합니다.",
+    "DHT11과 DHT22의 데이터 형식이 같다고 가정 — DHT11은 정수 바이트입니다."
+  ],
+  "challenges": [
+    "10번 측정의 최고·최저·평균을 함께 출력하는 로거로 바꿔 보세요.",
+    "이슬점을 계산해 출력해 보세요(근사식)."
+  ]
+}

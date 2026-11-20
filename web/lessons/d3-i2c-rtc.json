@@ -1,0 +1,93 @@
+{
+  "id": "i2c-rtc",
+  "order": 403,
+  "track": "D. 통신 (UART·I2C·SPI·1-Wire)",
+  "title": "I2C RTC 시계(DS3231)",
+  "level": "중급",
+  "minutes": 40,
+  "goal": "DS3231 실시간 시계를 I2C 버스에 더해 시간을 읽고, B1로 RTC 레지스터에 써서 초를 00으로 맞춥니다.",
+  "objectives": [
+    "RTC가 MCU와 따로 시간을 세는 이유(배터리 백업)를 안다",
+    "BCD(이진화 십진수) 레지스터를 읽고 쓴다",
+    "`HAL_I2C_Mem_Read`/`Mem_Write`로 레지스터 주소를 지정한다"
+  ],
+  "prereq": "**I2C OLED에 글자 표시**.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "oled", "kind": "oled-ssd1306", "x": 46, "y": 4, "props": { "address": "0x3C" } },
+        { "id": "rtc", "kind": "rtc-ds3231", "x": 46, "y": 20, "props": { "temp": 25 } },
+        { "id": "aht", "kind": "aht20", "x": 58, "y": 21, "props": { "temp": 23.5, "humidity": 45 } }
+      ],
+      "wires": [
+        { "id": "w1", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "oled", "pin": "VCC" }, "color": "#e53935" },
+        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_D" }, "b": { "part": "oled", "pin": "GND" }, "color": "#212121" },
+        { "id": "w3", "a": { "part": "nucleo", "pin": "D15" }, "b": { "part": "oled", "pin": "SCL" }, "color": "#fbc02d" },
+        { "id": "w4", "a": { "part": "nucleo", "pin": "D14" }, "b": { "part": "oled", "pin": "SDA" }, "color": "#1e88e5" },
+        { "id": "wa1", "a": { "part": "oled", "pin": "VCC" }, "b": { "part": "aht", "pin": "VCC" } },
+        { "id": "wa2", "a": { "part": "oled", "pin": "GND" }, "b": { "part": "aht", "pin": "GND" } },
+        { "id": "wa3", "a": { "part": "oled", "pin": "SCL" }, "b": { "part": "aht", "pin": "SCL" } },
+        { "id": "wa4", "a": { "part": "oled", "pin": "SDA" }, "b": { "part": "aht", "pin": "SDA" } }
+      ]
+    }
+  },
+  "firmware": { "example": "hal-i2c-oled.elf" },
+  "grade": {
+    "ms": 3500,
+    "stimuli": [
+      { "at": 1600, "press": "B1", "ms": 200 }
+    ]
+  },
+  "steps": [
+    {
+      "title": "RTC를 버스에 연결",
+      "text": [
+        "OLED와 AHT20은 이미 버스에 있습니다. **DS3231** 모듈의 네 핀을 연결하세요.",
+        "- VCC → 3V3, GND → GND",
+        "- SCL → **D15** (PB8), SDA → **D14** (PB9)",
+        "",
+        "다른 모듈의 같은 핀에 이어도 됩니다(버스는 한 줄입니다)."
+      ],
+      "theory": [
+        "**RTC**(실시간 시계)는 32.768 kHz 수정 발진기로 초를 세는 칩입니다. MCU가 꺼져도 코인 전지로 계속 셉니다.",
+        "DS3231은 주소 **0x68**에 있고, 레지스터 0x00 = 초, 0x01 = 분, 0x02 = 시 …입니다."
+      ],
+      "checks": [
+        { "type": "connected", "kind": "rtc-ds3231", "pin": "VCC", "to": "3V3" },
+        { "type": "connected", "kind": "rtc-ds3231", "pin": "GND", "to": "GND" },
+        { "type": "connected", "kind": "rtc-ds3231", "pin": "SCL", "to": "PB8", "label": "RTC SCL → D15(PB8)" },
+        { "type": "connected", "kind": "rtc-ds3231", "pin": "SDA", "to": "PB9", "label": "RTC SDA → D14(PB9)" }
+      ]
+    },
+    {
+      "title": "시간 읽고 초 맞추기",
+      "text": [
+        "**▶ 실행**하면 콘솔 첫 줄 `scan:`에 **0x68**이 보이고, 1초마다 `2026-…-… 12:34:56 | 23.5 C …`가 나옵니다.",
+        "**B1**(파란 버튼)을 누르면 펌웨어가 초 레지스터에 0을 써서 `seconds set to 00`이 나옵니다.",
+        "",
+        "채점은 1.6초에 B1을 누릅니다."
+      ],
+      "theory": [
+        "**BCD**: 십진수 한 자리를 4비트에 담습니다. 45초 = `0x45` = 0100 0101.",
+        "```c",
+        "int bcd(uint8_t b) { return (b >> 4) * 10 + (b & 0x0F); }",
+        "HAL_I2C_Mem_Read(&hi2c1, 0x68 << 1, 0x00, I2C_MEMADD_SIZE_8BIT, r, 7, 100);",
+        "```"
+      ],
+      "checks": [
+        { "type": "running" },
+        { "type": "console", "pattern": "scan:.*0x68", "label": "버스 검색에 0x68" },
+        { "type": "console", "pattern": "\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d", "count": 2, "label": "날짜·시간을 두 번 이상 출력" },
+        { "type": "console", "pattern": "seconds set to 00", "label": "B1 → 초를 00으로 씀" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "BCD를 그냥 정수로 출력 — 45초가 69초로 보입니다(0x45 = 69).",
+    "주소 0x68을 시프트하지 않고 HAL에 넘김 — HAL은 8비트 주소(0xD0)를 기대합니다."
+  ],
+  "challenges": [
+    "콘솔 명령(예: `set 13:45`)으로 시각을 맞추도록 UART 파서와 합쳐 보세요."
+  ]
+}

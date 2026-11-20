@@ -1,0 +1,75 @@
+{
+  "id": "tm1637",
+  "order": 405,
+  "track": "D. 통신 (UART·I2C·SPI·1-Wire)",
+  "title": "TM1637 4자리 시계 (비트뱅잉)",
+  "level": "중급",
+  "minutes": 35,
+  "goal": "TM1637 표시기를 D2(CLK)·D3(DIO)에 연결해 분:초 시계를 띄우고, I2C와 비슷하지만 다른 프로토콜을 GPIO로 직접 만드는 비트뱅잉을 봅니다.",
+  "objectives": [
+    "비트뱅잉(GPIO로 프로토콜 흉내 내기)과 DWT 마이크로초 지연을 안다",
+    "TM1637의 START/STOP, LSB 먼저, ACK를 I2C와 비교한다",
+    "표시기 응답(ACK)으로 배선 오류를 찾는다"
+  ],
+  "prereq": "**I2C OLED에 글자 표시**, **7세그먼트 다중화**(세그먼트 패턴).",
+  "start": "empty",
+  "firmware": { "example": "hal-tm1637-clock.elf" },
+  "grade": {
+    "ms": 3000,
+    "stimuli": [
+      { "at": 1500, "press": "B1", "ms": 200 }
+    ]
+  },
+  "steps": [
+    {
+      "title": "표시기 연결",
+      "text": [
+        "**TM1637 4자리 7세그먼트**를 놓고 연결하세요.",
+        "- VCC → **3V3**, GND → **GND**",
+        "- CLK → **D2** (PA10)",
+        "- DIO → **D3** (PB3)"
+      ],
+      "theory": [
+        "**TM1637**은 다중화를 칩이 대신 해 주는 표시기 드라이버입니다. 선은 CLK와 DIO 두 개뿐이지만 **I2C가 아닙니다**:",
+        "주소가 없고, 바이트를 **LSB 먼저** 보냅니다. STM32의 I2C 하드웨어를 쓸 수 없어 GPIO를 직접 올렸다 내렸다 하는 **비트뱅잉**으로 만듭니다."
+      ],
+      "checks": [
+        { "type": "part", "kind": "tm1637" },
+        { "type": "connected", "kind": "tm1637", "pin": "VCC", "to": "3V3" },
+        { "type": "connected", "kind": "tm1637", "pin": "GND", "to": "GND" },
+        { "type": "connected", "kind": "tm1637", "pin": "CLK", "to": "PA10", "label": "CLK → D2(PA10)" },
+        { "type": "connected", "kind": "tm1637", "pin": "DIO", "to": "PB3", "label": "DIO → D3(PB3)" }
+      ]
+    },
+    {
+      "title": "시계 보고 채점",
+      "text": [
+        "**▶ 실행**하면 표시기에 `00:01`, `00:02` …가 나오고 가운데 콜론이 1초마다 깜빡입니다. **B1**은 밝기(0–7)를 바꿉니다.",
+        "오실로스코프로 PA10/PB3을 찍어 START(CLK가 High일 때 DIO ↓)와 바이트를 찾아보세요."
+      ],
+      "theory": [
+        "```c",
+        "static void delay_us(uint32_t us) {          // DWT 사이클 카운터: 84 MHz → 84 사이클 = 1 µs",
+        "  uint32_t start = DWT->CYCCNT, ticks = us * (SystemCoreClock / 1000000);",
+        "  while (DWT->CYCCNT - start < ticks) {}",
+        "}",
+        "```",
+        "`HAL_Delay`는 1 ms 단위라 프로토콜 타이밍(5 µs)에는 너무 거칩니다."
+      ],
+      "hint": "콘솔에 'no ACK'가 나오면 CLK/DIO가 바뀌었거나 전원이 빠졌습니다.",
+      "checks": [
+        { "type": "running" },
+        { "type": "display", "kind": "tm1637", "text": "\\d\\d:?\\d\\d", "label": "표시기에 mm:ss" },
+        { "type": "console", "pattern": "^\\d\\d:\\d\\d", "flags": "m", "count": 2, "label": "콘솔에 시각 두 번 이상" },
+        { "type": "console", "pattern": "brightness 0", "label": "B1 → 밝기 바뀜" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "TM1637을 I2C 핀(D14/D15)에 연결하고 HAL_I2C로 통신하려 함 — 주소가 없는 별개 프로토콜입니다.",
+    "CLK와 DIO를 바꿔 연결 — 표시기가 ACK를 보내지 않습니다."
+  ],
+  "challenges": [
+    "표시기에 `HI` 나 `- -` 같은 글자를 띄우려면 세그먼트 바이트가 얼마일까요? (a = bit 0 … g = bit 6)"
+  ]
+}

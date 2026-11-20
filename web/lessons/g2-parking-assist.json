@@ -1,0 +1,98 @@
+{
+  "id": "parking-assist",
+  "order": 702,
+  "track": "G. 프로젝트 (종합)",
+  "title": "프로젝트: 주차 보조 장치",
+  "level": "고급",
+  "minutes": 60,
+  "goal": "초음파 센서(연결됨)에 초록·노랑·빨강 LED와 부저를 더해, 가까워질수록 색이 바뀌고 경고음이 빨라지는 주차 보조 장치를 완성합니다.",
+  "objectives": [
+    "거리 구간(zone)에 따라 여러 출력을 함께 바꾸는 상태 기반 설계를 한다",
+    "PWM 톤과 비차단(non-blocking) 시간 패턴으로 비프음을 만든다",
+    "단계별로 통합하고 시험한다"
+  ],
+  "prereq": "**초음파 거리 경보**, **수동 부저로 음계·멜로디**.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "us", "kind": "hc-sr04", "x": 46, "y": 4, "props": { "distance": 80 } },
+        { "id": "bz1", "kind": "buzzer-passive", "x": 48, "y": 24, "props": {} },
+        { "id": "r1", "kind": "resistor", "x": 58, "y": 20, "props": { "ohms": "220" } },
+        { "id": "led1", "kind": "led-5mm", "x": 58, "y": 14, "props": { "color": "green" } },
+        { "id": "r2", "kind": "resistor", "x": 63, "y": 20, "props": { "ohms": "220" } },
+        { "id": "led2", "kind": "led-5mm", "x": 63, "y": 14, "props": { "color": "yellow" } },
+        { "id": "r3", "kind": "resistor", "x": 68, "y": 20, "props": { "ohms": "220" } },
+        { "id": "led3", "kind": "led-5mm", "x": 68, "y": 14, "props": { "color": "red" } }
+      ],
+      "wires": [
+        { "id": "w1", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "us", "pin": "VCC" }, "color": "#fb8c00" },
+        { "id": "w2", "a": { "part": "us", "pin": "GND" }, "b": { "part": "nucleo", "pin": "GND_D" }, "color": "#212121" },
+        { "id": "w3", "a": { "part": "nucleo", "pin": "D7" }, "b": { "part": "us", "pin": "TRIG" } },
+        { "id": "w4", "a": { "part": "nucleo", "pin": "D3" }, "b": { "part": "us", "pin": "ECHO" } }
+      ]
+    }
+  },
+  "firmware": { "example": "lesson-parking.elf" },
+  "grade": {
+    "ms": 4600,
+    "stimuli": [
+      { "at": 300, "set": { "kind": "hc-sr04", "prop": "distance", "value": 80 } },
+      { "at": 1400, "set": { "kind": "hc-sr04", "prop": "distance", "value": 35 } },
+      { "at": 2500, "set": { "kind": "hc-sr04", "prop": "distance", "value": 15 } },
+      { "at": 3500, "set": { "kind": "hc-sr04", "prop": "distance", "value": 5 } }
+    ]
+  },
+  "steps": [
+    {
+      "title": "LED 세 개",
+      "text": [
+        "- 초록: **D4** (PB5) — 50 cm보다 멀 때",
+        "- 노랑: **D5** (PB4) — 20–50 cm",
+        "- 빨강: **D6** (PB10) — 20 cm보다 가까울 때"
+      ],
+      "checks": [
+        { "type": "series", "from": "PB5", "to": "GND", "through": ["resistor", "led-5mm"], "label": "초록: D4(PB5)" },
+        { "type": "series", "from": "PB4", "to": "GND", "through": ["resistor", "led-5mm"], "label": "노랑: D5(PB4)" },
+        { "type": "series", "from": "PB10", "to": "GND", "through": ["resistor", "led-5mm"], "label": "빨강: D6(PB10)" }
+      ]
+    },
+    {
+      "title": "부저",
+      "text": "수동 부저 **+** → **D8** (PA9, TIM1_CH2), **−** → GND.",
+      "theory": [
+        "비프 패턴을 `HAL_Delay`로 만들면 그동안 거리를 잴 수 없습니다. 펌웨어는 **비차단** 방식으로 매 루프 `HAL_GetTick() % 주기 < 100`이면",
+        "소리를 켜고 아니면 끕니다. 50 cm 안: 600 ms마다, 20 cm 안: 200 ms마다, 10 cm 안: 계속."
+      ],
+      "checks": [
+        { "type": "connected", "kind": "buzzer-passive", "pin": "+", "to": "PA9", "label": "부저 + → D8(PA9)" },
+        { "type": "connected", "kind": "buzzer-passive", "pin": "-", "to": "GND" }
+      ]
+    },
+    {
+      "title": "다가가며 채점",
+      "text": [
+        "**▶ 실행**하고 센서 앞 물체를 점점 가깝게 끌어 보세요. 초록 → 노랑 → 빨강, 그리고 삐–삐–삐삐삐–삐이이.",
+        "",
+        "채점은 거리를 80 → 35 → 15 → 5 cm로 바꿉니다."
+      ],
+      "checks": [
+        { "type": "running" },
+        { "type": "console", "pattern": "zone GREEN" },
+        { "type": "console", "pattern": "zone YELLOW" },
+        { "type": "console", "pattern": "zone RED" },
+        { "type": "console", "pattern": "zone RED STOP", "label": "10 cm 안: STOP" },
+        { "type": "duty", "pin": "PA9", "min": 0.4, "max": 0.6, "label": "STOP에서 부저 듀티 50 %(계속 울림)" },
+        { "type": "brightness", "kind": "led-5mm", "above": 0.5, "below": 0.1, "label": "LED가 구간마다 켜지고 꺼짐" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "LED 색과 핀을 섞어 연결 — 시험 순서대로(먼 곳 → 가까운 곳) 하나씩 확인하세요.",
+    "`HAL_Delay(600)`으로 비프 — 그동안 측정이 멈춰 반응이 늦습니다."
+  ],
+  "challenges": [
+    "거리를 OLED에 막대 그래프로 표시해 보세요.",
+    "후진 기어 스위치(버튼)가 눌렸을 때만 동작하게 해 보세요."
+  ]
+}

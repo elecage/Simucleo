@@ -169,14 +169,18 @@ test("NeoPixel chain: the decoded GRB frame is what the ring and the strip show"
   await page.getByLabel("디코더 추가").selectOption("ws2812");
   await expect(page.locator("[data-probe=PB4]")).toBeVisible();
   // The end of a frame: the falling edge before a low wider than 40 µs.
-  // That is known only when the low ends (the next frame, 20 ms later),
-  // so the window runs 45 ms past it, over two more frames, and the
-  // simulation pauses at its end, 20 ms before the frame after them.
+  // Frames come every 21 ms (HAL_Delay(20) and the 0.6 ms frame), and once
+  // a second 3–4.5 ms later: the firmware prints its frame count over the
+  // UART first, blocking. The window, 10 ms before and 90 ms after, holds
+  // that frame and the next four even with a printf among them (the last
+  // ends by 88.6 ms), and the simulation pauses at its end, before the
+  // fifth (105 ms at the earliest). (With 45 ms after, a printf put the
+  // last pixel of the third frame at its very end.)
   await page.getByLabel("트리거 소스").selectOption("PB4");
   await page.getByLabel("트리거 에지").selectOption("falling");
   await page.getByLabel("펄스 폭 조건").selectOption("gt");
   await page.getByLabel("펄스 폭 (µs)").fill("40");
-  await page.getByLabel("시간/눈금").selectOption({ label: "5 ms/div" });
+  await page.getByLabel("시간/눈금").selectOption({ label: "10 ms/div" });
   await page.getByLabel("트리거 위치").fill("10");
   await page.getByLabel("트리거 모드").selectOption("single");
   // Running (the first such edge is PB4 becoming an output), then arm with
@@ -189,18 +193,18 @@ test("NeoPixel chain: the decoded GRB frame is what the ring and the strip show"
   await expect(runButton(page)).toBeVisible({ timeout: 5000 });
   const rs = await rows(page.getByTestId("decode-table-0"));
   expect(rs.filter((r) => r.error)).toEqual([]);
-  // Three frames of 20 pixels (12 on the ring, 8 on the strip), numbered from each reset.
+  // Five frames of 20 pixels (12 on the ring, 8 on the strip), numbered from each reset.
   const pixels = rs.filter((r) => r.kind === "pixel");
   // (On a mismatch: where each row of the table is, in µs from the trigger.)
   const where = rs.map((r) => `${r.kind === "pixel" ? r.text.match(/#(\d+) #/)?.[1] : r.kind}@${Math.round(r.t / 1000)}`).join(" ");
   expect(pixels.map((r) => r.text.match(/#(\d+) #/)?.[1]), where).toEqual(
-    Array.from({ length: 60 }, (_, i) => String(i % 20)),
+    Array.from({ length: 100 }, (_, i) => String(i % 20)),
   );
-  expect(rs.filter((r) => r.kind === "reset").length).toBe(3);
+  expect(rs.filter((r) => r.kind === "reset").length).toBe(5);
   const frame = (await page.getByTestId("decode-frame-0").getAttribute("data-colors"))!.toLowerCase().split(" ");
   expect(frame.length).toBe(20);
   // The table has the same colours, as G, R, B went out.
-  expect(pixels.slice(40).map((r) => "#" + r.value!.toString(16).padStart(6, "0"))).toEqual(frame);
+  expect(pixels.slice(80).map((r) => "#" + r.value!.toString(16).padStart(6, "0"))).toEqual(frame);
   const colours = (id: string) =>
     page.locator(`[data-id=${id}] [data-led]`).evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.color!.toLowerCase()));
   const ring = await colours("ring");

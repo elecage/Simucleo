@@ -1,5 +1,5 @@
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 
 // Share links and QR codes (M30): a project goes into the link's
 // fragment, opens in another browser after the receiver says so, and
@@ -216,7 +216,9 @@ test("an uploaded ELF travels in the link, stripped of debug info; no QR for it"
   await page.getByRole("button", { name: "🔗 공유" }).click();
   const dlg = shareDialog(page);
   await expect(dlg.getByLabel("디버그 정보 빼기")).toBeChecked();
-  await expect(dlg.getByTestId("share-summary")).toContainText(/hal-blinky\.elf 829 KB → \d+(\.\d)? KB/);
+  // The ELF's own size (it depends on the build's paths in the debug info).
+  const elfKb = `${Math.round(statSync("public/examples/hal-blinky.elf").size / 1024)} KB`;
+  await expect(dlg.getByTestId("share-summary")).toContainText(new RegExp(`hal-blinky\\.elf ${elfKb} → \\d+(\\.\\d)? KB`));
   const stripped = await dlg.getByTestId("share-link").inputValue();
   expect(stripped.length).toBeGreaterThan(2953);
   expect(stripped.length).toBeLessThan(20_000);

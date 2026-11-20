@@ -77,6 +77,17 @@ pub enum FlashFault {
     Protected,
 }
 
+/// What the controller is doing, for a status view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlashActivity {
+    Idle,
+    /// Erasing these sectors (bit n = sector n; 0xFF for a mass erase).
+    Erasing(u8),
+    Programming,
+    /// Writing the option bytes.
+    Options,
+}
+
 /// An operation in progress.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Op {
@@ -157,6 +168,28 @@ impl FlashIf {
 
     pub fn busy(&self) -> bool {
         self.op.is_some()
+    }
+
+    /// The operation in progress, if any.
+    pub fn activity(&self) -> FlashActivity {
+        match self.op {
+            None => FlashActivity::Idle,
+            Some((Op::Erase(s), _)) => FlashActivity::Erasing(s),
+            Some((Op::Program, _)) => FlashActivity::Programming,
+            Some((Op::Options(_), _)) => FlashActivity::Options,
+        }
+    }
+
+    /// Sectors write-protected by the option bytes (bit n = sector n).
+    pub fn write_protected(&self) -> u8 {
+        (0..SECTORS.len())
+            .filter(|&s| self.protected(s))
+            .fold(0, |m, s| m | 1 << s)
+    }
+
+    /// FLASH_CR.LOCK is set.
+    pub fn locked(&self) -> bool {
+        self.cr & LOCK != 0
     }
 
     /// When the operation in progress ends.
@@ -572,6 +605,28 @@ mod tests {
         f2.write(0x10, SER, u32::MAX, 0);
         assert!(f2.write(0x10, SER | STRT, u32::MAX, 0).is_none());
         assert_ne!(f2.read(0x0C) & WRPERR, 0);
+    }
+
+    #[test]
+    fn activity_names_the_sectors_being_erased() {
+        let mut m = flash();
+        let mut f = unlocked();
+        assert_eq!(f.activity(), FlashActivity::Idle);
+        assert!(!f.locked());
+        assert_eq!(f.write_protected(), 0);
+        f.write(0x10, 2 << 8 | 6 << 3 | SER, u32::MAX, 0);
+        f.write(0x10, 2 << 8 | 6 << 3 | SER | STRT, u32::MAX, 0)
+            .unwrap();
+        assert_eq!(f.activity(), FlashActivity::Erasing(1 << 6));
+        f.complete(&mut m);
+        assert_eq!(f.activity(), FlashActivity::Idle);
+        f.write(0x10, 2 << 8 | PG, u32::MAX, 0);
+        f.program(&mut m, 0x0804_0000, AccessSize::Word, 0, 0)
+            .unwrap();
+        assert_eq!(f.activity(), FlashActivity::Programming);
+        f.complete(&mut m);
+        f.option_bytes &= !(1 << 17 | 1 << 19);
+        assert_eq!(f.write_protected(), 0b1010);
     }
 
     #[test]

@@ -72,6 +72,14 @@ impl Iwdg {
         (self.count - gone).max(0.0) as u32
     }
 
+    /// Seconds (LSI time) until it resets the chip, while it runs.
+    pub fn time_left_s(&self, now: Cycles) -> Option<f64> {
+        self.running.then(|| {
+            let div = (4u32 << self.pr.min(6)) as f64;
+            self.counter_exact(now) * div / LSI_HZ
+        })
+    }
+
     /// When it resets the chip (reaches 0).
     pub fn deadline(&self) -> Option<Cycles> {
         self.running
@@ -165,6 +173,9 @@ mod tests {
         // 1000 ticks of 32/32 kHz = 1 s at 16 MHz.
         assert_eq!(end, 1000 + 16_000_000);
         assert_eq!(w.counter(1000 + 8_000_000), 500);
+        let left = w.time_left_s(1000 + 8_000_000).unwrap();
+        assert!((left - 0.5).abs() < 1e-3, "{left}");
+        assert!(Iwdg::default().time_left_s(0).is_none());
         // Refresh half way: another second from there.
         let end = w.write(0, 0xAAAA, 8_000_000).unwrap();
         assert_eq!(end, 8_000_000 + 16_000_000);

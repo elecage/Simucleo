@@ -7244,6 +7244,32 @@ mod tests {
     }
 
     #[test]
+    fn a_chopping_phase_in_its_dead_time_stays_on_the_low_diode() {
+        let mut s = bldc_sim();
+        let mut t = 0.01;
+        commutate_pwm(&mut s, &mut t, 0.1, 0.5, 500e-9, false);
+        let k = s.phase_out["br"]
+            .0
+            .iter()
+            .position(|d| matches!(d, PhaseDrive::Duty(_)))
+            .expect("a chopping phase");
+        // Both of its switches off, as in the dead time after the high
+        // side: the motor current goes on through the low side's diode, so
+        // the output is at ground (not floating at the star point).
+        let mut d = s.drives.clone().unwrap()[..s.mcu.len()].to_vec();
+        let pins = s.mcu_pins();
+        for (i, p) in pins.iter().enumerate() {
+            if *p == (1, 2 * k as u8) || *p == (1, 2 * k as u8 + 1) {
+                d[i] = Drive::Low;
+            }
+        }
+        s.update(at(t) + 2, &d);
+        let out = ["br.OUTA", "br.OUTB", "br.OUTC"][k];
+        assert_eq!(s.legs[k], Drive::Low);
+        assert!(probe(&s, out).abs() < 0.5, "{}", probe(&s, out));
+    }
+
+    #[test]
     fn overlapping_switches_warn_of_shoot_through_and_dead_time_does_not() {
         // No dead time: the low side turns on as the high side turns off —
         // faster than the switch turns off.
@@ -7471,6 +7497,29 @@ mod tests {
         t += 0.2;
         let m = motor(&mut s, t, "mot").motor.unwrap();
         assert!((m.steps - start - 20.0).abs() < 0.1, "{}", m.steps - start);
+        // Stepping again and let go (both enables low): the open coils
+        // show their back-EMF across them as the rotor turns on.
+        for k in 0..12 {
+            coils(&mut s, t, HALF[(k + 3) % 8], [true; 2]);
+            t += 0.004;
+        }
+        coils(&mut s, t, HALF[7], [false; 2]);
+        let (e, w) = {
+            let m = &s.steppers["mot"];
+            (m.emf_at(s.seconds_at(at(t))), m.omega)
+        };
+        assert!(w.abs() > 1.0, "{w}");
+        for (k, (p, n)) in [("mot.A+", "mot.A-"), ("mot.B+", "mot.B-")]
+            .iter()
+            .enumerate()
+        {
+            let across = probe(&s, p) - probe(&s, n);
+            assert!(
+                (across - e[k]).abs() < 1e-3 + 0.01 * e[k].abs(),
+                "{across} vs {e:?}"
+            );
+        }
+        assert!(e[0].abs().max(e[1].abs()) > 0.05, "{e:?}");
         // Without the resistor (the plain L298N) the coil gets 1.0.
         let mut s = l298n_sim("off");
         coils(&mut s, 0.01, 0b0101, [true; 2]);
@@ -7537,12 +7586,22 @@ mod tests {
         let u = probe(&s, "mot.U") - probe(&s, "rn0.2");
         assert!(e[0].abs() > 0.5, "{e:?}");
         assert!((u - e[0]).abs() < 0.01 * e[0].abs() + 1e-3, "{u} vs {e:?}");
-        // While it coasts the probe is sampled without anything changing.
-        let next = s.next_event().expect("a sample of the moving probe");
-        assert!(next <= at(t) + (EMF_PROBE_INTERVAL * MHZ) as Cycles + 1);
-        s.update(next, &off);
+        // While it coasts the probe is sampled without anything changing:
+        // every 20 µs (the halls change only every few hundred µs).
+        let step = (EMF_PROBE_INTERVAL * MHZ) as Cycles + 1;
+        let mut now = at(t);
+        for _ in 0..20 {
+            let next = s.next_event().expect("a sample of the moving probe");
+            assert!(next > now && next <= now + step, "{next} after {now}");
+            s.update(next, &off);
+            now = next;
+        }
         let log = s.take_voltage_log();
-        assert!(log.len() >= 2 && log[0].1[0] != log[1].1[0], "{log:?}");
+        assert!(
+            log.len() >= 20 && log[0].1[0] != log[1].1[0],
+            "{}",
+            log.len()
+        );
     }
 
     #[test]

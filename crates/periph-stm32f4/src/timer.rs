@@ -1930,6 +1930,24 @@ mod tests {
             }
         }
         assert_eq!(ups, vec![(16, 0), (32, 0), (48, 0), (64, 0)]);
+        // Many center-aligned periods at once (two over/underflows each):
+        // ARR 8, RCR 5 — an update every 6 half periods, at 48, 96, …
+        let mut t = tim1();
+        t.write(0x2C, 8, u32::MAX, 0);
+        t.write(0x30, 5, u32::MAX, 0);
+        t.write(0x00, 1 << CMS_SHIFT, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x00, CEN | 1 << CMS_SHIFT, u32::MAX, 0);
+        t.sync(47);
+        assert_eq!(t.sr & UIF, 0);
+        t.sync(48);
+        assert_ne!(t.sr & UIF, 0, "the sixth half period");
+        t.write(0x10, 0, u32::MAX, 48);
+        t.sync(48 + 48 * 20 - 1);
+        t.write(0x10, 0, u32::MAX, 48 + 48 * 20 - 1);
+        t.sync(48 + 48 * 20);
+        assert_ne!(t.sr & UIF, 0, "twenty updates later");
         // RCR 0 in center-aligned mode: both.
         let mut t = tim1();
         t.write(0x2C, 8, u32::MAX, 0);

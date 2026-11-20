@@ -22,13 +22,22 @@ export type Lang = "ko" | "en";
 export const LANGS: Lang[] = ["ko", "en"];
 const KEY = "simucleo.lang";
 
-function detect(): Lang {
-  try {
-    const q = new URLSearchParams(globalThis.location?.search ?? "").get("lang");
-    if (q === "ko" || q === "en") {
+/**
+ * The page's language: the `lang` query (also saved, when storage allows),
+ * else the saved choice, else the browser's languages. Exported for tests.
+ */
+export function detect(): Lang {
+  const q = new URLSearchParams(globalThis.location?.search ?? "").get("lang");
+  if (q === "ko" || q === "en") {
+    try {
       globalThis.localStorage?.setItem(KEY, q);
-      return q;
+    } catch {
+      // Storage blocked or full: the query still decides (switchLang keeps
+      // it in the address for exactly this case).
     }
+    return q;
+  }
+  try {
     const s = globalThis.localStorage?.getItem(KEY);
     if (s === "ko" || s === "en") return s;
   } catch {

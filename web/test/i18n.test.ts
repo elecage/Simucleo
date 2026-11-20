@@ -12,7 +12,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { EN, GROUPS } from "../src/i18n/en/index.ts";
-import { setLangForTest, t } from "../src/i18n/index.ts";
+import { detect, setLangForTest, t } from "../src/i18n/index.ts";
 import { translateLesson, lessonStrings } from "../src/i18n/lessons.ts";
 import type { Lesson } from "../src/lessons/types.ts";
 
@@ -174,4 +174,34 @@ test("i18n: every lesson has an English file covering its Korean", () => {
     if (left.length) problems.push(`${f}: still Korean after translation: ${left[0].slice(0, 60)}`);
   }
   assert.deepEqual(problems.slice(0, 40), [], `${problems.length} problems`);
+});
+
+test("i18n: the lang query decides even when saving it to storage fails", () => {
+  const g = globalThis as Record<string, unknown>;
+  const saved = { location: g.location, localStorage: g.localStorage };
+  const blocked = {
+    getItem: () => null,
+    setItem: () => {
+      throw new DOMException("quota", "QuotaExceededError");
+    },
+  };
+  try {
+    // An English browser, storage that throws on write (blocked or full).
+    Object.defineProperty(globalThis, "localStorage", { value: blocked, configurable: true, writable: true });
+    for (const want of ["ko", "en"] as const) {
+      Object.defineProperty(globalThis, "location", { value: { search: `?lang=${want}` }, configurable: true, writable: true });
+      assert.equal(detect(), want);
+    }
+    // Reading throws too: the browser's languages decide, no crash.
+    Object.defineProperty(globalThis, "localStorage", {
+      value: { getItem: () => { throw new Error("blocked"); }, setItem: blocked.setItem },
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(globalThis, "location", { value: { search: "" }, configurable: true, writable: true });
+    assert.ok(["ko", "en"].includes(detect()));
+  } finally {
+    Object.defineProperty(globalThis, "location", { value: saved.location, configurable: true, writable: true });
+    Object.defineProperty(globalThis, "localStorage", { value: saved.localStorage, configurable: true, writable: true });
+  }
 });

@@ -305,6 +305,57 @@ test("oversized links and zip bombs are refused before they are unpacked", async
   assert.equal((await inflate(packed.subarray(0, packed.length), MAX_UNPACKED_BYTES * 8)).length, zeros.length);
 });
 
+test("a link is never made that its receiver would refuse as too big", async () => {
+  // A 9 MB ELF (padded with zeros: it compresses to a short link) sent whole.
+  const big = new Uint8Array(9 * 1024 * 1024);
+  big.set(makeElf());
+  const fw = { name: "big.elf", bytes: big };
+  await assert.rejects(share({ firmware: fw, strip: "none" }), /너무 큽니다.*파일로 저장/);
+  // Stripped it is a few KB, and opens.
+  const ok = await share({ firmware: fw, strip: "debug" });
+  assert.ok(ok.elfBytes < 4096, `${ok.elfBytes}`);
+  const back = await decodeShare(`#${ok.fragment}`, CATALOG);
+  assert.equal(back.elf?.size, ok.elfBytes);
+});
+
+test("an ELF whose headers point at the same bytes again and again is refused, not copied", async () => {
+  // 1024 PT_LOAD headers over one 64 KB range: 64 MB if each were copied.
+  const n = 1024;
+  const dataAt = 52 + n * 32;
+  const elf = new Uint8Array(dataAt + 65536);
+  const v = new DataView(elf.buffer);
+  elf.set([0x7f, 0x45, 0x4c, 0x46, 1, 1, 1]);
+  v.setUint16(16, 2, true);
+  v.setUint16(18, 40, true);
+  v.setUint32(28, 52, true);
+  v.setUint16(42, 32, true);
+  v.setUint16(44, n, true);
+  for (let i = 0; i < n; i++) {
+    const p = 52 + i * 32;
+    [1, dataAt, 0x08000000, 0x08000000, 65536, 65536, 5, 4].forEach((x, k) => v.setUint32(p + k * 4, x, true));
+  }
+  assert.throws(() => readElf(elf), /겹쳐/);
+  // Through a link: refused with that message before anything is shown.
+  const enc = await share({ firmware: { name: "evil.elf", bytes: elf }, strip: "none" });
+  await assert.rejects(decodeShare(`#${enc.fragment}`, CATALOG), /겹쳐/);
+  // Symbol tables likewise: three SYMTAB sections over the 40 KB of debug bytes.
+  const e2 = makeElf();
+  const d2 = new DataView(e2.buffer);
+  const shoff = d2.getUint32(32, true);
+  const debugOff = d2.getUint32(shoff + 3 * 40 + 16, true);
+  for (const i of [1, 2, 3]) {
+    const s = shoff + i * 40;
+    d2.setUint32(s + 4, 2, true); // SHT_SYMTAB
+    d2.setUint32(s + 16, debugOff, true);
+    d2.setUint32(s + 20, 40_000, true);
+    d2.setUint32(s + 24, 5, true); // .strtab
+    d2.setUint32(s + 36, 16, true);
+  }
+  assert.throws(() => readElf(e2), /겹쳐/);
+  // The real layout is well within it.
+  assert.equal(readElf(makeElf()).segments.length, 2);
+});
+
 test("links are found in pasted text: one, or many on lines", async () => {
   const a = (await share()).fragment;
   const b = (await share({ name: "다른" })).fragment;

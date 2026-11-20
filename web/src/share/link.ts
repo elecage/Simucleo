@@ -176,6 +176,13 @@ export async function encodeShare(input: ShareInput, opts: { compress?: boolean 
   new DataView(body.buffer).setUint32(0, json.length, true);
   body.set(json, 4);
   if (elf) body.set(elf, 4 + json.length);
+  // Every receiver refuses more than this unpacked (decodeShare), however
+  // well it compresses: no link that cannot be opened.
+  if (body.length > MAX_UNPACKED_BYTES) {
+    throw new ShareError(
+      `내용이 너무 큽니다(${fmtBytes(body.length)}, 받는 쪽 한도 ${fmtBytes(MAX_UNPACKED_BYTES)}). 디버그 정보를 빼거나 파일로 저장해 보내세요.`,
+    );
+  }
   const compress = (opts.compress ?? true) && hasStreams();
   const packed = compress ? await deflate(body) : body;
   const all = new Uint8Array(1 + packed.length);

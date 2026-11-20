@@ -58,12 +58,21 @@ export function readElf(bytes: Uint8Array): ElfInfo {
   const phentsize = u16(42);
   const phnum = u16(44);
   if (phnum && (phentsize < 32 || !inside(phoff, phentsize * phnum))) throw new ElfError("프로그램 헤더가 파일 밖을 가리킵니다.");
+  // What is copied out of the file is bounded by the file itself: segments
+  // (and symbol tables) pointing at the same bytes again and again would
+  // otherwise turn a small link into any amount of memory.
+  let budget = bytes.length;
+  const take = (len: number, what: string) => {
+    budget -= len;
+    if (budget < 0) throw new ElfError(`${what}이(가) 겹쳐 파일보다 많은 데이터를 가리킵니다.`);
+  };
   const segments: ElfSegment[] = [];
   for (let i = 0; i < phnum; i++) {
     const o = phoff + i * phentsize;
     if (u32(o) !== PT_LOAD) continue;
     const [off, paddr, filesz, memsz] = [u32(o + 4), u32(o + 12), u32(o + 16), u32(o + 20)];
     if (!inside(off, filesz)) throw new ElfError(`세그먼트 ${i}가 파일 밖을 가리킵니다.`);
+    take(filesz, "세그먼트");
     segments.push({ paddr, vaddr: u32(o + 8), memsz, flags: u32(o + 24), align: u32(o + 28), data: bytes.slice(off, off + filesz) });
   }
   const symbols: ElfSymbol[] = [];
@@ -80,6 +89,7 @@ export function readElf(bytes: Uint8Array): ElfInfo {
       const [stroff, strsize] = [u32(str + 16), u32(str + 20)];
       if (!inside(stroff, strsize)) continue;
       const strtab = bytes.subarray(stroff, stroff + strsize);
+      take(size, "심볼 표");
       for (let e = off + entsize; e + 16 <= off + size; e += entsize) {
         const info = bytes[e + 12];
         const type = info & 0xf;

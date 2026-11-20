@@ -14,6 +14,7 @@ import { ProjectMenu } from "./run/ProjectMenu";
 import { fromBase64, idbGet, idbSet, parse, serialize, toBase64, type Loaded } from "./editor/project";
 import { createSimulator, type Netlist, type SimHandle } from "./sim/simulator";
 import { useRunner } from "./sim/useRunner";
+import { PwaStatus, UpdateBanner } from "./PwaUi";
 import { useSdPersistence } from "./sim/sdStore";
 import { unlockAudio, useBuzzerAudio } from "./sim/audio";
 import type { VisualState } from "./parts/types";
@@ -607,6 +608,7 @@ export function App() {
           {simError ? `WASM 로드 실패: ${simError}` : sim ? `core v${sim.version}` : "WASM 로딩 중…"}
         </span>
       </header>
+      <UpdateBanner running={runner.running} />
 
       <aside className="library">
         {categories.map((cat) => (
@@ -720,7 +722,14 @@ export function App() {
         </div>
       </main>
 
-      <BottomPanel runner={runner} parts={project.parts} scope={project.scope} scopeSeq={scopeSeq} onScope={onScope} />
+      <BottomPanel
+        runner={runner}
+        parts={project.parts}
+        scope={project.scope}
+        scopeSeq={scopeSeq}
+        onScope={onScope}
+        status={<PwaStatus />}
+      />
 
       {lessonOpen && (
         <LessonPanel

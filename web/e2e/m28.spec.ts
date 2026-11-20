@@ -84,10 +84,26 @@ test("an analog channel on a bridge output shows the PWM phase voltage", async (
   expect(off.length).toBeGreaterThanOrEqual(2);
   for (const r of on) expect(r[3]).toBeGreaterThan(11);
   for (const r of off) expect(r[3]).toBeLessThan(1);
-  // Its mean is the duty × the supply (pot in the middle: 49 %).
-  const mean = Number(await page.getByTestId("analog-br.OUTA").getAttribute("data-mean"));
-  expect(mean).toBeGreaterThan(4.5);
-  expect(mean).toBeLessThan(7.5);
+  // Over a PWM period of the chopping phase its mean is the duty × the
+  // supply (pot in the middle: 49 %, 5.8 V). Per period (PA8 rise to rise),
+  // as one of them may hold a commutation, where phase A floats or sits low
+  // (a lower mean): the largest is a period of plain chopping.
+  const means: number[] = [];
+  const rises = pulses(rows, 1).map(([r]) => r);
+  for (let k = 1; k < rises.length; k++) {
+    const [t0, t1] = [rises[k - 1], rises[k]];
+    let area = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const a = Math.max(rows[i][0], t0);
+      const b = Math.min(i + 1 < rows.length ? rows[i + 1][0] : t1, t1);
+      if (b > a) area += rows[i][3] * (b - a);
+    }
+    means.push(area / (t1 - t0));
+  }
+  expect(means.length).toBeGreaterThanOrEqual(2);
+  const chopping = Math.max(...means);
+  expect(chopping).toBeGreaterThan(5.2);
+  expect(chopping).toBeLessThan(6.5);
 });
 
 test("centre-aligned PWM on the scope: the pulses stay centred when the duty changes", async ({ page }) => {

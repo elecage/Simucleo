@@ -1,0 +1,21 @@
+{
+  "name": "Simucleo",
+  "short_name": "Simucleo",
+  "description": "교육용 STM32 Nucleo-F401RE 시뮬레이터. 펌웨어(ELF)를 브레드보드 회로와 함께 실행한다. 한 번 열면 인터넷 없이도 쓸 수 있다.",
+  "lang": "ko",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#2563eb",
+  "background_color": "#f4f5f7",
+  "categories": ["education", "developer"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Simucleo: a Nucleo-like board (MCU, LD2 lit, B1) on the accent blue. Maskable: full bleed, the board inside the safe zone. -->
+  <rect width="512" height="512" fill="#2563eb"/>
+  <g id="board" transform="translate(256 256) scale(0.72) translate(-256 -256)">
+    <rect x="96" y="120" width="320" height="272" rx="28" fill="#f4f5f7"/>
+    <g fill="#9aa1ab">
+      <rect x="124" y="140" width="12" height="20" rx="3"/><rect x="152" y="140" width="12" height="20" rx="3"/>
+      <rect x="180" y="140" width="12" height="20" rx="3"/><rect x="208" y="140" width="12" height="20" rx="3"/>
+      <rect x="292" y="140" width="12" height="20" rx="3"/><rect x="320" y="140" width="12" height="20" rx="3"/>
+      <rect x="348" y="140" width="12" height="20" rx="3"/><rect x="376" y="140" width="12" height="20" rx="3"/>
+      <rect x="124" y="352" width="12" height="20" rx="3"/><rect x="152" y="352" width="12" height="20" rx="3"/>
+      <rect x="180" y="352" width="12" height="20" rx="3"/><rect x="208" y="352" width="12" height="20" rx="3"/>
+      <rect x="292" y="352" width="12" height="20" rx="3"/><rect x="320" y="352" width="12" height="20" rx="3"/>
+      <rect x="348" y="352" width="12" height="20" rx="3"/><rect x="376" y="352" width="12" height="20" rx="3"/>
+    </g>
+    <g stroke="#6b7280" stroke-width="8" stroke-linecap="round">
+      <path d="M200 214h-16M200 238h-16M200 262h-16M200 286h-16"/>
+      <path d="M312 214h16M312 238h16M312 262h16M312 286h16"/>
+      <path d="M220 194v-16M244 194v-16M268 194v-16M292 194v-16"/>
+      <path d="M220 306v16M244 306v16M268 306v16M292 306v16"/>
+    </g>
+    <rect x="200" y="194" width="112" height="112" rx="10" fill="#1d2125"/>
+    <circle cx="222" cy="216" r="6" fill="#6b7280"/>
+    <circle cx="372" cy="214" r="30" fill="#22c55e" opacity="0.35"/>
+    <circle cx="372" cy="214" r="15" fill="#22c55e"/>
+    <circle cx="140" cy="286" r="18" fill="#1d4ed8"/>
+  </g>
+</svg>

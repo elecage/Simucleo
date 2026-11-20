@@ -204,7 +204,13 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
       return;
     }
     if (!view.current) view.current = new EditorView({ state, parent: host.current });
-    else view.current.setState(state);
+    else {
+      view.current.setState(state);
+      // (The scroller keeps its offset across documents: a header opened
+      // from far down main.c showed its middle. Each document opens where
+      // its cursor is — a new one at the top.)
+      view.current.dispatch({ effects: EditorView.scrollIntoView(state.selection.main.head, { y: "start", yMargin: 0 }) });
+    }
   }, [active, header, headerText, codeSeq, localSeq, !!code]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => view.current?.destroy(), []);
 

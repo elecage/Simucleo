@@ -34,11 +34,14 @@ export function RunControls({
   runner,
   examples,
   onExampleProject,
+  onUserLoad,
 }: {
   runner: Runner;
   examples: Example[];
   /** Load the wiring that comes with an example. */
   onExampleProject?: (ex: Example) => void;
+  /** Firmware loaded here (an upload, an example without wiring): newer than any load still on its way. */
+  onUserLoad?: () => void;
 }) {
   const [speedLabel, setSpeedLabel] = useState("×1 실시간");
   const f = runner.frame;
@@ -51,6 +54,7 @@ export function RunControls({
       onExampleProject(ex); // loads the wiring and the firmware
       return;
     }
+    onUserLoad?.();
     const bytes = await (await fetch(`./examples/${ex.file}`)).arrayBuffer();
     runner.load(ex.name, bytes, ex.file);
   };
@@ -66,7 +70,10 @@ export function RunControls({
           data-testid="elf-input"
           onChange={async (e) => {
             const file = e.target.files?.[0];
-            if (file) runner.load(file.name, await file.arrayBuffer());
+            if (file) {
+              onUserLoad?.();
+              runner.load(file.name, await file.arrayBuffer());
+            }
             e.target.value = "";
           }}
         />

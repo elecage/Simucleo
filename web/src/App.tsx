@@ -139,8 +139,13 @@ export function App() {
     (scope: ScopeSettings) => setProject((p) => (p.scope === scope ? p : { ...p, scope })),
     [],
   );
+  // Every load (a project, an example, a link, the autosave) takes a number;
+  // one that finishes after a newer one started gives way, so a slow restore
+  // of the last session never replaces what the user has just opened.
+  const loadGen = useRef(0);
   const applyLoaded = useCallback(
     async (l: Loaded) => {
+      const gen = ++loadGen.current;
       schOrder.current = [];
       setProject(l.project);
       setScopeSeq((k) => k + 1);
@@ -153,7 +158,9 @@ export function App() {
         load(fw.name, fromBase64(fw.data).buffer as ArrayBuffer, fw.example);
       } else if (fw?.example) {
         const r = await fetch(`./examples/${fw.example}`);
-        if (r.ok) load(fw.name, await r.arrayBuffer(), fw.example);
+        const bytes = r.ok ? await r.arrayBuffer() : null;
+        if (gen !== loadGen.current) return;
+        if (bytes) load(fw.name, bytes, fw.example);
         else setNotice(`예제 펌웨어 ${fw.example}을 찾지 못했습니다.`);
       }
     },
@@ -278,8 +285,10 @@ export function App() {
 
   const onExampleProject = async (ex: Example) => {
     if (!confirmReplace()) return;
+    const gen = ++loadGen.current;
     const r = await fetch(`./examples/${ex.project}`);
-    if (r.ok) openText(await r.text());
+    const text = r.ok ? await r.text() : null;
+    if (text !== null && gen === loadGen.current) openText(text);
   };
 
   // Autosave to IndexedDB, and restore the last session once the
@@ -289,9 +298,11 @@ export function App() {
   const [restoredDone, setRestoredDone] = useState(false);
   useEffect(() => {
     if (!runner.ready || restored.current) return;
+    const gen = loadGen.current;
     void idbGet<string>("autosave").then(async (text) => {
       restored.current = true;
-      if (text) {
+      // Something was opened meanwhile: that stays.
+      if (text && gen === loadGen.current) {
         try {
           await applyLoaded(parse(text));
         } catch {
@@ -692,7 +703,7 @@ export function App() {
           </button>
         </span>
         <ProjectMenu project={project} name={projectName} runner={runner} onNew={onNew} onOpenText={openText} />
-        <RunControls runner={runner} examples={examples} onExampleProject={onExampleProject} />
+        <RunControls runner={runner} examples={examples} onExampleProject={onExampleProject} onUserLoad={() => ++loadGen.current} />
         <button
           className={lessonOpen ? "lesson-toggle on" : "lesson-toggle"}
           onClick={() => {

@@ -35,7 +35,8 @@ function detect(): Lang {
     // storage blocked: fall through to the browser's languages
   }
   const nav = globalThis.navigator;
-  if (!nav || typeof nav.languages === "undefined") return "ko"; // Node (tests)
+  // Node (tests): Korean, though Node 21+ has a `navigator` with languages.
+  if (!nav || typeof nav.languages === "undefined" || typeof document === "undefined") return "ko";
   const langs = nav.languages?.length ? nav.languages : [nav.language];
   return langs.some((l) => /^ko\b/i.test(l ?? "")) ? "ko" : "en";
 }

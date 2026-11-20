@@ -14,6 +14,7 @@ import { ProjectMenu } from "./run/ProjectMenu";
 import { fromBase64, idbGet, idbSet, parse, serialize, toBase64, type Loaded } from "./editor/project";
 import { createSimulator, type Netlist, type SimHandle } from "./sim/simulator";
 import { useRunner } from "./sim/useRunner";
+import { PwaStatus, UpdateBanner } from "./PwaUi";
 import { useSdPersistence } from "./sim/sdStore";
 import { unlockAudio, useBuzzerAudio } from "./sim/audio";
 import type { VisualState } from "./parts/types";
@@ -606,7 +607,9 @@ export function App() {
         <span className="version" title="시뮬레이터 코어 버전">
           {simError ? `WASM 로드 실패: ${simError}` : sim ? `core v${sim.version}` : "WASM 로딩 중…"}
         </span>
+        <PwaStatus />
       </header>
+      <UpdateBanner running={runner.running} />
 
       <aside className="library">
         {categories.map((cat) => (

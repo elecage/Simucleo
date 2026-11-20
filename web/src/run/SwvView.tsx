@@ -35,8 +35,10 @@ const fmtUs = (ns: number) => (ns >= 1e6 ? `${(ns / 1e6).toFixed(2)} ms` : `${(n
 /** The trace the frames bring, kept while the tab is hidden; cleared for new firmware. */
 export function useSwvState(runner: Runner, on: boolean): [SwvState, () => void] {
   const [state, setState] = useState<SwvState>(emptyState);
-  const { onFrame, firmware } = runner;
-  useEffect(() => setState(emptyState()), [firmware]);
+  const { onFrame, loadGen } = runner;
+  // Every load, also of the same firmware again (a rebuild in the code tab):
+  // its time starts at zero.
+  useEffect(() => setState(emptyState()), [loadGen]);
   useEffect(() => {
     if (!on) return;
     return onFrame((m) => {

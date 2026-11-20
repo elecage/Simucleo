@@ -81,4 +81,15 @@ test("SWV: ITM console, data graph, profile and exception trace of hal-swv-trace
   const before = Number(await tim2.nth(1).textContent());
   await runFor(page, 200);
   expect(Number(await swv.locator('[data-exc="TIM2"] td').nth(1).textContent())).toBe(before);
+
+  // The same firmware loaded again (as a code-tab rebuild does): its time
+  // starts at zero, so the trace of the last run is cleared.
+  await swv.getByTestId("swv-on").check();
+  await runFor(page, 100);
+  await expect(swv.locator('[data-exc="TIM2"]')).toBeVisible();
+  await page.locator('select:has(option[value="hal-swv-trace.elf"])').selectOption("hal-swv-trace.elf");
+  await expect(status(page)).toContainText("0.000 s");
+  await expect(swv.locator('[data-exc="TIM2"]')).toHaveCount(0);
+  await swv.getByRole("button", { name: "ITM 콘솔" }).click();
+  await expect(swv.getByTestId("swv-itm")).toHaveText("");
 });

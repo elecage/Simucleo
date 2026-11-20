@@ -165,6 +165,9 @@ export interface Runner {
   setSwv(settings: SwvSettings | null): void;
   /** Where each SWV data trace expression landed. */
   swvPlaced: DataPlaced[];
+  /** Bumped by every successful firmware load, also of the same file again
+   * (a rebuild): what describes the last run starts over. */
+  loadGen: number;
   /** Look at an RTOS task's call stack (null: the running code). */
   selectTask(tcb: number | null): void;
   assigned: { n: number; target: string; result: WatchValue | null };
@@ -233,6 +236,7 @@ export function useRunner(): Runner {
   const [watch, setWatch] = useState<WatchValue[]>([]);
   const [watchpoints, setWatchpointsPlaced] = useState<WatchpointPlaced[]>([]);
   const [swvPlaced, setSwvPlaced] = useState<DataPlaced[]>([]);
+  const [loadGen, setLoadGen] = useState(0);
   const [assigned, setAssigned] = useState<{ n: number; target: string; result: WatchValue | null }>({
     n: 0,
     target: "",
@@ -307,6 +311,7 @@ export function useRunner(): Runner {
           break;
         case "loaded":
           setFirmware(m.error ? null : m.name);
+          if (!m.error) setLoadGen((g) => g + 1);
           setLoadError(m.error ?? null);
           setConsole("");
           setDebugState(null);
@@ -463,6 +468,6 @@ export function useRunner(): Runner {
 
   return {
     ready, firmware, firmwareBytes, firmwareExample, loadError, running, speed, frame, console: consoleText, memory, bluetooth,
-    debugFiles, breakpoints, pauseEvent, debugState, disasm, watch, assigned, watchpoints, swvPlaced, ...actions,
+    debugFiles, breakpoints, pauseEvent, debugState, disasm, watch, assigned, watchpoints, swvPlaced, loadGen, ...actions,
   };
 }

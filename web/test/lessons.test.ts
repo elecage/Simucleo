@@ -6,7 +6,7 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { evaluateWiring, type WiringContext, type PinRef } from "../src/lessons/wiring.ts";
-import { evaluateBehaviour, dutyWindows, gradeMs, litPixels, Recording, type FrameLike } from "../src/lessons/behaviour.ts";
+import { evaluateBehaviour, dutyWindows, edgeDuties, gradeMs, litPixels, Recording, type FrameLike } from "../src/lessons/behaviour.ts";
 import { josa } from "../src/lessons/korean.ts";
 import { validateLesson } from "../src/lessons/validate.ts";
 import { record, resultsCsv, resultsJson, type LessonProgress } from "../src/lessons/progress.ts";
@@ -271,4 +271,32 @@ test("progress keeps when a result last changed; the CSV is spreadsheet-ready", 
   assert.match(csv, /홍길동,led-blink,LED,t2,0,1,LED 놓기,pass,t2/);
   const quoted = resultsCsv({ ...file, student: 'a,"b"' });
   assert.match(quoted, /^﻿.*\r\n"a,""b""",/);
+});
+
+test("PWM duty from a probed pin's edges, period by period: a 2.5 ms servo pulse is 12.5 % whatever the frames cover", () => {
+  // 50 Hz, 2.5 ms high, in 3 ms frames (a slow machine): a frame's or a
+  // 16 ms window's duty is 0 or ~16 %, never 12.5 %; the edges tell.
+  const rec = new Recording();
+  const all: [number, boolean][] = [];
+  for (let p = 0; p < 50; p++) all.push([p * 20, true], [p * 20 + 2.5, false]);
+  for (let t = 0; t <= 1000; t += 3) {
+    const edges = all.filter(([x]) => x > t - 3 && x <= t);
+    const high = all.filter(([x, l]) => l && x <= t).length > all.filter(([x, l]) => !l && x <= t).length;
+    // The frame's own duty: how much of (t-3, t] was high.
+    let h = 0;
+    for (let x = t - 3; x < t; x += 0.01) {
+      const ph = ((x % 20) + 20) % 20;
+      if (ph < 2.5) h += 0.01;
+    }
+    rec.add(frame(t, { pins: [{ port: "C", pin: 7, level: high, duty: h / 3 }], probes: [{ name: "PC7", level0: false, edges, dense: false }] as never }), "");
+  }
+  const r = judge({ type: "duty", pin: "PC7", min: 0.115, max: 0.13 }, rec);
+  assert.equal(r.pass, true, r.hint);
+  assert.equal(judge({ type: "duty", pin: "PC7", min: 0.115, max: 0.13, mode: "always" }, rec).pass, true);
+  // Period by period, and a level held for long counts as that level.
+  assert.deepEqual(edgeDuties({ level0: false, edges: [[0, true], [1, false], [4, true], [5, false], [8, true], [9, false]] }, 0, 9), [0.25, 0.25]);
+  assert.deepEqual(edgeDuties({ level0: false, edges: [[0, true], [1, false], [4, true], [5, false], [8, true], [40, false]] }, 0, 40), [0.25, 0.25, 1]);
+  // Edges that did not all fit a frame, or too few: the frames decide.
+  assert.equal(edgeDuties({ level0: false, edges: [[0, true], [1, false], [4, true], [5, false], [8, true]], dense: true }, 0, 9), null);
+  assert.equal(edgeDuties({ level0: false, edges: [[0, true], [1, false]] }, 0, 9), null);
 });

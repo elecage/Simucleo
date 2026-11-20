@@ -23,7 +23,7 @@ export interface FrameLike {
     leds?: number[];
   }[];
   circuitWarnings: string[];
-  probes: { name: string; level0: boolean; edges: [number, boolean][] }[];
+  probes: { name: string; level0: boolean; edges: [number, boolean][]; dense?: boolean }[];
 }
 
 interface Sample {
@@ -38,7 +38,7 @@ export class Recording {
   stopped: string | null = null;
   warnings = new Set<string>();
   /** Edges of probed pins, [time ms, level]. */
-  edges = new Map<string, { level0: boolean; edges: [number, boolean][] }>();
+  edges = new Map<string, { level0: boolean; edges: [number, boolean][]; dense?: boolean }>();
   t0: number | null = null;
   lastT = 0;
 
@@ -53,6 +53,8 @@ export class Recording {
       let e = this.edges.get(p.name);
       if (!e) this.edges.set(p.name, (e = { level0: p.level0, edges: [] }));
       e.edges.push(...p.edges);
+      // (Some edges of a frame did not fit: the list is not the signal.)
+      if (p.dense) e.dense = true;
     }
   }
 
@@ -205,6 +207,47 @@ export const DUTY_WINDOW_MS = 16;
  * steady 25 % read as 33 % (M31); a window is what one frame at ×1
  * speed covers. The first sample has no frame before it and is skipped.
  */
+/**
+ * The duty of each PWM period, rising edge to rising edge, from a probed
+ * pin's edges — exact whatever the display frames cover (a 20 ms servo
+ * period never fits a frame's window, so frame duties of a 12.5 % pulse
+ * read 0 or 16 %). A stretch at one level much longer than the periods
+ * (a duty of 0 or 100 % held) counts as that level. Null when the edges
+ * cannot tell (too few, or some did not fit a frame): the frames then.
+ */
+export function edgeDuties(
+  rec: { level0: boolean; edges: [number, boolean][]; dense?: boolean } | undefined,
+  start: number,
+  end: number,
+): number[] | null {
+  if (!rec || rec.dense) return null;
+  const e = rec.edges;
+  const rises = e.filter((x) => x[1]).map((x) => x[0]);
+  if (rises.length < 3) return null;
+  const out: number[] = [];
+  const periods: number[] = [];
+  let k = 0;
+  for (let i = 0; i + 1 < rises.length; i++) {
+    const [a, b] = [rises[i], rises[i + 1]];
+    while (k < e.length && e[k][0] <= a) k++;
+    // The fall within this period.
+    const fall = e.slice(k).find((x) => !x[1] && x[0] < b);
+    if (!fall) continue;
+    periods.push(b - a);
+    out.push((fall[0] - a) / (b - a));
+  }
+  if (!out.length) return null;
+  // Held levels: a gap between edges (or before the first, after the last)
+  // longer than 4 typical periods.
+  const sorted = [...periods].sort((x, y) => x - y);
+  const typical = sorted[Math.floor(sorted.length / 2)];
+  const marks: [number, boolean][] = [[start, rec.level0], ...e, [end, e.length ? e[e.length - 1][1] : rec.level0]];
+  for (let i = 0; i + 1 < marks.length; i++) {
+    if (marks[i + 1][0] - marks[i][0] > 4 * typical) out.push(marks[i][1] ? 1 : 0);
+  }
+  return out;
+}
+
 export function dutyWindows(samples: { t: number; duty: number | undefined }[]): number[] {
   const out: number[] = [];
   let area = 0;
@@ -234,9 +277,10 @@ export function dutyWindows(samples: { t: number; duty: number | undefined }[]):
 
 function duty(c: Extract<BehaviourCheck, { type: "duty" }>, rec: Recording): CheckResult {
   const pin = pinOf(c.pin);
-  const values = dutyWindows(
-    rec.samples.map((s) => ({ t: s.t, duty: s.frame.pins.find((p) => pin && p.port === pin.port && p.pin === pin.pin)?.duty })),
-  );
+  const fromEdges = edgeDuties(rec.edges.get(c.pin), rec.t0 ?? 0, rec.lastT);
+  const values =
+    fromEdges ??
+    dutyWindows(rec.samples.map((s) => ({ t: s.t, duty: s.frame.pins.find((p) => pin && p.port === pin.port && p.pin === pin.pin)?.duty })));
   if (!values.length) return { pass: false, hint: `${josa(c.pin, "이/가")} 출력으로 쓰이지 않았습니다.` };
   const lo = Math.min(...values);
   const hi = Math.max(...values);
@@ -390,7 +434,8 @@ export function probedPins(lesson: Lesson): string[] {
     ...new Set(
       lesson.steps
         .flatMap((s) => s.checks)
-        .filter((c) => c.type === "period")
+        // (Duty checks too: measured period by period from the edges.)
+        .filter((c) => c.type === "period" || c.type === "duty")
         .map((c) => (c as { pin: string }).pin),
     ),
   ];

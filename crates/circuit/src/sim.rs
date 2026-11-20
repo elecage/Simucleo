@@ -14,6 +14,15 @@
 //!
 //! The solution only depends on the combination of pin drives, so results
 //! are cached: PWM toggling between a few states costs a hash lookup.
+//!
+//! Motor windings (M28) are elements too: a resistance in series with the
+//! back-EMF (or, behind a chopper driver, a current source), and the motor
+//! drivers' outputs are switches to their supply and ground, whose states
+//! are part of the cache key like the MCU's pins. The back-EMFs vary
+//! continuously, so a cached solution holds the operating point with them
+//! at zero and the sensitivity of every node to each of them (the circuit
+//! is linear for a given key): the voltage now is `v0 + S·x`, and each
+//! winding's current is `a + B·emf`, which the motors integrate with.
 //! Visual quantities are integrated over time (in core cycles) between
 //! display frames, so a 25 % PWM duty shows as a dimmer LED.
 
@@ -28,7 +37,7 @@ use crate::devices::{
 use crate::tier8::{Bmp280, Hc595, Pir, Tm1637, PIR_VMIN};
 use crate::tier9::{
     l298n_bridge, BipolarStepper, CoilDrive, Esc, EscState, HallBldc, PhaseBridge, PhaseDrive,
-    StepDriver,
+    StepDriver, BLDC_R, STEPPER_COIL_R, STEPPER_RATED,
 };
 
 use crate::netlist::{build_netlist, BusCatalog, Circuit, PartCatalog, PartInstance, PinRef, Wire};
@@ -57,6 +66,17 @@ const MOTOR_MAX_RPM: f64 = 200.0;
 const PIN_MAX: f64 = 0.025;
 /// Most voltage changes logged for analog probes between two drains.
 const VOLTAGE_LOG_MAX: usize = 1 << 18;
+/// On-resistance of a driver output switch (Ω): an L298N's Darlington
+/// (about 1 V at 0.4 A), an A4988's DMOS, a 3-phase bridge's MOSFET.
+const L298N_R_ON: f64 = 2.5;
+const A4988_R_ON: f64 = 0.4;
+const BRIDGE_R_ON: f64 = 0.02;
+/// How often a probed net that a turning motor's back-EMF moves is
+/// sampled when nothing else changes (s).
+const EMF_PROBE_INTERVAL: f64 = 20e-6;
+/// Most bridge outputs chopped at once whose PWM is averaged exactly for
+/// the motors (2^n solutions); more are rounded to on or off.
+const MAX_DUTY_LEGS: usize = 3;
 
 /// How the MCU drives one pin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -200,6 +220,26 @@ enum Element {
         threshold: f64,
         visual: usize,
         channel: usize,
+    },
+    /// One output of a motor driver (M28): a switch with resistance `r`
+    /// from `out` to `hi` (its supply) or to `lo` (its ground), as key
+    /// entry `slot` of the legs says (High, Low, Float = both off).
+    Leg {
+        out: usize,
+        hi: usize,
+        lo: usize,
+        r: f64,
+        slot: usize,
+    },
+    /// A motor winding from `a` to `b` (M28): resistance `r` in series with
+    /// the back-EMF `x[input]` (current from `a` to `b` is
+    /// `(v_a − v_b − x)/r`), or — when the key puts it in current mode —
+    /// a current source of `x[input]` amperes from `a` to `b`.
+    Winding {
+        a: usize,
+        b: usize,
+        r: f64,
+        input: usize,
     },
 }
 
@@ -390,7 +430,16 @@ struct VisualSlot {
 /// The DC operating point for one combination of pin drives.
 #[derive(Debug, Clone)]
 struct Solution {
+    /// Node voltages with every winding's input (back-EMF, current) at 0.
     v: Vec<f64>,
+    /// Per winding input j: dv/dx_j of every node (M28).
+    sens: Vec<Vec<f64>>,
+    /// Nodes some winding input moves.
+    sens_node: Vec<bool>,
+    /// Winding currents `a + B·x` (A): `a` per winding, `B` row-major.
+    /// Rows of current-mode windings are left at zero.
+    coef_a: Vec<f64>,
+    coef_b: Vec<f64>,
     /// Brightness per (visual, channel); buzzer "on" as 0/1.
     level: Vec<Vec<f64>>,
     over: Vec<bool>,
@@ -466,6 +515,26 @@ pub struct CircuitSim {
     /// M23: what each 3-phase bridge saw on its inputs (PWM duties,
     /// overlaps).
     phase_state: HashMap<String, PhaseBridge>,
+    /// M28: the windings (inputs of the solve), the driver output switches
+    /// as they are now (key entries after the relays), which windings a
+    /// chopper drives as a current source, the inputs' values now, the MCU
+    /// input levels with them, and when they were last brought up to date.
+    windings: Vec<WindingInfo>,
+    legs: Vec<Drive>,
+    winding_cs: Vec<bool>,
+    x: Vec<f64>,
+    inputs_now: Vec<Option<bool>>,
+    inputs_changed: bool,
+    x_time: Cycles,
+    /// Scratch drive key for the motors' averaged solutions, and the key
+    /// and chopped outputs the motors were last given.
+    mech: Vec<Drive>,
+    mech_last: Vec<Drive>,
+    duties_last: Vec<(usize, f64)>,
+    /// The winding current coefficients last computed from those.
+    net_last: (Vec<f64>, Vec<f64>),
+    /// A probed net moves with a turning motor: sample it periodically.
+    emf_probe_live: bool,
     steppers: HashMap<String, BipolarStepper>,
     drivers: HashMap<String, DriverState>,
     bridges: HashMap<String, BridgeState>,
@@ -564,12 +633,22 @@ struct CoilLink {
     sign: f64,
 }
 
-/// A bipolar stepper: its coils (+ end, − end) and what drives them.
+/// A bipolar stepper: its coils (+ end, − end) and what drives them,
+/// and its windings' inputs in the solve.
 #[derive(Debug, Clone)]
 struct StepperPart {
     id: String,
     coils: [(usize, usize); 2],
     links: [Option<CoilLink>; 2],
+    inputs: [usize; 2],
+}
+
+/// A motor winding in the solve (M28): its ends and resistance.
+#[derive(Debug, Clone, Copy)]
+struct WindingInfo {
+    a: usize,
+    b: usize,
+    r: f64,
 }
 
 /// An A4988 / DRV8825 carrier board.
@@ -589,6 +668,8 @@ struct DriverPart {
     out: [(usize, usize); 2],
     /// Current limit (Vref pot) as a share of the motor's rated current.
     current: f64,
+    /// First of its four output switches (1A, 1B, 2A, 2B) in the legs.
+    legs: usize,
 }
 
 /// What a step driver is doing.
@@ -613,6 +694,8 @@ struct BridgePart {
     out: [(usize, usize); 2],
     /// ENA/ENB jumpers on: the bridges are always enabled.
     jumpers: bool,
+    /// First of its four output switches (OUT1–OUT4) in the legs.
+    legs: usize,
 }
 
 /// An L298N's outputs now and averaged over the display frame.
@@ -644,6 +727,10 @@ struct BldcPart {
     vcc: usize,
     gnd: usize,
     halls: [usize; 3],
+    /// Its windings' inputs in the solve (U, V, W to the star point).
+    inputs: [usize; 3],
+    /// No hall sensors (M28, part `bldc`).
+    sensorless: bool,
 }
 
 /// A 3-phase bridge module (DRV8302 class): INH/INL per phase.
@@ -655,6 +742,8 @@ struct PhaseBridgePart {
     pvdd: usize,
     gnd: usize,
     out: [usize; 3],
+    /// First of its three output switches (OUTA–OUTC) in the legs.
+    legs: usize,
 }
 
 /// Lowest supply of the hall sensors and of the 3-phase bridge.
@@ -796,6 +885,18 @@ impl CircuitSim {
             bldc_parts: Vec::new(),
             phase_bridges: Vec::new(),
             phase_out: HashMap::new(),
+            windings: Vec::new(),
+            legs: Vec::new(),
+            winding_cs: Vec::new(),
+            x: Vec::new(),
+            inputs_now: Vec::new(),
+            inputs_changed: false,
+            x_time: time,
+            mech: Vec::new(),
+            mech_last: Vec::new(),
+            duties_last: Vec::new(),
+            net_last: (Vec::new(), Vec::new()),
+            emf_probe_live: false,
             phase_state: HashMap::new(),
             steppers: HashMap::new(),
             drivers: HashMap::new(),
@@ -964,6 +1065,10 @@ impl CircuitSim {
 
     fn rebuild(&mut self) {
         self.cache.clear();
+        // The motors' current coefficients came from the old network.
+        self.mech_last.clear();
+        self.duties_last.clear();
+        self.net_last = (Vec::new(), Vec::new());
         self.drives = None;
         self.current = None;
         let parts = self.circuit.parts.clone();
@@ -1112,6 +1217,9 @@ impl CircuitSim {
         let mut esc_parts: Vec<EscPart> = Vec::new();
         let mut bldc_parts: Vec<BldcPart> = Vec::new();
         let mut phase_bridges: Vec<PhaseBridgePart> = Vec::new();
+        // M28: windings and driver output switches, numbered as they come.
+        let mut windings: Vec<WindingInfo> = Vec::new();
+        let mut n_legs = 0usize;
         let now_s = self.seconds_at(self.last_time);
         let mut map = std::mem::take(&mut self.pin_nodes);
         let mut add_visual = |id: &str, kind: VisualKind, channels: usize| {
@@ -1747,10 +1855,25 @@ impl CircuitSim {
                         (node(pin("A+"), &mut map), node(pin("A-"), &mut map)),
                         (node(pin("B+"), &mut map), node(pin("B-"), &mut map)),
                     ];
+                    let inputs = [windings.len(), windings.len() + 1];
+                    for (k, &(a, b)) in coils.iter().enumerate() {
+                        windings.push(WindingInfo {
+                            a,
+                            b,
+                            r: STEPPER_COIL_R,
+                        });
+                        elements.push(Element::Winding {
+                            a,
+                            b,
+                            r: STEPPER_COIL_R,
+                            input: inputs[k],
+                        });
+                    }
                     stepper_parts.push(StepperPart {
                         id: p.id.clone(),
                         coils,
                         links: [None, None],
+                        inputs,
                     });
                     let load = prop_f64(p, "load", 0.0).clamp(0.0, 100.0) / 100.0;
                     let inertia = prop_f64(p, "inertia", 0.0).clamp(0.0, 5000.0) * 1e-7;
@@ -1796,6 +1919,26 @@ impl CircuitSim {
                         r: 10_000.0,
                     });
                     let drv8825 = prop_str(p, "model", "A4988") == "DRV8825";
+                    let vmot = node(pin("VMOT"), &mut map);
+                    let out = [
+                        (node(pin("1A"), &mut map), node(pin("1B"), &mut map)),
+                        (node(pin("2A"), &mut map), node(pin("2B"), &mut map)),
+                    ];
+                    // Output switches 1A, 1B, 2A, 2B (VMOT or GND).
+                    let legs = n_legs;
+                    for (i, o) in [out[0].0, out[0].1, out[1].0, out[1].1]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        elements.push(Element::Leg {
+                            out: o,
+                            hi: vmot,
+                            lo: gnd,
+                            r: A4988_R_ON,
+                            slot: legs + i,
+                        });
+                    }
+                    n_legs += 4;
                     driver_parts.push(DriverPart {
                         id: p.id.clone(),
                         step: node(pin("STEP"), &mut map),
@@ -1804,14 +1947,12 @@ impl CircuitSim {
                         ms,
                         rst: node(pin("RST"), &mut map),
                         slp,
-                        vmot: node(pin("VMOT"), &mut map),
+                        vmot,
                         vdd,
                         gnd,
-                        out: [
-                            (node(pin("1A"), &mut map), node(pin("1B"), &mut map)),
-                            (node(pin("2A"), &mut map), node(pin("2B"), &mut map)),
-                        ],
+                        out,
                         current: prop_f64(p, "current", 100.0).clamp(10.0, 100.0) / 100.0,
+                        legs,
                     });
                     match self.drivers.get_mut(&p.id) {
                         Some(d) if d.drv.drv8825 == drv8825 => {}
@@ -1832,6 +1973,27 @@ impl CircuitSim {
                     // Dual H-bridge module; the inputs have no pull resistors.
                     add_visual(&p.id, VisualKind::Motion, 0);
                     let pin = |n: &str| PinRef::new(&p.id, n);
+                    let vs = node(pin("12V"), &mut map);
+                    let gnd = node(pin("GND"), &mut map);
+                    let out = [
+                        (node(pin("OUT1"), &mut map), node(pin("OUT2"), &mut map)),
+                        (node(pin("OUT3"), &mut map), node(pin("OUT4"), &mut map)),
+                    ];
+                    // Output switches OUT1–OUT4 (12V or GND).
+                    let legs = n_legs;
+                    for (i, o) in [out[0].0, out[0].1, out[1].0, out[1].1]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        elements.push(Element::Leg {
+                            out: o,
+                            hi: vs,
+                            lo: gnd,
+                            r: L298N_R_ON,
+                            slot: legs + i,
+                        });
+                    }
+                    n_legs += 4;
                     bridge_parts.push(BridgePart {
                         id: p.id.clone(),
                         inp: [
@@ -1841,14 +2003,12 @@ impl CircuitSim {
                             node(pin("IN4"), &mut map),
                         ],
                         en: [node(pin("ENA"), &mut map), node(pin("ENB"), &mut map)],
-                        vs: node(pin("12V"), &mut map),
-                        gnd: node(pin("GND"), &mut map),
+                        vs,
+                        gnd,
                         v5: node(pin("5V"), &mut map),
-                        out: [
-                            (node(pin("OUT1"), &mut map), node(pin("OUT2"), &mut map)),
-                            (node(pin("OUT3"), &mut map), node(pin("OUT4"), &mut map)),
-                        ],
+                        out,
                         jumpers: prop_str(p, "jumpers", "on") != "off",
+                        legs,
                     });
                     self.bridges
                         .entry(p.id.clone())
@@ -1880,34 +2040,61 @@ impl CircuitSim {
                     e.kv = kv;
                     e.load = load;
                 }
-                "bldc-hall" => {
+                "bldc-hall" | "bldc" => {
                     // 3-phase BLDC (star) with three open-collector hall
-                    // sensors (device outputs 0–2: A, B, C).
+                    // sensors (device outputs 0–2: A, B, C); "bldc" (M28)
+                    // is the same motor without them (sensorless).
                     add_visual(&p.id, VisualKind::Motion, 0);
                     let pin = |n: &str| PinRef::new(&p.id, n);
-                    let halls = [
-                        node(pin("HA"), &mut map),
-                        node(pin("HB"), &mut map),
-                        node(pin("HC"), &mut map),
+                    let sensorless = p.kind == "bldc";
+                    let mut halls = [0; 3];
+                    let (mut vcc, mut gnd) = (0, 0);
+                    if !sensorless {
+                        halls = [
+                            node(pin("HA"), &mut map),
+                            node(pin("HB"), &mut map),
+                            node(pin("HC"), &mut map),
+                        ];
+                        for (i, &h) in halls.iter().enumerate() {
+                            dev_outputs.push((p.id.clone(), h, i));
+                        }
+                        vcc = node(pin("VCC"), &mut map);
+                        gnd = node(pin("GND"), &mut map);
+                    }
+                    let phases = [
+                        node(pin("U"), &mut map),
+                        node(pin("V"), &mut map),
+                        node(pin("W"), &mut map),
                     ];
-                    for (i, &h) in halls.iter().enumerate() {
-                        dev_outputs.push((p.id.clone(), h, i));
+                    // The windings meet at the star point inside the motor.
+                    let star = node(pin("@star"), &mut map);
+                    let inputs = [0, 1, 2].map(|k| windings.len() + k);
+                    for (k, &ph) in phases.iter().enumerate() {
+                        windings.push(WindingInfo {
+                            a: ph,
+                            b: star,
+                            r: BLDC_R,
+                        });
+                        elements.push(Element::Winding {
+                            a: ph,
+                            b: star,
+                            r: BLDC_R,
+                            input: inputs[k],
+                        });
                     }
                     bldc_parts.push(BldcPart {
                         id: p.id.clone(),
-                        phases: [
-                            node(pin("U"), &mut map),
-                            node(pin("V"), &mut map),
-                            node(pin("W"), &mut map),
-                        ],
+                        phases,
                         links: [None, None, None],
-                        vcc: node(pin("VCC"), &mut map),
-                        gnd: node(pin("GND"), &mut map),
+                        vcc,
+                        gnd,
                         halls,
+                        inputs,
+                        sensorless,
                     });
                     let load = prop_f64(p, "load", 0.0).clamp(0.0, 100.0) / 100.0;
                     match self.devices.get_mut(&p.id) {
-                        Some(Device::Bldc(b)) => {
+                        Some(Device::Bldc(b)) if b.sensorless == sensorless => {
                             b.advance(now_s);
                             b.load = load;
                         }
@@ -1915,6 +2102,7 @@ impl CircuitSim {
                             let mut b = HallBldc::new();
                             b.rebase(now_s);
                             b.load = load;
+                            b.sensorless = sensorless;
                             self.devices.insert(p.id.clone(), Device::Bldc(Box::new(b)));
                         }
                     }
@@ -1942,13 +2130,27 @@ impl CircuitSim {
                     self.phase_state
                         .entry(p.id.clone())
                         .or_insert_with(|| PhaseBridge::new(now_s));
+                    let pvdd = node(pin("PVDD"), &mut map);
+                    // Output switches OUTA–OUTC (PVDD or GND).
+                    let legs = n_legs;
+                    for (k, &o) in out.iter().enumerate() {
+                        elements.push(Element::Leg {
+                            out: o,
+                            hi: pvdd,
+                            lo: gnd,
+                            r: BRIDGE_R_ON,
+                            slot: legs + k,
+                        });
+                    }
+                    n_legs += 3;
                     phase_bridges.push(PhaseBridgePart {
                         id: p.id.clone(),
                         inh,
                         inl,
-                        pvdd: node(pin("PVDD"), &mut map),
+                        pvdd,
                         gnd,
                         out,
+                        legs,
                     });
                 }
                 "joystick" => {
@@ -2383,6 +2585,12 @@ impl CircuitSim {
             .retain(|id, _| phase_bridges.iter().any(|b| &b.id == id));
         self.bldc_parts = bldc_parts;
         self.phase_bridges = phase_bridges;
+        // The switches start off; the windings on their back-EMF.
+        self.legs = vec![Drive::Float; n_legs];
+        self.winding_cs = vec![false; windings.len()];
+        self.x = vec![0.0; windings.len()];
+        self.windings = windings;
+        self.emf_probe_live = false;
         self.nodes = nodes;
         self.elements = elements;
         self.visuals = visuals;
@@ -2433,6 +2641,15 @@ impl CircuitSim {
                 break;
             }
         }
+        // Motor windings: the same operating point once more with each
+        // node's sensitivity to the windings' inputs (M28).
+        let sens = if self.windings.is_empty() {
+            Vec::new()
+        } else {
+            let (v2, sens) = self.nodal_sens(drives, &on);
+            v = v2;
+            sens
+        };
 
         let mut warnings = Vec::new();
         let mut level: Vec<Vec<f64>> = self.visuals.iter().map(|s| vec![0.0; s.channels]).collect();
@@ -2491,7 +2708,9 @@ impl CircuitSim {
                 }
                 Element::Battery { p, n, v: vb, r } => {
                     let cur = (vb - (v[p] - v[n])) / r;
-                    if cur > 5.0 {
+                    // A short pulls the terminals together; a stalled
+                    // motor draws amperes but leaves the voltage.
+                    if cur > 5.0 && v[p] - v[n] < 0.5 * vb {
                         warnings.push(format!(
                             "short circuit: the {vb:.0} V supply's + is connected to its − (or to a lower voltage)"
                         ));
@@ -2545,8 +2764,32 @@ impl CircuitSim {
             }
             inputs.push(comp[node].then_some(v[node] > VDD / 2.0));
         }
+        // Which nodes the windings' inputs move, and the winding currents
+        // a + B·x (rows of back-EMF windings; a current source's current
+        // is its input).
+        let tiny = |x: f64| x.abs() < 1e-9;
+        let sens_node: Vec<bool> = (0..self.nodes)
+            .map(|k| sens.iter().any(|c| !tiny(c[k])))
+            .collect();
+        let nw = self.windings.len();
+        let mut coef_a = vec![0.0; nw];
+        let mut coef_b = vec![0.0; nw * nw];
+        for (j, w) in self.windings.iter().enumerate() {
+            if self.current_mode(drives, j) {
+                continue;
+            }
+            coef_a[j] = (v[w.a] - v[w.b]) / w.r;
+            for (k, c) in sens.iter().enumerate() {
+                let own = if k == j { 1.0 } else { 0.0 };
+                coef_b[j * nw + k] = (c[w.a] - c[w.b] - own) / w.r;
+            }
+        }
         Solution {
             v,
+            sens,
+            sens_node,
+            coef_a,
+            coef_b,
             level,
             over,
             inputs,
@@ -2589,6 +2832,16 @@ impl CircuitSim {
                 Element::Contact { a, b, relay, when } if self.contact(drives, relay) == when => {
                     union(&mut parent, a, b)
                 }
+                Element::Leg {
+                    out, hi, lo, slot, ..
+                } => match self.leg(drives, slot) {
+                    Drive::High => union(&mut parent, out, hi),
+                    Drive::Low => union(&mut parent, out, lo),
+                    _ => {}
+                },
+                Element::Winding { a, b, input, .. } if !self.current_mode(drives, input) => {
+                    union(&mut parent, a, b)
+                }
                 _ => {}
             }
         }
@@ -2620,6 +2873,51 @@ impl CircuitSim {
 
     /// Linear nodal analysis with the LEDs in the given states.
     fn nodal(&self, drives: &[Drive], on: &[bool]) -> Vec<f64> {
+        let n = self.nodes;
+        let m = n - 1;
+        let (mut g, rhs) = self.stamp(drives, on);
+        let mut cols = vec![rhs];
+        let x = gauss_cols(&mut g, &mut cols, m).swap_remove(0);
+        let mut v = vec![0.0; n];
+        v[1..].copy_from_slice(&x);
+        v
+    }
+
+    /// The operating point and each node's sensitivity to every winding
+    /// input (unit back-EMF, or unit current in current mode), from one
+    /// factorisation.
+    fn nodal_sens(&self, drives: &[Drive], on: &[bool]) -> (Vec<f64>, Vec<Vec<f64>>) {
+        let n = self.nodes;
+        let m = n - 1;
+        let (mut g, rhs) = self.stamp(drives, on);
+        let mut cols = vec![rhs];
+        for (j, w) in self.windings.iter().enumerate() {
+            let mut c = vec![0.0; m];
+            let (ia, ib) = if self.current_mode(drives, j) {
+                (-1.0, 1.0)
+            } else {
+                (1.0 / w.r, -1.0 / w.r)
+            };
+            if w.a > 0 {
+                c[w.a - 1] += ia;
+            }
+            if w.b > 0 {
+                c[w.b - 1] += ib;
+            }
+            cols.push(c);
+        }
+        let xs = gauss_cols(&mut g, &mut cols, m);
+        let mut out = xs.into_iter().map(|x| {
+            let mut v = vec![0.0; n];
+            v[1..].copy_from_slice(&x);
+            v
+        });
+        let v = out.next().unwrap_or_default();
+        (v, out.collect())
+    }
+
+    /// The conductance matrix (nodes 1..n) and source vector.
+    fn stamp(&self, drives: &[Drive], on: &[bool]) -> (Vec<f64>, Vec<f64>) {
         let n = self.nodes;
         let m = n - 1; // unknowns: nodes 1..n
         let mut g = vec![0.0; m * m];
@@ -2675,6 +2973,21 @@ impl CircuitSim {
                 Element::Contact { a, b, relay, when } if self.contact(drives, relay) == when => {
                     stamp(&mut g, a, b, 1.0 / R_CONTACT)
                 }
+                Element::Leg {
+                    out,
+                    hi,
+                    lo,
+                    r,
+                    slot,
+                } => match self.leg(drives, slot) {
+                    Drive::High => stamp(&mut g, out, hi, 1.0 / r),
+                    Drive::Low => stamp(&mut g, out, lo, 1.0 / r),
+                    _ => {}
+                },
+                // The back-EMF itself is an input (zero here).
+                Element::Winding { a, b, r, input } if !self.current_mode(drives, input) => {
+                    stamp(&mut g, a, b, 1.0 / r)
+                }
                 Element::Sensor { out, gnd, v, r, .. } if on[i] => {
                     // Norton source v/r from gnd into out, with r across.
                     let c = 1.0 / r;
@@ -2702,10 +3015,7 @@ impl CircuitSim {
                 source(&mut g, &mut rhs, *node, v, r);
             }
         }
-        let x = gauss(&mut g, &mut rhs, m);
-        let mut v = vec![0.0; n];
-        v[1..].copy_from_slice(&x);
-        v
+        (g, rhs)
     }
 
     /// Accumulate the current solution's visual levels up to `time`.
@@ -2725,10 +3035,27 @@ impl CircuitSim {
     /// input level of every pin of [`CircuitSim::mcu_pins`] if any of them
     /// may have changed.
     pub fn update(&mut self, time: Cycles, drives: &[Drive]) -> Option<Vec<Option<bool>>> {
-        let old = self.current.clone();
+        let first = self.current.is_none();
+        self.inputs_changed = false;
         self.update_inner(time, drives);
-        let sol = self.current.clone()?;
-        changed_inputs(&old, &sol)
+        self.current.as_ref()?;
+        (first || self.inputs_changed).then(|| self.inputs_now.clone())
+    }
+
+    /// The solution for a drive key, from the cache or solved now.
+    fn solution_for(&mut self, key: &[Drive]) -> Rc<Solution> {
+        if let Some(s) = self.cache.get(key) {
+            return s.clone();
+        }
+        let s = Rc::new(self.solve(key));
+        for w in &s.warnings {
+            self.warnings.insert(w.clone());
+        }
+        if self.cache.len() > 4096 {
+            self.cache.clear();
+        }
+        self.cache.insert(key.to_vec(), s.clone());
+        s
     }
 
     /// What the devices drive and where the relay contacts are, after the
@@ -2757,7 +3084,34 @@ impl CircuitSim {
             };
             key.push(if closed { Drive::High } else { Drive::Low });
         }
+        // Then the motor drivers' output switches, and which windings a
+        // chopper drives as a current source (M28).
+        key.extend_from_slice(&self.legs);
+        key.extend(
+            self.winding_cs
+                .iter()
+                .map(|&cs| if cs { Drive::High } else { Drive::Low }),
+        );
         key
+    }
+
+    /// Index in the drive key of the first output switch.
+    fn leg_base(&self) -> usize {
+        self.mcu.len() + self.dev_outputs.len() + self.relay_parts.len()
+    }
+
+    /// The state of output switch `slot` in this drive key.
+    fn leg(&self, drives: &[Drive], slot: usize) -> Drive {
+        drives
+            .get(self.leg_base() + slot)
+            .copied()
+            .unwrap_or(Drive::Float)
+    }
+
+    /// Winding `j` is a current source (a chopper's regulated current) in
+    /// this drive key.
+    fn current_mode(&self, drives: &[Drive], j: usize) -> bool {
+        drives.get(self.leg_base() + self.legs.len() + j) == Some(&Drive::High)
     }
 
     fn update_inner(&mut self, time: Cycles, drives: &[Drive]) {
@@ -2765,32 +3119,29 @@ impl CircuitSim {
         // the MCU's pins in the drive list, so they are part of the cache key.
         let now_s = self.seconds_at(time);
         let mcu = drives.len();
+        // The MCU's pins as they were: a 3-phase bridge input may have
+        // stopped switching (its outputs then change by themselves).
+        let same_pins = self
+            .drives
+            .as_ref()
+            .is_some_and(|d| d.len() >= mcu && d[..mcu] == *drives);
+        let phases_due = same_pins && self.phase_bridges_due(now_s);
+        if !same_pins {
+            self.predict_phase_legs(drives, now_s);
+        }
         let mut key = drives.to_vec();
         key.extend(self.device_key(now_s));
         let drives = &key[..];
         if self.drives.as_deref() == Some(drives) {
-            self.phase_bridges_due(now_s);
+            if phases_due {
+                self.apply_motor_networks(now_s);
+            }
+            self.refresh_windings(time, now_s, true);
             return;
         }
         self.integrate(time);
-        let sol = match self.cache.get(drives) {
-            Some(s) => s.clone(),
-            None => {
-                let s = Rc::new(self.solve(drives));
-                for w in &s.warnings {
-                    self.warnings.insert(w.clone());
-                }
-                if self.cache.len() > 4096 {
-                    self.cache.clear();
-                }
-                self.cache.insert(drives.to_vec(), s.clone());
-                s
-            }
-        };
+        let sol = self.solution_for(drives);
         let old = self.current.replace(sol.clone());
-        if !self.voltage_probes.is_empty() {
-            self.log_voltages(time);
-        }
         for (i, slot) in self.visuals.iter_mut().enumerate() {
             if sol.over[i] {
                 slot.overcurrent = true;
@@ -2888,56 +3239,325 @@ impl CircuitSim {
             self.depth += 1;
             self.update_inner(time, &key[..mcu]);
             self.depth -= 1;
+        } else {
+            // Settled: the motors get the currents this circuit gives them,
+            // and the voltages and inputs that their back-EMF moves follow.
+            self.apply_motor_networks(now_s);
+            self.refresh_windings(time, now_s, true);
         }
     }
 
-    /// The 3-phase bridges' outputs from what their inputs did (PWM
-    /// averaged), and the BLDCs on them driven by those.
+    /// The windings' inputs (back-EMF, a chopper's current) at `time`, and
+    /// what they move: the probed voltages and (`inputs`) the MCU's input
+    /// levels.
+    fn refresh_windings(&mut self, time: Cycles, now_s: f64, inputs: bool) {
+        let Some(sol) = self.current.clone() else {
+            return;
+        };
+        if !self.windings.is_empty() {
+            for part in &self.stepper_parts {
+                if let Some(m) = self.steppers.get_mut(&part.id) {
+                    // (A chopper's current ramps between updates.)
+                    m.advance(now_s);
+                    let e = m.emf_at(now_s);
+                    for k in 0..2 {
+                        let j = part.inputs[k];
+                        self.x[j] = if self.winding_cs[j] {
+                            m.current[k] * STEPPER_RATED
+                        } else {
+                            e[k]
+                        };
+                    }
+                }
+            }
+            for part in &self.bldc_parts {
+                if let Some(Device::Bldc(b)) = self.devices.get(&part.id) {
+                    let e = b.emf_at(now_s);
+                    for k in 0..3 {
+                        self.x[part.inputs[k]] = e[k];
+                    }
+                }
+            }
+            self.x_time = time;
+        }
+        if inputs {
+            let mut changed = self.inputs_now.len() != sol.inputs.len();
+            self.inputs_now.resize(sol.inputs.len(), None);
+            for (i, (now, &solved)) in self.inputs_now.iter_mut().zip(&sol.inputs).enumerate() {
+                let node = self.mcu[i].1;
+                let level = if sol.sens_node[node] && sol.driven[node] {
+                    let mut v = sol.v[node];
+                    for (c, x) in sol.sens.iter().zip(&self.x) {
+                        v += c[node] * x;
+                    }
+                    Some(v > VDD / 2.0)
+                } else {
+                    solved
+                };
+                if *now != level {
+                    *now = level;
+                    changed = true;
+                }
+            }
+            self.inputs_changed |= changed;
+        }
+        if !self.voltage_probes.is_empty() {
+            self.log_voltages(time);
+            let moving = self.x.iter().any(|x| x.abs() > 1e-6);
+            self.emf_probe_live = moving
+                && self.voltage_probes.iter().any(|n| {
+                    self.pin_nodes
+                        .get(&self.canonical(&self.probe_pin(n)))
+                        .is_some_and(|&node| sol.sens_node[node])
+                });
+        } else {
+            self.emf_probe_live = false;
+        }
+    }
+
+    /// Bring the windings' inputs up to `time` without a new solve (before
+    /// the ADC samples a pin).
+    pub fn refresh(&mut self, time: Cycles) {
+        if !self.windings.is_empty() {
+            let now_s = self.seconds_at(time);
+            self.refresh_windings(time, now_s, false);
+        }
+    }
+
+    /// A node's voltage in a solution with the windings' inputs as now.
+    fn v_eff(&self, sol: &Solution, node: usize) -> f64 {
+        let mut v = sol.v[node];
+        if sol.sens_node.get(node) == Some(&true) {
+            for (c, x) in sol.sens.iter().zip(&self.x) {
+                v += c[node] * x;
+            }
+        }
+        v
+    }
+
+    /// The 3-phase bridges' outputs from what their inputs did: the
+    /// switches as they are now (the output switches of the solve) and,
+    /// PWM averaged, what the motors get (`phase_out`).
     fn drive_phases(&mut self, now: f64) {
         for part in &self.phase_bridges {
             let Some(st) = self.phase_state.get(&part.id) else {
                 continue;
             };
-            let out = if st.supply >= PHASE_BRIDGE_VMIN {
+            let powered = st.supply >= PHASE_BRIDGE_VMIN;
+            let out = if powered {
                 st.drive(now)
             } else {
                 [PhaseDrive::Float; 3]
             };
+            for k in 0..3 {
+                self.legs[part.legs + k] = match st.leg(k, now) {
+                    Some(true) if powered => Drive::High,
+                    Some(false) if powered => Drive::Low,
+                    _ => Drive::Float,
+                };
+            }
             self.phase_out.insert(part.id.clone(), (out, st.supply));
         }
-        for part in &self.bldc_parts {
-            let Some(Device::Bldc(b)) = self.devices.get_mut(&part.id) else {
+    }
+
+    /// The 3-phase bridges' output switches for new MCU pin drives, before
+    /// solving: an input on an MCU pin driven high or low is at that level
+    /// (else it is left as it was). Saves solving twice at every PWM edge;
+    /// if this is wrong, the bridge's outputs change once the inputs are
+    /// seen and the circuit is solved again.
+    fn predict_phase_legs(&mut self, drives: &[Drive], now: f64) {
+        let level = |node: usize| {
+            let i = self.mcu.iter().position(|&(_, n)| n == node)?;
+            match drives.get(i) {
+                Some(Drive::High) => Some(true),
+                Some(Drive::Low) => Some(false),
+                _ => None,
+            }
+        };
+        for part in &self.phase_bridges {
+            let Some(st) = self.phase_state.get(&part.id) else {
                 continue;
             };
-            let mut drive = [PhaseDrive::Float; 3];
-            let mut supply: f64 = 0.0;
+            if st.supply < PHASE_BRIDGE_VMIN {
+                continue;
+            }
             for k in 0..3 {
-                if let Some((id, o)) = &part.links[k] {
-                    if let Some((out, s)) = self.phase_out.get(id) {
-                        drive[k] = out[*o];
-                        supply = supply.max(*s);
-                    }
+                if let (Some(h), Some(l)) = (level(part.inh[k]), level(part.inl[k])) {
+                    self.legs[part.legs + k] = match st.leg_for(k, h, l, now) {
+                        Some(true) => Drive::High,
+                        Some(false) => Drive::Low,
+                        None => Drive::Float,
+                    };
                 }
             }
-            b.set_drive(now, drive, supply);
         }
     }
 
     /// A bridge input stopped switching (no edge for a PWM period): the
-    /// phase follows its static level from now on.
-    fn phase_bridges_due(&mut self, now: f64) {
+    /// phase follows its static level from now on. Returns whether one did.
+    fn phase_bridges_due(&mut self, now: f64) -> bool {
         let due = self
             .phase_state
             .values()
             .any(|st| st.next_change().is_some_and(|t| t <= now + 1e-9));
         if !due {
-            return;
+            return false;
         }
         for st in self.phase_state.values_mut() {
             let levels = st.levels();
             st.inputs(now, levels);
         }
         self.drive_phases(now);
+        true
+    }
+
+    /// Hand each motor the currents the circuit gives its windings (M28):
+    /// `a + B·emf` from the solution of the present key, with each chopping
+    /// 3-phase bridge output averaged over its PWM (the solutions with it
+    /// on and off, weighted by the duty). Coils behind an A4988 that is on
+    /// keep the driver's regulated current.
+    fn apply_motor_networks(&mut self, now: f64) {
+        let nw = self.windings.len();
+        if nw == 0 {
+            return;
+        }
+        let mut mech = std::mem::take(&mut self.mech);
+        mech.clear();
+        match &self.drives {
+            Some(key) => mech.extend_from_slice(key),
+            None => return,
+        }
+        let base = self.leg_base();
+        let mut duties: Vec<(usize, f64)> = Vec::new();
+        for part in &self.phase_bridges {
+            let Some((out, _)) = self.phase_out.get(&part.id) else {
+                continue;
+            };
+            for (k, o) in out.iter().enumerate() {
+                let i = base + part.legs + k;
+                mech[i] = match *o {
+                    PhaseDrive::High => Drive::High,
+                    PhaseDrive::Low => Drive::Low,
+                    PhaseDrive::Float => Drive::Float,
+                    PhaseDrive::Duty(d) => {
+                        let f = d as f64 / 1000.0;
+                        if duties.len() < MAX_DUTY_LEGS {
+                            duties.push((i, f));
+                        }
+                        if f >= 0.5 {
+                            Drive::High
+                        } else {
+                            Drive::Low
+                        }
+                    }
+                };
+            }
+        }
+        // Nothing new for the motors: the same key but for MCU pins whose
+        // nets the windings do not reach (the network is reciprocal: a
+        // pin the back-EMF does not move cannot move a winding current) —
+        // say a PWM edge on a bridge input.
+        if duties == self.duties_last && mech.len() == self.mech_last.len() {
+            let sol = self.current.clone();
+            let n_mcu = self.mcu.len();
+            let same = mech
+                .iter()
+                .zip(&self.mech_last)
+                .enumerate()
+                .all(|(i, (x, y))| {
+                    x == y
+                        || (i < n_mcu && sol.as_ref().is_some_and(|s| !s.sens_node[self.mcu[i].1]))
+                });
+            if !same {
+                self.mech_last.clear();
+            }
+        } else {
+            self.mech_last.clear();
+        }
+        if self.mech_last.is_empty() || self.net_last.0.len() != nw {
+            self.mech_last.clone_from(&mech);
+            self.duties_last.clone_from(&duties);
+            let mut a = vec![0.0; nw];
+            let mut b = vec![0.0; nw * nw];
+            for combo in 0..1usize << duties.len() {
+                let mut w = 1.0;
+                for (bit, &(i, f)) in duties.iter().enumerate() {
+                    let on = combo >> bit & 1 == 1;
+                    w *= if on { f } else { 1.0 - f };
+                    mech[i] = if on { Drive::High } else { Drive::Low };
+                }
+                if w <= 0.0 {
+                    continue;
+                }
+                let sol = self.solution_for(&mech);
+                for (acc, c) in a.iter_mut().zip(&sol.coef_a) {
+                    *acc += w * c;
+                }
+                for (acc, c) in b.iter_mut().zip(&sol.coef_b) {
+                    *acc += w * c;
+                }
+            }
+            self.net_last = (a, b);
+        }
+        let (a, b) = std::mem::take(&mut self.net_last);
+        let pwm = !duties.is_empty();
+        for part in &self.stepper_parts {
+            let Some(m) = self.steppers.get_mut(&part.id) else {
+                continue;
+            };
+            let mut target = [0.0; 2];
+            let mut drive = [CoilDrive::Off; 2];
+            for k in 0..2 {
+                let j = part.inputs[k];
+                // Behind a chopper that is on: its regulated current.
+                let link = part.links[k].as_ref();
+                let chopper = link.and_then(|l| {
+                    self.drivers
+                        .get(&l.driver)
+                        .map(|d| (l.sign * d.out[l.bridge].0, d.out[l.bridge].1))
+                });
+                if let Some((t, d @ CoilDrive::Chopper { .. })) = chopper {
+                    target[k] = t;
+                    drive[k] = d;
+                    continue;
+                }
+                // Else what the circuit gives the coil. An open coil lets
+                // its current die away through the diodes, except on an
+                // L298N whose enable is off (slow decay, so a PWM on the
+                // enable averages, as in M21).
+                let own = [part.inputs[0], part.inputs[1]];
+                let bb = [b[j * nw + own[0]], b[j * nw + own[1]]];
+                let open = b[j * nw + j].abs() < 1e-6;
+                let l298n_on = link.is_some_and(|l| {
+                    self.bridges
+                        .get(&l.driver)
+                        .is_some_and(|br| br.out[l.bridge].1 != CoilDrive::Off)
+                });
+                let tau = if open && !l298n_on {
+                    crate::tier9::FREEWHEEL_TAU
+                } else {
+                    crate::tier9::COIL_TAU
+                };
+                target[k] = a[j] / STEPPER_RATED;
+                drive[k] = CoilDrive::Network {
+                    b: bb.map(|x| x / STEPPER_RATED),
+                    tau,
+                };
+            }
+            m.set_drive(now, target, drive);
+        }
+        for part in &self.bldc_parts {
+            let Some(Device::Bldc(m)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            let ins = part.inputs;
+            let na: [f64; 3] = std::array::from_fn(|k| a[ins[k]]);
+            let nb: [[f64; 3]; 3] =
+                std::array::from_fn(|k| std::array::from_fn(|j| b[ins[k] * nw + ins[j]]));
+            m.set_network(now, na, nb, pwm);
+        }
+        self.net_last = (a, b);
+        self.mech = mech;
     }
 
     /// Relay coils follow their input; the contacts follow the coil after
@@ -3118,6 +3738,20 @@ impl CircuitSim {
             } else {
                 [(0.0, CoilDrive::Off); 2]
             };
+            // The outputs: each bridge drives its coil one way, VMOT on one
+            // side and GND on the other (the chopper's PWM is not modelled;
+            // the coil is a current source of the regulated current).
+            for k in 0..2 {
+                let (a, b) = if d.state != "on" {
+                    (Drive::Float, Drive::Float)
+                } else if d.out[k].0 >= 0.0 {
+                    (Drive::High, Drive::Low)
+                } else {
+                    (Drive::Low, Drive::High)
+                };
+                self.legs[part.legs + 2 * k] = a;
+                self.legs[part.legs + 2 * k + 1] = b;
+            }
         }
         for part in &self.bridge_parts {
             let Some(b) = self.bridges.get_mut(&part.id) else {
@@ -3139,9 +3773,20 @@ impl CircuitSim {
                     ));
                 }
                 let en = part.jumpers || high(part.en[k]);
+                let (in1, in2) = (high(part.inp[2 * k]), high(part.inp[2 * k + 1]));
                 if b.powered {
-                    *o = l298n_bridge(high(part.inp[2 * k]), high(part.inp[2 * k + 1]), en, vs);
+                    *o = l298n_bridge(in1, in2, en, vs);
                 }
+                // The output switches: each output to 12V or GND by its
+                // input while enabled, both off otherwise.
+                let on = b.powered && en && vs >= 4.5;
+                let leg = |x: bool| match (on, x) {
+                    (false, _) => Drive::Float,
+                    (true, true) => Drive::High,
+                    (true, false) => Drive::Low,
+                };
+                self.legs[part.legs + 2 * k] = leg(in1);
+                self.legs[part.legs + 2 * k + 1] = leg(in2);
             }
             // Averaged for the display.
             for k in 0..2 {
@@ -3150,28 +3795,22 @@ impl CircuitSim {
             b.since = now;
             b.out = out;
         }
-        for part in &mut self.stepper_parts {
-            let Some(m) = self.steppers.get_mut(&part.id) else {
-                continue;
-            };
-            let mut target = [0.0; 2];
-            let mut drive = [CoilDrive::Off; 2];
+        // A coil behind an A4988 that is on is a current source (its
+        // regulated current); every other winding is R + back-EMF. The
+        // motors themselves are driven once the circuit has settled
+        // (`apply_motor_networks`).
+        for part in &self.stepper_parts {
             for k in 0..2 {
-                let Some(l) = &part.links[k] else {
-                    continue;
-                };
-                let out = self
-                    .drivers
-                    .get(&l.driver)
-                    .map(|d| d.out[l.bridge])
-                    .or_else(|| self.bridges.get(&l.driver).map(|b| b.out[l.bridge]));
-                if let Some((t, d)) = out {
-                    target[k] = l.sign * t;
-                    drive[k] = d;
-                }
+                let chopper = part.links[k].as_ref().is_some_and(|l| {
+                    self.drivers
+                        .get(&l.driver)
+                        .is_some_and(|d| matches!(d.out[l.bridge].1, CoilDrive::Chopper { .. }))
+                });
+                self.winding_cs[part.inputs[k]] = chopper;
             }
-            m.set_drive(now, target, drive);
-            stepper_warnings(&part.id, m, &mut self.warnings);
+            if let Some(m) = self.steppers.get_mut(&part.id) {
+                stepper_warnings(&part.id, m, &mut self.warnings);
+            }
         }
         for part in &self.phase_bridges {
             let rel = |n: usize| v(n) - v(part.gnd);
@@ -3298,6 +3937,7 @@ impl CircuitSim {
     /// Close the display frame at `time`; `seconds` is its simulated length.
     pub fn end_frame(&mut self, time: Cycles, seconds: f64) -> Vec<PartVisual> {
         self.integrate(time);
+        self.refresh(time);
         let mut spilled = Vec::new();
         let span = time.saturating_sub(self.frame_start) as f64;
         let cur = self.current.clone();
@@ -3437,13 +4077,16 @@ impl CircuitSim {
                         }
                         v.angle = Some(b.degrees());
                         v.rpm = Some(b.rpm());
-                        v.unpowered = !b.powered;
+                        let on = b.powered || b.sensorless;
+                        v.unpowered = !on;
                         let h = b.hall();
-                        v.text = Some(format!("{}{}{}", h & 1, h >> 1 & 1, h >> 2 & 1));
+                        if !b.sensorless {
+                            v.text = Some(format!("{}{}{}", h & 1, h >> 1 & 1, h >> 2 & 1));
+                        }
                         v.motor = Some(MotorView {
                             coils: b.current.iter().map(|i| i / 6.0).collect(),
                             stalled: b.stalled,
-                            state: if b.powered { "on" } else { "off" }.into(),
+                            state: if on { "on" } else { "off" }.into(),
                             ..Default::default()
                         });
                     } else if let Some((out, supply)) = self.phase_out.get(&slot.id) {
@@ -3762,6 +4405,11 @@ impl CircuitSim {
             .filter_map(|id| self.devices.get(id).and_then(|d| d.next_change()))
             .chain(self.phase_state.values().filter_map(|b| b.next_change()))
             .map(|t| c + ((t - s) * hz).ceil().max(0.0) as Cycles)
+            // A probed net that a turning motor's back-EMF moves.
+            .chain(
+                self.emf_probe_live
+                    .then(|| self.x_time + (EMF_PROBE_INTERVAL * hz).ceil() as Cycles),
+            )
             .min()
     }
 
@@ -3794,8 +4442,10 @@ impl CircuitSim {
         s + (t as f64 - c as f64) / hz
     }
 
+    /// A node's voltage now: the operating point with the windings'
+    /// back-EMF as last brought up to date.
     fn node_voltage(&self, node: usize) -> f64 {
-        self.current.as_ref().map_or(0.0, |s| s.v[node])
+        self.current.as_ref().map_or(0.0, |s| self.v_eff(s, node))
     }
 
     fn mcu_node(&self, pin: (u8, u8)) -> Option<usize> {
@@ -4093,7 +4743,7 @@ impl CircuitSim {
     /// if the circuit connects anything to it (for the ADC).
     pub fn mcu_voltage(&self, port: u8, pin: u8) -> Option<f64> {
         let &(_, node) = self.mcu.iter().find(|(p, _)| *p == (port, pin))?;
-        Some(self.current.as_ref().map_or(0.0, |s| s.v[node]))
+        Some(self.node_voltage(node))
     }
 
     /// The pin an analog probe names: `"PA1"` (an MCU pin) or
@@ -4112,7 +4762,11 @@ impl CircuitSim {
         self.voltage_probes = names.to_vec();
         self.voltage_last.clear();
         self.voltage_log.clear();
-        if !self.voltage_probes.is_empty() {
+        if !self.windings.is_empty() {
+            // Logs, and notes whether a probe moves with a motor.
+            let now_s = self.seconds_at(time);
+            self.refresh_windings(time, now_s, false);
+        } else if !self.voltage_probes.is_empty() {
             self.log_voltages(time);
         }
     }
@@ -4145,7 +4799,7 @@ impl CircuitSim {
     /// operating point.
     pub fn voltage(&self, pin: &PinRef) -> Option<f64> {
         let node = *self.pin_nodes.get(&self.canonical(pin))?;
-        Some(self.current.as_ref().map_or(0.0, |s| s.v[node]))
+        Some(self.node_voltage(node))
     }
 }
 
@@ -4161,6 +4815,9 @@ fn hall_pull_ups(
     mcu: &[((u8, u8), usize)],
     warnings: &mut BTreeSet<String>,
 ) {
+    if part.sensorless {
+        return;
+    }
     for (k, &h) in part.halls.iter().enumerate() {
         let floats = b.powered
             && b.hall_output(k).is_none()
@@ -4192,7 +4849,14 @@ fn shoot_through_warnings(id: &str, shoot: [bool; 3], warnings: &mut BTreeSet<St
 
 /// Report a BLDC that stalled since the last look.
 fn bldc_warnings(id: &str, b: &mut HallBldc, warnings: &mut BTreeSet<String>) {
-    if std::mem::take(&mut b.stall_new) {
+    if !std::mem::take(&mut b.stall_new) {
+        return;
+    }
+    if b.sensorless {
+        warnings.insert(format!(
+            "{id}: the motor has current but does not turn — the commutation is not in step with the rotor (sensorless: align, then ramp up slowly enough before following the back-EMF zero crossings), or the load is more than its torque"
+        ));
+    } else {
         warnings.insert(format!(
             "{id}: the motor has current but does not turn — the commutation does not match the hall sensors (check the table and which hall and phase goes where), or the load is more than its torque"
         ));
@@ -4289,7 +4953,10 @@ fn link_steppers(
                         .map(move |(_, n)| format!("{id}.{n}"))
                 })
                 .collect();
-            if !touched.is_empty() {
+            // One end through something else (a sense resistor) is fine
+            // since the coils are in the solve (M28); both ends on outputs
+            // of different pairs is a wiring mistake.
+            if touched.len() >= 2 {
                 warnings.push(format!(
                     "{}: coil {coil} ({coil}+/{coil}−) is not across one output pair (it is on {}) — put both ends of a coil on 1A/1B or 2A/2B (OUT1/OUT2 or OUT3/OUT4)",
                     m.id,
@@ -4312,12 +4979,6 @@ fn truthy(v: &serde_json::Value) -> bool {
 
 /// Norton equivalent (voltage, resistance) of a pin drive.
 /// The inputs of `sol` if they differ from those of `old`.
-fn changed_inputs(old: &Option<Rc<Solution>>, sol: &Solution) -> Option<Vec<Option<bool>>> {
-    old.as_ref()
-        .is_none_or(|o| o.inputs != sol.inputs)
-        .then(|| sol.inputs.clone())
-}
-
 fn drive_source(d: Drive) -> Option<(f64, f64)> {
     match d {
         Drive::High => Some((VDD, R_ON)),
@@ -4328,9 +4989,10 @@ fn drive_source(d: Drive) -> Option<(f64, f64)> {
     }
 }
 
-/// Solve `a x = b` (n×n, row-major) by Gaussian elimination with partial
-/// pivoting. The matrix is diagonally dominant thanks to GMIN.
-fn gauss(a: &mut [f64], b: &mut [f64], n: usize) -> Vec<f64> {
+/// Solve `a x = b` (n×n, row-major) for each right-hand side `b` in
+/// `bs` by Gaussian elimination with partial pivoting. The matrix is
+/// diagonally dominant thanks to GMIN.
+fn gauss_cols(a: &mut [f64], bs: &mut [Vec<f64>], n: usize) -> Vec<Vec<f64>> {
     for col in 0..n {
         let piv = (col..n)
             .max_by(|&i, &j| a[i * n + col].abs().total_cmp(&a[j * n + col].abs()))
@@ -4339,7 +5001,9 @@ fn gauss(a: &mut [f64], b: &mut [f64], n: usize) -> Vec<f64> {
             for k in 0..n {
                 a.swap(piv * n + k, col * n + k);
             }
-            b.swap(piv, col);
+            for b in bs.iter_mut() {
+                b.swap(piv, col);
+            }
         }
         let d = a[col * n + col];
         if d.abs() < 1e-30 {
@@ -4353,19 +5017,25 @@ fn gauss(a: &mut [f64], b: &mut [f64], n: usize) -> Vec<f64> {
             for k in col..n {
                 a[row * n + k] -= f * a[col * n + k];
             }
-            b[row] -= f * b[col];
+            for b in bs.iter_mut() {
+                b[row] -= f * b[col];
+            }
         }
     }
-    let mut x = vec![0.0; n];
-    for row in (0..n).rev() {
-        let mut s = b[row];
-        for k in row + 1..n {
-            s -= a[row * n + k] * x[k];
-        }
-        let d = a[row * n + row];
-        x[row] = if d.abs() < 1e-30 { 0.0 } else { s / d };
-    }
-    x
+    bs.iter()
+        .map(|b| {
+            let mut x = vec![0.0; n];
+            for row in (0..n).rev() {
+                let mut s = b[row];
+                for k in row + 1..n {
+                    s -= a[row * n + k] * x[k];
+                }
+                let d = a[row * n + row];
+                x[row] = if d.abs() < 1e-30 { 0.0 } else { s / d };
+            }
+            x
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -6578,6 +7248,32 @@ mod tests {
     }
 
     #[test]
+    fn a_chopping_phase_in_its_dead_time_stays_on_the_low_diode() {
+        let mut s = bldc_sim();
+        let mut t = 0.01;
+        commutate_pwm(&mut s, &mut t, 0.1, 0.5, 500e-9, false);
+        let k = s.phase_out["br"]
+            .0
+            .iter()
+            .position(|d| matches!(d, PhaseDrive::Duty(_)))
+            .expect("a chopping phase");
+        // Both of its switches off, as in the dead time after the high
+        // side: the motor current goes on through the low side's diode, so
+        // the output is at ground (not floating at the star point).
+        let mut d = s.drives.clone().unwrap()[..s.mcu.len()].to_vec();
+        let pins = s.mcu_pins();
+        for (i, p) in pins.iter().enumerate() {
+            if *p == (1, 2 * k as u8) || *p == (1, 2 * k as u8 + 1) {
+                d[i] = Drive::Low;
+            }
+        }
+        s.update(at(t) + 2, &d);
+        let out = ["br.OUTA", "br.OUTB", "br.OUTC"][k];
+        assert_eq!(s.legs[k], Drive::Low);
+        assert!(probe(&s, out).abs() < 0.5, "{}", probe(&s, out));
+    }
+
+    #[test]
     fn overlapping_switches_warn_of_shoot_through_and_dead_time_does_not() {
         // No dead time: the low side turns on as the high side turns off —
         // faster than the switch turns off.
@@ -6676,5 +7372,472 @@ mod tests {
         s.update(wake, &off);
         assert_eq!(s.phase_out["br"].0[0], PhaseDrive::Float);
         assert_eq!(s.next_event(), None);
+    }
+
+    // ------------------------------------- M28: windings in the nodal solve
+
+    fn probe(s: &CircuitSim, name: &str) -> f64 {
+        s.voltage(&s.probe_pin(name)).unwrap()
+    }
+
+    #[test]
+    fn driver_outputs_show_their_voltage_and_the_mcu_reads_it() {
+        // L298N, jumpers on, IN1 high: OUT1 at 12 V less one switch's drop
+        // at the coil's current, OUT2 at one switch's drop above ground.
+        let mut s = l298n_sim("off");
+        let mut c = s.circuit.clone();
+        // OUT1 through a 10 k / 4.7 k divider to PA7.
+        c.parts.push(part("r1", "resistor", &[("ohms", "10k")]));
+        c.parts.push(part("r2", "resistor", &[("ohms", "4.7k")]));
+        c.wires.push(wire(("br", "OUT1"), ("r1", "1")));
+        c.wires.push(wire(("r1", "2"), ("mcu", "PA7")));
+        c.wires.push(wire(("mcu", "PA7"), ("r2", "1")));
+        c.wires.push(wire(("r2", "2"), ("mcu", "GND")));
+        s.set_circuit(&c, 0);
+        coils(&mut s, 0.01, 0b0001, [true; 2]);
+        let i = 12.0 / (STEPPER_COIL_R + 2.0 * L298N_R_ON);
+        assert!((probe(&s, "br.OUT1") - (12.0 - i * L298N_R_ON)).abs() < 0.05);
+        assert!((probe(&s, "br.OUT2") - i * L298N_R_ON).abs() < 0.05);
+        assert!((probe(&s, "mot.A+") - probe(&s, "br.OUT1")).abs() < 1e-9);
+        let pa7 = s.mcu_pins().iter().position(|&p| p == (0, 7)).unwrap();
+        let level = |s: &mut CircuitSim, pattern: u8, t: f64| {
+            let mut lv: Vec<((u8, u8), Option<bool>)> = IN_PINS
+                .iter()
+                .enumerate()
+                .map(|(i, &p)| (p, Some(pattern >> i & 1 != 0)))
+                .collect();
+            lv.push(((1, 0), Some(true)));
+            lv.push(((1, 1), Some(true)));
+            let d = drives(s, |p| match lv.iter().find(|(q, _)| *q == p) {
+                Some((_, Some(true))) => Drive::High,
+                Some((_, Some(false))) => Drive::Low,
+                _ => Drive::Float,
+            });
+            s.update(at(t), &d);
+            s.inputs_now[pa7]
+        };
+        assert_eq!(level(&mut s, 0b0001, 0.02), Some(true), "OUT1 high");
+        // IN1 low, IN2 high: OUT1 low, the coil the other way.
+        assert_eq!(level(&mut s, 0b0010, 0.03), Some(false));
+        assert!(probe(&s, "br.OUT1") < 1.5, "{}", probe(&s, "br.OUT1"));
+        assert!(probe(&s, "br.OUT2") > 10.5);
+        // An analog probe logs each change.
+        s.set_voltage_probes(&["br.OUT1".to_string()], at(0.03));
+        level(&mut s, 0b0001, 0.04);
+        let log = s.take_voltage_log();
+        assert_eq!(log.len(), 2, "{log:?}");
+        assert!(log[0].1[0].unwrap() < 1.5 && log[1].1[0].unwrap() > 10.5);
+        // A 3-phase bridge: OUTA high, OUTB low, OUTC off.
+        let mut s = bldc_sim();
+        let d = drives(&s, |p| match p {
+            (1, 0) | (1, 3) => Drive::High,
+            (1, _) => Drive::Low,
+            (0, 8..=10) => Drive::PullUp,
+            _ => Drive::Float,
+        });
+        s.update(at(0.01), &d);
+        // Standing: the stall current through two phases, two switches and
+        // the supply's own resistance.
+        let i = 12.0 / (2.0 * BLDC_R + 2.0 * BRIDGE_R_ON + R_SUPPLY);
+        let (a, b, c) = (
+            probe(&s, "br.OUTA"),
+            probe(&s, "br.OUTB"),
+            probe(&s, "br.OUTC"),
+        );
+        assert!(
+            (a - (12.0 - i * (R_SUPPLY + BRIDGE_R_ON))).abs() < 1e-3,
+            "{a}"
+        );
+        assert!((b - i * BRIDGE_R_ON).abs() < 1e-3, "{b}");
+        // OUTC floats at the star point, half way.
+        assert!((c - (a + b) / 2.0).abs() < 1e-3, "{c}");
+        assert!(
+            !s.warnings.iter().any(|w| w.contains("short")),
+            "{:?}",
+            s.warnings
+        );
+    }
+
+    #[test]
+    fn editing_a_series_resistor_with_the_drive_held_changes_the_coil_current() {
+        // The motors' coefficients are solved again after a circuit edit
+        // even when the windings and the drive key stay the same.
+        let mut s = l298n_sim("off");
+        let mut c = s.circuit.clone();
+        c.parts.push(part("rs", "resistor", &[("ohms", "25")]));
+        for w in &mut c.wires {
+            if w.b.pin == "A+" {
+                w.b = PinRef::new("rs", "1");
+            }
+        }
+        c.wires.push(wire(("rs", "2"), ("mot", "A+")));
+        s.set_circuit(&c, 0);
+        coils(&mut s, 0.01, 0b0101, [true; 2]);
+        let m = motor(&mut s, 0.3, "mot").motor.unwrap();
+        let with_25 = 12.0 / (STEPPER_COIL_R + 25.0 + 2.0 * L298N_R_ON) / STEPPER_RATED;
+        assert!((m.coils[0] - with_25).abs() < 0.02, "{:?}", m.coils);
+        for p in &mut c.parts {
+            if p.id == "rs" {
+                p.props.insert("ohms".into(), "75".into());
+            }
+        }
+        s.set_circuit(&c, at(0.3));
+        coils(&mut s, 0.31, 0b0101, [true; 2]);
+        let m = motor(&mut s, 0.6, "mot").motor.unwrap();
+        let with_75 = 12.0 / (STEPPER_COIL_R + 75.0 + 2.0 * L298N_R_ON) / STEPPER_RATED;
+        assert!(
+            (m.coils[0] - with_75).abs() < 0.02,
+            "{:?} vs {with_75}",
+            m.coils
+        );
+        // The probes agree: the drop across it is I × 75 Ω.
+        let drop = probe(&s, "rs.1") - probe(&s, "rs.2");
+        assert!(
+            (drop - m.coils[0] * STEPPER_RATED * 75.0).abs() < 0.05,
+            "{drop}"
+        );
+    }
+
+    #[test]
+    fn a_series_resistor_limits_the_coil_current() {
+        // Coil A through 25 Ω: 12 V over 25 + 25 + 2 × 2.5 Ω.
+        let mut s = l298n_sim("off");
+        let mut c = s.circuit.clone();
+        c.parts.push(part("rs", "resistor", &[("ohms", "25")]));
+        for w in &mut c.wires {
+            if w.b.pin == "A+" {
+                w.b = PinRef::new("rs", "1");
+            }
+        }
+        c.wires.push(wire(("rs", "2"), ("mot", "A+")));
+        s.set_circuit(&c, 0);
+        coils(&mut s, 0.01, 0b0101, [true; 2]);
+        let m = motor(&mut s, 0.3, "mot").motor.unwrap();
+        let with_r = 12.0 / (2.0 * STEPPER_COIL_R + 2.0 * L298N_R_ON) / STEPPER_RATED;
+        assert!(
+            (m.coils[0] - with_r).abs() < 0.02,
+            "{:?} vs {with_r}",
+            m.coils
+        );
+        assert!((m.coils[1] - 1.0).abs() < 0.02, "{:?}", m.coils);
+        // The drop across it shows: I × 25 Ω.
+        let drop = probe(&s, "rs.1") - probe(&s, "rs.2");
+        assert!(
+            (drop - with_r * STEPPER_RATED * 25.0).abs() < 0.05,
+            "{drop}"
+        );
+        // No wiring warning: one end through a resistor is a circuit.
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        // And it still steps (half steps, slowly: less torque).
+        const HALF: [u8; 8] = [
+            0b0001, 0b0101, 0b0100, 0b0110, 0b0010, 0b1010, 0b1000, 0b1001,
+        ];
+        let mut t = 0.3;
+        let start = motor(&mut s, t, "mot").motor.unwrap().steps;
+        for k in 1..=40 {
+            coils(&mut s, t, HALF[(k + 1) % 8], [true; 2]);
+            t += 0.01;
+        }
+        t += 0.2;
+        let m = motor(&mut s, t, "mot").motor.unwrap();
+        assert!((m.steps - start - 20.0).abs() < 0.1, "{}", m.steps - start);
+        // Stepping again and let go (both enables low): the open coils
+        // show their back-EMF across them as the rotor turns on.
+        for k in 0..12 {
+            coils(&mut s, t, HALF[(k + 3) % 8], [true; 2]);
+            t += 0.004;
+        }
+        coils(&mut s, t, HALF[7], [false; 2]);
+        let (e, w) = {
+            let m = &s.steppers["mot"];
+            (m.emf_at(s.seconds_at(at(t))), m.omega)
+        };
+        assert!(w.abs() > 1.0, "{w}");
+        for (k, (p, n)) in [("mot.A+", "mot.A-"), ("mot.B+", "mot.B-")]
+            .iter()
+            .enumerate()
+        {
+            let across = probe(&s, p) - probe(&s, n);
+            assert!(
+                (across - e[k]).abs() < 1e-3 + 0.01 * e[k].abs(),
+                "{across} vs {e:?}"
+            );
+        }
+        assert!(e[0].abs().max(e[1].abs()) > 0.05, "{e:?}");
+        // Without the resistor (the plain L298N) the coil gets 1.0.
+        let mut s = l298n_sim("off");
+        coils(&mut s, 0.01, 0b0101, [true; 2]);
+        let m = motor(&mut s, 0.3, "mot").motor.unwrap();
+        assert!((m.coils[0] - 1.0).abs() < 0.02, "{:?}", m.coils);
+    }
+
+    #[test]
+    fn a_floating_phase_shows_the_back_emf_on_top_of_the_star_point() {
+        let mut s = bldc_sim();
+        let mut t = 0.01;
+        commutate(&mut s, &mut t, 0.5, false, true);
+        assert!(motor(&mut s, t, "mot").rpm.unwrap() > 2500.0);
+        // Look at it between hall edges: one phase high, one low, one off.
+        let mut seen = 0;
+        let mut signs = BTreeSet::new();
+        for _ in 0..200 {
+            t += 0.37e-3;
+            let d = s.drives.clone().unwrap()[..s.mcu.len()].to_vec();
+            s.update(at(t), &d);
+            let st = &s.phase_out["br"].0;
+            let Some(w) = st.iter().position(|d| *d == PhaseDrive::Float) else {
+                continue;
+            };
+            let Some(Device::Bldc(b)) = s.devices.get("mot") else {
+                panic!()
+            };
+            let e = b.emf_at(s.seconds_at(at(t)));
+            let names = ["br.OUTA", "br.OUTB", "br.OUTC"];
+            let (u, v) = ((w + 1) % 3, (w + 2) % 3);
+            // V(W) − mean of the driven two = e_W − (e_U + e_V)/2.
+            let mid = (probe(&s, names[u]) + probe(&s, names[v])) / 2.0;
+            let got = probe(&s, names[w]) - mid;
+            let want = e[w] - (e[u] + e[v]) / 2.0;
+            assert!((got - want).abs() < 0.05, "{got} vs {want}");
+            signs.insert(got > 0.0);
+            seen += 1;
+        }
+        assert!(seen > 100);
+        assert_eq!(signs.len(), 2, "it crosses zero");
+        // Let go: every phase floats, a virtual neutral (3 × 10 kΩ) shows
+        // each phase's back-EMF.
+        let mut c = s.circuit.clone();
+        for (k, ph) in ["U", "V", "W"].iter().enumerate() {
+            let id = format!("rn{k}");
+            c.parts.push(part(&id, "resistor", &[("ohms", "10k")]));
+            c.wires.push(wire(("mot", ph), (&id, "1")));
+            c.wires.push(wire((&id, "2"), ("rn0", "2")));
+        }
+        s.set_circuit(&c, at(t));
+        let off = drives(&s, |p| match p {
+            (0, 8..=10) => Drive::PullUp,
+            (1, _) => Drive::Low,
+            _ => Drive::Float,
+        });
+        s.update(at(t), &off);
+        t += 1e-3;
+        s.update(at(t), &off);
+        s.set_voltage_probes(&["mot.U".into(), "rn0.2".into()], at(t));
+        let Some(Device::Bldc(b)) = s.devices.get("mot") else {
+            panic!()
+        };
+        let e = b.emf_at(s.seconds_at(at(t)));
+        let u = probe(&s, "mot.U") - probe(&s, "rn0.2");
+        assert!(e[0].abs() > 0.5, "{e:?}");
+        assert!((u - e[0]).abs() < 0.01 * e[0].abs() + 1e-3, "{u} vs {e:?}");
+        // While it coasts the probe is sampled without anything changing:
+        // every 20 µs (the halls change only every few hundred µs).
+        let step = (EMF_PROBE_INTERVAL * MHZ) as Cycles + 1;
+        let mut now = at(t);
+        for _ in 0..20 {
+            let next = s.next_event().expect("a sample of the moving probe");
+            assert!(next > now && next <= now + step, "{next} after {now}");
+            s.update(next, &off);
+            now = next;
+        }
+        let log = s.take_voltage_log();
+        assert!(
+            log.len() >= 20 && log[0].1[0] != log[1].1[0],
+            "{}",
+            log.len()
+        );
+    }
+
+    #[test]
+    fn a4988_outputs_drive_each_coil_one_way_at_the_regulated_current() {
+        let mut s = a4988_sim(false, true, &[]);
+        let mut t = 0.01;
+        step_pulses(&mut s, &mut t, 1, 0.01, true, false);
+        t += 0.2;
+        // One full step from home (45°) to 135°: coil 1 at −70.7 %, coil 2
+        // at +70.7 %.
+        let m = motor(&mut s, t, "mot").motor.unwrap();
+        assert!(m.coils[0] < -0.6 && m.coils[1] > 0.6, "{:?}", m.coils);
+        let (i1, i2) = (-m.coils[0] * STEPPER_RATED, m.coils[1] * STEPPER_RATED);
+        let vmot = probe(&s, "drv.VMOT");
+        assert!(vmot > 11.9);
+        // Coil 1 driven backwards: 1A to GND, 1B to VMOT, each through
+        // the switch's resistance at the regulated current.
+        let (a1, b1) = (probe(&s, "drv.1A"), probe(&s, "drv.1B"));
+        assert!((a1 - i1 * A4988_R_ON).abs() < 1e-3, "{a1}");
+        assert!((b1 - (vmot - i1 * A4988_R_ON)).abs() < 1e-3, "{b1} {vmot}");
+        // Coil 2 forwards: 2A to VMOT, 2B to GND.
+        let (a2, b2) = (probe(&s, "drv.2A"), probe(&s, "drv.2B"));
+        assert!((a2 - (vmot - i2 * A4988_R_ON)).abs() < 1e-3, "{a2}");
+        assert!((b2 - i2 * A4988_R_ON).abs() < 1e-3, "{b2}");
+        // Two more steps (315°): both turned round.
+        step_pulses(&mut s, &mut t, 2, 0.01, true, false);
+        t += 0.2;
+        let m = motor(&mut s, t, "mot").motor.unwrap();
+        assert!(m.coils[0] > 0.6 && m.coils[1] < -0.6, "{:?}", m.coils);
+        assert!(probe(&s, "drv.1A") > 11.5 && probe(&s, "drv.1B") < 0.5);
+        assert!(probe(&s, "drv.2A") < 0.5 && probe(&s, "drv.2B") > 11.5);
+        // Disabled: the outputs let go.
+        step_pulses(&mut s, &mut t, 1, 0.01, true, true);
+        t += 0.2;
+        motor(&mut s, t, "mot");
+        assert!((probe(&s, "drv.1A") - probe(&s, "drv.1B")).abs() < 1e-3);
+    }
+
+    /// A sensorless BLDC on a 3-phase bridge (INH/INL on PB0–PB5), each
+    /// phase through 10 k / 2.2 k to PA1, PA4, PC1, and a virtual neutral
+    /// (10 k from each of those) on PC0.
+    fn sensorless_sim() -> CircuitSim {
+        let mut parts = vec![
+            part("br", "bridge-3ph", &[]),
+            part("mot", "bldc", &[]),
+            part("bat", "battery", &[("voltage", "12")]),
+        ];
+        let mut wires = vec![
+            wire(("bat", "+"), ("br", "PVDD")),
+            wire(("bat", "-"), ("mcu", "GND")),
+            wire(("br", "GND"), ("mcu", "GND")),
+        ];
+        for (i, n) in ["INHA", "INLA", "INHB", "INLB", "INHC", "INLC"]
+            .iter()
+            .enumerate()
+        {
+            wires.push(wire(("mcu", &format!("PB{i}")), ("br", n)));
+        }
+        for (out, ph, pin) in [
+            ("OUTA", "U", "PA1"),
+            ("OUTB", "V", "PA4"),
+            ("OUTC", "W", "PC1"),
+        ] {
+            let (a, b, n) = (format!("{ph}1"), format!("{ph}2"), format!("{ph}n"));
+            parts.push(part(&a, "resistor", &[("ohms", "10k")]));
+            parts.push(part(&b, "resistor", &[("ohms", "2.2k")]));
+            parts.push(part(&n, "resistor", &[("ohms", "10k")]));
+            wires.push(wire(("br", out), ("mot", ph)));
+            wires.push(wire(("br", out), (&a, "1")));
+            wires.push(wire((&a, "2"), (&b, "1")));
+            wires.push(wire((&b, "2"), ("mcu", "GND")));
+            wires.push(wire((&a, "2"), ("mcu", pin)));
+            wires.push(wire((&a, "2"), (&n, "1")));
+            wires.push(wire((&n, "2"), ("mcu", "PC0")));
+        }
+        sim(parts, wires)
+    }
+
+    /// The firmware's sensorless six-step (`hal-bldc-sensorless`) in Rust:
+    /// 20 kHz PWM on the high side (`duty`), the floating phase and the
+    /// neutral read at the middle of the on-time, a commutation half a step
+    /// after each zero crossing; aligned and ramped open loop first.
+    /// Returns (commutations, crossings) in closed loop and, for each
+    /// crossing, the floating phase's back-EMF over its amplitude then.
+    fn sensorless_run(s: &mut CircuitSim, secs: f64, duty: f64) -> (u32, u32, Vec<f64>) {
+        const HIGH: [usize; 6] = [0, 1, 1, 2, 2, 0];
+        const LOW: [usize; 6] = [2, 2, 0, 0, 1, 1];
+        const FLOAT: [usize; 6] = [1, 0, 2, 1, 0, 2];
+        const RISING: [bool; 6] = [true, false, true, false, true, false];
+        const SENSE: [(u8, u8); 3] = [(0, 1), (0, 4), (2, 1)];
+        let period = 50e-6;
+        let (mut step, mut comm_at, mut step_len) = (0usize, 0.0, 0.02);
+        let mut ramp = 0.02;
+        let mut due: Option<f64> = None;
+        let mut zc_seen = false;
+        let (mut comms, mut zcs, mut emf_at_zc) = (0, 0, Vec::new());
+        let mut t = 0.0;
+        let align = 0.5;
+        let mut closed = false;
+        while t < secs {
+            // The bridge for this period: on for duty × period, the low
+            // side the complement, 500 ns of dead time between them.
+            let dead = 500e-9;
+            let phases = [
+                (0.0, false, false),
+                (dead, true, false),
+                (duty * period, false, false),
+                (duty * period + dead, false, true),
+            ];
+            for (dt, on, comp) in phases {
+                let d = drives(s, |p| match p {
+                    (1, i @ 0..=5) => {
+                        let (ph, low) = (i as usize / 2, i % 2 == 1);
+                        let level = if ph == HIGH[step] {
+                            if low {
+                                comp
+                            } else {
+                                on
+                            }
+                        } else {
+                            ph == LOW[step] && low
+                        };
+                        if level {
+                            Drive::High
+                        } else {
+                            Drive::Low
+                        }
+                    }
+                    _ => Drive::Float,
+                });
+                s.update(at(t + dt), &d);
+                if !on {
+                    continue;
+                }
+                // Middle of the on-time: sample.
+                let ts = t + duty * period / 2.0;
+                s.refresh(at(ts));
+                let v = |p: (u8, u8)| s.mcu_voltage(p.0, p.1).unwrap();
+                let diff = v(SENSE[FLOAT[step]]) - v((2, 0));
+                let since = ts - comm_at;
+                if closed && !zc_seen && since > step_len / 4.0 && (diff > 0.0) == RISING[step] {
+                    zc_seen = true;
+                    zcs += 1;
+                    due = Some(ts + since);
+                    let Some(Device::Bldc(b)) = s.devices.get("mot") else {
+                        panic!()
+                    };
+                    let e = b.emf_at(s.seconds_at(at(ts)));
+                    let amp = e.iter().map(|x| x.abs()).fold(0.0, f64::max);
+                    emf_at_zc.push(e[FLOAT[step]] / amp);
+                }
+            }
+            t += period;
+            if t < align {
+                continue;
+            }
+            let next = due.get_or_insert(t + ramp);
+            if t >= *next {
+                step = (step + 1) % 6;
+                step_len = (3.0 * step_len + (t - comm_at)) / 4.0;
+                comm_at = t;
+                zc_seen = false;
+                due = None;
+                if closed {
+                    comms += 1;
+                } else {
+                    ramp *= 31.0 / 32.0;
+                    closed = ramp <= 0.004;
+                }
+            }
+        }
+        (comms, zcs, emf_at_zc)
+    }
+
+    #[test]
+    fn sensorless_bldc_runs_on_its_back_emf_zero_crossings() {
+        let mut s = sensorless_sim();
+        let (comms, zcs, emf) = sensorless_run(&mut s, 2.5, 0.5);
+        let v = motor(&mut s, 2.5, "mot");
+        let rpm = v.rpm.unwrap();
+        // Half the supply: about half the no-load speed.
+        assert!(rpm > 1300.0 && rpm < 1900.0, "{rpm}");
+        assert!(comms > 300, "{comms}");
+        // Every commutation came from a crossing.
+        assert!(zcs + 2 >= comms, "{zcs} crossings, {comms} commutations");
+        // After the hand-over from the ramp (the rotor lags the open-loop
+        // field then), each crossing is found within a sample of the real
+        // one: the floating phase's back-EMF is then near zero.
+        let worst = emf[5..].iter().map(|e| e.abs()).fold(0.0, f64::max);
+        assert!(worst < 0.1, "{worst}");
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        // No sensorless part: the hall motor's halls are not needed.
+        assert!(motor(&mut s, 2.5, "mot").text.is_none());
     }
 }

@@ -19,9 +19,17 @@
 //! EGR.BG) that clears MOE and sets BIF, and the preloaded CCxE/CCxNE/OCxM
 //! bits (CR2.CCPC) taken over at a COM event (EGR.COMG, COMIF). A dead-time
 //! edge lies between counter ticks, so it is scheduled in core cycles.
-//! Not yet: center-aligned counting (counts up), the repetition counter,
-//! slave modes other than reset and encoder, BDTR.LOCK and the COM event
-//! from TRGI (CCUS).
+//! Center-aligned counting (CR1.CMS 1–3, TIM1–TIM5, RM0368 §12.3.2): the
+//! counter runs 0 → ARR → 0 (overflow at ARR, underflow at 0, each an
+//! update event), CR1.DIR is read-only and shows the direction, PWM 1/2
+//! give pulses centred on the underflow (on the overflow for PWM 2), and an
+//! output channel's CCxIF is set only counting down (CMS 1), up (CMS 2) or
+//! both (CMS 3). The repetition counter (TIM1 RCR, §12.3.3): an update
+//! event only every RCR + 1 overflows/underflows — periods in edge-aligned
+//! mode, half periods in center-aligned mode; RCR is loaded at each update
+//! event (and by UG).
+//! Not yet: slave modes other than reset and encoder, BDTR.LOCK and the
+//! COM event from TRGI (CCUS).
 //! Input capture (direct/indirect TI mapping, edge polarity, prescaler,
 //! overcapture) and the reset slave mode take pin edges from the bus.
 
@@ -33,6 +41,8 @@ const UDIS: u32 = 1 << 1;
 const URS: u32 = 1 << 2;
 const OPM: u32 = 1 << 3;
 const DIR: u32 = 1 << 4;
+/// CR1.CMS: center-aligned mode selection (bits 6:5).
+const CMS_SHIFT: u32 = 5;
 const ARPE: u32 = 1 << 7;
 // SR / DIER
 pub const UIF: u32 = 1 << 0;
@@ -317,6 +327,14 @@ pub struct Timer {
     /// BKIN: routed to a pin in its alternate function, and that pin's level.
     bk_routed: bool,
     bk_level: bool,
+    /// Center-aligned mode: counting down now (CR1.DIR reads this).
+    cdown: bool,
+    /// Repetition down-counter (REP_CNT): an update event when an
+    /// overflow/underflow finds it at 0, then it is reloaded from RCR.
+    rep: u32,
+    /// When the last update event loaded the shadow registers (a PWM
+    /// reference that changed since cannot have changed before it).
+    uev_at: Cycles,
 }
 
 impl Timer {
@@ -357,6 +375,9 @@ impl Timer {
             track_time: 0,
             bk_routed: false,
             bk_level: false,
+            cdown: false,
+            rep: 0,
+            uev_at: 0,
         }
     }
 
@@ -384,8 +405,66 @@ impl Timer {
         self.cr1 & CEN != 0
     }
 
+    /// CR1.CMS (0 = edge-aligned). Only TIM1–TIM5 have it.
+    fn cms(&self) -> u32 {
+        if self.info.channels == 4 {
+            (self.cr1 >> CMS_SHIFT) & 3
+        } else {
+            0
+        }
+    }
+
+    /// Center-aligned (up/down) counting.
+    fn center(&self) -> bool {
+        self.cms() != 0
+    }
+
+    /// Counting down: CR1.DIR, or the present half of a center-aligned
+    /// period.
     fn down(&self) -> bool {
-        self.cr1 & DIR != 0
+        if self.center() {
+            self.cdown
+        } else {
+            self.cr1 & DIR != 0
+        }
+    }
+
+    /// An output compare match counting down (`down`) sets CCxIF: always
+    /// in edge-aligned mode, per CMS in center-aligned mode.
+    fn flags_match(&self, down: bool) -> bool {
+        match self.cms() {
+            1 => down,
+            2 => !down,
+            _ => true,
+        }
+    }
+
+    /// `k` overflows/underflows: the repetition counter counts them down.
+    /// Returns how many of them were update events (REP_CNT at 0).
+    fn turns(&mut self, k: u64) -> u64 {
+        let r = self.rep as u64;
+        if k <= r {
+            self.rep -= k as u32;
+            return 0;
+        }
+        let n = self.rcr as u64 + 1;
+        let after = k - r - 1;
+        self.rep = (self.rcr as u64 - after % n) as u32;
+        1 + after / n
+    }
+
+    /// Ticks from one overflow/underflow to the next (once running).
+    fn turn_ticks(&self) -> u64 {
+        if self.center() {
+            self.arr_act as u64
+        } else {
+            self.arr_act as u64 + 1
+        }
+    }
+
+    /// Ticks until the next update event (the repetition counter at 0).
+    fn ticks_to_update(&self) -> u64 {
+        self.ticks_to_wrap() + self.rep as u64 * self.turn_ticks()
     }
 
     fn tick(&self) -> Cycles {
@@ -433,8 +512,17 @@ impl Timer {
         self.ccmr[ch / 2] >> (8 * (ch % 2)) & (1 << 3) != 0
     }
 
-    /// Ticks until the counter wraps (the next update event).
+    /// Ticks until the counter wraps: the next overflow or underflow (an
+    /// update event unless the repetition counter is not at 0).
     fn ticks_to_wrap(&self) -> u64 {
+        if self.center() {
+            // Up to ARR, or down to 0.
+            return if self.cdown {
+                (self.cnt as u64).max(1)
+            } else {
+                (self.arr_act as u64).saturating_sub(self.cnt as u64).max(1)
+            };
+        }
         if self.down() {
             self.cnt as u64 + 1
         } else if self.cnt <= self.arr_act {
@@ -448,6 +536,28 @@ impl Timer {
     fn ticks_to_value(&self, v: u32) -> Option<u64> {
         if v > self.arr_act {
             return None;
+        }
+        if self.center() {
+            // Position in the period: 0 … ARR − 1 counting up, ARR … 2·ARR − 1
+            // counting down (CNT = 2·ARR − position). The counter takes v
+            // counting up at position v (v < ARR) and counting down at
+            // 2·ARR − v (v ≥ 1).
+            let a = self.arr_act as u64;
+            let period = 2 * a;
+            if period == 0 {
+                return None;
+            }
+            let p = self.position();
+            let mut best: Option<u64> = None;
+            let targets = [((v as u64) < a, v as u64), (v >= 1, period - v as u64)];
+            for (ok, t) in targets {
+                if ok {
+                    let d = (t + period - p) % period;
+                    let d = if d == 0 { period } else { d };
+                    best = Some(best.map_or(d, |b| b.min(d)));
+                }
+            }
+            return best;
         }
         let wrap = self.ticks_to_wrap();
         Some(if self.down() {
@@ -463,15 +573,29 @@ impl Timer {
         })
     }
 
-    /// The counter took the value of CCRx: set CCxIF and update the
-    /// stateful output-compare references.
-    fn compare_match(&mut self, ch: usize, times: u64) {
+    /// Position in a center-aligned period (see `ticks_to_value`).
+    fn position(&self) -> u64 {
+        let a = self.arr_act as u64;
+        let c = (self.cnt as u64).min(a);
+        if self.cdown {
+            (2 * a - c) % (2 * a).max(1)
+        } else {
+            c.min(a.saturating_sub(1))
+        }
+    }
+
+    /// The counter took the value of CCRx: set CCxIF (if `flag`: in
+    /// center-aligned mode only in the directions CMS selects) and update
+    /// the stateful output-compare references.
+    fn compare_match(&mut self, ch: usize, times: u64, flag: bool) {
         let Some(mode) = self.oc_mode(ch) else {
             return;
         };
-        self.sr |= CC_IF[ch];
-        if self.dier & CC_DE[ch] != 0 && self.cr2 & CCDS == 0 {
-            self.dma_req |= 2 << ch;
+        if flag {
+            self.sr |= CC_IF[ch];
+            if self.dier & CC_DE[ch] != 0 && self.cr2 & CCDS == 0 {
+                self.dma_req |= 2 << ch;
+            }
         }
         match mode {
             1 => self.ocref[ch] = true,
@@ -489,10 +613,11 @@ impl Timer {
         } else {
             (self.cnt as u64 + 1, self.cnt as u64 + e)
         };
+        let flag = self.flags_match(self.down());
         for ch in 0..self.info.channels as usize {
             let v = self.ccr_act[ch] as u64;
             if (lo..=hi).contains(&v) && v <= self.arr_act as u64 {
-                self.compare_match(ch, 1);
+                self.compare_match(ch, 1, flag);
             }
         }
         self.cnt = if self.down() { lo as u32 } else { hi as u32 };
@@ -664,6 +789,7 @@ impl Timer {
             _ => false,
         };
         if sms == 4 && trigger && self.running() {
+            self.cdown = false;
             self.cnt = if self.down() { self.arr_act } else { 0 };
             self.ref_cycle = now;
             self.update_event(self.cr1 & URS == 0);
@@ -724,6 +850,25 @@ impl Timer {
             self.ccr_act[ch] as u64,
             self.arr_act as u64,
         );
+        if self.center() {
+            // The reference changes where the counter takes CCRx: counting
+            // up (position CCRx) and counting down (2·ARR − CCRx).
+            if ccr == 0 || ccr >= arr {
+                // Always off or always on: it changed at the update event
+                // that loaded this CCRx.
+                return Some(self.uev_at);
+            }
+            let (p, period) = (self.position(), 2 * arr);
+            let back = [ccr, period - ccr]
+                .map(|e| (p + period - e) % period)
+                .into_iter()
+                .min()
+                .unwrap_or(0);
+            // A new CCRx loaded at the update event changes the reference
+            // there (from 0 % to a pulse at the underflow, say).
+            let at = self.ref_cycle.saturating_sub(back * self.tick());
+            return Some(at.max(self.uev_at));
+        }
         let back = if self.down() {
             if cnt <= ccr && ccr < arr {
                 ccr - cnt
@@ -738,9 +883,24 @@ impl Timer {
         Some(self.ref_cycle.saturating_sub(back * self.tick()))
     }
 
+    /// The next update event does more than set UIF: a DMA request (UDE,
+    /// or CCDS with a CCxDE), MOE set again (AOE), or the end of a one-pulse
+    /// run (OPM). Such an update must be run, not skipped arithmetically.
+    fn update_has_effects(&self) -> bool {
+        let dma_on_update =
+            self.dier & UDE != 0 || (self.cr2 & CCDS != 0 && self.dier & 0x1E00 != 0);
+        // AOE sets MOE again at the next update.
+        let aoe = self.info.advanced && self.bdtr & (AOE | MOE) == AOE && !self.break_active();
+        dma_on_update || aoe || self.cr1 & OPM != 0
+    }
+
     /// Bring the counter and flags up to `now`.
     fn advance_to(&mut self, now: Cycles) {
-        if !self.running() || self.gated || self.encoder_mode() {
+        if !self.running()
+            || self.gated
+            || self.encoder_mode()
+            || (self.center() && self.arr_act == 0)
+        {
             self.ref_cycle = now;
             return;
         }
@@ -756,23 +916,40 @@ impl Timer {
                 return;
             }
             // Run up to the wrap: the counter passes every remaining value
-            // and then takes its reload value.
+            // and then takes its reload value (edge-aligned) or turns round
+            // at ARR or 0 (center-aligned).
             if wrap > 1 {
                 self.advance_within(wrap - 1);
             }
             self.ref_cycle += tick;
-            self.cnt = if self.down() { self.arr_act } else { 0 };
-            // The update loads the preloaded registers first; the new
-            // compare values apply to the counter's first value.
-            if self.cr1 & UDIS == 0 {
-                self.update_event(true);
+            if self.center() {
+                let was_down = self.cdown;
+                self.cdown = !was_down;
+                self.cnt = if was_down { 0 } else { self.arr_act };
+            } else {
+                self.cnt = if self.down() { self.arr_act } else { 0 };
             }
+            // An overflow/underflow: an update event when the repetition
+            // counter is at 0. The update loads the preloaded registers
+            // first; the new compare values apply to the counter's value.
+            let update = self.turns(1) == 1;
+            if update && self.cr1 & UDIS == 0 {
+                self.update_event(true);
+                self.uev_at = self.ref_cycle;
+            }
+            // A zero ARR loaded by that update stops a center-aligned
+            // counter (as at the entry).
+            if self.center() && self.arr_act == 0 {
+                self.ref_cycle = now;
+                return;
+            }
+            let flag = self.flags_match(self.down());
             for ch in 0..self.info.channels as usize {
                 if self.ccr_act[ch] == self.cnt {
-                    self.compare_match(ch, 1);
+                    self.compare_match(ch, 1, flag);
                 }
             }
-            if self.cr1 & OPM != 0 {
+            if update && self.cr1 & OPM != 0 {
                 self.cr1 &= !CEN;
                 self.ref_cycle = now;
                 return;
@@ -780,17 +957,39 @@ impl Timer {
             // Whole periods with nothing to reload: skip them arithmetically.
             if self.shadows_settled() {
                 let tick = self.tick();
-                let period = self.arr_act as u64 + 1;
-                let periods = (now - self.ref_cycle) / tick / period;
+                let (period, turns) = if self.center() {
+                    (2 * self.arr_act as u64, 2)
+                } else {
+                    (self.arr_act as u64 + 1, 1)
+                };
+                let mut periods = (now - self.ref_cycle) / tick / period;
+                // Stop short of an update with side effects (the repetition
+                // counter runs out after `rep` more turns): the loop runs it.
+                if self.cr1 & UDIS == 0 && self.update_has_effects() {
+                    periods = periods.min(self.rep as u64 / turns);
+                }
                 if periods > 0 {
                     self.ref_cycle += periods * period * tick;
-                    if self.cr1 & UDIS == 0 {
+                    if self.turns(periods * turns) > 0 && self.cr1 & UDIS == 0 {
                         self.sr |= UIF;
                     }
+                    let a = self.arr_act;
                     for ch in 0..self.info.channels as usize {
-                        if self.ccr_act[ch] <= self.arr_act {
-                            self.compare_match(ch, periods);
+                        let v = self.ccr_act[ch];
+                        if v > a {
+                            continue;
                         }
+                        // Matches per period: counting up at v < ARR, down
+                        // at v ≥ 1 (center-aligned); once (edge-aligned).
+                        let (up, down) = if !self.center() {
+                            let d = self.down();
+                            ((!d) as u64, d as u64)
+                        } else {
+                            ((v < a) as u64, (v >= 1) as u64)
+                        };
+                        let flag = (up > 0 && self.flags_match(false))
+                            || (down > 0 && self.flags_match(true));
+                        self.compare_match(ch, periods * (up + down), flag);
                     }
                 }
             }
@@ -928,7 +1127,11 @@ impl Timer {
     }
 
     fn counter_event(&self) -> Option<Cycles> {
-        if !self.running() || self.gated || self.encoder_mode() {
+        if !self.running()
+            || self.gated
+            || self.encoder_mode()
+            || (self.center() && self.arr_act == 0)
+        {
             return None;
         }
         let mut ticks: Option<u64> = None;
@@ -939,17 +1142,12 @@ impl Timer {
         };
         let any_pwm = (0..self.info.channels as usize)
             .any(|ch| self.output_enabled(ch) && matches!(self.oc_mode(ch), Some(6 | 7)));
-        let dma_on_update =
-            self.dier & UDE != 0 || (self.cr2 & CCDS != 0 && self.dier & 0x1E00 != 0);
-        // AOE sets MOE again at the next update.
-        let aoe = self.info.advanced && self.bdtr & (AOE | MOE) == AOE && !self.break_active();
-        if self.dier & UIF != 0
-            || dma_on_update
-            || !self.shadows_settled()
-            || self.cr1 & OPM != 0
-            || any_pwm
-            || aoe
-        {
+        if self.dier & UIF != 0 || !self.shadows_settled() || self.update_has_effects() {
+            consider(Some(self.ticks_to_update()));
+        }
+        // Edge-aligned PWM outputs change at every wrap; center-aligned
+        // ones only where the counter takes CCRx.
+        if any_pwm && !self.center() {
             consider(Some(self.ticks_to_wrap()));
         }
         for ch in 0..self.info.channels as usize {
@@ -992,6 +1190,8 @@ impl Timer {
     /// Register read (after `sync`).
     pub fn read(&self, offset: u32) -> u32 {
         match offset {
+            // DIR shows the direction in center-aligned mode.
+            0x00 if self.center() => (self.cr1 & !DIR) | if self.cdown { DIR } else { 0 },
             0x00 => self.cr1,
             0x04 => self.cr2,
             0x08 => self.smcr,
@@ -1028,7 +1228,15 @@ impl Timer {
         match offset {
             0x00 => {
                 let was = self.running();
+                let (was_center, dir) = (self.center(), self.cr1 & DIR);
                 self.cr1 = merge(self.cr1) & 0x3FF;
+                if self.center() {
+                    // DIR is read-only in center-aligned mode.
+                    if !was_center {
+                        self.cdown = dir != 0;
+                    }
+                    self.cr1 = (self.cr1 & !DIR) | dir;
+                }
                 if !was && self.running() {
                     self.ref_cycle = now;
                 }
@@ -1046,9 +1254,13 @@ impl Timer {
             0x14 => {
                 let v = value & lanes;
                 if v & 1 != 0 {
-                    // UG: re-initialise the counter and prescaler.
+                    // UG: re-initialise the counter, prescaler and
+                    // repetition counter (center-aligned: from 0, up).
+                    self.cdown = false;
                     self.cnt = if self.down() { self.arr } else { 0 };
+                    self.rep = self.rcr;
                     self.ref_cycle = now;
+                    self.uev_at = now;
                     if self.cr1 & UDIS == 0 {
                         self.update_event(self.cr1 & URS == 0);
                     }
@@ -1537,5 +1749,366 @@ mod tests {
         // Polarity is not preloaded.
         t.write(0x20, 1 << 4 | 1 << 5 | 1 << 6, u32::MAX, 30);
         assert_eq!(t.output(1), Some(false));
+    }
+
+    // ------------------------------------- center-aligned mode, RCR (M28)
+
+    /// TIM3 at one tick per cycle, ARR 8, CH1 PWM `mode` at CCR1 3, in
+    /// center-aligned mode `cms`, started at cycle 0.
+    fn tim3_center(cms: u32, mode: u32) -> Timer {
+        let mut t = tim3();
+        t.write(0x2C, 8, u32::MAX, 0);
+        t.write(0x18, mode << 4, u32::MAX, 0);
+        t.write(0x34, 3, u32::MAX, 0);
+        t.write(0x20, 1, u32::MAX, 0);
+        t.write(0x00, cms << CMS_SHIFT, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0); // UG
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x00, CEN | cms << CMS_SHIFT, u32::MAX, 0);
+        t
+    }
+
+    #[test]
+    fn center_aligned_counter_runs_up_and_down_with_dir_read_only() {
+        // RM0368 fig. 46 (ARR = 6 there): 0 1 … ARR−1 ARR ARR−1 … 1 0 1 …,
+        // overflow at ARR and underflow at 0, each an update event.
+        let mut t = tim3_center(1, 6);
+        let mut seen = Vec::new();
+        for c in 0..=34 {
+            t.sync(c);
+            seen.push((t.read(0x24), t.read(0x00) & DIR != 0));
+        }
+        let want: Vec<(u32, bool)> = (0..=34u32)
+            .map(|c| {
+                let p = c % 16;
+                if p < 8 {
+                    (p, false)
+                } else {
+                    (16 - p, true)
+                }
+            })
+            .collect();
+        assert_eq!(seen, want);
+        // DIR is read-only: writing it changes nothing.
+        t.write(0x00, CEN | 1 << CMS_SHIFT | DIR, u32::MAX, 34);
+        assert_eq!(t.read(0x00) & DIR, 0, "counting up at 34");
+        t.sync(39);
+        assert_eq!((t.read(0x24), t.read(0x00) & DIR), (7, 0));
+        t.sync(40);
+        assert_eq!((t.read(0x24), t.read(0x00) & DIR), (8, DIR));
+        // Update flag at the overflow (cycle 8) and the underflow (16).
+        let mut t = tim3_center(1, 6);
+        t.sync(7);
+        assert_eq!(t.sr & UIF, 0);
+        t.sync(8);
+        assert_ne!(t.sr & UIF, 0, "overflow");
+        t.write(0x10, 0, u32::MAX, 8);
+        t.sync(15);
+        assert_eq!(t.sr & UIF, 0);
+        t.sync(16);
+        assert_ne!(t.sr & UIF, 0, "underflow");
+        // With the update interrupt on (and the PWM output off), both are
+        // scheduled.
+        t.write(0x20, 0, u32::MAX, 16);
+        t.write(0x0C, UIF, u32::MAX, 16);
+        assert_eq!(t.next_event(), Some(24));
+        t.sync(24);
+        assert_eq!(t.next_event(), Some(32));
+        // Edge-aligned again: DIR as written.
+        t.write(0x00, CEN | DIR, u32::MAX, 24);
+        assert_ne!(t.read(0x00) & DIR, 0);
+    }
+
+    #[test]
+    fn center_aligned_pwm_is_symmetric_about_the_underflow() {
+        // PWM 1, CCR 3, ARR 8: active while CNT < 3 counting up and
+        // CNT ≤ 3 counting down — 6 ticks centred on the underflow at 16.
+        let mut t = tim3_center(1, 6);
+        let mut e = vec![(0, t.output(0))];
+        while let Some(at) = t.next_event().filter(|&a| a <= 50) {
+            t.sync(at);
+            if e.last().unwrap().1 != t.output(0) {
+                e.push((at, t.output(0)));
+            }
+        }
+        let (h, l) = (Some(true), Some(false));
+        assert_eq!(
+            e,
+            vec![(0, h), (3, l), (13, h), (19, l), (29, h), (35, l), (45, h)]
+        );
+        // PWM 2: the complement, centred on the overflow.
+        let mut t = tim3_center(3, 7);
+        let mut e = vec![(0, t.output(0))];
+        while let Some(at) = t.next_event().filter(|&a| a <= 40) {
+            t.sync(at);
+            if e.last().unwrap().1 != t.output(0) {
+                e.push((at, t.output(0)));
+            }
+        }
+        assert_eq!(e, vec![(0, l), (3, h), (13, l), (19, h), (29, l), (35, h)]);
+        // CCR 0: never active; CCR ≥ ARR: always (PWM 1).
+        let mut t = tim3_center(1, 6);
+        t.write(0x34, 0, u32::MAX, 0);
+        for c in [0, 5, 8, 12, 16, 20] {
+            t.sync(c);
+            assert_eq!(t.output(0), l, "{c}");
+        }
+        t.write(0x34, 8, u32::MAX, 20);
+        for c in [20, 24, 25, 31, 32, 40] {
+            t.sync(c);
+            assert_eq!(t.output(0), h, "{c}");
+        }
+    }
+
+    #[test]
+    fn center_aligned_compare_flags_follow_cms() {
+        // CCR 3 is passed counting up at 3 and down at 13.
+        for (cms, up, down) in [(1, false, true), (2, true, false), (3, true, true)] {
+            let mut t = tim3_center(cms, 1); // active on match
+            t.write(0x0C, CC_IF[0], u32::MAX, 0);
+            t.sync(3);
+            assert_eq!(t.sr & CC_IF[0] != 0, up, "CMS {cms} up");
+            assert_eq!(t.output(0), Some(true), "the output matches either way");
+            t.write(0x10, 0, u32::MAX, 3);
+            t.sync(13);
+            assert_eq!(t.sr & CC_IF[0] != 0, down, "CMS {cms} down");
+            // Whole periods skipped at once flag the same way.
+            t.write(0x10, 0, u32::MAX, 13);
+            t.write(0x0C, 0, u32::MAX, 13);
+            t.sync(13 + 16 * 100);
+            assert_eq!(t.sr & CC_IF[0] != 0, up || down, "CMS {cms} periods");
+        }
+        // CMS 1 with the compare interrupt: the down match at 13 is due.
+        let mut t = tim3_center(1, 6);
+        t.sync(4);
+        t.write(0x0C, CC_IF[0], u32::MAX, 4);
+        assert_eq!(t.next_event(), Some(13));
+    }
+
+    #[test]
+    fn a_late_sync_does_not_skip_an_update_with_side_effects() {
+        // ARR 9, RCR 2: the update is at 30. A sync straight to 30 must run
+        // it — one-pulse mode stops there, UDE asks for a DMA transfer.
+        let mut t = tim1();
+        t.write(0x2C, 9, u32::MAX, 0);
+        t.write(0x30, 2, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x00, CEN | OPM, u32::MAX, 0);
+        assert_eq!(t.next_event(), Some(30));
+        t.sync(30);
+        assert!(!t.running(), "one pulse ends at the update");
+        assert_ne!(t.sr & UIF, 0);
+        // Not before it: syncing past 20 only leaves it running.
+        let mut t = tim1();
+        t.write(0x2C, 9, u32::MAX, 0);
+        t.write(0x30, 2, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x00, CEN | OPM, u32::MAX, 0);
+        t.sync(29);
+        assert!(t.running());
+        t.sync(1_000);
+        assert!(!t.running());
+        assert_eq!(t.read(0x24), 0);
+        // UDE: the request at 30.
+        let mut t = tim1();
+        t.write(0x2C, 9, u32::MAX, 0);
+        t.write(0x30, 2, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x0C, UDE, u32::MAX, 0);
+        t.dma_req = 0;
+        t.write(0x00, CEN, u32::MAX, 0);
+        t.sync(29);
+        assert_eq!(t.dma_req & 1, 0);
+        t.sync(30);
+        assert_eq!(t.dma_req & 1, 1, "the update's DMA request");
+        // Center-aligned, RCR 3: updates every fourth turn (at 32 with ARR 8).
+        let mut t = tim1();
+        t.write(0x2C, 8, u32::MAX, 0);
+        t.write(0x30, 3, u32::MAX, 0);
+        t.write(0x00, 1 << CMS_SHIFT, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x00, 1 << CMS_SHIFT | CEN | OPM, u32::MAX, 0);
+        t.sync(31);
+        assert!(t.running());
+        t.sync(32);
+        assert!(!t.running(), "stopped at the fourth turn");
+    }
+
+    #[test]
+    fn a_zero_arr_loaded_at_an_update_stops_a_center_aligned_counter() {
+        let mut t = tim3();
+        t.write(0x2C, 8, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x00, CEN | ARPE | 1 << CMS_SHIFT, u32::MAX, 0);
+        t.write(0x2C, 0, u32::MAX, 0); // preloaded: loads at the update
+        t.sync(8);
+        t.sync(1_000); // no panic, no counting
+        assert_eq!(t.next_event(), None);
+    }
+
+    #[test]
+    fn repetition_counter_spaces_the_update_events() {
+        // Edge-aligned, ARR 9 (10 cycles), RCR 2: an update every third
+        // overflow — UIF at 30 and 60, not at 10 or 20.
+        let mut t = tim1();
+        t.write(0x2C, 9, u32::MAX, 0);
+        t.write(0x30, 2, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0); // UG loads RCR
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x0C, UIF, u32::MAX, 0);
+        t.write(0x00, CEN, u32::MAX, 0);
+        assert_eq!(t.next_event(), Some(30), "the interrupt is due at 30");
+        for c in [10, 20, 29] {
+            t.sync(c);
+            assert_eq!(t.sr & UIF, 0, "{c}");
+        }
+        t.sync(30);
+        assert_ne!(t.sr & UIF, 0);
+        t.write(0x10, 0, u32::MAX, 30);
+        assert_eq!(t.next_event(), Some(60));
+        // Preloaded: a new ARR waits for the update event.
+        t.write(0x00, CEN | ARPE, u32::MAX, 30);
+        t.write(0x2C, 4, u32::MAX, 31);
+        t.sync(55);
+        assert_eq!(t.read(0x24), 5, "still ARR 9 at the overflows at 40, 50");
+        t.sync(60);
+        t.sync(64);
+        assert_eq!(t.read(0x24), 4, "ARR 4 from the update at 60");
+        // Many periods at once: UIF only if an update came.
+        let mut t = tim1();
+        t.write(0x2C, 9, u32::MAX, 0);
+        t.write(0x30, 99, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x00, CEN, u32::MAX, 0);
+        t.sync(999);
+        assert_eq!(t.sr & UIF, 0, "99 overflows, no update yet");
+        t.sync(1000);
+        assert_ne!(t.sr & UIF, 0, "the 100th");
+        // Center-aligned, RCR 1: every second half period — after UG at
+        // the underflows only (16, 32), not the overflows (8, 24).
+        let mut t = tim1();
+        t.write(0x2C, 8, u32::MAX, 0);
+        t.write(0x30, 1, u32::MAX, 0);
+        t.write(0x00, 1 << CMS_SHIFT, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x0C, UIF, u32::MAX, 0);
+        t.write(0x00, CEN | 1 << CMS_SHIFT, u32::MAX, 0);
+        let mut ups = Vec::new();
+        while let Some(at) = t.next_event().filter(|&a| a <= 70) {
+            t.sync(at);
+            if t.sr & UIF != 0 {
+                ups.push((at, t.read(0x24)));
+                t.write(0x10, 0, u32::MAX, at);
+            }
+        }
+        assert_eq!(ups, vec![(16, 0), (32, 0), (48, 0), (64, 0)]);
+        // Many center-aligned periods at once (two over/underflows each):
+        // ARR 8, RCR 5 — an update every 6 half periods, at 48, 96, …
+        let mut t = tim1();
+        t.write(0x2C, 8, u32::MAX, 0);
+        t.write(0x30, 5, u32::MAX, 0);
+        t.write(0x00, 1 << CMS_SHIFT, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x00, CEN | 1 << CMS_SHIFT, u32::MAX, 0);
+        t.sync(47);
+        assert_eq!(t.sr & UIF, 0);
+        t.sync(48);
+        assert_ne!(t.sr & UIF, 0, "the sixth half period");
+        t.write(0x10, 0, u32::MAX, 48);
+        t.sync(48 + 48 * 20 - 1);
+        t.write(0x10, 0, u32::MAX, 48 + 48 * 20 - 1);
+        t.sync(48 + 48 * 20);
+        assert_ne!(t.sr & UIF, 0, "twenty updates later");
+        // RCR 0 in center-aligned mode: both.
+        let mut t = tim1();
+        t.write(0x2C, 8, u32::MAX, 0);
+        t.write(0x00, CEN | 3 << CMS_SHIFT, u32::MAX, 0);
+        t.sync(8);
+        assert_ne!(t.sr & UIF, 0);
+        // One-pulse mode stops at the update event, after RCR + 1 periods.
+        let mut t = tim1();
+        t.write(0x2C, 9, u32::MAX, 0);
+        t.write(0x30, 2, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x00, CEN | OPM, u32::MAX, 0);
+        t.sync(25);
+        assert!(t.running(), "not after the first two periods");
+        t.sync(100);
+        assert!(!t.running());
+    }
+
+    #[test]
+    fn center_aligned_complementary_outputs_keep_their_dead_time() {
+        // TIM1 CH1/CH1N, ARR 100, CCR 40, dead time 10: OC1REF high for
+        // [0, 40) and [160, 240) (centred on the underflow at 200).
+        let mut t = tim1();
+        t.write(0x2C, 100, u32::MAX, 0);
+        t.write(0x34, 40, u32::MAX, 0);
+        t.write(0x18, 6 << 4, u32::MAX, 0);
+        t.write(0x20, 1 | 4, u32::MAX, 0);
+        t.write(0x44, MOE | 10, u32::MAX, 0);
+        t.write(0x00, CEN | 1 << CMS_SHIFT, u32::MAX, 0);
+        let e = edges(&mut t, 450);
+        let (s, c) = (Some(true), Some(false));
+        assert_eq!(
+            e,
+            vec![
+                (0, c, c),
+                (10, s, c),
+                (40, c, c),
+                (50, c, s),
+                (160, c, c),
+                (170, s, c),
+                (240, c, c),
+                (250, c, s),
+                (360, c, c),
+                (370, s, c),
+                (440, c, c),
+                (450, c, s),
+            ]
+        );
+        // Looked at late (a register access at 163, after OC1REF rose at
+        // 160 counting down): CH1 still turns on at 170.
+        let mut t = tim1();
+        t.write(0x2C, 100, u32::MAX, 0);
+        t.write(0x34, 40, u32::MAX, 0);
+        t.write(0x18, 6 << 4, u32::MAX, 0);
+        t.write(0x20, 1 | 4, u32::MAX, 0);
+        t.write(0x44, MOE | 10, u32::MAX, 0);
+        t.write(0x00, CEN | 1 << CMS_SHIFT, u32::MAX, 0);
+        t.sync(100);
+        t.sync(163);
+        assert_eq!((t.output(0), t.output_n(0)), (c, c));
+        assert_eq!(t.next_event(), Some(170));
+        // A preloaded CCR1 going from 0 to 40 takes effect at the update
+        // event (the underflow at 200): OC1REF rises there, CH1N falls
+        // there and CH1 waits the dead time — even looked at late.
+        let mut t = tim1();
+        t.write(0x2C, 100, u32::MAX, 0);
+        t.write(0x18, 6 << 4 | 1 << 3, u32::MAX, 0);
+        t.write(0x20, 1 | 4, u32::MAX, 0);
+        t.write(0x44, MOE | 10, u32::MAX, 0);
+        t.write(0x00, CEN | ARPE | 1 << CMS_SHIFT, u32::MAX, 0);
+        t.sync(150);
+        assert_eq!((t.output(0), t.output_n(0)), (c, s));
+        t.write(0x34, 40, u32::MAX, 150);
+        assert_eq!(
+            (t.output(0), t.output_n(0)),
+            (c, s),
+            "not before the update"
+        );
+        t.sync(203);
+        assert_eq!((t.output(0), t.output_n(0)), (c, c));
+        assert_eq!(t.next_event(), Some(210));
+        t.sync(210);
+        assert_eq!((t.output(0), t.output_n(0)), (s, c));
     }
 }

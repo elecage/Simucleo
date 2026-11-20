@@ -443,71 +443,90 @@ export const bldcHall: PartDef = {
   pins: BLDC_PINS.map(([id, , label], i) => ({ id, x: 1 + i, y: 10, label })),
   props: { load: 0 },
   ranges: { load: { min: 0, max: 20, step: 0.5, label: "부하 (브레이크)", unit: "N·cm" } },
-  render: (_props, visual) => {
-    const m = visual.motor;
-    const angle = visual.angle ?? 0;
-    const rpm = visual.rpm ?? 0;
-    const halls = visual.text ?? "000";
-    const cur = m?.coils ?? [0, 0, 0];
-    const { x: cx, y: cy } = BLDC_C;
-    return (
-      <g data-rpm={rpm.toFixed(0)} data-halls={halls} data-stalled={m?.stalled ? "1" : "0"}>
-        {BLDC_PINS.map(([id, color], i) => (
-          <line key={id} x1={(1 + i) * P} y1={8.8 * P} x2={(1 + i) * P} y2={10 * P} stroke={color} strokeWidth={1.2} />
+  render: (_props, visual) => bldcBody(visual, true),
+};
+
+/** The BLDC's can, rotor, rpm, phase currents and (with sensors) halls. */
+function bldcBody(visual: VisualState, withHalls: boolean) {
+  const m = visual.motor;
+  const angle = visual.angle ?? 0;
+  const rpm = visual.rpm ?? 0;
+  const halls = visual.text ?? "000";
+  const cur = m?.coils ?? [0, 0, 0];
+  const { x: cx, y: cy } = BLDC_C;
+  return (
+    <g data-rpm={rpm.toFixed(0)} data-halls={halls} data-stalled={m?.stalled ? "1" : "0"}>
+      {BLDC_PINS.slice(0, withHalls ? BLDC_PINS.length : 3).map(([id, color], i) => (
+        <line key={id} x1={(1 + i) * P} y1={8.8 * P} x2={(1 + i) * P} y2={10 * P} stroke={color} strokeWidth={1.2} />
+      ))}
+      <circle cx={cx} cy={cy} r={3.4 * P} className="bldc-can" />
+      <g transform={`rotate(${angle} ${cx} ${cy})`} data-rotor-angle={angle.toFixed(0)}>
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+          <path
+            key={i}
+            d={`M ${cx} ${cy} L ${cx + 2.6 * P * Math.sin((i * Math.PI) / 4 - 0.35)} ${cy - 2.6 * P * Math.cos((i * Math.PI) / 4 - 0.35)} A ${2.6 * P} ${2.6 * P} 0 0 1 ${cx + 2.6 * P * Math.sin((i * Math.PI) / 4 + 0.35)} ${cy - 2.6 * P * Math.cos((i * Math.PI) / 4 + 0.35)} Z`}
+            className={i % 2 ? "magnet s" : "magnet n"}
+          />
         ))}
-        <circle cx={cx} cy={cy} r={3.4 * P} className="bldc-can" />
-        <g transform={`rotate(${angle} ${cx} ${cy})`} data-rotor-angle={angle.toFixed(0)}>
-          {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
-            <path
-              key={i}
-              d={`M ${cx} ${cy} L ${cx + 2.6 * P * Math.sin((i * Math.PI) / 4 - 0.35)} ${cy - 2.6 * P * Math.cos((i * Math.PI) / 4 - 0.35)} A ${2.6 * P} ${2.6 * P} 0 0 1 ${cx + 2.6 * P * Math.sin((i * Math.PI) / 4 + 0.35)} ${cy - 2.6 * P * Math.cos((i * Math.PI) / 4 + 0.35)} Z`}
-              className={i % 2 ? "magnet s" : "magnet n"}
-            />
-          ))}
-          <line x1={cx} y1={cy} x2={cx} y2={cy - 3 * P} className="motor-spoke marked" />
-          <circle cx={cx} cy={cy} r={0.5 * P} className="motor-shaft" />
-        </g>
-        <text x={cx} y={-0.4 * P} textAnchor="middle" className="silk small value">
-          {fmt(rpm)} rpm
-        </text>
-        {/* Hall states A, B, C. */}
-        {["A", "B", "C"].map((h, i) => {
-          const on = halls[i] === "1";
-          return (
-            <g key={h} data-hall={h} data-level={on ? "1" : "0"}>
-              <circle cx={8.6 * P} cy={(1 + i * 1.1) * P} r={0.38 * P} className={on ? "hall-led on" : "hall-led"} />
-              <text x={9.4 * P} y={(1.25 + i * 1.1) * P} className="silk tiny">
-                H{h}
-              </text>
-            </g>
-          );
-        })}
-        {["U", "V", "W"].map((ph, i) => (
-          <g key={`b${ph}`}>
-            <rect x={(7.9 + i * 0.7) * P} y={5.2 * P} width={0.5 * P} height={2.6 * P} className="coil-track" />
-            <rect
-              x={(7.9 + i * 0.7) * P}
-              y={(cur[i] ?? 0) >= 0 ? (6.5 - 1.3 * Math.min(1, cur[i] ?? 0)) * P : 6.5 * P}
-              width={0.5 * P}
-              height={1.3 * Math.min(1, Math.abs(cur[i] ?? 0)) * P}
-              className={(cur[i] ?? 0) >= 0 ? "coil-bar pos" : "coil-bar neg"}
-              data-phase={ph}
-              data-current={(cur[i] ?? 0).toFixed(2)}
-            />
-            <text x={(8.15 + i * 0.7) * P} y={8.5 * P} textAnchor="middle" className="silk tiny">
-              {ph}
+        <line x1={cx} y1={cy} x2={cx} y2={cy - 3 * P} className="motor-spoke marked" />
+        <circle cx={cx} cy={cy} r={0.5 * P} className="motor-shaft" />
+      </g>
+      <text x={cx} y={-0.4 * P} textAnchor="middle" className="silk small value">
+        {fmt(rpm)} rpm
+      </text>
+      {/* Hall states A, B, C. */}
+      {withHalls && ["A", "B", "C"].map((h, i) => {
+        const on = halls[i] === "1";
+        return (
+          <g key={h} data-hall={h} data-level={on ? "1" : "0"}>
+            <circle cx={8.6 * P} cy={(1 + i * 1.1) * P} r={0.38 * P} className={on ? "hall-led on" : "hall-led"} />
+            <text x={9.4 * P} y={(1.25 + i * 1.1) * P} className="silk tiny">
+              H{h}
             </text>
           </g>
-        ))}
-        {m?.stalled && (
-          <text x={cx} y={11.2 * P} textAnchor="middle" className="silk small stall on" data-stall="1">
-            멈춤! 정류가 홀과 맞지 않음
+        );
+      })}
+      {["U", "V", "W"].map((ph, i) => (
+        <g key={`b${ph}`}>
+          <rect x={(7.9 + i * 0.7) * P} y={5.2 * P} width={0.5 * P} height={2.6 * P} className="coil-track" />
+          <rect
+            x={(7.9 + i * 0.7) * P}
+            y={(cur[i] ?? 0) >= 0 ? (6.5 - 1.3 * Math.min(1, cur[i] ?? 0)) * P : 6.5 * P}
+            width={0.5 * P}
+            height={1.3 * Math.min(1, Math.abs(cur[i] ?? 0)) * P}
+            className={(cur[i] ?? 0) >= 0 ? "coil-bar pos" : "coil-bar neg"}
+            data-phase={ph}
+            data-current={(cur[i] ?? 0).toFixed(2)}
+          />
+          <text x={(8.15 + i * 0.7) * P} y={8.5 * P} textAnchor="middle" className="silk tiny">
+            {ph}
           </text>
-        )}
-        {visual.unpowered && <NoPower x={cx} y={11.2 * P} text="홀 센서 전원 없음" />}
-      </g>
-    );
-  },
+        </g>
+      ))}
+      {m?.stalled && (
+        <text x={cx} y={11.2 * P} textAnchor="middle" className="silk small stall on" data-stall="1">
+          {withHalls ? "멈춤! 정류가 홀과 맞지 않음" : "멈춤! 정류가 회전자와 맞지 않음"}
+        </text>
+      )}
+      {withHalls && visual.unpowered && <NoPower x={cx} y={11.2 * P} text="홀 센서 전원 없음" />}
+    </g>
+  );
+}
+
+// ------------------------------------------------- sensorless BLDC (M28)
+
+export const bldcSensorless: PartDef = {
+  kind: "bldc",
+  name: "BLDC 모터 (센서리스)",
+  category: "actuator",
+  description:
+    "홀 센서 없는 3상 BLDC 모터(홀 센서 BLDC와 같은 모터: 4극쌍, 상 저항 1 Ω, 12 V에서 약 3300 rpm). 회전자 위치는 역기전력으로 압니다: 6스텝에서 떠 있는 상의 전압은 중성점(별결선 중심) 전압에 그 상의 역기전력을 더한 값이라, 각 60° 구간의 가운데에서 중성점을 지나갑니다(영점). 영점에서 30° 뒤에 정류하면 됩니다. 멈춰 있으면 역기전력이 없어 먼저 한 스텝으로 정렬하고, 열린 루프로 점점 빠르게 정류한 뒤 영점을 따라갑니다. 상마다 10 kΩ/2.2 kΩ 분압기를 ADC 핀에, 세 분압점을 10 kΩ 세 개로 모으면 가상 중성점이 됩니다. U·V·W를 3상 브리지의 OUTA·OUTB·OUTC에.",
+  w: 10,
+  h: 10,
+  pins: BLDC_PINS.slice(0, 3).map(([id, , label], i) => ({ id, x: 1 + i, y: 10, label })),
+  props: { load: 0 },
+  ranges: { load: { min: 0, max: 20, step: 0.5, label: "부하 (브레이크)", unit: "N·cm" } },
+  render: (_props, visual) => bldcBody(visual, false),
 };
 
 // ---------------------------------------------------- 3-phase bridge

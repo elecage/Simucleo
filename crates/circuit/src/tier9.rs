@@ -15,9 +15,15 @@
 //! - [`Esc`]: a hobby ESC with a brushless outrunner: servo-style throttle
 //!   pulses, the arming sequence, failsafe and a first-order speed response.
 //!
-//! The drivers' outputs reach the motor through the nets: a motor coil
-//! whose two ends sit on the two outputs of one bridge carries that
-//! bridge's current, with the sign of the way round it is wired.
+//! The drivers' outputs reach the motor through the nets. Since M28 the
+//! windings are elements of the circuit's nodal solve (resistance in series
+//! with the back-EMF, see `sim.rs`): the bridges' outputs are switches to
+//! their supply and ground, and the current a coil (or BLDC phase) carries
+//! is what the circuit gives it — a series resistor limits it, and the
+//! outputs and a floating phase show their real voltage. The circuit hands
+//! each motor the coefficients of that current, `a + B·emf`, so the motor
+//! integrates without solving the circuit again; an A4988's chopper still
+//! regulates its current behaviourally (the coil is a current source then).
 
 use std::f64::consts::{PI, TAU};
 
@@ -63,12 +69,18 @@ const FRICTION: f64 = 0.003;
 const COIL_LI: f64 = 4.5e-3;
 /// Back-EMF per unit of rated current (V per rad/s): it eats into the
 /// supply as the motor speeds up, so the current (and the torque) cannot
-/// follow fast steps any more.
-const BACK_EMF: f64 = 0.12;
+/// follow fast steps any more. Also the amplitude of each coil's back-EMF
+/// in the circuit (V per mechanical rad/s).
+pub const BACK_EMF: f64 = 0.12;
+/// Resistance of one coil (Ω) and the rated current the coil currents are
+/// counted in (A): a 12 V stepper, 0.4 A per coil. With an L298N's two
+/// switches (about 2 V lost) 12 V gives the rated current.
+pub const STEPPER_COIL_R: f64 = 25.0;
+pub const STEPPER_RATED: f64 = 0.4;
 /// Coil time constant L/R of a coil on a voltage (L298N) drive.
-const COIL_TAU: f64 = 2.0e-3;
+pub const COIL_TAU: f64 = 2.0e-3;
 /// How fast the current dies away when the bridge lets go (diodes).
-const FREEWHEEL_TAU: f64 = 0.2e-3;
+pub const FREEWHEEL_TAU: f64 = 0.2e-3;
 /// Integration step (s).
 const DT: f64 = 10e-6;
 /// Slips closer together than this are one burst (s).
@@ -89,6 +101,10 @@ pub enum CoilDrive {
     /// A voltage across the coil: the current follows the target with the
     /// coil's time constant (PWM on the enable averages out).
     Voltage,
+    /// The coil is an element of the circuit (M28): its steady current is
+    /// the target plus `b · emf` (units of the rated current per volt of the
+    /// two coils' back-EMF), followed with the time constant `tau`.
+    Network { b: [f64; 2], tau: f64 },
 }
 
 /// A NEMA17 hybrid stepper with two coils, A and B.
@@ -276,6 +292,24 @@ impl BipolarStepper {
         self.torque().abs() <= FRICTION + self.load
     }
 
+    /// Back-EMF of coils A and B (V, in the direction of positive current:
+    /// it opposes the current that makes positive torque).
+    pub fn emf(&self) -> [f64; 2] {
+        self.emf_at_angle(self.theta)
+    }
+
+    fn emf_at_angle(&self, theta: f64) -> [f64; 2] {
+        let (s, c) = (TEETH * theta).sin_cos();
+        [-BACK_EMF * self.omega * s, BACK_EMF * self.omega * c]
+    }
+
+    /// The back-EMF at `now`, the rotor carried on at its speed from where
+    /// it was last integrated (for voltages read between integrations).
+    pub fn emf_at(&self, now: Seconds) -> [f64; 2] {
+        let dt = (now - self.time).clamp(0.0, 0.01);
+        self.emf_at_angle(self.theta + self.omega * dt)
+    }
+
     /// Motor torque (coils and detent) at the present state (N·m).
     fn torque(&self) -> f64 {
         let (s, c) = (TEETH * self.theta).sin_cos();
@@ -285,6 +319,7 @@ impl BipolarStepper {
 
     fn step(&mut self, dt: f64) {
         // Coil currents.
+        let emf = self.emf();
         for k in 0..2 {
             let i = &mut self.current[k];
             match self.drive[k] {
@@ -294,6 +329,11 @@ impl BipolarStepper {
                     *i += (self.target[k] - *i).clamp(-rate * dt, rate * dt);
                 }
                 CoilDrive::Voltage => *i += (self.target[k] - *i) * (1.0 - (-dt / COIL_TAU).exp()),
+                CoilDrive::Network { b, tau } => {
+                    let e = emf;
+                    let steady = self.target[k] + b[0] * e[0] + b[1] * e[1];
+                    *i += (steady - *i) * (1.0 - (-dt / tau).exp());
+                }
             }
             if i.abs() < 1e-12 {
                 *i = 0.0;
@@ -768,9 +808,9 @@ impl Esc {
 /// Pole pairs of the hall BLDC (electrical angle = 4 × mechanical).
 pub const BLDC_POLE_PAIRS: f64 = 4.0;
 /// Back-EMF constant per phase (V per mechanical rad/s) = torque constant.
-const BLDC_KE: f64 = 0.02;
+pub const BLDC_KE: f64 = 0.02;
 /// Phase resistance (Ω) and rotor inertia (kg·m²).
-const BLDC_R: f64 = 1.0;
+pub const BLDC_R: f64 = 1.0;
 const BLDC_J: f64 = 5e-5;
 /// Bearing friction (N·m) and viscous drag (N·m per rad/s).
 const BLDC_FRICTION: f64 = 0.002;
@@ -994,6 +1034,29 @@ impl PhaseBridge {
         })
     }
 
+    /// Output switch of phase `k` at `now` (M28): `Some(true)` to the
+    /// supply, `Some(false)` to ground, `None` both off. Both inputs on: the
+    /// module cuts the phase off. Both off within a PWM period (the dead
+    /// time, or the off time of a phase chopped on one side only): the
+    /// motor current goes on through a diode — the low side's while the
+    /// high side chops, the high side's while only the low side does.
+    pub fn leg(&self, k: usize, now: Seconds) -> Option<bool> {
+        let [mh, ml] = &self.meters[k];
+        self.leg_for(k, mh.level, ml.level, now)
+    }
+
+    /// [`PhaseBridge::leg`] with the inputs of phase `k` at `h`, `l`.
+    pub fn leg_for(&self, k: usize, h: bool, l: bool, now: Seconds) -> Option<bool> {
+        let [mh, ml] = &self.meters[k];
+        match (h, l) {
+            (true, false) => Some(true),
+            (false, true) => Some(false),
+            (true, true) => None,
+            (false, false) if mh.live(now) || ml.live(now) => Some(mh.duty(now) <= 0.0),
+            (false, false) => None,
+        }
+    }
+
     /// When a switching input next counts as static, after the last look.
     pub fn next_change(&self) -> Option<Seconds> {
         self.meters
@@ -1090,6 +1153,14 @@ pub struct HallBldc {
     pub float_since: [Option<Seconds>; 3],
     /// When the halls were last looked ahead.
     predicted_at: Seconds,
+    /// The phase currents the circuit gives (M28): `net_a + net_b · emf`
+    /// (A, and A per V of the three phases' back-EMF).
+    net_a: [f64; 3],
+    net_b: [[f64; 3]; 3],
+    /// A phase is chopped by PWM (look ahead less far).
+    pwm: bool,
+    /// No hall sensors (M28): nothing to look ahead for.
+    pub sensorless: bool,
 }
 
 impl Default for HallBldc {
@@ -1117,6 +1188,10 @@ impl HallBldc {
             halls: hall_code(0.3 * BLDC_POLE_PAIRS),
             float_since: [None; 3],
             predicted_at: f64::NEG_INFINITY,
+            net_a: [0.0; 3],
+            net_b: [[0.0; 3]; 3],
+            pwm: false,
+            sensorless: false,
         }
     }
 
@@ -1166,17 +1241,47 @@ impl HallBldc {
         self.omega / TAU * 60.0
     }
 
-    /// New bridge state from `now` on.
+    /// New bridge state from `now` on, the phases on ideal sources (each
+    /// driven phase at its fraction of `supply`, the driven phases in a
+    /// star through [`BLDC_R`]; a floating phase carries nothing).
     pub fn set_drive(&mut self, now: Seconds, drive: [PhaseDrive; 3], supply: f64) {
-        if drive == self.drive && (supply - self.supply).abs() <= 0.05 {
+        let mut a = [0.0; 3];
+        let mut b = [[0.0; 3]; 3];
+        let driven: Vec<usize> = (0..3).filter(|&k| drive[k].fraction().is_some()).collect();
+        if driven.len() >= 2 && supply > 0.0 {
+            let d = driven.len() as f64;
+            let v = |k: usize| drive[k].fraction().unwrap_or(0.0) * supply;
+            let mean = driven.iter().map(|&k| v(k)).sum::<f64>() / d;
+            for &k in &driven {
+                a[k] = (v(k) - mean) / BLDC_R;
+                for &j in &driven {
+                    b[k][j] = (if j == k { -1.0 } else { 0.0 } + 1.0 / d) / BLDC_R;
+                }
+            }
+        }
+        self.drive = drive;
+        self.supply = supply;
+        let pwm = drive.iter().any(|d| matches!(d, PhaseDrive::Duty(_)));
+        self.set_network(now, a, b, pwm);
+    }
+
+    /// The phase currents from `now` on as the circuit gives them:
+    /// `a + b · emf` (A; A per V), `pwm` if a phase is chopped.
+    pub fn set_network(&mut self, now: Seconds, a: [f64; 3], b: [[f64; 3]; 3], pwm: bool) {
+        let same = |x: f64, y: f64| (x - y).abs() <= 1e-6 * (1.0 + y.abs());
+        let unchanged = pwm == self.pwm
+            && (0..3).all(|k| same(a[k], self.net_a[k]))
+            && (0..3).all(|k| (0..3).all(|j| same(b[k][j], self.net_b[k][j])));
+        if unchanged {
             // Nothing new (a PWM edge the bridge averages away).
             self.advance_if_due(now);
             return;
         }
         self.advance(now);
         {
-            self.drive = drive;
-            self.supply = supply;
+            self.net_a = a;
+            self.net_b = b;
+            self.pwm = pwm;
             let soon = self.predicted_at + PREDICT_MIN_INTERVAL;
             if self.time < soon {
                 // Changed again just after a look ahead: look again then.
@@ -1236,7 +1341,14 @@ impl HallBldc {
         let driven = self.current.iter().any(|i| i.abs() > 0.5);
         if driven {
             let (t0, a0) = *self.stuck_since.get_or_insert((now, self.theta));
-            if now - t0 >= BLDC_STALL_TIME {
+            // A sensorless start holds the rotor still on purpose for a
+            // while (alignment): watch longer.
+            let window = if self.sensorless {
+                5.0 * BLDC_STALL_TIME
+            } else {
+                BLDC_STALL_TIME
+            };
+            if now - t0 >= window {
                 let stuck = (self.theta - a0).abs() < BLDC_STALL_SPEED * (now - t0);
                 if stuck && !self.stalled {
                     self.stall_new = true;
@@ -1253,36 +1365,39 @@ impl HallBldc {
         }
     }
 
-    /// No current can flow (fewer than two phases driven, or no supply).
+    /// Standing, nothing drives a current (no back-EMF either).
     fn idle(&self) -> bool {
-        let mut driven = self.drive.iter().filter_map(|d| d.fraction());
-        let Some(first) = driven.next() else {
-            return true;
-        };
-        let differ = driven.any(|f| (f - first).abs() > 1e-9);
-        !differ || self.supply <= 0.0
+        self.net_a.iter().all(|a| a.abs() < 1e-9)
     }
 
-    /// Phase currents for the drive at the present speed and angle: the
-    /// driven phases form a star; a floating phase carries nothing.
-    fn currents(&self) -> [f64; 3] {
+    /// Back-EMF of phases U, V, W (V, star point to phase terminal against
+    /// the current into the motor) at the present speed and angle.
+    pub fn emf(&self) -> [f64; 3] {
         let e = self.electrical();
-        let mut cur = [0.0; 3];
-        if self.idle() {
-            return cur;
-        }
-        let emf = |k: usize| BLDC_KE * self.omega * phase_shape(e, k);
-        let volts = |k: usize| self.drive[k].fraction().map(|f| f * self.supply);
-        let driven: Vec<usize> = (0..3).filter(|&k| volts(k).is_some()).collect();
-        let star = driven
-            .iter()
-            .map(|&k| volts(k).unwrap() - emf(k))
-            .sum::<f64>()
-            / driven.len() as f64;
-        for &k in &driven {
-            cur[k] = (volts(k).unwrap() - emf(k) - star) / BLDC_R;
-        }
-        cur
+        std::array::from_fn(|k| BLDC_KE * self.omega * phase_shape(e, k))
+    }
+
+    /// The back-EMF at `now`, the rotor carried on at its speed from where
+    /// it was last integrated (for voltages read between integrations).
+    pub fn emf_at(&self, now: Seconds) -> [f64; 3] {
+        let dt = (now - self.time).clamp(0.0, 0.01);
+        let e = BLDC_POLE_PAIRS * (self.theta + self.omega * dt);
+        std::array::from_fn(|k| BLDC_KE * self.omega * phase_shape(e, k))
+    }
+
+    /// Phase currents at the present speed and angle, as the circuit
+    /// gives them (into the motor).
+    fn currents(&self) -> [f64; 3] {
+        let emf = self.emf();
+        std::array::from_fn(|k| {
+            let i = self.net_a[k] + (0..3).map(|j| self.net_b[k][j] * emf[j]).sum::<f64>();
+            // (Nanoamps through the solve's leak to ground: nothing.)
+            if i.abs() < 1e-6 {
+                0.0
+            } else {
+                i
+            }
+        })
     }
 
     fn step(&mut self, dt: f64) {
@@ -1316,7 +1431,7 @@ impl HallBldc {
     fn predict(&mut self) {
         self.next_hall = None;
         self.predicted_at = self.time;
-        if self.omega == 0.0 && self.idle() {
+        if self.sensorless || (self.omega == 0.0 && self.idle()) {
             return;
         }
         let mut probe = self.clone();
@@ -1324,11 +1439,7 @@ impl HallBldc {
         let mut t = 0.0;
         // A chopping bridge brings the motor up to date every PWM edge,
         // which finds the hall edge then: only look a little ahead.
-        let horizon = if self.drive.iter().any(|d| matches!(d, PhaseDrive::Duty(_))) {
-            PWM_HORIZON
-        } else {
-            HALL_HORIZON
-        };
+        let horizon = if self.pwm { PWM_HORIZON } else { HALL_HORIZON };
         while t < horizon {
             probe.step(DT);
             t += DT;

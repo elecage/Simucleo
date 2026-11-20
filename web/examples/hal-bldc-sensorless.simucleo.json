@@ -1,0 +1,559 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "센서리스 BLDC (역기전력 영점, 중앙 정렬 PWM)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "br",
+      "kind": "bridge-3ph",
+      "x": 48,
+      "y": 8,
+      "props": {}
+    },
+    {
+      "id": "bat",
+      "kind": "battery",
+      "x": 48,
+      "y": 24,
+      "props": {
+        "voltage": 12
+      }
+    },
+    {
+      "id": "pot",
+      "kind": "potentiometer",
+      "x": 38,
+      "y": 26,
+      "props": {
+        "ohms": "10k",
+        "position": 0.5
+      }
+    },
+    {
+      "id": "mot",
+      "kind": "bldc",
+      "x": 64,
+      "y": 6,
+      "props": {
+        "load": 0
+      }
+    },
+    {
+      "id": "ru1",
+      "kind": "resistor",
+      "x": 60,
+      "y": 18,
+      "props": {
+        "ohms": "10k",
+        "bands": "4",
+        "tolerance": "5%",
+        "tempco": "100"
+      }
+    },
+    {
+      "id": "ru2",
+      "kind": "resistor",
+      "x": 66,
+      "y": 20,
+      "props": {
+        "ohms": "2.2k",
+        "bands": "4",
+        "tolerance": "5%",
+        "tempco": "100"
+      }
+    },
+    {
+      "id": "rnu",
+      "kind": "resistor",
+      "x": 72,
+      "y": 18,
+      "props": {
+        "ohms": "10k",
+        "bands": "4",
+        "tolerance": "5%",
+        "tempco": "100"
+      }
+    },
+    {
+      "id": "rv1",
+      "kind": "resistor",
+      "x": 60,
+      "y": 22,
+      "props": {
+        "ohms": "10k",
+        "bands": "4",
+        "tolerance": "5%",
+        "tempco": "100"
+      }
+    },
+    {
+      "id": "rv2",
+      "kind": "resistor",
+      "x": 66,
+      "y": 24,
+      "props": {
+        "ohms": "2.2k",
+        "bands": "4",
+        "tolerance": "5%",
+        "tempco": "100"
+      }
+    },
+    {
+      "id": "rnv",
+      "kind": "resistor",
+      "x": 72,
+      "y": 22,
+      "props": {
+        "ohms": "10k",
+        "bands": "4",
+        "tolerance": "5%",
+        "tempco": "100"
+      }
+    },
+    {
+      "id": "rw1",
+      "kind": "resistor",
+      "x": 60,
+      "y": 26,
+      "props": {
+        "ohms": "10k",
+        "bands": "4",
+        "tolerance": "5%",
+        "tempco": "100"
+      }
+    },
+    {
+      "id": "rw2",
+      "kind": "resistor",
+      "x": 66,
+      "y": 28,
+      "props": {
+        "ohms": "2.2k",
+        "bands": "4",
+        "tolerance": "5%",
+        "tempco": "100"
+      }
+    },
+    {
+      "id": "rnw",
+      "kind": "resistor",
+      "x": 72,
+      "y": 26,
+      "props": {
+        "ohms": "10k",
+        "bands": "4",
+        "tolerance": "5%",
+        "tempco": "100"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "br",
+        "pin": "INHA"
+      },
+      "color": "#1e88e5"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "D11"
+      },
+      "b": {
+        "part": "br",
+        "pin": "INLA"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D8"
+      },
+      "b": {
+        "part": "br",
+        "pin": "INHB"
+      },
+      "color": "#8e24aa"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "A3"
+      },
+      "b": {
+        "part": "br",
+        "pin": "INLB"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "D2"
+      },
+      "b": {
+        "part": "br",
+        "pin": "INHC"
+      },
+      "color": "#00acc1"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "nucleo",
+        "pin": "CN10_24"
+      },
+      "b": {
+        "part": "br",
+        "pin": "INLC"
+      },
+      "color": "#fdd835"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "bat",
+        "pin": "+"
+      },
+      "b": {
+        "part": "br",
+        "pin": "PVDD"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "bat",
+        "pin": "-"
+      },
+      "b": {
+        "part": "br",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "br",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w18",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "pot",
+        "pin": "1"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w19",
+      "a": {
+        "part": "pot",
+        "pin": "W"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "A0"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w20",
+      "a": {
+        "part": "pot",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P2"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w13",
+      "a": {
+        "part": "br",
+        "pin": "OUTA"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "U"
+      },
+      "color": "#eab308"
+    },
+    {
+      "id": "w14",
+      "a": {
+        "part": "br",
+        "pin": "OUTA"
+      },
+      "b": {
+        "part": "ru1",
+        "pin": "1"
+      },
+      "color": "#eab308"
+    },
+    {
+      "id": "w15",
+      "a": {
+        "part": "ru1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "ru2",
+        "pin": "1"
+      },
+      "color": "#757575"
+    },
+    {
+      "id": "w16",
+      "a": {
+        "part": "ru2",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P2"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w17",
+      "a": {
+        "part": "ru1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "A1"
+      },
+      "color": "#eab308"
+    },
+    {
+      "id": "w18",
+      "a": {
+        "part": "ru1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "rnu",
+        "pin": "1"
+      },
+      "color": "#757575"
+    },
+    {
+      "id": "w19",
+      "a": {
+        "part": "rnu",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "A5"
+      },
+      "color": "#ec407a"
+    },
+    {
+      "id": "w20",
+      "a": {
+        "part": "br",
+        "pin": "OUTB"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "V"
+      },
+      "color": "#16a34a"
+    },
+    {
+      "id": "w21",
+      "a": {
+        "part": "br",
+        "pin": "OUTB"
+      },
+      "b": {
+        "part": "rv1",
+        "pin": "1"
+      },
+      "color": "#16a34a"
+    },
+    {
+      "id": "w22",
+      "a": {
+        "part": "rv1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "rv2",
+        "pin": "1"
+      },
+      "color": "#757575"
+    },
+    {
+      "id": "w23",
+      "a": {
+        "part": "rv2",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P2"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w24",
+      "a": {
+        "part": "rv1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "A2"
+      },
+      "color": "#16a34a"
+    },
+    {
+      "id": "w25",
+      "a": {
+        "part": "rv1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "rnv",
+        "pin": "1"
+      },
+      "color": "#757575"
+    },
+    {
+      "id": "w26",
+      "a": {
+        "part": "rnv",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "A5"
+      },
+      "color": "#ec407a"
+    },
+    {
+      "id": "w27",
+      "a": {
+        "part": "br",
+        "pin": "OUTC"
+      },
+      "b": {
+        "part": "mot",
+        "pin": "W"
+      },
+      "color": "#2563eb"
+    },
+    {
+      "id": "w28",
+      "a": {
+        "part": "br",
+        "pin": "OUTC"
+      },
+      "b": {
+        "part": "rw1",
+        "pin": "1"
+      },
+      "color": "#2563eb"
+    },
+    {
+      "id": "w29",
+      "a": {
+        "part": "rw1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "rw2",
+        "pin": "1"
+      },
+      "color": "#757575"
+    },
+    {
+      "id": "w30",
+      "a": {
+        "part": "rw2",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P2"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w31",
+      "a": {
+        "part": "rw1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "A4"
+      },
+      "color": "#2563eb"
+    },
+    {
+      "id": "w32",
+      "a": {
+        "part": "rw1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "rnw",
+        "pin": "1"
+      },
+      "color": "#757575"
+    },
+    {
+      "id": "w33",
+      "a": {
+        "part": "rnw",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "A5"
+      },
+      "color": "#ec407a"
+    }
+  ],
+  "firmware": {
+    "name": "hal-bldc-sensorless",
+    "example": "hal-bldc-sensorless.elf"
+  }
+}

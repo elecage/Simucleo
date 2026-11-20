@@ -18,6 +18,17 @@ pub const PRIO_BITS: u32 = 4;
 const SCR_SEVONPEND: u32 = 1 << 4;
 const PRIO_MASK: u8 = (0xFF << (8 - PRIO_BITS)) as u8;
 
+/// The numbers `base + i` of the set bits `i` of `bits`, lowest first.
+fn set_bits(mut bits: u32, base: u16) -> impl Iterator<Item = u16> {
+    std::iter::from_fn(move || {
+        (bits != 0).then(|| {
+            let i = bits.trailing_zeros();
+            bits &= bits - 1;
+            base + i as u16
+        })
+    })
+}
+
 pub mod exc {
     pub const RESET: u16 = 1;
     pub const NMI: u16 = 2;
@@ -385,13 +396,12 @@ impl CortexM {
     }
 
     fn active_list(&self) -> impl Iterator<Item = u16> + '_ {
-        (1..16u16)
-            .filter(|n| self.sys_active & (1 << n) != 0)
-            .chain(
-                (0..NUM_IRQS as u16)
-                    .filter(|i| self.nvic_active[*i as usize / 32] & (1 << (i % 32)) != 0)
-                    .map(|i| i + 16),
-            )
+        set_bits(self.sys_active as u32 & 0xFFFE, 0).chain(
+            self.nvic_active
+                .iter()
+                .enumerate()
+                .flat_map(|(w, &bits)| set_bits(bits, 16 + 32 * w as u16)),
+        )
     }
 
     fn active_count(&self) -> u32 {
@@ -419,16 +429,15 @@ impl CortexM {
     }
 
     fn pending_list(&self) -> impl Iterator<Item = u16> + '_ {
-        (2..16u16)
-            .filter(|n| self.sys_pending & (1 << n) != 0)
-            .chain(
-                (0..NUM_IRQS as u16)
-                    .filter(|i| {
-                        let (w, b) = (*i as usize / 32, i % 32);
-                        self.nvic_pending[w] & self.nvic_enabled[w] & (1 << b) != 0
-                    })
-                    .map(|i| i + 16),
-            )
+        // Only the set bits are visited: this runs before every instruction
+        // while an interrupt waits behind a running handler.
+        set_bits(self.sys_pending as u32 & 0xFFFC, 0).chain(
+            self.nvic_pending
+                .iter()
+                .zip(&self.nvic_enabled)
+                .enumerate()
+                .flat_map(|(w, (&p, &e))| set_bits(p & e, 16 + 32 * w as u16)),
+        )
     }
 
     /// Cheap check: is anything pending at all (enabled IRQs included)?

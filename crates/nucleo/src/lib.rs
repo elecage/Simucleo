@@ -110,6 +110,10 @@ impl ExternalCircuit for CircuitLink {
         self.0.borrow().mcu_voltage(port, pin)
     }
 
+    fn refresh(&mut self, time: Cycles) {
+        self.0.borrow_mut().refresh(time);
+    }
+
     fn next_event(&self) -> Option<Cycles> {
         self.0.borrow().next_event()
     }

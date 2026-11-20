@@ -185,6 +185,11 @@ const BOX_LAYOUT: Record<
     right: ["U", "V", "W", "HA", "HB", "HC"],
     subtitle: () => "BLDC (홀 센서 A/B/C)",
   },
+  bldc: {
+    left: [],
+    right: ["U", "V", "W"],
+    subtitle: () => "BLDC (센서리스)",
+  },
   "bridge-3ph": {
     left: ["PVDD", "GND", "INHA", "INLA", "INHB", "INLB", "INHC", "INLC"],
     right: ["OUTA", "OUTB", "OUTC"],

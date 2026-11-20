@@ -1,6 +1,11 @@
 // Copy the built example firmware into public/examples/ with an index, so
 // the site can offer them without a toolchain. Build them first, e.g.
 //   make -C ../firmware/hal-blinky variants && make -C ../firmware/hal-uart-printf
+//
+//   --projects  print the firmware directories the examples come from (one
+//               list for the workflows to build) and stop
+//   --strict    fail when an example is not built (the deployed site would
+//               be without it; without the flag it is only skipped)
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,12 +65,21 @@ const EXAMPLES = [
   ["bare-blinky", "bare-blinky.elf", "Bare metal: toggle PA5 with register writes"],
 ];
 
+const args = process.argv.slice(2);
+if (args.includes("--projects")) {
+  console.log([...new Set(EXAMPLES.map(([p]) => p))].join(" "));
+  process.exit(0);
+}
+const strict = args.includes("--strict");
+
 mkdirSync(out, { recursive: true });
 const index = [];
+const missing = [];
 for (const [project, file, description] of EXAMPLES) {
   const src = join(root, project, "build", file);
   if (!existsSync(src)) {
     console.warn(`skip ${file}: not built (${src})`);
+    missing.push(file);
     continue;
   }
   copyFileSync(src, join(out, file));
@@ -104,3 +118,7 @@ for (const project of new Set([...EXAMPLES.map(([p]) => p), "hal-common", "freer
 writeFileSync(join(out, "sources.json"), JSON.stringify(sources.sort()) + "\n");
 console.log(`${sources.length} source files → public/examples/src`);
 console.log(`${index.length} examples → public/examples`);
+if (strict && missing.length) {
+  console.error(`--strict: ${missing.length} example(s) not built: ${missing.join(" ")}`);
+  process.exit(1);
+}

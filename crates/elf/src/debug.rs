@@ -236,30 +236,13 @@ impl DebugInfo {
                         continue;
                     };
                     let name = name.to_string_lossy().into_owned();
-                    let path = if name.starts_with('/') {
-                        name
-                    } else {
-                        let dir = fe
-                            .directory(&header)
-                            .and_then(|d| dwarf.attr_string(&unit, d).ok())
-                            .map(|d| d.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        if dir.is_empty() {
-                            name
-                        } else {
-                            format!("{dir}/{name}")
-                        }
-                    };
-                    // Relative to the compilation directory.
-                    let path = if path.starts_with('/') {
-                        path
-                    } else {
-                        match unit.comp_dir.map(|d| d.to_string_lossy().into_owned()) {
-                            Some(dir) => format!("{dir}/{path}"),
-                            None => path,
-                        }
-                    };
-                    let path = normalize(&path);
+                    let dir = fe
+                        .directory(&header)
+                        .and_then(|d| dwarf.attr_string(&unit, d).ok())
+                        .map(|d| d.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let comp_dir = unit.comp_dir.map(|d| d.to_string_lossy().into_owned());
+                    let path = source_path(comp_dir.as_deref(), &dir, &name);
                     let n = file_ids.len() as u32;
                     let id = *file_ids.entry(path).or_insert(n);
                     unit_files.insert(index, id);
@@ -1477,6 +1460,35 @@ fn format_float(f: f64) -> String {
     }
 }
 
+/// Whether a path from DWARF is absolute: POSIX `/…`, or a Windows drive
+/// (`C:/…`, `C:\…`) or UNC (`\\server\…`) path from a student's PC.
+fn is_absolute(p: &str) -> bool {
+    let b = p.as_bytes();
+    p.starts_with('/')
+        || p.starts_with('\\')
+        || (b.len() >= 3
+            && b[0].is_ascii_alphabetic()
+            && b[1] == b':'
+            && matches!(b[2], b'/' | b'\\'))
+}
+
+/// The full path of a line-table file: the name, else under its directory,
+/// else under the compilation directory; `\` becomes `/` (CubeIDE on
+/// Windows writes `C:\Users\…\Debug` and `../Core/Src/main.c`) and `.`/`..`
+/// are collapsed.
+fn source_path(comp_dir: Option<&str>, dir: &str, name: &str) -> String {
+    let mut path = name.to_string();
+    if !is_absolute(&path) && !dir.is_empty() {
+        path = format!("{dir}/{path}");
+    }
+    if !is_absolute(&path) {
+        if let Some(c) = comp_dir.filter(|c| !c.is_empty()) {
+            path = format!("{c}/{path}");
+        }
+    }
+    normalize(&path.replace('\\', "/"))
+}
+
 /// Collapse `a/./b` and `a/x/../b` so paths from different units match.
 fn normalize(p: &str) -> String {
     let mut parts: Vec<&str> = Vec::new();
@@ -1494,7 +1506,51 @@ fn normalize(p: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::legacy_bit_start;
+    use super::{legacy_bit_start, source_path};
+
+    #[test]
+    fn source_paths_from_any_pc() {
+        // POSIX: absolute name, name under a directory, under comp_dir.
+        assert_eq!(source_path(Some("/w"), "", "/h/p/main.c"), "/h/p/main.c");
+        assert_eq!(
+            source_path(Some("/w"), "/h/p/Core/Src", "main.c"),
+            "/h/p/Core/Src/main.c"
+        );
+        assert_eq!(
+            source_path(Some("/h/p/Debug"), "", "../Core/Src/main.c"),
+            "/h/p/Core/Src/main.c"
+        );
+        assert_eq!(
+            source_path(Some("/h/p/Debug"), "../Core/Src", "main.c"),
+            "/h/p/Core/Src/main.c"
+        );
+        // CubeIDE on Windows: backslashes, a drive letter, relative to Debug.
+        assert_eq!(
+            source_path(
+                Some(r"C:\Users\kim\ws\blinky\Debug"),
+                "",
+                "../Core/Src/main.c"
+            ),
+            "C:/Users/kim/ws/blinky/Core/Src/main.c"
+        );
+        assert_eq!(
+            source_path(
+                Some(r"C:\Users\kim\ws\blinky\Debug"),
+                r"C:\Users\kim\ws\blinky\Core\Inc",
+                "main.h"
+            ),
+            "C:/Users/kim/ws/blinky/Core/Inc/main.h"
+        );
+        assert_eq!(
+            source_path(Some("/x"), "", r"D:\STM32Cube\Drivers\hal.c"),
+            "D:/STM32Cube/Drivers/hal.c"
+        );
+        // No comp_dir: stays relative (matched by suffix later).
+        assert_eq!(
+            source_path(None, "", "../Core/Src/main.c"),
+            "../Core/Src/main.c"
+        );
+    }
 
     #[test]
     fn dwarf4_bit_offsets() {

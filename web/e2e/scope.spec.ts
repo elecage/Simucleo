@@ -154,10 +154,11 @@ test("without a trigger the view waits, Auto rolls, an unprobed source is flagge
   // Normal: an edge comes within a second and is held.
   await page.getByLabel("트리거 모드").selectOption("normal");
   await expect(plot(page)).toHaveAttribute("data-view", "capture", { timeout: 3000 });
-  // Both levels drawn (rows: high at y = 20, low at y = 42).
-  const pts = await page.locator("[data-trace=PA5] polyline").getAttribute("points");
-  expect(pts).toContain(",20");
-  expect(pts).toContain(",42");
+  // Both levels drawn (rows: high at y = 20, low at y = 42). The view can
+  // switch to the capture a render before its trace is drawn: wait for it.
+  const trace = page.locator("[data-trace=PA5] polyline");
+  await expect(trace).toHaveAttribute("points", /,20\b/);
+  await expect(trace).toHaveAttribute("points", /,42\b/);
   // The source pin removed from the probes.
   await page.getByLabel("프로브 핀 추가").selectOption("PA6");
   await page.getByRole("button", { name: "PA5 제거" }).click();

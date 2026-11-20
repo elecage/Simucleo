@@ -5,6 +5,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Runner } from "../sim/useRunner";
 import type { BreakpointSpec, DebugValue, WatchpointSpec } from "../sim/protocol";
+import type { SourceUpload } from "../upload/useSourceUpload";
+import { UploadBar } from "../upload/UploadBar";
 
 const base = "./";
 
@@ -125,8 +127,9 @@ function pauseText(reason: string): string {
   return reason;
 }
 
-export function SourceView({ runner }: { runner: Runner }) {
+export function SourceView({ runner, upload: bundle }: { runner: Runner; upload?: SourceUpload }) {
   const files = runner.debugFiles;
+  const attached = bundle?.attached ?? null;
   const [texts, setTexts] = useState<Record<string, string>>({});
   const [uploaded, setUploaded] = useState<Record<string, string>>({});
   const [available, setAvailable] = useState<Set<string>>(new Set());
@@ -152,6 +155,8 @@ export function SourceView({ runner }: { runner: Runner }) {
 
   /** Source text for a file, if we have it. */
   const sourceKey = (path: string): string | null => {
+    // M39: a file from an uploaded project folder matched by its DWARF path.
+    if (attached?.files[path]) return `a:${attached.id}:${path}`;
     const rel = firmwareRel(path);
     if (rel && available.has(rel)) return `b:${rel}`;
     if (uploaded[baseName(path)] !== undefined) return `u:${baseName(path)}`;
@@ -168,7 +173,7 @@ export function SourceView({ runner }: { runner: Runner }) {
     setWatchpoints([]);
     setFrame(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files, available]);
+  }, [files, available, attached]);
 
   const current = files.find((f) => f.index === fileIdx) ?? null;
   const key = current ? sourceKey(current.path) : null;
@@ -176,6 +181,11 @@ export function SourceView({ runner }: { runner: Runner }) {
   // Fetch the text of the shown file.
   useEffect(() => {
     if (!key || texts[key] !== undefined) return;
+    if (key.startsWith("a:")) {
+      const f = attached?.files[current!.path];
+      if (f) setTexts((t) => ({ ...t, [key]: f.text }));
+      return;
+    }
     if (key.startsWith("u:")) {
       setTexts((t) => ({ ...t, [key]: uploaded[key.slice(2)] }));
       return;
@@ -183,7 +193,7 @@ export function SourceView({ runner }: { runner: Runner }) {
     fetch(`${base}examples/src/${key.slice(2)}`)
       .then((r) => (r.ok ? r.text() : ""))
       .then((text) => setTexts((t) => ({ ...t, [key]: text })));
-  }, [key, texts, uploaded]);
+  }, [key, texts, uploaded, attached]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => setBreakpoints(wanted), [wanted, setBreakpoints]);
   // Watchpoints: the memory each expression names, seen from the shown
@@ -256,18 +266,36 @@ export function SourceView({ runner }: { runner: Runner }) {
     );
   };
 
-  if (!runner.firmware) return <p className="hint">펌웨어를 불러오면 소스가 보입니다.</p>;
+  const bar = bundle && <UploadBar upload={bundle} files={files} />;
+  if (!runner.firmware)
+    return (
+      <div className="source-empty">
+        {bar}
+        <p className="hint">
+          펌웨어를 불러오면 소스가 보입니다. STM32CubeIDE 프로젝트 폴더나 그 zip을 올리면 ELF와 소스를 한꺼번에 불러옵니다(앱 어디에나 끌어다 놓아도 됩니다).
+        </p>
+      </div>
+    );
   if (files.length === 0)
-    return <p className="hint">이 펌웨어에는 디버그 정보(DWARF)가 없습니다. <code>-g</code>로 빌드하세요.</p>;
+    return (
+      <div className="source-empty">
+        {bar}
+        <p className="hint">이 펌웨어에는 디버그 정보(DWARF)가 없습니다. <code>-g</code>로 빌드하세요.</p>
+      </div>
+    );
+
+  /** The name shown for a DWARF file: the uploaded path, the example path, or the build path. */
+  const label = (path: string) => attached?.files[path]?.from ?? firmwareRel(path) ?? path;
 
   return (
     <div className="source-view">
       <div className="source-main">
+        {bar}
         <div className="source-bar">
           <select aria-label="소스 파일" value={fileIdx ?? ""} onChange={(e) => setFileIdx(Number(e.target.value))}>
             {[...withSource, ...files.filter((f) => !sourceKey(f.path))].map((f) => (
               <option key={f.index} value={f.index}>
-                {firmwareRel(f.path) ?? f.path}
+                {label(f.path)}
                 {sourceKey(f.path) ? "" : " (소스 없음)"}
               </option>
             ))}
@@ -334,7 +362,7 @@ export function SourceView({ runner }: { runner: Runner }) {
             })
           ) : (
             <p className="hint">
-              {current ? `${current.path}의 소스가 없습니다. ‘소스 추가…’로 파일을 넣으면 보입니다.` : ""}
+              {current ? `${current.path}의 소스가 없습니다. ‘소스 추가…’로 파일을 넣거나 ‘📁 프로젝트 폴더·zip 올리기’로 프로젝트를 올리면 보입니다.` : ""}
             </p>
           )}
         </div>

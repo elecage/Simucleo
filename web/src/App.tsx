@@ -31,6 +31,8 @@ import type { WiringContext } from "./lessons/wiring";
 import { LESSONS } from "./lessons/index";
 import type { ResultsFile } from "./lessons/progress";
 import { ShareDialog, type ShareFirmware } from "./share/ShareDialog";
+import { useSourceUpload } from "./upload/useSourceUpload";
+import { fromDataTransfer } from "./upload/folder";
 import { ReceiveDialog } from "./share/ReceiveDialog";
 import { decodeShare, findFragment, type Received } from "./share/link";
 
@@ -137,8 +139,16 @@ export function App() {
     (scope: ScopeSettings) => setProject((p) => (p.scope === scope ? p : { ...p, scope })),
     [],
   );
+  // Every load (a project, an example, a link, the autosave, an upload)
+  // takes a number; one that finishes after a newer one started gives way,
+  // so a slow restore of the last session never replaces what the user has
+  // just opened. Firmware has its own count: a project file without firmware
+  // keeps the firmware, even one still on its way (a lesson's).
+  const loadGen = useRef(0);
+  const fwGen = useRef(0);
   const applyLoaded = useCallback(
     async (l: Loaded) => {
+      ++loadGen.current;
       schOrder.current = [];
       setProject(l.project);
       setScopeSeq((k) => k + 1);
@@ -148,10 +158,14 @@ export function App() {
       setNotice(l.notes.length ? l.notes.join("\n") : null);
       const fw = l.firmware;
       if (fw?.data) {
+        ++fwGen.current;
         load(fw.name, fromBase64(fw.data).buffer as ArrayBuffer, fw.example);
       } else if (fw?.example) {
+        const gen = ++fwGen.current;
         const r = await fetch(`./examples/${fw.example}`);
-        if (r.ok) load(fw.name, await r.arrayBuffer(), fw.example);
+        const bytes = r.ok ? await r.arrayBuffer() : null;
+        if (gen !== fwGen.current) return;
+        if (bytes) load(fw.name, bytes, fw.example);
         else setNotice(`예제 펌웨어 ${fw.example}을 찾지 못했습니다.`);
       }
     },
@@ -276,8 +290,10 @@ export function App() {
 
   const onExampleProject = async (ex: Example) => {
     if (!confirmReplace()) return;
+    const gen = ++loadGen.current;
     const r = await fetch(`./examples/${ex.project}`);
-    if (r.ok) openText(await r.text());
+    const text = r.ok ? await r.text() : null;
+    if (text !== null && gen === loadGen.current) openText(text);
   };
 
   // Autosave to IndexedDB, and restore the last session once the
@@ -287,9 +303,11 @@ export function App() {
   const [restoredDone, setRestoredDone] = useState(false);
   useEffect(() => {
     if (!runner.ready || restored.current) return;
+    const gen = loadGen.current;
     void idbGet<string>("autosave").then(async (text) => {
       restored.current = true;
-      if (text) {
+      // Something was opened meanwhile: that stays.
+      if (text && gen === loadGen.current) {
         try {
           await applyLoaded(parse(text));
         } catch {
@@ -337,6 +355,53 @@ export function App() {
     clearHash();
     setIncoming(null);
   };
+
+  // ------------------------------------- project folder / zip (M39)
+  const userLoad = useCallback(() => {
+    ++loadGen.current;
+    ++fwGen.current;
+  }, []);
+  const sourceUpload = useSourceUpload(runner, userLoad);
+  // Files dragged over the window: a fixed overlay (it moves nothing), and a
+  // drop anywhere that nobody else took (the teacher view takes its own).
+  const [dropping, setDropping] = useState(false);
+  const { upload: uploadBundle } = sourceUpload;
+  useEffect(() => {
+    let depth = 0;
+    const files = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+    const enter = (e: DragEvent) => {
+      if (!files(e)) return;
+      depth++;
+      setDropping(true);
+    };
+    const leave = (e: DragEvent) => {
+      if (!files(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (!depth) setDropping(false);
+    };
+    const over = (e: DragEvent) => {
+      if (files(e) && !e.defaultPrevented) e.preventDefault();
+    };
+    const drop = (e: DragEvent) => {
+      depth = 0;
+      setDropping(false);
+      if (!files(e) || e.defaultPrevented) return;
+      e.preventDefault();
+      void fromDataTransfer(e.dataTransfer!).then(uploadBundle, (err: Error) =>
+        setNotice(`끌어다 놓은 것을 읽지 못했습니다: ${err.message}`),
+      );
+    };
+    window.addEventListener("dragenter", enter);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("dragover", over);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragenter", enter);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("drop", drop);
+    };
+  }, [uploadBundle]);
 
   // SD cards keep what the firmware wrote, per project (IndexedDB).
   const sdCards = useSdPersistence(runner, project, projectName);
@@ -624,7 +689,9 @@ export function App() {
   const categories = [...new Set(PARTS.map((p) => p.category))];
 
   return (
-    <div className={lessonOpen ? "app with-lesson" : "app"}>
+    // data-restored: the last session is back (or there was none); until then
+    // a load the user starts may still meet the restored circuit.
+    <div className={lessonOpen ? "app with-lesson" : "app"} data-restored={restoredDone ? "yes" : "no"}>
       <header className="toolbar">
         <strong>Simucleo</strong>
         {/* M30: the share button sits inside the name field's box, so the
@@ -647,7 +714,7 @@ export function App() {
           </button>
         </span>
         <ProjectMenu project={project} name={projectName} runner={runner} onNew={onNew} onOpenText={openText} />
-        <RunControls runner={runner} examples={examples} onExampleProject={onExampleProject} />
+        <RunControls runner={runner} examples={examples} onExampleProject={onExampleProject} onUserLoad={userLoad} />
         <button
           className={lessonOpen ? "lesson-toggle on" : "lesson-toggle"}
           onClick={() => {
@@ -795,7 +862,13 @@ export function App() {
         scopeSeq={scopeSeq}
         onScope={onScope}
         status={<PwaStatus />}
+        upload={sourceUpload}
       />
+      {dropping && !teacherOpen && (
+        <div className="drop-overlay" data-testid="drop-overlay">
+          📁 프로젝트 폴더나 zip(ELF·소스)을 놓으면 불러옵니다
+        </div>
+      )}
 
       {lessonOpen && (
         <LessonPanel

@@ -138,7 +138,11 @@ test("shaking the MPU-6050 shows on |a| and on a second MAX7219 chained on DOUT"
   const box = (await page.locator("[data-id=imu] [data-drag=tilt] .imu-dial").boundingBox())!;
   const [x0, y0] = [box.x + box.width / 2, box.y + box.height / 2];
   let jiggled = false;
-  for (let i = 0; i < 4 && (await maxAccel(page, mark)) < 1.25; i++) {
+  // The acceleration comes from how fast the pointer moves between events: on
+  // a busy runner events arrive further apart (a gentler flick), and the
+  // firmware reads only every 100 ms, so a try can miss the swing: up to 8.
+  const tries: number[] = [];
+  for (let i = 0; i < 8 && (await maxAccel(page, mark)) < 1.25; i++) {
     await page.mouse.move(x0, y0);
     await page.mouse.down();
     // About 2 px/ms, the way a hand flicks a mouse (one move per frame).
@@ -149,9 +153,10 @@ test("shaking the MPU-6050 shows on |a| and on a second MAX7219 chained on DOUT"
     jiggled ||= (await page.locator("[data-id=imu] [data-shake]").getAttribute("data-shake")) === "1";
     await page.mouse.up();
     await page.waitForTimeout(800);
+    tries.push(await maxAccel(page, mark));
   }
   expect(jiggled, "the drawing jiggles while shaken").toBe(true);
-  expect(await maxAccel(page, mark)).toBeGreaterThanOrEqual(1.25);
+  expect(await maxAccel(page, mark), `|a| reached after each try: ${tries.join(", ")}`).toBeGreaterThanOrEqual(1.25);
   await expect(page.getByLabel("ay")).toHaveValue("0", { timeout: 3000 });
   await expect(page.getByTestId("circuit-warning")).toHaveCount(0);
 });

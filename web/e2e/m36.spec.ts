@@ -91,7 +91,7 @@ async function closePanel(page: Page) {
 let shared: { context: BrowserContext; page: Page; shape: string } | null = null;
 async function warmPage(browser: Browser) {
   if (shared) return shared.page;
-  const context = await browser.newContext({ viewport: { width: 1400, height: 820 }, acceptDownloads: true });
+  const context = await browser.newContext({ locale: "ko-KR", viewport: { width: 1400, height: 820 }, acceptDownloads: true });
   const page = await context.newPage();
   page.on("dialog", (d) => void d.accept());
   await page.goto("/");

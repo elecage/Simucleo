@@ -99,7 +99,7 @@ async function build(page: Page, expectOk = true) {
 let shared: { context: BrowserContext; page: Page } | null = null;
 async function warmPage(browser: Browser) {
   if (shared) return shared.page;
-  const context = await browser.newContext({ viewport: { width: 1400, height: 820 } });
+  const context = await browser.newContext({ locale: "ko-KR", viewport: { width: 1400, height: 820 } });
   const page = await context.newPage();
   await page.goto("/");
   await expect(status(page)).toContainText("예제를");
@@ -277,7 +277,7 @@ test("a share link carries the sources; the receiver builds them", async ({ brow
   expect(link.length).toBeLessThan(4000);
   await dlg.getByRole("button", { name: "닫기" }).first().click();
 
-  const other = await browser.newContext({ viewport: { width: 1400, height: 820 } });
+  const other = await browser.newContext({ locale: "ko-KR", viewport: { width: 1400, height: 820 } });
   try {
     const p2 = await other.newPage();
     await p2.goto(link);
@@ -293,7 +293,7 @@ test("a share link carries the sources; the receiver builds them", async ({ brow
 });
 
 test("offline: after '편집기 오프라인으로 받기' the build works with the network off", async ({ browser }) => {
-  const context = await browser.newContext({ viewport: { width: 1400, height: 820 } });
+  const context = await browser.newContext({ locale: "ko-KR", viewport: { width: 1400, height: 820 } });
   try {
     const page = await context.newPage();
     await page.goto("/");
@@ -326,7 +326,7 @@ test("edits and file switches during a build: the project keeps the edit, each f
   // The first build fetches the compiler: held 2.5 s here, so the student
   // switches file and types while it runs (and the edit is saved, 300 ms,
   // before it ends). The service worker is off so the route sees the fetch.
-  const context = await browser.newContext({ viewport: { width: 1400, height: 820 }, serviceWorkers: "block" });
+  const context = await browser.newContext({ locale: "ko-KR", viewport: { width: 1400, height: 820 }, serviceWorkers: "block" });
   await context.route("**/toolchain/manifest.json", async (route) => {
     await new Promise((r) => setTimeout(r, 2500));
     await route.continue();
@@ -377,7 +377,7 @@ test("the code tab opens the running example's main.c, not an empty tab; '코드
   // project's code: the tab then asked for an example again while that
   // example ran, and showed no source.
   // (The service worker is off so the route below sees the ELF fetch.)
-  const context = await browser.newContext({ viewport: { width: 1400, height: 820 }, serviceWorkers: "block" });
+  const context = await browser.newContext({ locale: "ko-KR", viewport: { width: 1400, height: 820 }, serviceWorkers: "block" });
   // hal-pwm-led's firmware comes 2 s after its project: meanwhile the
   // runner still names blinky, whose main.c must not land in pwm's project.
   await context.route("**/examples/hal-pwm-led.elf", async (route) => {

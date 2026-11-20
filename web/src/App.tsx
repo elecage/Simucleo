@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LangSelect } from "./i18n/LangSelect";
 import { Canvas } from "./editor/Canvas";
 import { buildSchematic } from "./schematic/layout";
 import { SchematicView, type SchEnd } from "./schematic/SchematicView";
@@ -837,6 +838,7 @@ export function App() {
           />{" "}
           🔊 소리
         </label>
+        <LangSelect />
         <span className="version" title="시뮬레이터 코어 버전">
           {simError ? `WASM 로드 실패: ${simError}` : sim ? `core v${sim.version}` : "WASM 로딩 중…"}
         </span>

@@ -30,7 +30,7 @@ const renders = (page: Page) => page.evaluate(() => ({ ...(window as unknown as 
 
 /** A page of its own (no autosave, mode or lesson from an earlier run). */
 async function fresh(browser: Browser, baseURL: string | undefined): Promise<Page> {
-  const ctx = await browser.newContext({ baseURL, viewport: { width: 1400, height: 820 } });
+  const ctx = await browser.newContext({ locale: "ko-KR", baseURL, viewport: { width: 1400, height: 820 } });
   return ctx.newPage();
 }
 

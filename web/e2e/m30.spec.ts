@@ -41,7 +41,7 @@ async function ready(page: Page, url = "/") {
 }
 
 async function fresh(browser: Browser): Promise<{ context: BrowserContext; page: Page }> {
-  const context = await browser.newContext({ baseURL: test.info().project.use.baseURL, viewport: { width: 1400, height: 820 } });
+  const context = await browser.newContext({ locale: "ko-KR", baseURL: test.info().project.use.baseURL, viewport: { width: 1400, height: 820 } });
   return { context, page: await context.newPage() };
 }
 

@@ -12,6 +12,7 @@ use simucleo_circuit::sim::parse_mcu_pin;
 use simucleo_core::cortexm::exc;
 use simucleo_nucleo::{Nucleo, Step, StepEnd, SynthEdge, WireSignal};
 
+pub mod decode;
 pub mod scope;
 use scope::Scope;
 

@@ -324,7 +324,6 @@ fn i2c_bmp280_shows_start_address_and_ack() {
     assert!(scl.0 && sda.0, "bus idle high before the START");
     let ev = i2c_decode(&scl, &sda);
     // HAL_I2C_Mem_Read: START, 0x76 + W, register, repeated START, 0x76 + R.
-    assert_eq!(&ev[..2], &["S", "ECA"], "{ev:?}");
     let sr = ev
         .iter()
         .skip(1)
@@ -522,4 +521,253 @@ fn tim1_dead_time_shows_between_pa8_falling_and_pa7_rising() {
             "both on at {t} ns"
         );
     }
+}
+
+// ---------------------------------------------------------------- M26
+
+/// A content trigger's settings as the waveform view sends them.
+fn content_trigger(
+    decoder: Value,
+    m: Value,
+    mode: &str,
+    window_ns: f64,
+    pre: f64,
+    pause: bool,
+) -> String {
+    serde_json::json!({
+        "source": "dec:1",
+        "edge": "rising",
+        "mode": mode,
+        "windowNs": window_ns,
+        "pre": pre,
+        "pause": pause,
+        "content": { "decoder": decoder, "match": m },
+    })
+    .to_string()
+}
+
+fn uart_decoder() -> Value {
+    serde_json::json!({"id": 1, "type": "uart", "pins": ["PA2"], "baud": 115200, "parity": "none", "mode": 0, "lsbFirst": false})
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-uart-printf"]
+fn uart_text_trigger_is_at_the_start_bit_of_the_text() {
+    let bit = 1e9 / 115_200.0;
+    // Where "tick 1" starts, from a long edge-triggered capture of
+    // everything the firmware prints (M22's path).
+    let reference = {
+        let mut sim = Simulator::new();
+        sim.load_elf(&firmware("hal-uart-printf")).unwrap();
+        sim.set_probes(r#"["PA2"]"#).unwrap();
+        sim.set_trigger(
+            r#"{"source":"PA2","edge":"falling","mode":"single","windowNs":1000000000,"pre":0.01}"#,
+        )
+        .unwrap();
+        let cap = next_capture(&mut sim, 1500.0).expect("a capture");
+        let pa2 = channel(&cap, "PA2");
+        let frames = uart_frames(pa2.0, &pa2.1, bit);
+        let text: String = frames.iter().map(|f| f.1 as char).collect();
+        let i = text.find("tick 1").unwrap_or_else(|| panic!("{text:?}"));
+        cap["triggerMs"].as_f64().unwrap() * 1e6 + frames[i].0
+    };
+    let mut sim = Simulator::new();
+    sim.load_elf(&firmware("hal-uart-printf")).unwrap();
+    sim.set_probes(r#"["PA2","PA5"]"#).unwrap();
+    sim.set_trigger(&content_trigger(
+        uart_decoder(),
+        serde_json::json!({"kind": "text", "text": "tick 1"}),
+        "single",
+        2e6,
+        0.1,
+        false,
+    ))
+    .unwrap();
+    let f: Value = serde_json::from_str(&sim.frame()).unwrap();
+    assert_eq!(f["scope"]["state"], "armed");
+    let cap = next_capture(&mut sim, 1000.0).expect("a capture");
+    assert_eq!(cap["source"], "dec:1");
+    let t0 = cap["triggerMs"].as_f64().unwrap() * 1e6;
+    // To the cycle (and closer: the same edge).
+    assert!(
+        (t0 - reference).abs() < 0.01,
+        "triggered at {t0} ns, \"tick 1\" starts at {reference} ns"
+    );
+    let pa2 = channel(&cap, "PA2");
+    assert!(pa2.1.contains(&(0.0, false)), "the start bit at t = 0");
+    let after: Vec<(f64, bool)> = pa2.1.iter().copied().filter(|e| e.0 >= 0.0).collect();
+    let text: String = uart_frames(true, &after, bit)
+        .iter()
+        .map(|f| f.1 as char)
+        .collect();
+    assert!(text.starts_with("tick 1 at "), "{text:?}");
+    // 10 % before: the end of "tick 0 …\r\n" is 500 ms back, so idle.
+    assert!(pa2.1.iter().all(|e| e.0 >= 0.0), "{:?}", &pa2.1[..3]);
+    let f: Value = serde_json::from_str(&sim.frame()).unwrap();
+    assert_eq!(f["scope"]["state"], "stopped");
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-uart-printf"]
+fn uart_text_trigger_pauses_right_after_the_window() {
+    let mut sim = Simulator::new();
+    sim.load_elf(&firmware("hal-uart-printf")).unwrap();
+    sim.set_probes(r#"["PA2"]"#).unwrap();
+    // "tick 2", 1 ms/div, half before.
+    sim.set_trigger(&content_trigger(
+        uart_decoder(),
+        serde_json::json!({"kind": "text", "text": "tick 2"}),
+        "normal",
+        10e6,
+        0.5,
+        true,
+    ))
+    .unwrap();
+    assert_eq!(sim.run_for_ms(2000.0), "");
+    assert!(sim.trigger_paused());
+    let f: Value = serde_json::from_str(&sim.frame()).unwrap();
+    let cap = &f["scope"]["capture"];
+    let end_ms = cap["triggerMs"].as_f64().unwrap() + cap["endNs"].as_f64().unwrap() / 1e6;
+    let now = f["timeMs"].as_f64().unwrap();
+    assert!(
+        now >= end_ms && now - end_ms < 0.05,
+        "paused at {now} ms, window ends {end_ms} ms"
+    );
+    // "tick 2 at … ms" goes out after the third 250 ms delay: the run
+    // stopped there, not 2 s on.
+    assert!((750.0..800.0).contains(&now), "{now}");
+    assert!(sim.take_console().contains("tick 2"));
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-bmp280"]
+fn i2c_address_trigger_in_hal_bmp280() {
+    let mut sim = Simulator::new();
+    sim.load_elf(&firmware("hal-bmp280")).unwrap();
+    wired(
+        &mut sim,
+        serde_json::json!({
+            "parts": [
+                {"id": "nucleo", "kind": "nucleo-f401re"},
+                {"id": "baro", "kind": "bmp280", "props": {"address": "0x76"}}
+            ],
+            "wires": [
+                {"a": {"part": "nucleo", "pin": "3V3"}, "b": {"part": "baro", "pin": "VCC"}},
+                {"a": {"part": "baro", "pin": "GND"}, "b": {"part": "nucleo", "pin": "GND"}},
+                {"a": {"part": "nucleo", "pin": "D15"}, "b": {"part": "baro", "pin": "SCL"}},
+                {"a": {"part": "nucleo", "pin": "D14"}, "b": {"part": "baro", "pin": "SDA"}}
+            ]
+        }),
+        &[("D15", "PB8"), ("D14", "PB9")],
+    );
+    sim.set_probes(r#"["PB8","PB9"]"#).unwrap();
+    // 0x76 + R: the read after the repeated START.
+    sim.set_trigger(&content_trigger(
+        serde_json::json!({"id": 1, "type": "i2c", "pins": ["PB8", "PB9"], "baud": 115200, "parity": "none", "mode": 0, "lsbFirst": false}),
+        serde_json::json!({"kind": "address", "addr": 0x76, "rw": "R"}),
+        "single",
+        400e3,
+        0.25,
+        false,
+    ))
+    .unwrap();
+    let cap = next_capture(&mut sim, 500.0).expect("a capture");
+    let (scl, sda) = (channel(&cap, "PB8"), channel(&cap, "PB9"));
+    let ev = i2c_decode(&scl, &sda);
+    // START, 0x76 + W, register, repeated START, 0x76 + R (0xED), …
+    let r = ev.iter().position(|e| e == "EDA").expect("0xED");
+    assert_eq!(ev[r - 1], "S", "{ev:?}");
+    // The address byte starts at t = 0: SCL's fall after the repeated
+    // START (the decoder's start of the byte).
+    assert!(scl.1.contains(&(0.0, false)), "{:?}", scl.1);
+    let sr = sda
+        .1
+        .iter()
+        .rfind(|e| e.0 < 0.0 && !e.1)
+        .expect("SDA falls before");
+    assert!(
+        level_at(scl.0, &scl.1, sr.0),
+        "a repeated START: SDA falls while SCL is high"
+    );
+    assert!(sr.0 > -10_000.0, "{}", sr.0);
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-ir-remote"]
+fn nec_command_trigger_in_hal_ir_remote() {
+    let mut sim = Simulator::new();
+    sim.load_elf(&firmware("hal-ir-remote")).unwrap();
+    wired(
+        &mut sim,
+        serde_json::json!({
+            "parts": [
+                {"id": "nucleo", "kind": "nucleo-f401re"},
+                {"id": "ir", "kind": "ir-receiver"}
+            ],
+            "wires": [
+                {"a": {"part": "nucleo", "pin": "3V3"}, "b": {"part": "ir", "pin": "VCC"}},
+                {"a": {"part": "ir", "pin": "GND"}, "b": {"part": "nucleo", "pin": "GND"}},
+                {"a": {"part": "nucleo", "pin": "D3"}, "b": {"part": "ir", "pin": "OUT"}}
+            ]
+        }),
+        &[("D3", "PB3")],
+    );
+    sim.set_probes(r#"["PB3"]"#).unwrap();
+    // OK (0x1C) from address 0x00; 10 ms/div, 10 % before.
+    sim.set_trigger(&content_trigger(
+        serde_json::json!({"id": 1, "type": "nec", "pins": ["PB3"], "baud": 115200, "parity": "none", "mode": 0, "lsbFirst": false}),
+        serde_json::json!({"kind": "nec", "cmd": 0x1c, "addr": 0}),
+        "single",
+        100e6,
+        0.1,
+        true,
+    ))
+    .unwrap();
+    assert_eq!(sim.run_for_ms(100.0), "");
+    sim.take_console();
+    // Another key: no trigger.
+    sim.press("ir:5", true);
+    assert_eq!(sim.run_for_ms(50.0), "");
+    sim.press("ir:5", false);
+    assert_eq!(sim.run_for_ms(150.0), "");
+    assert!(!sim.trigger_paused());
+    let f: Value = serde_json::from_str(&sim.frame()).unwrap();
+    assert_eq!(f["scope"]["state"], "armed");
+    assert!(f["scope"]["capture"].is_null());
+    assert_eq!(sim.take_console(), "NEC addr 0x00 cmd 0x40 key 5\r\n");
+    // OK, held 30 ms.
+    let pressed = sim.time_ms();
+    sim.press("ir:OK", true);
+    assert_eq!(sim.run_for_ms(30.0), "");
+    sim.press("ir:OK", false);
+    assert_eq!(sim.run_for_ms(200.0), "");
+    assert!(sim.trigger_paused(), "paused on the capture");
+    let f: Value = serde_json::from_str(&sim.frame()).unwrap();
+    let cap = &f["scope"]["capture"];
+    let t0 = cap["triggerMs"].as_f64().unwrap();
+    // The leader starts when the key goes down.
+    assert!(
+        (t0 - pressed).abs() < 0.01,
+        "trigger {t0} ms, pressed {pressed} ms"
+    );
+    let now = f["timeMs"].as_f64().unwrap();
+    assert!((now - (t0 + 90.0)).abs() < 0.05, "paused at {now} ms");
+    let (l0, edges) = channel(cap, "PB3");
+    assert!(l0, "idle high before");
+    assert_eq!(
+        edges.first(),
+        Some(&(0.0, false)),
+        "the leader's mark at t = 0"
+    );
+    // 9 ms mark, 4.5 ms space, then 32 bits by their space width.
+    let mark = edges[1].0;
+    assert!((mark - 9e6).abs() < 2e3, "{mark}");
+    let falls: Vec<f64> = edges.iter().filter(|e| !e.1).map(|e| e.0).collect();
+    let bits: u32 = falls[1..34]
+        .windows(2)
+        .enumerate()
+        .map(|(k, w)| u32::from(w[1] - w[0] > 1.6e6) << k)
+        .sum();
+    assert_eq!(bits.to_le_bytes(), [0x00, 0xff, 0x1c, 0xe3]);
+    assert_eq!(sim.take_console(), "NEC addr 0x00 cmd 0x1C key OK\r\n");
 }

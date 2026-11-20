@@ -3,6 +3,9 @@
 // lists with times in ns, unit tested in test/decode.test.ts.
 // M25: 1-Wire (DS18B20), TM1637 and WS2812 decoders, and matching decoded
 // content for the content trigger.
+// M26: NEC infrared decoder. The content trigger runs inside the simulator
+// (crates/wasm/src/decode.rs, the same decoders taking one edge at a time);
+// `findMatches` here is the reference its matches must equal.
 //
 // The edges of a USART, I2C or SPI pin are synthesized by the simulator
 // from the bytes the peripheral moves (crates/periph-stm32f4/src/wire.rs);
@@ -16,7 +19,17 @@ export interface Line {
   edges: [number, boolean][];
 }
 
-export type AnnotationKind = "data" | "address" | "start" | "restart" | "stop" | "reset" | "triplet" | "pixel";
+export type AnnotationKind =
+  | "data"
+  | "address"
+  | "start"
+  | "restart"
+  | "stop"
+  | "reset"
+  | "triplet"
+  | "pixel"
+  | "leader"
+  | "repeat";
 
 /** One decoded item, drawn as a box over [start, end] (ns). */
 export interface Annotation {
@@ -27,7 +40,7 @@ export interface Annotation {
   value?: number;
   /** SPI: the word on MISO. */
   miso?: number;
-  /** I2C address byte: 7-bit address and direction. */
+  /** I2C address byte: 7-bit address and direction; NEC leader: the frame's address (`value` its command). */
   addr?: number;
   rw?: "R" | "W";
   /** I2C: the byte was acknowledged. */
@@ -316,6 +329,10 @@ export function annotationLabel(a: Annotation, f: Format): string {
     }
     case "pixel":
       return `#${a.index ?? "?"} ${fmtColor(a.value!)}`;
+    case "leader":
+      return a.value === undefined ? "리더" : `리더 · 주소 ${fmtByte(a.addr!, "hex")} 명령 ${fmtByte(a.value, "hex")}`;
+    case "repeat":
+      return "반복";
     default: {
       let s = fmtByte(a.value!, f);
       if (a.miso !== undefined) s += ` / ${fmtByte(a.miso, f)}`;
@@ -735,6 +752,135 @@ export function ws2812Frame(anns: Annotation[]): number[] | null {
   return last;
 }
 
+// ------------------------------------------------------------- NEC (IR)
+
+/** NEC timing on the receiver's demodulated output (low = a 38 kHz burst), ns, with tolerances. */
+export const NEC = {
+  /** Leader: 9 ms mark, then 4.5 ms space (a frame) or 2.25 ms (a repeat code). */
+  leaderMarkMin: 7e6,
+  leaderMarkMax: 11e6,
+  leaderSpaceMin: 3.5e6,
+  leaderSpaceMax: 5.5e6,
+  repeatSpaceMin: 1.75e6,
+  repeatSpaceMax: 2.75e6,
+  /** A bit: 562.5 µs mark, then 562.5 µs (0) or 1687.5 µs (1) space. */
+  markMin: 300e3,
+  markMax: 900e3,
+  oneMin: 1.2e6,
+  oneMax: 2.2e6,
+};
+
+const NEC_BYTES = ["주소", "주소 반전", "명령", "명령 반전"];
+
+const within = (x: number, lo: number, hi: number) => x >= lo && x <= hi;
+
+/**
+ * NEC on an IR receiver's output (VS1838B: idle high, low while the 38 kHz
+ * burst arrives). A 9 ms mark and 4.5 ms space is the leader, then 32 bits
+ * LSB first, each a 562.5 µs mark and a space whose width is the bit
+ * (562.5 µs: 0, 1687.5 µs: 1), then a final mark: address, ~address,
+ * command, ~command. The leader carries the frame's address and command
+ * once the 32 bits are in, with an error when a check byte is not the
+ * inverse; a 9 ms mark with a 2.25 ms space and a mark is a repeat code
+ * (the key is held). A mark or space of the wrong width, or a new leader
+ * before the 32nd bit, is an error. A frame is good (and matches a content
+ * condition) only once its final mark has ended within 0.3–0.9 ms; one
+ * that is too long, or not over when the span ends, is an error.
+ */
+export function decodeNec(line: Line): Annotation[] {
+  const out: Annotation[] = [];
+  let level = line.level0;
+  let lastFall = NaN;
+  let lastRise = NaN;
+  type St =
+    | { s: "idle" }
+    | { s: "leader"; start: number }
+    | { s: "bits"; lead: Annotation; n: number; cur: number; bytes: number[]; byteStart: number }
+    | { s: "repeat"; start: number }
+    | { s: "stop"; lead: Annotation };
+  let st: St = { s: "idle" };
+  const us = (ns: number) => (ns / 1000).toFixed(0);
+  for (const [t, l] of line.edges) {
+    if (l === level) continue;
+    level = l;
+    if (!l) {
+      // A mark begins: the space before it is over.
+      const space = t - lastRise;
+      if (st.s === "leader") {
+        if (within(space, NEC.leaderSpaceMin, NEC.leaderSpaceMax)) {
+          const lead: Annotation = { start: st.start, end: t, kind: "leader" };
+          out.push(lead);
+          st = { s: "bits", lead, n: 0, cur: 0, bytes: [], byteStart: t };
+        } else if (within(space, NEC.repeatSpaceMin, NEC.repeatSpaceMax)) st = { s: "repeat", start: st.start };
+        else {
+          out.push({ start: st.start, end: t, kind: "leader", error: `리더 뒤 공백 ${us(space)} µs (4.5 ms도 2.25 ms도 아님)` });
+          st = { s: "idle" };
+        }
+      } else if (st.s === "bits") {
+        const one = within(space, NEC.oneMin, NEC.oneMax);
+        if (!one && !within(space, NEC.markMin, NEC.markMax)) {
+          st.lead.error = `비트 ${st.n}: 공백 ${us(space)} µs (0.56 ms도 1.69 ms도 아님)`;
+          st = { s: "idle" };
+        } else {
+          if (one) st.cur |= 1 << st.n % 8;
+          st.n++;
+          if (st.n % 8 === 0) {
+            const k = st.n / 8 - 1;
+            out.push({ start: st.byteStart, end: t, kind: "data", value: st.cur, note: NEC_BYTES[k] });
+            st.bytes.push(st.cur);
+            st.cur = 0;
+            st.byteStart = t;
+          }
+          if (st.n === 32) {
+            const [a, na, c, nc] = st.bytes;
+            st.lead.addr = a;
+            st.lead.value = c;
+            if ((a ^ na) !== 0xff) st.lead.error = `주소 검사 실패 (0x${a.toString(16)} / 0x${na.toString(16)})`;
+            else if ((c ^ nc) !== 0xff) st.lead.error = `명령 검사 실패 (0x${c.toString(16)} / 0x${nc.toString(16)})`;
+            // This edge starts the final mark: the frame counts once it ends within tolerance.
+            st = { s: "stop", lead: st.lead };
+          }
+        }
+      }
+      lastFall = t;
+    } else {
+      // A mark ends.
+      const w = t - lastFall;
+      if (st.s === "stop") {
+        // The final mark: a leader-long one cuts the frame short.
+        if (!within(w, NEC.markMin, NEC.markMax))
+          st.lead.error ??= within(w, NEC.leaderMarkMin, NEC.leaderMarkMax)
+            ? `프레임이 끝나지 않음 (마지막 마크 ${us(w)} µs)`
+            : `마지막 마크 폭 ${us(w)} µs (0.56 ms가 아님)`;
+        st = { s: "idle" };
+      }
+      if (within(w, NEC.leaderMarkMin, NEC.leaderMarkMax)) {
+        if (st.s === "bits") st.lead.error = `프레임이 끝나지 않음 (${st.n}비트)`;
+        st = { s: "leader", start: lastFall };
+      } else if (st.s === "bits") {
+        if (!within(w, NEC.markMin, NEC.markMax)) {
+          st.lead.error = `마크 폭 ${us(w)} µs (0.56 ms가 아님)`;
+          st = { s: "idle" };
+        }
+      } else if (st.s === "repeat") {
+        out.push({ start: st.start, end: t, kind: "repeat", ...(within(w, NEC.markMin, NEC.markMax) ? {} : { error: `마크 폭 ${us(w)} µs` }) });
+        st = { s: "idle" };
+      }
+      lastRise = t;
+    }
+  }
+  // The span ends before the frame (or its final mark) does.
+  if (st.s === "bits" || st.s === "stop") st.lead.error ??= st.s === "stop" ? "프레임이 끝나지 않음 (마지막 마크)" : `프레임이 끝나지 않음 (${st.n}비트)`;
+  return out;
+}
+
+/** The last good NEC frame: address and command. */
+export function necLast(anns: Annotation[]): { addr: number; cmd: number } | null {
+  let last: { addr: number; cmd: number } | null = null;
+  for (const a of anns) if (a.kind === "leader" && a.value !== undefined && !a.error) last = { addr: a.addr!, cmd: a.value };
+  return last;
+}
+
 // ---------------------------------------------------- content trigger
 
 /**
@@ -746,7 +892,8 @@ export type ContentMatch =
   | { kind: "byte"; value: number }
   | { kind: "text"; text: string }
   | { kind: "address"; addr: number; rw: "R" | "W" | "any" }
-  | { kind: "pixel"; index: number; color?: number };
+  | { kind: "pixel"; index: number; color?: number }
+  | { kind: "nec"; cmd: number; addr?: number };
 
 /**
  * Start times of the matches in `anns` (for a text, the start of its
@@ -777,6 +924,7 @@ export function findMatches(anns: Annotation[], m: ContentMatch, after = -Infini
     let hit = false;
     if (m.kind === "byte") hit = a.kind === "data" && !a.error?.startsWith("바이트가") && (a.value === m.value || a.miso === m.value);
     else if (m.kind === "address") hit = a.kind === "address" && a.addr === m.addr && (m.rw === "any" || a.rw === m.rw);
+    else if (m.kind === "nec") hit = a.kind === "leader" && !a.error && a.value === m.cmd && (m.addr === undefined || a.addr === m.addr);
     else hit = a.kind === "pixel" && a.index === m.index && !a.error?.startsWith("픽셀이") && (m.color === undefined || a.value === m.color);
     if (hit) out.push(a.start);
   }
@@ -809,7 +957,7 @@ export interface ScanState {
  */
 export function isSyncPoint(a: Annotation, type: string): boolean {
   if (type === "uart" || type === "spi") return a.kind === "data";
-  return a.kind === "start" || a.kind === "restart" || a.kind === "reset";
+  return a.kind === "start" || a.kind === "restart" || a.kind === "reset" || a.kind === "leader" || a.kind === "repeat";
 }
 
 /**

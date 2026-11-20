@@ -771,3 +771,226 @@ fn nec_command_trigger_in_hal_ir_remote() {
     assert_eq!(bits.to_le_bytes(), [0x00, 0xff, 0x1c, 0xe3]);
     assert_eq!(sim.take_console(), "NEC addr 0x00 cmd 0x1C key OK\r\n");
 }
+
+// ---------------------------------------------------------------- M28
+
+/// Board pins of the BLDC examples (`hal-bldc-pwm`, `hal-bldc-sensorless`).
+const BLDC_SIGNALS: &[(&str, &str)] = &[
+    ("D7", "PA8"),
+    ("D11", "PA7"),
+    ("D8", "PA9"),
+    ("A3", "PB0"),
+    ("D2", "PA10"),
+    ("CN10_24", "PB1"),
+    ("D3", "PB3"),
+    ("D4", "PB5"),
+    ("D6", "PB10"),
+    ("A0", "PA0"),
+    ("A1", "PA1"),
+    ("A2", "PA4"),
+    ("A4", "PC1"),
+    ("A5", "PC0"),
+    ("GND_P1", "GND"),
+    ("GND_P2", "GND"),
+    ("5V", "5V"),
+    ("3V3", "3V3"),
+];
+
+/// An example project as the web loads it, with the pot at `pot`.
+fn example_project(name: &str, pot: f64) -> Value {
+    let path = format!(
+        "{}/../../web/examples/{name}.simucleo.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut project: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    for p in project["parts"].as_array_mut().unwrap() {
+        if p["id"] == "pot" {
+            p["props"]["position"] = pot.into();
+        }
+    }
+    project
+}
+
+/// High pulses (rise, fall) of a captured channel.
+fn pulses(level0: bool, edges: &[(f64, bool)]) -> Vec<(f64, f64)> {
+    let mut out = Vec::new();
+    let mut rise = None;
+    let _ = level0;
+    for &(t, high) in edges {
+        match (high, rise) {
+            (true, _) => rise = Some(t),
+            (false, Some(r)) => {
+                out.push((r, t));
+                rise = None;
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-bldc-sensorless"]
+fn center_aligned_pwm_pulses_stay_centred_when_the_duty_changes() {
+    let mut sim = Simulator::new();
+    sim.load_elf(&firmware("hal-bldc-sensorless")).unwrap();
+    wired(
+        &mut sim,
+        example_project("hal-bldc-sensorless", 0.5),
+        BLDC_SIGNALS,
+    );
+    sim.set_probes(r#"["PA8","PA7"]"#).unwrap();
+    sim.run_for_ms(2500.0);
+    assert!(sim.take_console().contains("closed"));
+    // Duty 54 % (27 µs pulses); the pot to 87 % (43 µs). Trigger on the
+    // first PA8 pulse wider than 35 µs, the narrow ones before it in the
+    // window — if the change came while phase A was the chopping one
+    // (else try again).
+    let period = 50_000.0;
+    for attempt in 0..12 {
+        sim.set_trigger(
+            r#"{"source":"PA8","edge":"rising","mode":"single","windowNs":400000,"pre":0.6,"width":{"cmp":"gt","ns":35000}}"#,
+        )
+        .unwrap();
+        wired(
+            &mut sim,
+            example_project("hal-bldc-sensorless", 0.1),
+            BLDC_SIGNALS,
+        );
+        let cap = next_capture(&mut sim, 300.0).expect("a wide pulse");
+        let (l0, e) = channel(&cap, "PA8");
+        let p = pulses(l0, &e);
+        let narrow = p.iter().filter(|(r, f)| f - r < 30_000.0).count();
+        let wide = p.iter().filter(|(r, f)| f - r > 40_000.0).count();
+        if narrow < 2 || wide < 2 {
+            // Back to 54 % and wait for a full turn of the steps.
+            wired(
+                &mut sim,
+                example_project("hal-bldc-sensorless", 0.5),
+                BLDC_SIGNALS,
+            );
+            sim.run_for_ms(60.0 + attempt as f64 * 7.0);
+            continue;
+        }
+        // Every pulse is centred on the same 50 µs grid (the underflows)
+        // — except the one the update event falls in the middle of: the
+        // preloaded CCR1 is loaded there (RCR = 1: one update per period,
+        // at the underflow), so that pulse rose at the old width and falls
+        // at the new one (RM0368 §12.3.10). Rising edges are not on a grid.
+        let c0 = (p[0].0 + p[0].1) / 2.0;
+        let off_grid = |t: f64| {
+            let k = ((t - c0) / period).round();
+            (t - c0 - k * period).abs()
+        };
+        let odd: Vec<_> = p
+            .iter()
+            .filter(|(r, f)| off_grid((r + f) / 2.0) > 2.0 * CYCLE_NS)
+            .collect();
+        assert_eq!(odd.len(), 1, "{p:?}");
+        let (r, f) = *odd[0];
+        let w_old = p[0].1 - p[0].0;
+        let w_new = p.last().unwrap().1 - p.last().unwrap().0;
+        assert!(w_new - w_old > 10_000.0, "{p:?}");
+        let mid = r + w_old / 2.0;
+        assert!(off_grid(mid) <= 2.0 * CYCLE_NS, "{p:?}");
+        assert!((f - mid - w_new / 2.0).abs() <= 2.0 * CYCLE_NS, "{p:?}");
+        let rises: Vec<f64> = p.iter().map(|x| x.0).collect();
+        assert!(
+            rises.iter().any(|&t| off_grid(t + w_old / 2.0) > 1000.0),
+            "{p:?}"
+        );
+        // The low side: centred between, half a period off, 500 ns dead
+        // time on each side.
+        let (n0, ne) = channel(&cap, "PA7");
+        let lows = pulses(n0, &ne);
+        let (r, f) = *p.last().unwrap();
+        let low = lows.iter().find(|(lr, _)| *lr > f).expect("CH1N after");
+        assert!(
+            (low.0 - f - 42.0 * CYCLE_NS).abs() <= CYCLE_NS,
+            "{low:?} after {f}"
+        );
+        let centre = (r + f) / 2.0;
+        assert!(
+            ((low.0 + low.1) / 2.0 - centre - period / 2.0).abs() <= 2.0 * CYCLE_NS,
+            "{low:?} vs centre {centre}"
+        );
+        return;
+    }
+    panic!("never caught the duty change on phase A");
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-bldc-pwm"]
+fn analog_probe_on_a_bridge_output_shows_the_phase_voltage() {
+    let mut sim = Simulator::new();
+    sim.load_elf(&firmware("hal-bldc-pwm")).unwrap();
+    wired(&mut sim, example_project("hal-bldc-pwm", 0.5), BLDC_SIGNALS);
+    sim.set_probes(r#"["PA8","PA7"]"#).unwrap();
+    sim.set_analog_probes(r#"["br.OUTA","mot.U"]"#).unwrap();
+    sim.run_for_ms(1000.0);
+    // 12 ms from a PA8 rising edge (an electrical turn at this speed):
+    // phase A chopping, its low side on and floating, in turn.
+    sim.set_trigger(
+        r#"{"source":"PA8","edge":"rising","mode":"single","windowNs":12000000,"pre":0.1}"#,
+    )
+    .unwrap();
+    let cap = next_capture(&mut sim, 100.0).expect("a capture");
+    let at = |l0: bool, e: &[(f64, bool)], t: f64| {
+        let i = e.partition_point(|x| x.0 <= t);
+        if i == 0 {
+            l0
+        } else {
+            e[i - 1].1
+        }
+    };
+    let (h0, hi) = channel(&cap, "PA8");
+    let (l0, lo) = channel(&cap, "PA7");
+    let a = &cap["analog"][0];
+    assert_eq!(a["name"], "V(br.OUTA)");
+    let samples: Vec<(f64, f64)> = a["samples"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s[0].as_f64().unwrap(), s[1].as_f64().unwrap()))
+        .collect();
+    let v_at = |t: f64| {
+        let i = samples.partition_point(|s| s.0 <= t);
+        if i == 0 {
+            a["v0"].as_f64().unwrap()
+        } else {
+            samples[i - 1].1
+        }
+    };
+    // The phase voltage follows the switches: PVDD (less the switch's
+    // drop) while the high side is on, ground while the low side is.
+    let (mut high, mut low, mut float) = (0, 0, 0);
+    let end = samples.last().unwrap().0;
+    let mut t = -1_200_000.0;
+    while t < end {
+        let (h, l) = (at(h0, &hi, t), at(l0, &lo, t));
+        let v = v_at(t);
+        match (h, l) {
+            (true, false) => {
+                assert!(v > 11.0 && v < 12.01, "{v} V at {t} with the high side on");
+                high += 1;
+            }
+            (false, true) => {
+                assert!(v.abs() < 1.0, "{v} V at {t} with the low side on");
+                low += 1;
+            }
+            _ => {
+                if v > 1.0 && v < 11.0 {
+                    float += 1;
+                }
+            }
+        }
+        t += 731.0;
+    }
+    assert!(high > 50 && low > 50, "{high} {low}");
+    // Thousands of steps between the PWM: a floating sector in 2 ms shows
+    // the back-EMF on top of the star point, between the rails.
+    assert!(float > 50, "{float}");
+    // The motor's terminal is the same net.
+    assert_eq!(cap["analog"][1]["name"], "V(mot.U)");
+    assert!(samples.len() > 100, "{}", samples.len());
+}

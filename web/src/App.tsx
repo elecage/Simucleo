@@ -176,6 +176,7 @@ export function App() {
   const [hasBackup, setHasBackup] = useState(false);
   // M24: "내 레슨", the lesson editor's draft and preview, the teacher view.
   const [myLessons, setMyLessons] = useState<Lesson[]>([]);
+  const [mineLoaded, setMineLoaded] = useState(false);
   const [draft, setDraft] = useState<Lesson | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [preview, setPreview] = useState<{ lesson: Lesson; seq: number } | null>(null);
@@ -187,9 +188,10 @@ export function App() {
     void idbGet<string>(BACKUP_KEY).then((b) => setHasBackup(!!b));
     // Stored lessons are normalized: a broken one (an older version, an edited
     // database) shows its errors instead of crashing the list or the editor.
-    void idbGet<unknown>(MINE_KEY).then((l) =>
-      setMyLessons(Array.isArray(l) ? l.map(normalizeLesson).filter((x): x is Lesson => x !== null) : []),
-    );
+    void idbGet<unknown>(MINE_KEY).then((l) => {
+      setMyLessons(Array.isArray(l) ? l.map(normalizeLesson).filter((x): x is Lesson => x !== null) : []);
+      setMineLoaded(true);
+    });
     void idbGet<unknown>(DRAFT_KEY).then((d) => {
       const n = normalizeLesson(d);
       if (n) setDraft(n);
@@ -723,6 +725,7 @@ export function App() {
       {lessonOpen && (
         <LessonPanel
           runner={runner}
+          mineLoaded={mineLoaded}
           project={project}
           netlist={netlist}
           onStart={startLesson}

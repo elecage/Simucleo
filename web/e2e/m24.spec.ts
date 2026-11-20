@@ -226,6 +226,7 @@ test("lesson editor: checks from the current wiring, saved to 내 레슨, starte
   await page.reload();
   await expect(status(page)).toContainText("예제를");
   if (!(await panel(page).count())) await page.getByRole("button", { name: "📝 실습" }).click();
+  await expect(panel(page).getByText("불러오는 중…")).toHaveCount(0);
   if (await panel(page).getByRole("button", { name: "← 목록" }).count()) await panel(page).getByRole("button", { name: "← 목록" }).click();
   const mine = panel(page).getByRole("region", { name: "내 레슨" }).locator('[data-lesson="my-blink"]');
   await expect(mine).toContainText("내 LED 실습");
@@ -299,6 +300,7 @@ async function idbPut(page: Page, key: string, value: unknown) {
 
 async function openEditorFromPanel(page: Page) {
   if (!(await panel(page).count())) await page.getByRole("button", { name: "📝 실습" }).click();
+  await expect(panel(page).getByText("불러오는 중…")).toHaveCount(0);
   if (await panel(page).getByRole("button", { name: "← 목록" }).count()) await panel(page).getByRole("button", { name: "← 목록" }).click();
   await panel(page).getByRole("button", { name: "✏️ 레슨 편집기" }).click();
   await expect(editor(page)).toBeVisible();
@@ -422,6 +424,8 @@ test("editing a saved lesson's checks clears its old results: a changed period c
   await page.reload();
   await expect(status(page)).toContainText("예제를");
   if (!(await panel(page).count())) await page.getByRole("button", { name: "📝 실습" }).click();
+  // The panel reopens the lesson that was open once it has read the saved progress.
+  await expect(panel(page).getByText("불러오는 중…")).toHaveCount(0);
   if (await panel(page).getByRole("button", { name: "← 목록" }).count()) await panel(page).getByRole("button", { name: "← 목록" }).click();
   await mine.getByRole("button", { name: "이어서 하기" }).click();
   await expect(check(page, "0.0")).toHaveAttribute("data-status", "pending");

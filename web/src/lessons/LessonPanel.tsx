@@ -56,6 +56,8 @@ interface Props {
   onClose(): void;
   /** "내 레슨" (M24). */
   myLessons?: Lesson[];
+  /** "내 레슨" have been read (a lesson open before a reload may be one of them). */
+  mineLoaded?: boolean;
   onSaveMine?: (lessons: Lesson[]) => void;
   onRemoveMine?: (id: string) => void;
   /** Open the lesson editor: on a copy of a lesson, or on the current draft. */
@@ -90,6 +92,7 @@ export function LessonPanel({
   hasBackup,
   onClose,
   myLessons = [],
+  mineLoaded = true,
   onSaveMine,
   onRemoveMine,
   onEdit,
@@ -495,7 +498,7 @@ export function LessonPanel({
         </button>
       </header>
 
-      {!loaded ? (
+      {!loaded || !mineLoaded ? (
         // Until the saved progress is read: the list would otherwise flip to the
         // lesson that was open before a reload.
         <p className="hint">불러오는 중…</p>

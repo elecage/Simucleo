@@ -124,18 +124,21 @@ export const tactSwitch: PartDef = {
   name: "택트 스위치",
   category: "input",
   description: "누르는 동안 위(1a·1b)와 아래(2a·2b)가 연결됩니다. 실행 중 클릭해서 누르세요.",
+  // A 6 × 6 mm switch: legs 0.3" apart both ways, so it straddles the
+  // breadboard's centre channel (1a·1b in row e, 2a·2b in row f) like a
+  // real one (M38).
   w: 3,
-  h: 2,
+  h: 3,
   pins: [
     { id: "1a", x: 0, y: 0 }, { id: "1b", x: 3, y: 0 },
-    { id: "2a", x: 0, y: 2 }, { id: "2b", x: 3, y: 2 },
+    { id: "2a", x: 0, y: 3 }, { id: "2b", x: 3, y: 3 },
   ],
   buses: [["1a", "1b"], ["2a", "2b"]],
   render: (_props, visual) => (
     <g>
-      <rect x={-0.2 * PITCH} y={-0.2 * PITCH} width={3.4 * PITCH} height={2.4 * PITCH} rx={2} className="btn-body" />
+      <rect x={-0.2 * PITCH} y={-0.2 * PITCH} width={3.4 * PITCH} height={3.4 * PITCH} rx={2} className="btn-body" />
       <g data-action="press" className="board-button">
-        <circle cx={1.5 * PITCH} cy={PITCH} r={(visual.pressed ? 0.7 : 0.8) * PITCH} className="btn-cap" />
+        <circle cx={1.5 * PITCH} cy={1.5 * PITCH} r={(visual.pressed ? 0.95 : 1.05) * PITCH} className="btn-cap" />
       </g>
     </g>
   ),

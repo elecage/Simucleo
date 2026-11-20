@@ -161,6 +161,10 @@ static StatusCode communicate(uint8_t command, uint8_t wait_irq, const uint8_t *
     {
       return STATUS_TIMEOUT;
     }
+    /* Not every microsecond: the card answers within about a millisecond
+     * and the chip's timer gives up after 25 ms, so checking once a
+     * millisecond keeps the CPU (and SPI) mostly idle while waiting. */
+    HAL_Delay(1);
   }
   uint8_t err = PCD_ReadRegister(ErrorReg);
   if (err & 0x13) /* BufferOvfl, ParityErr, ProtocolErr */

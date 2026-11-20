@@ -3401,3 +3401,163 @@ fn cubeide_windows_paths() {
         .count();
     assert!(toggles >= 2, "LD2 toggled {toggles} times");
 }
+
+/// SWV: nothing is traced until the "debugger" turns the trace on; then ITM
+/// text and words, the traced variable's writes, TIM2's exception trace and
+/// a PC-sample profile come out (firmware/hal-swv-trace).
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-swv-trace"]
+fn swv_trace_itm_data_exceptions_and_profile() {
+    use simucleo_nucleo::swv::{DataMode, DataTrace, SwvConfig};
+
+    let elf = firmware("hal-swv-trace");
+    let mut board = Nucleo::new();
+    board.load_elf(&elf).unwrap();
+    let fw = board.firmware.as_ref().unwrap();
+    let addr_of = |name: &str| {
+        *fw.symbols
+            .iter()
+            .find(|(_, n)| n.as_str() == name)
+            .unwrap()
+            .0
+    };
+    let wave = addr_of("wave");
+
+    // Trace off: ITM_SendChar returns at once, nothing is collected.
+    board.run_for_ns(50e6);
+    let off = board.swv_take();
+    assert!(
+        off.itm.is_empty()
+            && off.data.is_empty()
+            && off.exceptions.is_empty()
+            && off.profile.is_empty()
+    );
+
+    board.swv_configure(Some(SwvConfig {
+        ports: 0b11,
+        pc_sampling: Some((15, true)), // every 16 × 1024 cycles
+        exceptions: true,
+        data: vec![DataTrace {
+            addr: wave,
+            size: 4,
+            mode: DataMode::Write,
+        }],
+    }));
+    board.run_for_ns(300e6);
+    let f = board.swv_take();
+    assert_eq!(f.dropped, 0);
+
+    // Port 0: the text, every 100 ms; port 1: the loop count as words.
+    let text: String = f
+        .itm
+        .iter()
+        .filter(|e| e.port == 0)
+        .map(|e| e.value as u8 as char)
+        .collect();
+    let lines: Vec<&str> = text.lines().collect();
+    assert!((2..=4).contains(&lines.len()), "ITM text: {text:?}");
+    assert!(
+        lines[0].starts_with("loop ") && lines[0].contains("wave"),
+        "{text:?}"
+    );
+    let words: Vec<u32> = f
+        .itm
+        .iter()
+        .filter(|e| e.port == 1)
+        .map(|e| {
+            assert_eq!(e.size, 4);
+            e.value
+        })
+        .collect();
+    assert_eq!(words.len(), lines.len());
+    assert!(words.windows(2).all(|w| w[1] > w[0]));
+
+    // Data trace: wave written every 5 ms, in steps of ±4 within −100…100.
+    let writes: Vec<i32> = f
+        .data
+        .iter()
+        .filter(|d| d.write && d.addr == wave)
+        .map(|d| d.value as i32)
+        .collect();
+    assert!((55..=62).contains(&writes.len()), "{} writes", writes.len());
+    assert!(
+        writes.windows(2).all(|w| (w[1] - w[0]).abs() == 4),
+        "{writes:?}"
+    );
+    assert!(writes.iter().all(|v| (-104..=104).contains(v)));
+    let times: Vec<f64> = f.data.iter().filter(|d| d.write).map(|d| d.t).collect();
+    for w in times.windows(2) {
+        assert!((4.9e6..5.2e6).contains(&(w[1] - w[0])), "{:?}", w);
+    }
+
+    // Exception trace: TIM2 (IRQ 28 = exception 44) enters and exits about
+    // 300 times in 300 ms, as does SysTick; each exit is followed by a
+    // return to what it interrupted.
+    let count = |n: u16, k: &str| {
+        f.exceptions
+            .iter()
+            .filter(|e| e.number == n && e.kind == k)
+            .count()
+    };
+    let tim2 = 16 + 28;
+    assert!(
+        (298..=302).contains(&count(tim2, "enter")),
+        "{}",
+        count(tim2, "enter")
+    );
+    assert_eq!(count(tim2, "enter"), count(tim2, "exit"));
+    assert!((298..=302).contains(&count(15, "enter")));
+    assert_eq!(
+        f.exceptions.iter().find(|e| e.number == tim2).unwrap().name,
+        "TIM2"
+    );
+    for w in f.exceptions.windows(2) {
+        if w[0].kind == "exit" {
+            assert_eq!(w[1].kind, "return");
+        }
+    }
+
+    // Profile: the slow filter() is where the awake core spends its time;
+    // the rest of the time it sleeps in WFI.
+    let total: u64 = f.profile.iter().map(|p| p.samples).sum::<u64>() + f.sleep_samples;
+    let expected = (300e-3 * 84e6 / 16384.0) as u64;
+    assert!(
+        total.abs_diff(expected) <= 2,
+        "{total} samples, expected {expected}"
+    );
+    assert_eq!(
+        f.profile[0].function,
+        "filter",
+        "{:?}",
+        &f.profile[..3.min(f.profile.len())]
+    );
+    assert!(
+        f.sleep_samples > f.profile[0].samples,
+        "sleep {} vs filter {}",
+        f.sleep_samples,
+        f.profile[0].samples
+    );
+
+    // Stopped: no more packets, and ITM_SendChar is a no-op again.
+    board.swv_configure(None);
+    board.run_for_ns(50e6);
+    let after = board.swv_take();
+    assert!(
+        after.itm.is_empty()
+            && after.data.is_empty()
+            && after.exceptions.is_empty()
+            && after.profile.is_empty()
+    );
+
+    // The settings survive loading the firmware again (as CubeIDE re-applies
+    // them when the debug session restarts).
+    board.swv_configure(Some(SwvConfig {
+        ports: 1,
+        pc_sampling: None,
+        exceptions: false,
+        data: vec![],
+    }));
+    board.load_elf(&elf).unwrap();
+    board.run_for_ns(150e6);
+    assert!(!board.swv_take().itm.is_empty());
+}

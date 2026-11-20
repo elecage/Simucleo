@@ -1744,57 +1744,62 @@ impl Bus for Stm32f401Bus {
     }
 
     fn poll(&mut self, sys: &mut CortexM) -> bool {
+        // Every interrupt request line, high or low: the NVIC needs both to
+        // tell a held level from a new request (see `CortexM::irq_lines`).
+        let mut lines = [0u32; simucleo_core::cortexm::NUM_IRQS / 32];
+        let mut raise = |irq: u16| lines[irq as usize / 32] |= 1 << (irq % 32);
         for u in &self.usart {
             if u.irq_line() {
-                sys.set_irq_pending(u.irq);
+                raise(u.irq);
             }
         }
         if self.adc.irq_line() {
-            sys.set_irq_pending(18);
+            raise(18);
         }
         for s in &self.spi {
             if s.irq_line() {
-                sys.set_irq_pending(s.irq);
+                raise(s.irq);
             }
         }
         for i in &self.i2c {
             let (ev, er) = i.irq_lines();
             if ev {
-                sys.set_irq_pending(i.irq_ev);
+                raise(i.irq_ev);
             }
             if er {
-                sys.set_irq_pending(i.irq_er);
+                raise(i.irq_er);
             }
         }
         for d in &self.dma {
             for (irq, on) in d.irqs().into_iter().zip(d.irq_lines()) {
                 if on {
-                    sys.set_irq_pending(irq);
+                    raise(irq);
                 }
             }
         }
         for irq in self.exti.irqs() {
-            sys.set_irq_pending(irq);
+            raise(irq);
         }
         for t in &self.timers {
             if t.info.advanced {
                 if t.irq_update() {
-                    sys.set_irq_pending(t.info.irq_update);
+                    raise(t.info.irq_update);
                 }
                 if t.irq_cc() {
-                    sys.set_irq_pending(t.info.irq_cc);
+                    raise(t.info.irq_cc);
                 }
                 // TIM1_BRK_TIM9 and TIM1_TRG_COM_TIM11.
                 if t.irq_break() {
-                    sys.set_irq_pending(24);
+                    raise(24);
                 }
                 if t.irq_trg_com() {
-                    sys.set_irq_pending(26);
+                    raise(26);
                 }
             } else if t.irq_any() {
-                sys.set_irq_pending(t.info.irq_update);
+                raise(t.info.irq_update);
             }
         }
+        sys.irq_lines(&lines);
         if std::mem::take(&mut self.time_read) {
             sys.time_reads += 1;
         }

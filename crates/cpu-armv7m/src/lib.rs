@@ -322,6 +322,9 @@ impl ArmV7M {
         if !self.watchpoints.is_empty() {
             self.check_watch(addr, size, false);
         }
+        if ctx.sys.trace_data {
+            self.trace_data(ctx, addr, size, v, false);
+        }
         Ok(v)
     }
 
@@ -356,7 +359,25 @@ impl ArmV7M {
         if !self.watchpoints.is_empty() {
             self.check_watch(addr, size, true);
         }
+        if ctx.sys.trace_data {
+            self.trace_data(ctx, addr, size, value, true);
+        }
         Ok(())
+    }
+
+    /// A data access for the DWT's data trace comparators.
+    #[cold]
+    fn trace_data(&self, ctx: &mut Ctx, addr: u32, size: AccessSize, value: u32, write: bool) {
+        let bytes = size.bytes();
+        let value = if bytes == 4 {
+            value
+        } else {
+            value & ((1u32 << (8 * bytes)) - 1)
+        };
+        let (demcr, cycle) = (ctx.sys.demcr, ctx.sys.cycles);
+        ctx.sys
+            .trace
+            .data_access(demcr, cycle, addr, bytes as u8, value, write, self.pc);
     }
 
     /// Unaligned word/halfword accesses are allowed unless CCR.UNALIGN_TRP.
@@ -596,6 +617,7 @@ impl CpuBackend for ArmV7M {
             }
 
             if self.sleeping {
+                ctx.sys.trace.pc = None; // PC samples while asleep
                 match ctx.sys.next_event_in() {
                     Some(dt) => {
                         ctx.sys.advance(dt.min(end - ctx.sys.cycles));
@@ -612,6 +634,7 @@ impl CpuBackend for ArmV7M {
             self.resume_from_bp = None;
 
             ctx.bus.set_time(ctx.sys.cycles);
+            ctx.sys.trace.pc = Some(self.pc);
             self.svc = false;
             self.exc_return = None;
             self.periph_touched = false;

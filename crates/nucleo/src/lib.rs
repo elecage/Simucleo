@@ -8,6 +8,7 @@
 mod debugger;
 mod diagnose;
 pub mod rtos;
+pub mod swv;
 
 pub use debugger::{Step, StepEnd};
 
@@ -157,6 +158,8 @@ pub struct Nucleo {
     rtos: Option<rtos::FreeRtos>,
     /// UART modules (HC-05) and the MCU pins on their lines.
     uart_links: Vec<UartLink>,
+    /// SWV settings, applied again to each new firmware's core.
+    swv: Option<swv::SwvConfig>,
 }
 
 impl Default for Nucleo {
@@ -188,6 +191,7 @@ impl Nucleo {
             ))),
             rtos: None,
             uart_links: Vec::new(),
+            swv: None,
         };
         board.power_on();
         board
@@ -221,6 +225,9 @@ impl Nucleo {
         self.set_watchpoints(&[]);
         self.debug.new_firmware(bytes);
         self.sys = CortexM::new();
+        if let Some(cfg) = &self.swv {
+            cfg.apply(&mut self.sys);
+        }
         self.timeline.clear();
         self.power_on();
         for seg in &fw.segments {
@@ -723,6 +730,26 @@ impl Nucleo {
     /// now runs).
     pub fn take_task_switches(&mut self) -> Vec<(Cycles, u32)> {
         std::mem::take(&mut self.bus.watch_log)
+    }
+
+    /// Start (`Some`) or stop the SWV trace, as the debugger does; the
+    /// settings stay for firmware loaded later.
+    pub fn swv_configure(&mut self, cfg: Option<swv::SwvConfig>) {
+        match &cfg {
+            Some(c) => c.apply(&mut self.sys),
+            None => swv::SwvConfig::stop(&mut self.sys),
+        }
+        self.swv = cfg;
+    }
+
+    /// The SWV trace since the last call.
+    pub fn swv_take(&mut self) -> swv::SwvFrame {
+        let drained = self.sys.trace.drain();
+        swv::SwvFrame::collect(
+            drained,
+            |c| self.ns_at(c),
+            |pc| self.symbol_at(pc).map(str::to_string),
+        )
     }
 
     /// Name of the function containing `addr` (nearest symbol at or below).

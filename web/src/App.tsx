@@ -15,6 +15,8 @@ import { fromBase64, idbGet, idbSet, parse, serialize, toBase64, type Loaded } f
 import { createSimulator, type Netlist, type SimHandle } from "./sim/simulator";
 import { useRunner } from "./sim/useRunner";
 import { PwaStatus, UpdateBanner } from "./PwaUi";
+import { PerfStatus } from "./run/PerfUi";
+import { usePerfLite } from "./sim/perfStore";
 import { useSdPersistence } from "./sim/sdStore";
 import { unlockAudio, useBuzzerAudio } from "./sim/audio";
 import type { VisualState } from "./parts/types";
@@ -117,6 +119,7 @@ export function App() {
   const schOrder = useRef<string[]>([]);
   const [wireColor, setWireColor] = useState(WIRE_COLORS[0]);
   const runner = useRunner();
+  const lite = usePerfLite();
   const examples = useExamples();
   const [projectName, setProjectName] = useState("새 프로젝트");
   const [notice, setNotice] = useState<string | null>(null);
@@ -691,7 +694,7 @@ export function App() {
   return (
     // data-restored: the last session is back (or there was none); until then
     // a load the user starts may still meet the restored circuit.
-    <div className={lessonOpen ? "app with-lesson" : "app"} data-restored={restoredDone ? "yes" : "no"}>
+    <div className={(lessonOpen ? "app with-lesson" : "app") + (lite ? " perf-lite" : "")} data-restored={restoredDone ? "yes" : "no"}>
       <header className="toolbar">
         <strong>Simucleo</strong>
         {/* M30: the share button sits inside the name field's box, so the
@@ -861,7 +864,7 @@ export function App() {
         scope={project.scope}
         scopeSeq={scopeSeq}
         onScope={onScope}
-        status={<PwaStatus />}
+        status={<PwaStatus extra={<PerfStatus runner={runner} />} />}
         upload={sourceUpload}
       />
       {dropping && !teacherOpen && (

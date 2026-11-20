@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Runner } from "../sim/useRunner";
+import { usePerf } from "../sim/perfStore";
+import { formatRatio } from "../sim/perf";
 
 export interface Example {
   name: string;
@@ -45,6 +47,8 @@ export function RunControls({
 }) {
   const [speedLabel, setSpeedLabel] = useState("×1 실시간");
   const f = runner.frame;
+  // What the screen shows (M31): the slower of the worker's pace and the page's.
+  const shown = usePerf().ratio;
   const loaded = runner.firmware !== null;
 
   const loadExample = async (file: string) => {
@@ -123,7 +127,7 @@ export function RunControls({
             ? `로드 실패: ${runner.loadError}`
             : loaded && f
               ? `${runner.firmware} · ${(f.timeMs / 1000).toFixed(3)} s · ${(f.clockHz / 1e6).toFixed(1)} MHz` +
-                (runner.running ? ` · 실제 ×${runner.speed >= 100 ? runner.speed.toFixed(0) : runner.speed.toFixed(2)}` : "")
+                (runner.running ? ` · 실제 ${formatRatio(shown ?? runner.speed)}` : "")
               : "펌웨어(ELF)를 올리거나 예제를 고르세요"}
       </span>
     </div>

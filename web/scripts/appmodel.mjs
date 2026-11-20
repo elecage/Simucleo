@@ -10,11 +10,11 @@ import { fileURLToPath } from "node:url";
 const web = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const entry = `
-export { PART_BY_KIND, busCatalog } from "./src/parts/index.ts";
+export { PART_BY_KIND, busCatalog, boardSignals } from "./src/parts/index.ts";
 export { toCircuit } from "./src/editor/model.ts";
 `;
 
-/** `{ PART_BY_KIND, busCatalog, toCircuit }` of the app. */
+/** `{ PART_BY_KIND, busCatalog, boardSignals, toCircuit }` of the app. */
 export async function loadAppModel() {
   const out = buildSync({
     stdin: { contents: entry, resolveDir: web, loader: "ts" },

@@ -1,7 +1,8 @@
 /// <reference lib="webworker" />
 // Runs the simulator off the UI thread and keeps it in step with wall time.
 import init, { Simulator, version } from "../wasm/pkg/simucleo_wasm.js";
-import type { FromWorker, SimFrame, ToWorker } from "./protocol";
+import type { FrameMsg, FromWorker, SimFrame, ToWorker } from "./protocol";
+import { batchDue, RatioMeter } from "./perf";
 
 const FRAME_MS = 16; // ~60 Hz display updates
 const WORK_BUDGET_MS = 12; // wall time we allow ourselves per frame
@@ -13,16 +14,41 @@ let speed = 1;
 /** Upper bound on `speed` while grading needs fine-grained frames (Infinity: none). */
 let speedCap = Infinity;
 let lastWall = 0;
+/** Achieved simulated time / wall time over the last 1.5 s (M31). */
+const meter = new RatioMeter();
 let achieved = 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let epoch = 0;
 
+// M31: frames go to the page in batches at most `uiHz` times a second and
+// only once it has drawn the last one (null: each frame at once, as
+// before). The frames themselves are made exactly as before either way.
+let uiHz: number | null = null;
+let batch: FrameMsg[] = [];
+let lastBatch = 0;
+let inFlight = false;
+
 const post = (m: FromWorker) => (self as unknown as Worker).postMessage(m);
 
-function sendFrame() {
+function flush() {
+  if (!batch.length) return;
+  post({ type: "frames", frames: batch, speed: achieved });
+  batch = [];
+  lastBatch = performance.now();
+  inFlight = true;
+}
+
+/** Close a display frame; `now`: hand it over whatever the batching says. */
+function sendFrame(now = true) {
   if (!sim) return;
   const frame = JSON.parse(sim.frame()) as SimFrame;
-  post({ type: "frame", frame, console: sim.takeConsole(), running, speed: achieved, epoch });
+  const m: FrameMsg = { frame, console: sim.takeConsole(), running, epoch };
+  if (uiHz === null) {
+    post({ type: "frame", ...m, speed: achieved });
+    return;
+  }
+  batch.push(m);
+  if (now || batchDue(performance.now(), lastBatch, uiHz, inFlight)) flush();
 }
 
 function tick() {
@@ -32,7 +58,6 @@ function tick() {
   // Clamp: after the tab was in the background, do not try to catch up.
   const wallDt = Math.min(now - lastWall, 100);
   lastWall = now;
-  const startSim = sim.timeMs();
   const sp = Math.min(speed, speedCap);
   let target = Number.isFinite(sp) ? wallDt * sp : Infinity;
   while (target > 0 && performance.now() - now < WORK_BUDGET_MS) {
@@ -45,20 +70,25 @@ function tick() {
     }
     if (sim.atBreakpoint()) {
       running = false;
+      flush(); // frames from before the stop come first
       post({ type: "paused", reason: sim.pauseReason() });
       break;
     }
     if (sim.triggerPaused()) {
       running = false;
+      flush();
       post({ type: "paused", reason: "trigger" });
       break;
     }
   }
-  const simDt = sim.timeMs() - startSim;
-  const ratio = wallDt > 0 ? simDt / wallDt : 0;
-  achieved = achieved === 0 ? ratio : achieved * 0.8 + ratio * 0.2;
-  sendFrame();
-  if (running) timer = setTimeout(tick, FRAME_MS);
+  meter.add(performance.now(), sim.timeMs());
+  achieved = meter.ratio() ?? achieved;
+  // Stopped: shown at once, not with the next batch.
+  sendFrame(!running);
+  // The next tick FRAME_MS after this one began (M31: not FRAME_MS after
+  // the work ended — that left the thread idle more than half the time
+  // and a heavy example below real time on a machine fast enough for it).
+  if (running) timer = setTimeout(tick, Math.max(1, FRAME_MS - (performance.now() - now)));
 }
 
 function start() {
@@ -66,6 +96,8 @@ function start() {
   running = true;
   achieved = 0;
   lastWall = performance.now();
+  meter.reset();
+  meter.add(lastWall, sim.timeMs());
   timer = setTimeout(tick, 0);
 }
 
@@ -113,6 +145,17 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case "speedCap":
       speedCap = m.value;
+      break;
+    case "uiRate":
+      uiHz = m.hz;
+      if (uiHz === null) {
+        // Back to single frames: hand over what is waiting first.
+        flush();
+        inFlight = false;
+      }
+      break;
+    case "ack":
+      inFlight = false;
       break;
     case "press":
       sim.press(m.part, m.pressed);

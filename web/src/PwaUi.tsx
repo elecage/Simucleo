@@ -1,6 +1,6 @@
 // Offline app (M29) in the UI: the 설치 button, the 오프라인 badge, the
 // offline-ready line and the update banner. See pwa.ts.
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import { createPwa, UPDATE_TEXT, type ContainerLike, type Pwa } from "./pwa";
 
 const pwa: Pwa = createPwa({
@@ -27,11 +27,13 @@ const usePwa = () => useSyncExternalStore(pwa.subscribe, pwa.state);
  * text ever changes the layout — above all never the toolbar, whose height
  * moves the canvas under the user's pointer.
  */
-export function PwaStatus() {
+export function PwaStatus({ extra }: { extra?: ReactNode } = {}) {
   const s = usePwa();
   const o = s.offline;
   return (
     <span className="pwa-slot" data-testid="pwa-slot">
+      {/* M31: the 성능 button, same slot, same rules. */}
+      {extra}
       {!s.online && (
         <span className="offline-badge" data-testid="offline-badge" title="네트워크에 연결되어 있지 않습니다. 캐시된 앱으로 실행 중입니다.">
           오프라인

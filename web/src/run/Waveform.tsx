@@ -10,6 +10,8 @@
 // spectrum (FFT) view of any channel.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Runner } from "../sim/useRunner";
+import { countRender } from "../sim/renderCount";
+import { getPerf } from "../sim/perfStore";
 import type { CaptureAnalog, CaptureChannel, ScopeCapture, ScopeState, TriggerConfig } from "../sim/protocol";
 import { PART_BY_KIND } from "../parts";
 import {
@@ -174,6 +176,19 @@ const STATE_TEXT: Record<ScopeState, string> = {
   stopped: "정지 (단일 캡처 완료)",
 };
 
+/** When the waveform view last drew (see `scopeDue`). */
+let lastScopeDraw = 0;
+/** Performance mode redraws the running scope at most this often (ms). */
+export const SCOPE_LITE_MS = 100;
+/**
+ * For `memo` with only the live state changed (M31): in performance mode
+ * a running scope redraws at most every `SCOPE_LITE_MS`; the frames are
+ * all collected meanwhile, so nothing is lost, only drawn later.
+ */
+export function scopeThrottled(running: boolean): boolean {
+  return getPerf().lite && running && performance.now() - lastScopeDraw < SCOPE_LITE_MS;
+}
+
 export function Waveform({
   runner,
   active = true,
@@ -191,6 +206,8 @@ export function Waveform({
   /** Called with the settings as they change (to keep them in the project). */
   onSettings?: (s: ScopeSettings) => void;
 }) {
+  countRender("waveform");
+  lastScopeDraw = performance.now();
   const [cfg, setCfg] = useState<ScopeSettings>(() => settings ?? defaultScope());
   const cfgRef = useRef(cfg);
   cfgRef.current = cfg;
@@ -244,6 +261,8 @@ export function Waveform({
   const [dragPre, setDragPre] = useState<number | null>(null);
   const [plotWidth, setPlotWidth] = useState(800);
   const traces = useRef(new Map<string, Trace>());
+  /** A capture that came while the tab was hidden (M31), see `showCapture_`. */
+  const heldCapture = useRef<ScopeCapture | null>(null);
   const atraces = useRef(new Map<string, ATrace>());
   /** The live (rolling) view is shown, not a capture. */
   const liveRef = useRef(false);
@@ -298,6 +317,7 @@ export function Waveform({
   // New settings: wait for a capture taken with them.
   useEffect(() => {
     if (ready) setTrigger(config);
+    heldCapture.current = null;
     setCapture(null);
   }, [config, ready, setTrigger]);
   useEffect(() => () => setTrigger(null), [setTrigger]);
@@ -317,10 +337,27 @@ export function Waveform({
   };
   useEffect(() => {
     rearm();
-    if (contentKey) setCapture(null);
+    if (contentKey) {
+      heldCapture.current = null;
+      setCapture(null);
+    }
   }, [contentKey]);
   const pauseRef = useRef(pauseRun);
   pauseRef.current = pauseRun;
+  // Hidden (M31): a new capture waits here instead of redrawing a view no
+  // one sees; it is shown when the tab is.
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const showCapture_ = (c: ScopeCapture) => {
+    if (activeRef.current) setCapture(c);
+    else heldCapture.current = c;
+  };
+  useEffect(() => {
+    if (active && heldCapture.current) {
+      setCapture(heldCapture.current);
+      heldCapture.current = null;
+    }
+  }, [active]);
 
   // A new timebase or trigger position: back to the whole window, cursors
   // at a quarter and three quarters of it.
@@ -339,6 +376,7 @@ export function Waveform({
           // Reset or new firmware: the history is gone.
           traces.current.clear();
           atraces.current.clear();
+          heldCapture.current = null;
           setCapture(null);
           if (scan.current.st) scan.current = { st: null, pending: null, done: false, seq: scan.current.seq };
         }
@@ -384,7 +422,7 @@ export function Waveform({
         if (k) {
           const c = contentStep(k, scan.current, f.timeMs, traces.current, atraces.current);
           if (c) {
-            setCapture(c);
+            showCapture_(c);
             if (k.pause) pauseRef.current("trigger");
           }
           const st: ScopeState = scan.current.done ? "stopped" : scan.current.pending !== null ? "collecting" : "armed";
@@ -395,7 +433,7 @@ export function Waveform({
         // (One still on its way from before a change of settings is dropped.)
         const kc = configRef.current;
         if (c && kc && c.source === kc.source && near(c.endNs - c.startNs, kc.windowNs) && near(c.startNs, -kc.pre * kc.windowNs))
-          setCapture(c);
+          showCapture_(c);
       }),
     [onFrame],
   );

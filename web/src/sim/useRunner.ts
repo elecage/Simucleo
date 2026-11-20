@@ -1,11 +1,12 @@
 // React hook around the simulation worker.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   BluetoothFrame,
   BreakpointSpec,
   DebugFile,
   DebugState,
   DisasmRow,
+  FrameMsg,
   FromWorker,
   SimFrame,
   ToWorker,
@@ -16,6 +17,7 @@ import type {
 } from "./protocol";
 import type { CircuitJson } from "../editor/model";
 import { boardSignals, busCatalog } from "../parts";
+import { connectPerf, perfLongTask, perfRunning, perfUpdate } from "./perfStore";
 
 const CONSOLE_LIMIT = 20_000;
 const CHAT_LIMIT = 200;
@@ -169,6 +171,27 @@ export interface FrameEvent {
 }
 export type FrameListener = (e: FrameEvent) => void;
 
+/**
+ * `cb(ms)` once the browser has drawn what was just committed: `ms` is the
+ * style, layout and paint work of that frame (from its animation-frame
+ * callbacks to the next task). A hidden page draws nothing: 0 after 200 ms.
+ */
+function afterPaint(cb: (paintMs: number) => void) {
+  let done = false;
+  const finish = (ms: number) => {
+    if (done) return;
+    done = true;
+    cb(ms);
+  };
+  requestAnimationFrame(() => {
+    const t = performance.now();
+    const ch = new MessageChannel();
+    ch.port1.onmessage = () => finish(performance.now() - t);
+    ch.port2.postMessage(0);
+  });
+  setTimeout(() => finish(0), 200);
+}
+
 export function useRunner(): Runner {
   const listeners = useRef(new Set<FrameListener>());
   const probeOwners = useRef(new Map<string, string[]>());
@@ -201,9 +224,65 @@ export function useRunner(): Runner {
     result: null,
   });
 
+  // M31: what each display update costs the page thread. The message
+  // handler, then the render (from this hook's call in App's render to the
+  // commit), then the browser's drawing (see `afterPaint`).
+  const cost = useRef({ handler: 0, frames: 0, renderStart: -1, pending: false, batched: false });
+  if (cost.current.pending && cost.current.renderStart < 0) cost.current.renderStart = performance.now();
+  const workerRatio = useRef(0);
+  const asked = useRef({ speed: 1, cap: Infinity });
+  const runningRef = useRef(false);
+  const frameRef = useRef<SimFrame | null>(null);
+  frameRef.current = frame;
+  useLayoutEffect(() => {
+    const c = cost.current;
+    if (!c.pending) return;
+    const commit = performance.now();
+    const work = c.handler + (c.renderStart >= 0 ? commit - c.renderStart : 0);
+    const { frames, batched } = c;
+    cost.current = { handler: 0, frames: 0, renderStart: -1, pending: false, batched: false };
+    afterPaint((paint) => {
+      const f = frameRef.current;
+      const want = Math.min(asked.current.speed, asked.current.cap);
+      perfUpdate(performance.now(), work + paint, frames, f?.timeMs ?? 0, runningRef.current, workerRatio.current, want);
+      if (batched) worker.current?.postMessage({ type: "ack" } satisfies ToWorker);
+    });
+  }, [frame]);
+  useEffect(() => {
+    if (typeof PerformanceObserver === "undefined" || !PerformanceObserver.supportedEntryTypes?.includes("longtask")) return;
+    const po = new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) perfLongTask(e.startTime + e.duration, e.duration);
+    });
+    po.observe({ type: "longtask" });
+    return () => po.disconnect();
+  }, []);
+
   useEffect(() => {
     const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
     worker.current = w;
+    connectPerf((hz) => w.postMessage({ type: "uiRate", hz } satisfies ToWorker));
+    /** Frames from the worker, one or a batch (M31): every one to the listeners, the last one on screen. */
+    const deliver = (msgs: FrameMsg[], speed: number, batched: boolean) => {
+      const t0 = performance.now();
+      for (const m of msgs) for (const l of listeners.current) l(m);
+      const last = msgs[msgs.length - 1];
+      setFrame(last.frame);
+      setRunning(last.running);
+      setSpeedState(speed);
+      workerRatio.current = speed;
+      if (last.running !== runningRef.current) {
+        runningRef.current = last.running;
+        perfRunning(last.running);
+      }
+      const text = msgs.length === 1 ? last.console : msgs.map((m) => m.console).join("");
+      if (text) setConsole((c) => (c + text).slice(-CONSOLE_LIMIT));
+      setBluetooth((b) => msgs.reduce((acc, m) => mergeBluetooth(acc, m.frame.bluetooth ?? []), b));
+      const c = cost.current;
+      c.handler += performance.now() - t0;
+      c.frames += msgs.length;
+      c.pending = true;
+      c.batched ||= batched;
+    };
     w.onmessage = (e: MessageEvent<FromWorker>) => {
       const m = e.data;
       switch (m.type) {
@@ -245,12 +324,11 @@ export function useRunner(): Runner {
           setAssigned((a) => ({ n: a.n + 1, target: m.target, result: m.result }));
           break;
         case "frame":
-          for (const l of listeners.current) l({ frame: m.frame, console: m.console, running: m.running, epoch: m.epoch });
-          setFrame(m.frame);
-          setRunning(m.running);
-          setSpeedState(m.speed);
-          if (m.console) setConsole((c) => (c + m.console).slice(-CONSOLE_LIMIT));
-          setBluetooth((b) => mergeBluetooth(b, m.frame.bluetooth ?? []));
+          deliver([{ frame: m.frame, console: m.console, running: m.running, epoch: m.epoch }], m.speed, false);
+          break;
+        case "frames":
+          if (m.frames.length) deliver(m.frames, m.speed, true);
+          else w.postMessage({ type: "ack" } satisfies ToWorker);
           break;
         case "memory":
           setMemory({ addr: m.addr, bytes: m.bytes });
@@ -286,8 +364,14 @@ export function useRunner(): Runner {
         listeners.current.add(l);
         return () => void listeners.current.delete(l);
       },
-      setSpeed: (value: number) => send({ type: "speed", value }),
-      setSpeedCap: (value: number) => send({ type: "speedCap", value }),
+      setSpeed: (value: number) => {
+        asked.current.speed = value;
+        send({ type: "speed", value });
+      },
+      setSpeedCap: (value: number) => {
+        asked.current.cap = value;
+        send({ type: "speedCap", value });
+      },
       press: (part: string, pressed: boolean) => send({ type: "press", part, pressed }),
       setWiring: (circuit: CircuitJson) =>
         send({ type: "wiring", circuit: JSON.stringify(circuit), catalog: CATALOG, signals: SIGNALS }),
@@ -348,6 +432,12 @@ export function useRunner(): Runner {
     }),
     [send],
   );
+
+  // Test hook (E2E, M31): every frame with its simulated time, and probes,
+  // to compare runs by simulated time rather than by what was drawn.
+  useEffect(() => {
+    (window as unknown as { __simucleoRunner: unknown }).__simucleoRunner = { onFrame: actions.onFrame, setProbes: actions.setProbes };
+  }, [actions]);
 
   return {
     ready, firmware, firmwareBytes, firmwareExample, loadError, running, speed, frame, console: consoleText, memory, bluetooth,

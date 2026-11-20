@@ -140,6 +140,11 @@ jobs:
         working-directory: web
       - run: npm run build
         working-directory: web
+      # M31: no bundled example may run slower than ×1.5 real time natively
+      # (release build; a slow one is measured twice more, the best counts).
+      - name: Example speed check (native)
+        run: node scripts/bench.mjs --native --seconds 2 --check 1.5
+        working-directory: web
       - name: End-to-end tests (wiring editor, running firmware)
         run: |
           npx playwright install --with-deps chromium

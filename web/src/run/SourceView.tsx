@@ -7,6 +7,7 @@ import type { Runner } from "../sim/useRunner";
 import type { BreakpointSpec, DebugValue, WatchpointSpec } from "../sim/protocol";
 import type { SourceUpload } from "../upload/useSourceUpload";
 import { UploadBar } from "../upload/UploadBar";
+import { countRender } from "../sim/renderCount";
 
 const base = "./";
 
@@ -127,7 +128,8 @@ function pauseText(reason: string): string {
   return reason;
 }
 
-export function SourceView({ runner, upload: bundle }: { runner: Runner; upload?: SourceUpload }) {
+export function SourceView({ runner, upload: bundle }: { runner: Runner; upload?: SourceUpload; active?: boolean }) {
+  countRender("source");
   const files = runner.debugFiles;
   const attached = bundle?.attached ?? null;
   const [texts, setTexts] = useState<Record<string, string>>({});

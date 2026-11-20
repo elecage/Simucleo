@@ -243,7 +243,21 @@ export type ToWorker =
   | { type: "sdLoad"; part: string; bytes: ArrayBuffer }
   | { type: "sdSnapshot"; part: string }
   | { type: "sdRestore"; part: string; bytes: ArrayBuffer }
-  | { type: "sdWipe"; part: string };
+  | { type: "sdWipe"; part: string }
+  /** M31: frames to the page at most `hz` times a second, in batches (null: each frame as it is made). */
+  | { type: "uiRate"; hz: number | null }
+  /** M31: the page has drawn the last batch. */
+  | { type: "ack" };
+
+/** One frame as the worker hands it to the page. */
+export interface FrameMsg {
+  frame: SimFrame;
+  /** Text the virtual COM port received since the last frame. */
+  console: string;
+  running: boolean;
+  /** The `epoch` of the last reset that asked for one (0 before). */
+  epoch: number;
+}
 
 export type FromWorker =
   | { type: "ready"; version: string }
@@ -259,6 +273,8 @@ export type FromWorker =
       /** The `epoch` of the last reset that asked for one (0 before). */
       epoch: number;
     }
+  /** M31: the frames made since the last batch, oldest first (performance mode). */
+  | { type: "frames"; frames: FrameMsg[]; speed: number }
   | { type: "memory"; addr: number; bytes: Uint8Array }
   | { type: "sdImage"; part: string; bytes: Uint8Array }
   | { type: "sdSnapshot"; part: string; bytes: Uint8Array }

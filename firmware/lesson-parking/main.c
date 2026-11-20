@@ -102,6 +102,15 @@ static void leds(enum Zone z)
 
 static void tone(int on)
 {
+  /* Only when it changes: a main loop that stores nothing while it waits
+     is one the simulator skips through (it would otherwise run every
+     instruction of the waiting at 84 MHz, slower than real time). */
+  static int last = -1;
+  if (on == last)
+  {
+    return;
+  }
+  last = on;
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, on ? 250 : 0); /* 50 % of 500 µs */
 }
 

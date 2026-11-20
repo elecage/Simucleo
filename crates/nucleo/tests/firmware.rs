@@ -3353,3 +3353,51 @@ fn printed_rpm_zc(line: &str) -> f64 {
     let i = w.iter().position(|&x| x == "rpm").unwrap();
     w[i + 1].parse().unwrap()
 }
+
+/// M39: a project built in a CubeIDE workspace on Windows
+/// (`firmware/cubeide-blinky`: `C:\Users\…\blinky/Debug` + `../Core/Src/main.c`)
+/// gives `/`-separated absolute paths, and its main loop runs.
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/cubeide-blinky"]
+fn cubeide_windows_paths() {
+    let path: PathBuf = [
+        env!("CARGO_MANIFEST_DIR"),
+        "../../firmware/cubeide-blinky/build/blinky/Debug/blinky.elf",
+    ]
+    .iter()
+    .collect();
+    let elf = std::fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e} (run `make -C firmware/cubeide-blinky` first)",
+            path.display()
+        )
+    });
+    let mut board = Nucleo::new();
+    board.load_elf(&elf).unwrap();
+    let info = board.debug_info().expect("DWARF");
+    let root = "C:/Users/student/STM32CubeIDE/workspace_1.16.0/blinky";
+    for f in [
+        "Core/Src/main.c",
+        "Core/Src/stm32f4xx_it.c",
+        "Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_gpio.c",
+    ] {
+        let want = format!("{root}/{f}");
+        let i = info.files.iter().position(|p| *p == want);
+        let i = i.unwrap_or_else(|| panic!("{want} not in {:?}", info.files));
+        assert!(!info.lines_with_code(i as u32).is_empty(), "{want}");
+    }
+    assert!(
+        info.files
+            .iter()
+            .all(|p| !p.contains('\\') && !p.contains("/Debug/..")),
+        "{:?}",
+        info.files
+    );
+    board.run_for_ns(1200e6);
+    let toggles = board
+        .take_pin_events()
+        .into_iter()
+        .filter(|e| e.port == 0 && e.pin == 5)
+        .count();
+    assert!(toggles >= 2, "LD2 toggled {toggles} times");
+}

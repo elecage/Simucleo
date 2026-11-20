@@ -171,6 +171,8 @@ main.schematic-on .notice { top: 44px; }
 .wave-controls input.num { width: 64px; font: inherit; }
 .scope-controls { font-size: 12px; gap: 10px; }
 .scope-state { color: var(--accent); font-weight: 600; }
+.content-mode { font-size: 12px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--muted); color: var(--muted); }
+.content-mode.exact { border-color: var(--accent); color: var(--accent); }
 .wave-label { box-sizing: border-box; overflow: hidden; white-space: nowrap; }
 .wave-label button { margin-left: 6px; padding: 0 6px; }
 .wave-label .trig-src::after { content: " T"; color: #f59e0b; }

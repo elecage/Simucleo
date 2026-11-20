@@ -92,6 +92,11 @@ test("IR remote: the NEC decoder shows the key pressed, an NEC command trigger c
   await expect(plot(page)).toHaveAttribute("data-view", "capture", { timeout: 10000 });
   await expect(runButton(page)).toBeVisible({ timeout: 5000 });
   await expect(page.getByTestId("scope-state")).toHaveAttribute("data-state", "stopped");
+  // Paused where the window ends, 90 ms after the leader.
+  const at = async (k: string) => Number(await plot(page).getAttribute(k));
+  const end = (await at("data-trigger-ms")) + 90;
+  expect((await at("data-now-ms")) - end).toBeGreaterThanOrEqual(0);
+  expect((await at("data-now-ms")) - end).toBeLessThan(0.05);
   const rs = await rows(page.getByTestId("decode-table-0"));
   expect(rs.filter((r) => r.error)).toEqual([]);
   const lead = rs.find((r) => r.kind === "leader")!;
@@ -144,6 +149,13 @@ test("exact content trigger: UART text with pause stops the run, the 't' at t = 
   await expect(page.locator(".source-view")).toContainText("멈춤: 오실로스코프 트리거");
   await openScope(page);
   expect(Number(await plot(page).getAttribute("data-view-start"))).toBe(-1e6);
+  // Paused at the window's end (the simulator's own pause, not a frame later).
+  const at = async (k: string) => Number(await plot(page).getAttribute(k));
+  // (5 ms window, 20 % before: it ends 4 ms after the trigger.)
+  const end = (await at("data-trigger-ms")) + 4;
+  const now = await at("data-now-ms");
+  expect(now).toBeGreaterThanOrEqual(end);
+  expect(now - end).toBeLessThan(0.05);
   const rs = await rows(page.getByTestId("decode-table-0"));
   expect(rs.filter((r) => r.error)).toEqual([]);
   // The 't' starts exactly at t = 0 (the simulator's trigger time is the start bit's edge).

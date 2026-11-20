@@ -1272,25 +1272,20 @@ mod tests {
 
     #[test]
     fn uart_frames_text_and_a_bad_frame_breaks_a_text() {
-        let e = uart(b"tick 1tick 1", 1000.0, &[3]);
+        let e = uart(b"ticXk 1tick 1", 1000.0, &[3]);
         let mut d = Decoder::new(&spec("uart"), &[true], &[true], 0.0).unwrap();
         let items = run1(&mut d, &e);
         let v: Vec<u32> = items.iter().map(|i| i.value.unwrap()).collect();
-        assert_eq!(
-            v,
-            b"tick 1tick 1"
-                .iter()
-                .map(|&b| u32::from(b))
-                .collect::<Vec<_>>()
-        );
+        let want: Vec<u32> = b"ticXk 1tick 1".iter().map(|&b| u32::from(b)).collect();
+        assert_eq!(v, want);
         assert_eq!(items[3].fault, Some(Fault::Other), "framing error");
-        // The first "tick 1" has a frame in error: only the second matches
-        // (M25's fix: no text across a byte not received).
+        // Leaving out the 'X' not received would read "tick 1": only the
+        // second one matches (M25's fix: no text across a frame in error).
         let text = Match::Text {
             text: "tick 1".into(),
         };
-        assert_eq!(matches(text, &items), vec![items[6].start]);
-        assert!((items[6].start - (1000.0 + 6.0 * 10.0 * BIT + BIT)).abs() < 1e-6);
+        assert_eq!(matches(text, &items), vec![items[7].start]);
+        assert!((items[7].start - (1000.0 + 7.0 * 10.0 * BIT + BIT)).abs() < 1e-6);
         // A byte matches even in error (as in TypeScript).
         assert_eq!(
             matches(

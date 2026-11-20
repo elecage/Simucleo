@@ -903,6 +903,8 @@ export function Waveform({
               data-testid="scope-plot"
               data-view={showCapture ? "capture" : live ? "live" : "waiting"}
               data-seq={showCapture ? capture.seq : undefined}
+              data-trigger-ms={showCapture ? capture.triggerMs : undefined}
+              data-now-ms={now}
               data-view-start={v.start}
               data-view-span={v.span}
               onPointerDown={onPointerDown}

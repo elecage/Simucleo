@@ -96,7 +96,8 @@ function uartStream(seed: number, baud: number, parity: Parity) {
   const bit = 1e9 / baud;
   const l = new L(true);
   let t = 5000;
-  const text = "Hello\r\ntick 1\r\ntick 2\r\nti\x00ck 3\r\nOK\r\ntick 1 tick 1\r\n";
+  // ('X' always goes out with a low stop bit: "ticXk 1" never reads "tick 1".)
+  const text = "Hello\r\ntick 1\r\ntick 2\r\nti\x00ck 3\r\nOK\r\ntick 1 tick 1\r\nticXk 1\r\n";
   for (let i = 0; i < text.length * 3; i++) {
     const v = text.charCodeAt(i % text.length);
     const bits: boolean[] = [];
@@ -105,7 +106,7 @@ function uartStream(seed: number, baud: number, parity: Parity) {
       const ones = bits.filter(Boolean).length + (r() < 0.05 ? 1 : 0); // a parity error now and then
       bits.push((ones % 2 === 1) !== (parity === "odd"));
     }
-    const badStop = r() < 0.04;
+    const badStop = v === 0x58 || r() < 0.04;
     l.at(t, false);
     bits.forEach((b, k) => l.at(t + (1 + k) * bit, b));
     l.at(t + (1 + bits.length) * bit, !badStop);

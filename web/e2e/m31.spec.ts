@@ -239,8 +239,22 @@ test("lesson grading gives the same result with performance mode off and forced 
 test("grading in performance mode: keypad presses timed on frames still reach the firmware", async ({ page }) => {
   // Frames batched at a few hertz would bring a 150 ms press and its
   // release to the page together, after the simulation passed both:
-  // grading takes single frames instead.
+  // grading takes single frames instead (the worker's messages counted).
   test.setTimeout(120_000);
+  await page.addInitScript(() => {
+    const counts: Record<string, number> = {};
+    (window as unknown as { __workerMsgs: Record<string, number> }).__workerMsgs = counts;
+    const W = window.Worker;
+    window.Worker = class extends W {
+      constructor(url: string | URL, opts?: WorkerOptions) {
+        super(url, opts);
+        this.addEventListener("message", (e: MessageEvent<{ type: string }>) => {
+          counts[e.data.type] = (counts[e.data.type] ?? 0) + 1;
+        });
+      }
+    };
+  });
+  const msgs = () => page.evaluate(() => ({ ...(window as unknown as { __workerMsgs: Record<string, number> }).__workerMsgs }));
   const panel = page.getByRole("complementary", { name: "실습" });
   await page.goto("/");
   await expect(status(page)).toContainText("예제를");
@@ -249,12 +263,16 @@ test("grading in performance mode: keypad presses timed on frames still reach th
   await panel.locator('[data-lesson="seven-segment"]').getByRole("button", { name: "시작" }).click();
   await page.getByTestId("project-input").setInputFiles("public/examples/hal-7seg-keypad.simucleo.json");
   await expect(panel.locator(".lesson-check").first()).toBeVisible();
-  const cdp = await throttle(page, 4);
   await panel.getByRole("button", { name: "채점", exact: true }).click();
   await expect(panel.getByTestId("grade-progress")).toBeVisible();
+  const before = await msgs();
   await expect(panel.getByTestId("grade-progress")).toHaveCount(0, { timeout: 90_000 });
+  const after = await msgs();
   expect((await perf(page)).lite).toBe(true);
-  await cdp.detach();
+  const n = (k: string) => (after[k] ?? 0) - (before[k] ?? 0);
+  expect(n("frame"), JSON.stringify({ before, after })).toBeGreaterThan(30);
+  // (At most the one batch on its way when grading began.)
+  expect(n("frames"), JSON.stringify({ before, after })).toBeLessThanOrEqual(1);
   const checks = await panel
     .getByTestId("lesson-check")
     .evaluateAll((l) => l.map((e) => `${e.getAttribute("data-status")} ${e.textContent}`));

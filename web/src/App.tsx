@@ -920,7 +920,7 @@ export function App() {
         onScope={onScope}
         status={<PwaStatus extra={<PerfStatus runner={runner} />} />}
         upload={sourceUpload}
-        code={{ code: project.code, onCode, examples, codeSeq, autoBuild, onAutoBuilt: () => setAutoBuild(false) }}
+        code={{ code: project.code, onCode, examples, codeSeq, autoBuild, onAutoBuilt: () => setAutoBuild(false), restored: restoredDone }}
         codeSources={codeSources}
         codeTabSeq={codeTabSeq}
       />

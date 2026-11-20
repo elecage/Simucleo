@@ -118,6 +118,7 @@ main { grid-area: main; min-width: 0; min-height: 0; }
 /* Run controls and panels (M2) */
 .run-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; flex: 1; }
 .run-toggle { display: inline-grid; }
+.run-status { flex: 1 1 12em; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .run-toggle > span { grid-area: 1 / 1; }
 .run-toggle > .ghost { visibility: hidden; }
 .run-controls select { font: inherit; font-size: 13px; padding: 4px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); }

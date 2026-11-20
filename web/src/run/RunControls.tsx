@@ -66,6 +66,14 @@ export function RunControls({
     runner.load(ex.name, bytes, ex.file);
   };
 
+  const statusText = !runner.ready
+    ? t("시뮬레이터 로딩 중…")
+    : runner.loadError
+      ? t("로드 실패: {error}", { error: runner.loadError })
+      : loaded && f
+        ? `${runner.firmware} · ${(f.timeMs / 1000).toFixed(3)} s · ${(f.clockHz / 1e6).toFixed(1)} MHz` +
+          (runner.running ? t(" · 실제 {ratio}", { ratio: formatRatio(shown ?? runner.speed) }) : "")
+        : t("펌웨어(ELF)를 올리거나 예제를 고르세요");
   return (
     <div className="run-controls">
       <label className="file-btn">
@@ -130,15 +138,11 @@ export function RunControls({
           <option key={l}>{l}</option>
         ))}
       </select>
-      <span className="status" data-testid="run-status">
-        {!runner.ready
-          ? t("시뮬레이터 로딩 중…")
-          : runner.loadError
-            ? t("로드 실패: {error}", { error: runner.loadError })
-            : loaded && f
-              ? `${runner.firmware} · ${(f.timeMs / 1000).toFixed(3)} s · ${(f.clockHz / 1e6).toFixed(1)} MHz` +
-                (runner.running ? t(" · 실제 {ratio}", { ratio: formatRatio(shown ?? runner.speed) }) : "")
-              : t("펌웨어(ELF)를 올리거나 예제를 고르세요")}
+      {/* One line, cut with "…" when the toolbar is narrow (the whole text is
+          its tooltip): the clock and real-time ratio that appear once it runs
+          must not wrap the toolbar onto another row. */}
+      <span className="status run-status" data-testid="run-status" title={statusText}>
+        {statusText}
       </span>
     </div>
   );

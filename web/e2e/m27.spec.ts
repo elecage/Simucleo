@@ -143,7 +143,8 @@ test("spectrum: the buzzer's 50 % PWM tone has its fundamental at 262 Hz and no 
   // Between the cursors (30 ms … 130 ms): only the note, 100 ms → 10 Hz bins.
   await page.getByLabel("커서", { exact: true }).check();
   await page.getByLabel("스펙트럼 구간").selectOption("cursors");
-  await expect(page.getByTestId("fft-info")).toHaveAttribute("data-span", "100000000");
+  // Floating point: 100 ms within rounding (the string may read 99999999.99…).
+  await expect.poll(() => num(page, "fft-info", "data-span")).toBeCloseTo(100_000_000, 0);
   const df = await num(page, "fft-info", "data-df");
   expect(df).toBeCloseTo(10, 6);
   const f = 1e6 / 3816;
@@ -197,7 +198,8 @@ test("spectrum: the L298N's 2 kHz 80 % PWM — harmonics on the sinc envelope, 5
   await page.getByRole("button", { name: "시간 + 스펙트럼" }).click();
   await page.getByLabel("스펙트럼 소스").selectOption("PB4");
   await page.getByLabel("창 함수").selectOption("blackman");
-  await expect(page.getByTestId("fft-info")).toHaveAttribute("data-df", "50");
+  // 20 ms window → 50 Hz bins, within rounding (it may read 49.99999999999993).
+  await expect.poll(() => num(page, "fft-info", "data-df")).toBeCloseTo(50, 6);
   const df = await num(page, "fft-info", "data-df");
   expect(df).toBeCloseTo(50, 6);
   expect(Math.abs((await num(page, "fft-fund", "data-hz")) - 2000)).toBeLessThan(df);

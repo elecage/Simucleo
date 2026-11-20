@@ -127,6 +127,9 @@ pub trait ExternalCircuit {
     fn voltage(&self, _port: u8, _pin: u8) -> Option<f64> {
         None
     }
+    /// Bring voltages that change by themselves (a turning motor's
+    /// back-EMF) up to `time` before the ADC samples a pin.
+    fn refresh(&mut self, _time: Cycles) {}
     /// One I2C bus operation at `time` for the devices on the nets of
     /// `scl` and `sda` (port, pin). Default: nobody answers.
     fn i2c(&mut self, _time: Cycles, _scl: (u8, u8), _sda: (u8, u8), op: I2cOp) -> I2cReply {
@@ -1083,6 +1086,9 @@ impl Stm32f401Bus {
                 Event::Adc { gen } => {
                     if self.adc.gen == gen {
                         if let Some(ch) = self.adc.converting {
+                            if let Some(c) = self.circuit.as_mut() {
+                                c.refresh(at);
+                            }
                             let v = self.channel_voltage(ch);
                             if self.adc.complete(v) {
                                 self.adc.begin(at, &clocks, &mut self.sched);

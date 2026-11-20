@@ -94,20 +94,44 @@ export function emptyState(): SwvState {
 
 const capped = <T>(a: T[], limit: number) => (a.length > limit ? a.slice(a.length - limit) : a);
 
+/** The latest packet time in `d`, or `since` (no spread: a frame can bring 200 000 packets). */
+function latest(since: number, d: SwvData): number {
+  let t = since;
+  for (const list of [d.itm, d.data, d.exceptions]) for (const e of list) if (e.t > t) t = e.t;
+  return t;
+}
+
 /** `s` with one frame's trace added (a new object; `s` is not changed). */
 export function addFrame(s: SwvState, d: SwvData, nowNs?: number): SwvState {
-  const text = new Map(s.text);
-  const words = new Map(s.words);
+  // This frame's writes per port first, then one merge and cap per port:
+  // a frame can bring up to 200 000 packets.
+  const newText = new Map<number, number[]>();
+  const newWords = new Map<number, [number, number][]>();
   for (const e of d.itm) {
     if (e.size === 1) {
-      text.set(e.port, (text.get(e.port) ?? "") + String.fromCharCode(e.value & 0xff));
+      let a = newText.get(e.port);
+      if (!a) newText.set(e.port, (a = []));
+      a.push(e.value & 0xff);
     } else {
-      const w = words.get(e.port) ?? [];
-      words.set(e.port, [...w, [e.t, e.value]]);
+      let a = newWords.get(e.port);
+      if (!a) newWords.set(e.port, (a = []));
+      a.push([e.t, e.value]);
     }
   }
-  for (const [p, v] of text) if (v.length > TEXT_LIMIT) text.set(p, v.slice(v.length - TEXT_LIMIT));
-  for (const [p, v] of words) words.set(p, capped(v, WORDS_LIMIT));
+  const text = new Map(s.text);
+  for (const [p, codes] of newText) {
+    let add = "";
+    for (let i = Math.max(0, codes.length - TEXT_LIMIT); i < codes.length; i += 8192) {
+      add += String.fromCharCode(...codes.slice(i, Math.min(i + 8192, codes.length)));
+    }
+    const v = (text.get(p) ?? "") + add;
+    text.set(p, v.length > TEXT_LIMIT ? v.slice(v.length - TEXT_LIMIT) : v);
+  }
+  const words = new Map(s.words);
+  for (const [p, a] of newWords) {
+    const kept = a.length >= WORDS_LIMIT ? [] : (words.get(p) ?? []);
+    words.set(p, capped([...kept, ...capped(a, WORDS_LIMIT)], WORDS_LIMIT));
+  }
 
   const series = new Map(s.series);
   if (d.data.length) {
@@ -159,7 +183,7 @@ export function addFrame(s: SwvState, d: SwvData, nowNs?: number): SwvState {
     sleepSamples: s.sleepSamples + d.sleepSamples,
     dropped: s.dropped + d.dropped,
     stack,
-    lastNs: nowNs ?? Math.max(s.lastNs, ...d.exceptions.map((e) => e.t), ...d.data.map((e) => e.t), ...d.itm.map((e) => e.t)),
+    lastNs: nowNs ?? latest(s.lastNs, d),
   };
 }
 

@@ -1,13 +1,18 @@
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, memo, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { btLinked, type Runner } from "../sim/useRunner";
 import { scopeThrottled, Waveform } from "./Waveform";
 import type { ScopeSettings } from "./scopeSettings";
 import { RtosView } from "./RtosView";
 import { SourceView } from "./SourceView";
 import type { SourceUpload } from "../upload/useSourceUpload";
+import type { Attached } from "../upload/attach";
+import type { CodePanelProps } from "../code/CodePanel";
+
+// M33: the code editor and CodeMirror load only when the tab is first opened.
+const CodePanel = lazy(() => import("../code/CodePanel"));
 
 /** A fixed tab, or `bt:<part id>` for an HC-05's phone. */
-type Tab = "console" | "source" | "waveform" | "rtos" | "registers" | "memory" | `bt:${string}`;
+type Tab = "console" | "code" | "source" | "waveform" | "rtos" | "registers" | "memory" | `bt:${string}`;
 
 /** What changes with every frame: a hidden tab does not redraw for these (M31). */
 const LIVE: ReadonlySet<string> = new Set(["frame", "speed", "console", "bluetooth", "memory"]);
@@ -47,6 +52,9 @@ export function BottomPanel({
   onScope,
   status,
   upload,
+  code,
+  codeSources,
+  codeTabSeq = 0,
 }: {
   runner: Runner;
   parts?: { id: string; kind: string }[];
@@ -58,8 +66,21 @@ export function BottomPanel({
   status?: ReactNode;
   /** Project folder / zip uploads (M39): the source tab comes to the front on each. */
   upload?: SourceUpload;
+  /** The code tab (M33), without the runner. */
+  code?: Omit<CodePanelProps, "runner">;
+  /** The sources the loaded ELF was built from in the code tab (M33), for the source view. */
+  codeSources?: Attached | null;
+  /** Changes when the code tab should come to the front. */
+  codeTabSeq?: number;
 }) {
   const [tab, setTab] = useState<Tab>("console");
+  const [codeOpened, setCodeOpened] = useState(false);
+  useEffect(() => {
+    if (tab === "code") setCodeOpened(true);
+  }, [tab]);
+  useEffect(() => {
+    if (codeTabSeq > 0) setTab("code");
+  }, [codeTabSeq]);
   const uploadSeq = upload?.seq ?? 0;
   useEffect(() => {
     if (uploadSeq > 0) setTab("source");
@@ -86,6 +107,7 @@ export function BottomPanel({
           [
             ["console", "가상 콘솔 (USART2)"],
             ...btTabs,
+            ...(code ? ([["code", "코드"]] as [Tab, string][]) : []),
             ["source", "소스 (디버그)"],
             ["waveform", "파형 (프로브)"],
             ["rtos", "RTOS"],
@@ -103,8 +125,15 @@ export function BottomPanel({
         {tab === "console" && <Console runner={runner} />}
         {btPart && runner.bluetooth[btPart] && <Phone runner={runner} part={btPart} />}
         {/* Kept mounted: breakpoints and added sources survive tab switches. */}
+        {code && (tab === "code" || codeOpened) && (
+          <div className="tab-keep" hidden={tab !== "code"}>
+            <Suspense fallback={<p className="hint">편집기를 불러오는 중…</p>}>
+              <CodePanel runner={runner} {...code} />
+            </Suspense>
+          </div>
+        )}
         <div className="tab-keep" hidden={tab !== "source"}>
-          <KeptSource runner={runner} upload={upload} active={tab === "source"} />
+          <KeptSource runner={runner} upload={upload} built={codeSources ?? null} active={tab === "source"} />
         </div>
         {(tab === "waveform" || scopeOpened) && (
           <div className="tab-keep" hidden={tab !== "waveform"}>

@@ -291,7 +291,9 @@ export function LessonPanel({
     if (!runner.firmware) {
       setMessage(
         lesson.firmware === "upload"
-          ? "먼저 직접 만든 펌웨어를 'ELF 업로드'로 올리세요."
+          ? lesson.code
+            ? "먼저 아래 '코드' 탭에서 코드를 고치고 '빌드'하세요 (또는 직접 만든 펌웨어를 'ELF 업로드'로 올리세요)."
+            : "먼저 직접 만든 펌웨어를 'ELF 업로드'로 올리세요."
           : "펌웨어가 없습니다. 실습을 다시 시작하거나 예제를 불러오세요.",
       );
       return;
@@ -629,7 +631,8 @@ export function LessonPanel({
           )}
           <p className="hint" data-testid="lesson-firmware">
             펌웨어: {runner.firmware ?? "없음"}
-            {lesson.firmware === "upload" && " — 직접 빌드한 ELF를 'ELF 업로드'로 올리세요."}
+            {lesson.firmware === "upload" &&
+              (lesson.code ? " — 아래 '코드' 탭에서 고치고 '빌드'하면 그 펌웨어로 채점합니다." : " — 직접 빌드한 ELF를 'ELF 업로드'로 올리세요.")}
           </p>
           {complete && mine?.completedAt && (
             <div className="lesson-complete" data-testid="lesson-complete" role="status">

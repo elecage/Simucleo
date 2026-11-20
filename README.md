@@ -8,6 +8,8 @@
 
 ![PWM으로 RGB LED와 LD2 밝기 제어](docs/images/m3-pwm-rgb.png)
 
+> **M33: 브라우저 안 C 편집·빌드.** 아래 탭의 **코드**에서 예제의 `main.c`를 고치고 **▶ 빌드**를 누르면, 브라우저 안의 clang·lld(WebAssembly)가 컴파일·링크해 몇 초 안에 시뮬레이터에서 돌린다 — CubeIDE 설치도 서버도 필요 없다. 회로는 그대로이고, 고친 줄에 바로 중단점을 걸 수 있다. 오류는 그 줄에 밑줄로 보이고, `HAL_GPIO_T`까지 치면 HAL 함수가 시그니처·설명과 함께 자동완성되며, 인터럽트 안의 `HAL_Delay`, 켜지 않은 GPIO 클럭, `if (x = 5)`, `volatile` 빠진 공유 변수 같은 흔한 실수를 "왜?"와 함께 알려 준다. 코드는 프로젝트와 공유 링크에 함께 들어가고, **편집기 오프라인으로 받기**(약 20 MB)로 인터넷 없이도 빌드한다([브라우저 안에서 C 코드 고치고 빌드하기](docs/editor.md)).
+>
 > **M31: 저사양 기기 성능 모드.** 학교 크롬북·오래된 노트북에서도 실시간으로 돌게 했다. 아래 탭 줄의 **⚡ 성능**에서
 > **기기 점검**을 누르면 예제 3개를 화면 없이 몇 초씩 돌려 "충분 / 성능 모드 권장 / 느림"을 알려 준다. 성능 모드(자동·끄기·켜기)는
 > 화면만 가볍게 그린다 — 프레임을 묶어 초당 30 → 15 → 10 → 5번 그리고, 화면 밖 부품과 빛 번짐을 건너뛰고, 파형은 초당 10번.
@@ -239,3 +241,4 @@ gdb-multiarch firmware/hal-7seg-keypad/build/hal-7seg-keypad.elf -ex "target ext
 
 ## 라이선스
 MIT. Unicorn/QEMU(GPLv2)는 기본 배포판에 포함하지 않는다([ADR 0002](docs/adr/0002-cpu-backends.md)).
+함께 배포하는 컴파일러(LLVM), newlib, libgcc, HAL, CMSIS, CodeMirror의 라이선스는 [THIRD_PARTY.md](THIRD_PARTY.md).

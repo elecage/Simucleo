@@ -145,8 +145,12 @@ test("an LED and resistor wired to the board on the schematic only blink with th
   // simulated time: on a loaded runner the simulation can fall well behind
   // the clock, so the waits are generous and a failure says how far it got.
   const why = async () => `status: ${await status(page).textContent()}`;
-  await expect.poll(brightness, { timeout: 15000, message: await why() }).toBeGreaterThan(0.5);
-  await expect.poll(brightness, { timeout: 15000, message: await why() }).toBeLessThan(0.1); // off (a frame may average a little of the edge on a busy machine)
+  // Every 97 ms: expect.poll's default settles at 1 s, twice blinky's
+  // 500 ms, and at real time every look then fell on the same phase — the
+  // LED looked stuck on for the whole 15 s while it blinked.
+  const look = { timeout: 15000, intervals: [97] };
+  await expect.poll(brightness, { ...look, message: await why() }).toBeGreaterThan(0.5);
+  await expect.poll(brightness, { ...look, message: await why() }).toBeLessThan(0.1); // off (a frame may average a little of the edge on a busy machine)
   await view(page, "회로도");
   await expect(sch(page).locator(`[data-part=${led}] .sym-glow`)).toHaveCount(1, { timeout: 5000 });
   await page.screenshot({ path: "test-results/m18-schematic-wiring.png" });

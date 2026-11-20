@@ -72,5 +72,7 @@ export function normalizeLesson(raw: unknown): Lesson | null {
   const f = l.firmware;
   if (!(f === undefined || f === "upload" || (isObject(f) && typeof f.example === "string"))) delete out.firmware;
   if (l.grade !== undefined && !isObject(l.grade)) delete out.grade;
+  const c = l.code;
+  if (c !== undefined && !(isObject(c) && typeof c.example === "string" && (c.main === undefined || typeof c.main === "string" || Array.isArray(c.main)))) delete out.code;
   return out;
 }

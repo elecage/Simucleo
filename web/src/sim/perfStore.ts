@@ -27,6 +27,12 @@ export interface PerfState {
   ratio: number | null;
   /** The worker's own ratio (simulated / wall time while it runs). */
   workerRatio: number | null;
+  /**
+   * Share of the worker's thread spent simulating (0–1, M31): about 0.75
+   * flat out (12 ms of each 16 ms tick); a property of its pacing, not of
+   * how fast the machine is or what else runs on it.
+   */
+  workerShare: number;
   /** Mean page-thread cost of one display update (ms). */
   uiMs: number;
   /** Share of time the page thread spent on the display (0–1). */
@@ -52,6 +58,7 @@ let state: PerfState = {
   hz: FULL_HZ,
   ratio: null,
   workerRatio: null,
+  workerShare: 0,
   uiMs: 0,
   busy: 0,
   updateHz: 0,
@@ -153,6 +160,14 @@ export function perfUpdate(now: number, costMs: number, frames: number, simMs: n
     lastPublish = now;
     set({ ratio, workerRatio, uiMs: perUpdate, busy, updateHz, frameHz });
   }
+}
+
+/** The worker's simulating share, from its frames (published at most every 400 ms). */
+let lastShare = 0;
+export function perfWorkerShare(now: number, share: number) {
+  if (now - lastShare < 400 || share === state.workerShare) return;
+  lastShare = now;
+  set({ workerShare: share });
 }
 
 /** Test hook (E2E): read the state, force a mode. */

@@ -272,13 +272,15 @@ export type FromWorker =
       running: boolean;
       /** Achieved simulated-time / wall-time ratio. */
       speed: number;
+      /** Share of the worker's own time spent simulating, over the last 1.5 s (M31). */
+      work: number;
       /** The `epoch` of the last reset that asked for one (0 before). */
       epoch: number;
       /** See `FrameMsg.triggerGen`. */
       triggerGen: number;
     }
   /** M31: the frames made since the last batch, oldest first (performance mode). */
-  | { type: "frames"; frames: FrameMsg[]; speed: number }
+  | { type: "frames"; frames: FrameMsg[]; speed: number; work: number }
   | { type: "memory"; addr: number; bytes: Uint8Array }
   | { type: "sdImage"; part: string; bytes: Uint8Array }
   | { type: "sdSnapshot"; part: string; bytes: Uint8Array }

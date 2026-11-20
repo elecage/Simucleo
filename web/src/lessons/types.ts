@@ -1,6 +1,7 @@
 // Guided exercises (M16): the lesson file format. Lessons live in
 // web/lessons/*.json and are bundled with the site; docs/lessons.md
 // documents every field for teachers who write their own.
+import type { LessonCode } from "../code/project";
 
 /** A project as in a `.simucleo.json` file (only parts and wires are used). */
 export interface InlineProject {
@@ -234,6 +235,11 @@ export interface Lesson {
   challenges?: string[];
   start: LessonStart;
   firmware?: LessonFirmware;
+  /**
+   * "Write the code" (M33): the code tab starts from this (an example's
+   * main.c or the lesson's own); the student builds it in the browser.
+   */
+  code?: LessonCode;
   grade?: GradeSettings;
   steps: LessonStep[];
 }

@@ -37,6 +37,9 @@ import { useSourceUpload } from "./upload/useSourceUpload";
 import { fromDataTransfer } from "./upload/folder";
 import { ReceiveDialog } from "./share/ReceiveDialog";
 import { decodeShare, findFragment, type Received } from "./share/link";
+import { elfKey, type Attached } from "./upload/attach";
+import { lessonStarter, type CodeProject } from "./code/project";
+import { PROJECT_ROOT } from "./code/sdk";
 
 const WIRE_COLORS = ["#e53935", "#1e88e5", "#43a047", "#fdd835", "#fb8c00", "#8e24aa", "#212121"];
 const CATEGORY_LABEL: Record<string, string> = {
@@ -149,11 +152,18 @@ export function App() {
   // keeps the firmware, even one still on its way (a lesson's).
   const loadGen = useRef(0);
   const fwGen = useRef(0);
+  // M33: the code tab takes the project's code again when this changes; a
+  // project with code but no firmware (a share link) brings the tab forward
+  // and builds it.
+  const [codeSeq, setCodeSeq] = useState(0);
+  const [codeTabSeq, setCodeTabSeq] = useState(0);
+  const [autoBuild, setAutoBuild] = useState(false);
   const applyLoaded = useCallback(
     async (l: Loaded) => {
       ++loadGen.current;
       schOrder.current = [];
       setProject(l.project);
+      setCodeSeq((k) => k + 1);
       setScopeSeq((k) => k + 1);
       setFitKey((k) => k + 1);
       setSelected(null);
@@ -171,6 +181,8 @@ export function App() {
         if (bytes) load(fw.name, bytes, fw.example);
         else setNotice(`예제 펌웨어 ${fw.example}을 찾지 못했습니다.`);
       }
+      // Code but no firmware (a link, a "write the code" lesson): show the code.
+      if (l.project.code && !fw) setCodeTabSeq((k) => k + 1);
     },
     [load],
   );
@@ -184,13 +196,14 @@ export function App() {
     },
     [applyLoaded],
   );
-  const dirty = project.wires.length > 0 || project.parts.length > defaultProject().parts.length;
+  const dirty = project.wires.length > 0 || project.parts.length > defaultProject().parts.length || !!project.code;
   const confirmReplace = () => !dirty || window.confirm("지금 배선을 바꿀까요? 저장하지 않은 내용은 사라집니다.");
   const onNew = () => {
     if (!confirmReplace()) return;
     schOrder.current = [];
     setProject(defaultProject());
     setScopeSeq((k) => k + 1);
+    setCodeSeq((k) => k + 1);
     setProjectName("새 프로젝트");
     setSelected(null);
   };
@@ -274,6 +287,15 @@ export function App() {
       name: `실습: ${lesson.title}`,
       firmware: fw && fw !== "upload" ? { name: fw.example.replace(/\.elf$/, ""), example: fw.example } : undefined,
     };
+    // M33: a "write the code" lesson starts the code tab from its starter.
+    if (lesson.code) {
+      const files = await lessonStarter(lesson.code, examples);
+      if (!files) {
+        setNotice(`실습의 시작 코드를 받지 못했습니다 (${lesson.code.example}).`);
+        return false;
+      }
+      loaded = { ...loaded, project: { ...loaded.project, code: { template: "hal", base: lesson.code.example, files, active: files[0].path } } };
+    }
     await applyLoaded(loaded);
     return true;
   };
@@ -348,6 +370,8 @@ export function App() {
     setIncoming(null);
     restored.current = true;
     await applyLoaded(r.loaded);
+    // A link with code carries no ELF (M33): build it here.
+    if (r.loaded.project.code && !r.loaded.firmware) setAutoBuild(true);
     if (r.lesson && lessonById(r.lesson)) {
       await idbSet(ACTIVE_KEY, r.lesson);
       setLessonKey((k) => k + 1);
@@ -664,10 +688,40 @@ export function App() {
     setReveal((r) => ({ id, seq: (r?.seq ?? 0) + 1 }));
   };
 
+  // M33: the ELF the code tab built is the project's code: the link carries
+  // the sources (short) and the receiver builds them.
+  const builtKey = project.code?.built?.key;
+  const loadedIsCode = !!builtKey && !!firmwareBytes && elfKey(firmwareBytes) === builtKey;
   const shareFirmware = useMemo<ShareFirmware | undefined>(
-    () => (firmware ? { name: firmware, example: firmwareExample ?? undefined, bytes: firmwareBytes ?? undefined } : undefined),
-    [firmware, firmwareExample, firmwareBytes],
+    () => (firmware && !loadedIsCode ? { name: firmware, example: firmwareExample ?? undefined, bytes: firmwareBytes ?? undefined } : undefined),
+    [firmware, firmwareExample, firmwareBytes, loadedIsCode],
   );
+  /** The sources the loaded ELF was built from, as the source view's attached files. */
+  const builtFiles = project.code?.built?.files;
+  const codeSources = useMemo<Attached | null>(
+    () =>
+      loadedIsCode && builtFiles && builtKey
+        ? {
+            key: builtKey,
+            id: `code:${builtKey}`,
+            files: Object.fromEntries(builtFiles.map((f) => [`${PROJECT_ROOT}/${f.path}`, { from: f.path, text: f.text }])),
+            missing: [],
+            outside: [],
+            ties: [],
+            stored: true,
+            bytes: 0,
+          }
+        : null,
+    [loadedIsCode, builtFiles, builtKey],
+  );
+  const onCode = useCallback((code: CodeProject | undefined) => {
+    setProject((p) => {
+      if (code) return { ...p, code };
+      const { code: _drop, ...rest } = p;
+      void _drop;
+      return rest;
+    });
+  }, []);
 
   const deleteSelected = useCallback(() => {
     if (!selected) return;
@@ -866,6 +920,9 @@ export function App() {
         onScope={onScope}
         status={<PwaStatus extra={<PerfStatus runner={runner} />} />}
         upload={sourceUpload}
+        code={{ code: project.code, onCode, examples, codeSeq, autoBuild, onAutoBuilt: () => setAutoBuild(false) }}
+        codeSources={codeSources}
+        codeTabSeq={codeTabSeq}
       />
       {dropping && !teacherOpen && (
         <div className="drop-overlay" data-testid="drop-overlay">

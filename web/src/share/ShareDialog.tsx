@@ -111,6 +111,11 @@ export function ShareDialog({ project, name, firmware, lesson, result, mode = "s
                       ? `${firmware.name} ${fmtBytes(built.enc.elfOriginalBytes)}${built.enc.elfBytes !== built.enc.elfOriginalBytes ? ` → ${fmtBytes(built.enc.elfBytes)}` : ""}`
                       : `${firmware.name} (넣지 않음)`}
               </li>
+              {project.code && (
+                <li data-testid="share-code">
+                  코드: {project.code.files.map((f) => f.path.split("/").pop()).join(", ")} (소스만 넣음 — 받는 쪽에서 빌드)
+                </li>
+              )}
               {lesson && withLesson && <li>실습: {lesson.title}</li>}
               {result && withResult && (
                 <li>

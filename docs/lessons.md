@@ -64,7 +64,7 @@ Simucleo의 **📝 실습**은 단계별 안내와 자동 채점이 붙은 과�
 |---|---|---|---|---|---|---|---|---|
 | A | `led-on` | LED 켜기: 첫 GPIO 출력 | GPIO 출력, LED 극성, 옴의 법칙 | LED, 저항 | 처음부터 배선 | 입문 | 20분 | `lesson-led-on` |
 | A | `led-blink` | LED 깜빡이 배선 | `HAL_Delay`, 주기·주파수 | LED, 저항 | 처음부터 배선 | 입문 | 25분 | `hal-blinky` |
-| A | `blink-2hz` | 내 펌웨어 올리기: 2 Hz 깜빡이 | CubeIDE 빌드, ELF 업로드, 지연 계산 | (보드만) | 펌웨어 직접 작성·값 조정 | 중급 | 40분 | 직접 빌드 |
+| A | `blink-2hz` | 내 펌웨어 만들기: 2 Hz 깜빡이 | 코드 탭에서 고쳐 빌드(M33), 지연 계산, (선택) CubeIDE 빌드·ELF 업로드 | (보드만) | 펌웨어 직접 작성·값 조정 | 중급 | 40분 | 코드 탭·직접 빌드 |
 | A | `button-poll` | 버튼 폴링: 고장 난 회로 고치기 | 풀업 입력, 폴링 | 택트 스위치, LED, 저항 | 고장 난 회로 고치기 | 입문 | 30분 | `lesson-button-poll` |
 | A | `button-exti` | 버튼 인터럽트(EXTI)와 디바운스 | EXTI, WFI, 디바운스 | 택트 스위치, LED, 저항 | 처음부터 배선 | 초급 | 35분 | `hal-button-exti` |
 | A | `knight-rider` | 여러 LED 패턴: 나이트라이더 | GPIO 배열, 패턴 주기 | LED 4, 저항 4 | 부품만 놓인 회로 배선 | 초급 | 35분 | `lesson-knight-rider` |
@@ -304,6 +304,7 @@ JSON 파일을 나눠 주고 학생이 **레슨 파일 불러오기**를 하게 
 | `title`, `level`, `goal` | ✔ | 제목, 수준(입문·초급·중급 등 자유), 한두 문장의 목표 |
 | `start` | ✔ | 시작 회로: `"empty"`(보드 + 빈 브레드보드), `{ "example": "hal-adc-servo.simucleo.json" }`(`web/examples`의 예제 프로젝트), `{ "project": { "parts": [...], "wires": [...] } }`(직접 적은 회로, `.simucleo.json` 파일의 `parts`·`wires`와 같은 형식) |
 | `firmware` | | `{ "example": "hal-blinky.elf" }`(사이트에 들어 있는 예제 ELF, `web/scripts/examples.mjs` 목록), 또는 `"upload"`(학생이 직접 빌드해 올림). 없으면 펌웨어를 바꾸지 않음 |
+| `code` | | 코드 탭의 시작 코드(M33, "코드 쓰기" 실습): `{ "example": "hal-blinky.elf" }`이면 그 예제의 `main.c`로, `"main": ["줄", …]`(또는 문자열)을 주면 그 글로 시작한다. 예제는 코드 탭에서 고칠 수 있는 것(HAL 공통 틀)이어야 한다. 보통 `"firmware": "upload"`와 함께 쓴다 — 학생이 **▶ 빌드**한 펌웨어로 채점한다([editor.md](editor.md)) |
 | `grade.ms` | | 채점할 때 실행할 시뮬레이션 시간(ms). 없으면 검사마다 필요한 시간 중 가장 긴 것 |
 | `grade.stimuli` | | 채점 중에 할 조작(아래) |
 | `steps` | ✔ | 단계 목록. 각 단계는 `title`, `text`, `checks`, 그리고 고를 수 있는 `theory`(📘 개념 상자)와 `hint`(접힌 💡 힌트) — 둘 다 Markdown |
@@ -410,6 +411,7 @@ GND에 있는지는 `{ "type": "series", "from": "3V3", "to": "GND", "through": 
 | `order` | 숫자 |
 | `start` | `"empty"`, `{ "example": 문자열 }`, `{ "project": { "parts": [...], "wires": [...] } }` 중 하나 |
 | `firmware` | 없음, `"upload"`, `{ "example": 문자열 }` 중 하나 |
+| `code` | 없음, 또는 `{ "example": 문자열, "main": 문자열이나 문자열 배열(선택) }` |
 | `grade` | `ms`는 0보다 큰 숫자, `stimuli`는 배열이고 각 항목은 숫자 `at`과 `press`(문자열, `ms`는 숫자), `set`(`kind`·`prop`·`value`, 알려진 부품 종류), `send`(문자열, `to`는 `"console"`이나 알려진 부품 종류) 또는 `connect`(알려진 부품 종류) |
 | 과정 필드 (M32) | `track`은 비어 있지 않은 문자열, `minutes`는 0보다 큰 숫자, `objectives`·`mistakes`·`challenges`는 문자열 배열, `prereq`와 단계의 `theory`·`hint`는 문자열 또는 문자열 배열 |
 | `steps` | 비어 있지 않은 배열. 각 단계는 `title`, `text`(문자열 또는 문자열 배열), `checks`(배열) |

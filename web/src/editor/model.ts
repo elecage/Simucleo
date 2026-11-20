@@ -1,5 +1,6 @@
 import { PART_BY_KIND } from "../parts";
 import type { ScopeSettings } from "../run/scopeSettings";
+import type { CodeProject } from "../code/project";
 
 export interface PinRef {
   part: string;
@@ -35,6 +36,8 @@ export interface Project {
   wires: WireModel[];
   /** Waveform view settings, saved with the project (M25). */
   scope?: ScopeSettings;
+  /** The student's C sources, edited and built in the browser (M33). */
+  code?: CodeProject;
 }
 
 /** The circuit as the Rust core sees it (`simucleo_circuit::netlist::Circuit`). */

@@ -6,14 +6,25 @@
   "scripts": {
     "wasm": "cargo build --release --target wasm32-unknown-unknown -p simucleo-wasm && wasm-bindgen --target web --out-dir src/wasm/pkg ../target/wasm32-unknown-unknown/release/simucleo_wasm.wasm",
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/editor-sdk.mjs && tsc -b && vite build",
     "typecheck": "tsc -b",
     "test": "node --test test/*.test.ts",
     "preview": "vite preview",
     "e2e": "playwright test",
-    "examples": "node scripts/examples.mjs"
+    "examples": "node scripts/examples.mjs",
+    "editor": "node scripts/editor-sdk.mjs",
+    "test:toolchain": "SIMUCLEO_TOOLCHAIN_TEST=1 node --test test/m33-toolchain.test.ts"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "6.20.4",
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-cpp": "6.0.3",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/lint": "6.9.7",
+    "@codemirror/search": "6.7.2",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.15",
+    "@lezer/highlight": "1.2.5",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
@@ -22,6 +33,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "microbit-clang-wasm": "21.11.0-alpha.3",
     "typescript": "~5.8.3",
     "vite": "^7.0.0"
   }

@@ -18,7 +18,7 @@ import type {
 import type { CircuitJson } from "../editor/model";
 import { boardSignals, busCatalog } from "../parts";
 import { dropStaleCaptures } from "./staleCapture";
-import { connectPerf, perfLongTask, perfRunning, perfUpdate } from "./perfStore";
+import { connectPerf, perfLongTask, perfRunning, perfUpdate, perfWorkerShare } from "./perfStore";
 
 const CONSOLE_LIMIT = 20_000;
 const CHAT_LIMIT = 200;
@@ -330,9 +330,11 @@ export function useRunner(): Runner {
           setAssigned((a) => ({ n: a.n + 1, target: m.target, result: m.result }));
           break;
         case "frame":
+          perfWorkerShare(performance.now(), m.work);
           deliver([{ frame: m.frame, console: m.console, running: m.running, epoch: m.epoch, triggerGen: m.triggerGen }], m.speed, false);
           break;
         case "frames":
+          perfWorkerShare(performance.now(), m.work);
           if (m.frames.length) deliver(m.frames, m.speed, true);
           else w.postMessage({ type: "ack" } satisfies ToWorker);
           break;

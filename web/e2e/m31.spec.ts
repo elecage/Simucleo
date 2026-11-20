@@ -19,6 +19,7 @@ interface Perf {
   hz: number;
   ratio: number | null;
   workerRatio: number | null;
+  workerShare: number;
   busy: number;
   uiMs: number;
 }
@@ -239,8 +240,22 @@ test("lesson grading gives the same result with performance mode off and forced 
 test("grading in performance mode: keypad presses timed on frames still reach the firmware", async ({ page }) => {
   // Frames batched at a few hertz would bring a 150 ms press and its
   // release to the page together, after the simulation passed both:
-  // grading takes single frames instead.
+  // grading takes single frames instead (the worker's messages counted).
   test.setTimeout(120_000);
+  await page.addInitScript(() => {
+    const counts: Record<string, number> = {};
+    (window as unknown as { __workerMsgs: Record<string, number> }).__workerMsgs = counts;
+    const W = window.Worker;
+    window.Worker = class extends W {
+      constructor(url: string | URL, opts?: WorkerOptions) {
+        super(url, opts);
+        this.addEventListener("message", (e: MessageEvent<{ type: string }>) => {
+          counts[e.data.type] = (counts[e.data.type] ?? 0) + 1;
+        });
+      }
+    };
+  });
+  const msgs = () => page.evaluate(() => ({ ...(window as unknown as { __workerMsgs: Record<string, number> }).__workerMsgs }));
   const panel = page.getByRole("complementary", { name: "실습" });
   await page.goto("/");
   await expect(status(page)).toContainText("예제를");
@@ -249,12 +264,16 @@ test("grading in performance mode: keypad presses timed on frames still reach th
   await panel.locator('[data-lesson="seven-segment"]').getByRole("button", { name: "시작" }).click();
   await page.getByTestId("project-input").setInputFiles("public/examples/hal-7seg-keypad.simucleo.json");
   await expect(panel.locator(".lesson-check").first()).toBeVisible();
-  const cdp = await throttle(page, 4);
   await panel.getByRole("button", { name: "채점", exact: true }).click();
   await expect(panel.getByTestId("grade-progress")).toBeVisible();
+  const before = await msgs();
   await expect(panel.getByTestId("grade-progress")).toHaveCount(0, { timeout: 90_000 });
+  const after = await msgs();
   expect((await perf(page)).lite).toBe(true);
-  await cdp.detach();
+  const n = (k: string) => (after[k] ?? 0) - (before[k] ?? 0);
+  expect(n("frame"), JSON.stringify({ before, after })).toBeGreaterThan(30);
+  // (At most the one batch on its way when grading began.)
+  expect(n("frames"), JSON.stringify({ before, after })).toBeLessThanOrEqual(1);
   const checks = await panel
     .getByTestId("lesson-check")
     .evaluateAll((l) => l.map((e) => `${e.getAttribute("data-status")} ${e.textContent}`));
@@ -334,15 +353,19 @@ test("the worker spends most of its time simulating: flat out it gets near the h
   const [raw] = await page.evaluate(() =>
     (window as unknown as { __simucleoBench(n: string[], f?: unknown, ms?: number): Promise<{ ratio: number }[]> }).__simucleoBench(["hal-bldc-pwm"], undefined, 3000),
   );
-  // The worker computes 12 ms of every 16, so "최대" reaches about ×0.75 of
-  // that; before M31 it slept 16 ms after each 12 ms of work: about ×0.43,
-  // and a heavy example fell below real time on a machine fast enough for it.
+  // The worker computes 12 ms of every 16: flat out, about 0.75 of its
+  // thread goes to the simulation; before M31 it slept 16 ms after each
+  // 12 ms of work: about 0.43, and a heavy example fell below real time on
+  // a machine fast enough for it. The share is the worker's own measure:
+  // the speeds of two runs at different moments, with another test on the
+  // same two cores, differ by more than that (x0.6 to x1.45 of each other).
   await page.getByLabel("실행 속도").selectOption("최대");
   await page.getByRole("button", { name: "▶ 실행" }).click();
   await page.waitForTimeout(5000);
   const p = await perf(page);
-  console.log(`headless ×${raw.ratio.toFixed(2)}, flat out in the app ×${p.workerRatio!.toFixed(2)}`);
-  expect(p.workerRatio! / raw.ratio).toBeGreaterThan(0.6);
+  console.log(`headless ×${raw.ratio.toFixed(2)}, flat out in the app ×${p.workerRatio!.toFixed(2)}, worker busy ${(p.workerShare * 100).toFixed(0)} %`);
+  expect(p.workerShare).toBeGreaterThan(0.65);
+  expect(p.workerShare).toBeLessThan(0.9);
 });
 
 test("the ratio on the status line is what really happens: simulated time over wall time", async ({ page }) => {

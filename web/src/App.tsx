@@ -139,13 +139,16 @@ export function App() {
     (scope: ScopeSettings) => setProject((p) => (p.scope === scope ? p : { ...p, scope })),
     [],
   );
-  // Every load (a project, an example, a link, the autosave) takes a number;
-  // one that finishes after a newer one started gives way, so a slow restore
-  // of the last session never replaces what the user has just opened.
+  // Every load (a project, an example, a link, the autosave, an upload)
+  // takes a number; one that finishes after a newer one started gives way,
+  // so a slow restore of the last session never replaces what the user has
+  // just opened. Firmware has its own count: a project file without firmware
+  // keeps the firmware, even one still on its way (a lesson's).
   const loadGen = useRef(0);
+  const fwGen = useRef(0);
   const applyLoaded = useCallback(
     async (l: Loaded) => {
-      const gen = ++loadGen.current;
+      ++loadGen.current;
       schOrder.current = [];
       setProject(l.project);
       setScopeSeq((k) => k + 1);
@@ -155,11 +158,13 @@ export function App() {
       setNotice(l.notes.length ? l.notes.join("\n") : null);
       const fw = l.firmware;
       if (fw?.data) {
+        ++fwGen.current;
         load(fw.name, fromBase64(fw.data).buffer as ArrayBuffer, fw.example);
       } else if (fw?.example) {
+        const gen = ++fwGen.current;
         const r = await fetch(`./examples/${fw.example}`);
         const bytes = r.ok ? await r.arrayBuffer() : null;
-        if (gen !== loadGen.current) return;
+        if (gen !== fwGen.current) return;
         if (bytes) load(fw.name, bytes, fw.example);
         else setNotice(`예제 펌웨어 ${fw.example}을 찾지 못했습니다.`);
       }
@@ -352,7 +357,10 @@ export function App() {
   };
 
   // ------------------------------------- project folder / zip (M39)
-  const userLoad = useCallback(() => void ++loadGen.current, []);
+  const userLoad = useCallback(() => {
+    ++loadGen.current;
+    ++fwGen.current;
+  }, []);
   const sourceUpload = useSourceUpload(runner, userLoad);
   // Files dragged over the window: a fixed overlay (it moves nothing), and a
   // drop anywhere that nobody else took (the teacher view takes its own).

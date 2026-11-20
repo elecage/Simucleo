@@ -114,7 +114,7 @@ export const APP: Record<string, string> = {
   "부품 {parts}개 · 와이어 {wires}개": "{parts} {parts#part/parts} · {wires} {wires#wire/wires}",
   "파형 설정": "waveform settings",
   "펌웨어:": "Firmware:",
-  "없음": "none",
+  "없음": "None",
   "{name} (링크에 든 ELF {size}{strip})": "{name} (ELF in the link, {size}{strip})",
   "예제 {name}": "Example {name}",
   "실습:": "Lesson:",

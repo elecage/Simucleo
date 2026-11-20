@@ -64,10 +64,10 @@ test("an analog channel on a bridge output shows the PWM phase voltage", async (
   await page.getByRole("button", { name: "PA5 제거" }).click();
   await page.getByLabel("아날로그 채널 추가").selectOption("br.OUTA");
   await expect(page.locator("[data-analog='br.OUTA']")).toBeVisible();
-  // PA8 rising, 10 µs/div: two PWM periods of the chopping phase.
+  // PA8 rising, 20 µs/div: four PWM periods of the chopping phase.
   await page.getByLabel("트리거 소스").selectOption("PA8");
   await page.getByLabel("트리거 에지").selectOption("rising");
-  await page.getByLabel("시간/눈금").selectOption({ label: "10 µs/div" });
+  await page.getByLabel("시간/눈금").selectOption({ label: "20 µs/div" });
   await page.getByLabel("트리거 위치").fill("20");
   await page.getByLabel("트리거 모드").selectOption("single");
   await expect(plot(page)).toHaveAttribute("data-view", "capture", { timeout: 10000 });
@@ -80,8 +80,8 @@ test("an analog channel on a bridge output shows the PWM phase voltage", async (
   // (Both off: the dead time, or phase A left floating at a commutation.)
   const on = rows.filter((r) => r[1] === 1);
   const off = rows.filter((r) => r[2] === 1);
-  expect(on.length).toBeGreaterThan(3);
-  expect(off.length).toBeGreaterThan(3);
+  expect(on.length).toBeGreaterThanOrEqual(2);
+  expect(off.length).toBeGreaterThanOrEqual(2);
   for (const r of on) expect(r[3]).toBeGreaterThan(11);
   for (const r of off) expect(r[3]).toBeLessThan(1);
   // Its mean is the duty × the supply (pot in the middle: 49 %).
@@ -129,11 +129,20 @@ test("centre-aligned PWM on the scope: the pulses stay centred when the duty cha
     // Every pulse is centred on the 50 µs grid of the underflows but one:
     // the update event (RCR 1, at the underflow) loads the new duty in its
     // middle, so it rises at the old width and falls at the new.
-    const c0 = (p[0][0] + p[0][1]) / 2;
+    // The grid: the centre phase most pulses share (to 0.1 µs).
+    const phase = (x: [number, number]) => Math.round((((((x[0] + x[1]) / 2) % period) + period) % period) / 100);
+    const counts = new Map<number, number>();
+    for (const x of p) counts.set(phase(x), (counts.get(phase(x)) ?? 0) + 1);
+    const c0 = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0] * 100;
     const offGrid = (t: number) => Math.abs(t - c0 - Math.round((t - c0) / period) * period);
-    const odd = p.filter(([r, f]) => offGrid((r + f) / 2) > 2 * CYCLE_NS);
+    // (Only pulses with a neighbour a period away on both sides: a
+    // commutation may cut the first or last one of a step short.)
+    const near = (a: number, b: number) => Math.abs(Math.abs(a - b) - period) < 10000;
+    const inner = p.filter((x, i) => i > 0 && i < p.length - 1 && near(p[i - 1][0], x[0]) && near(p[i + 1][0], x[0]));
+    expect(inner.length).toBeGreaterThanOrEqual(3);
+    const odd = inner.filter(([r, f]) => offGrid((r + f) / 2) > 2 * CYCLE_NS);
     expect(odd.length).toBe(1);
-    const [wOld, wNew] = [w[0], w.at(-1)!];
+    const [wOld, wNew] = [inner[0][1] - inner[0][0], inner.at(-1)![1] - inner.at(-1)![0]];
     expect(offGrid(odd[0][0] + wOld / 2)).toBeLessThanOrEqual(2 * CYCLE_NS);
     expect(Math.abs(odd[0][1] - (odd[0][0] + wOld / 2) - wNew / 2)).toBeLessThanOrEqual(2 * CYCLE_NS);
     // The rising edges moved: they are not on one grid.

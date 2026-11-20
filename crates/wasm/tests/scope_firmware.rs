@@ -877,19 +877,35 @@ fn center_aligned_pwm_pulses_stay_centred_when_the_duty_changes() {
         // preloaded CCR1 is loaded there (RCR = 1: one update per period,
         // at the underflow), so that pulse rose at the old width and falls
         // at the new one (RM0368 §12.3.10). Rising edges are not on a grid.
-        let c0 = (p[0].0 + p[0].1) / 2.0;
+        // The grid: the centre phase most pulses share (to 0.1 µs).
+        let phase =
+            |x: &(f64, f64)| (((x.0 + x.1) / 2.0).rem_euclid(period) / 100.0).round() as i64;
+        let mut counts = std::collections::HashMap::new();
+        for x in &p {
+            *counts.entry(phase(x)).or_insert(0) += 1;
+        }
+        let c0 = *counts.iter().max_by_key(|(_, &n)| n).unwrap().0 as f64 * 100.0;
         let off_grid = |t: f64| {
             let k = ((t - c0) / period).round();
             (t - c0 - k * period).abs()
         };
-        let odd: Vec<_> = p
+        // (Only pulses with a neighbour a period away on both sides: a
+        // commutation may cut the first or last one of a step short.)
+        let near = |a: f64, b: f64| ((a - b).abs() - period).abs() < 10_000.0;
+        let inner: Vec<(f64, f64)> = (1..p.len().saturating_sub(1))
+            .filter(|&i| near(p[i - 1].0, p[i].0) && near(p[i + 1].0, p[i].0))
+            .map(|i| p[i])
+            .collect();
+        assert!(inner.len() >= 3, "{p:?}");
+        let odd: Vec<_> = inner
             .iter()
             .filter(|(r, f)| off_grid((r + f) / 2.0) > 2.0 * CYCLE_NS)
             .collect();
+
         assert_eq!(odd.len(), 1, "{p:?}");
         let (r, f) = *odd[0];
-        let w_old = p[0].1 - p[0].0;
-        let w_new = p.last().unwrap().1 - p.last().unwrap().0;
+        let w_old = inner[0].1 - inner[0].0;
+        let w_new = inner.last().unwrap().1 - inner.last().unwrap().0;
         assert!(w_new - w_old > 10_000.0, "{p:?}");
         let mid = r + w_old / 2.0;
         assert!(off_grid(mid) <= 2.0 * CYCLE_NS, "{p:?}");

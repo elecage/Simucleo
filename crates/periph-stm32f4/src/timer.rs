@@ -332,6 +332,9 @@ pub struct Timer {
     /// Repetition down-counter (REP_CNT): an update event when an
     /// overflow/underflow finds it at 0, then it is reloaded from RCR.
     rep: u32,
+    /// When the last update event loaded the shadow registers (a PWM
+    /// reference that changed since cannot have changed before it).
+    uev_at: Cycles,
 }
 
 impl Timer {
@@ -374,6 +377,7 @@ impl Timer {
             bk_level: false,
             cdown: false,
             rep: 0,
+            uev_at: 0,
         }
     }
 
@@ -850,7 +854,9 @@ impl Timer {
             // The reference changes where the counter takes CCRx: counting
             // up (position CCRx) and counting down (2·ARR − CCRx).
             if ccr == 0 || ccr >= arr {
-                return None;
+                // Always off or always on: it changed at the update event
+                // that loaded this CCRx.
+                return Some(self.uev_at);
             }
             let (p, period) = (self.position(), 2 * arr);
             let back = [ccr, period - ccr]
@@ -858,7 +864,10 @@ impl Timer {
                 .into_iter()
                 .min()
                 .unwrap_or(0);
-            return Some(self.ref_cycle.saturating_sub(back * self.tick()));
+            // A new CCRx loaded at the update event changes the reference
+            // there (from 0 % to a pulse at the underflow, say).
+            let at = self.ref_cycle.saturating_sub(back * self.tick());
+            return Some(at.max(self.uev_at));
         }
         let back = if self.down() {
             if cnt <= ccr && ccr < arr {
@@ -915,6 +924,7 @@ impl Timer {
             let update = self.turns(1) == 1;
             if update && self.cr1 & UDIS == 0 {
                 self.update_event(true);
+                self.uev_at = self.ref_cycle;
             }
             let flag = self.flags_match(self.down());
             for ch in 0..self.info.channels as usize {
@@ -1237,6 +1247,7 @@ impl Timer {
                     self.cnt = if self.down() { self.arr } else { 0 };
                     self.rep = self.rcr;
                     self.ref_cycle = now;
+                    self.uev_at = now;
                     if self.cr1 & UDIS == 0 {
                         self.update_event(self.cr1 & URS == 0);
                     }
@@ -1980,5 +1991,27 @@ mod tests {
         t.sync(163);
         assert_eq!((t.output(0), t.output_n(0)), (c, c));
         assert_eq!(t.next_event(), Some(170));
+        // A preloaded CCR1 going from 0 to 40 takes effect at the update
+        // event (the underflow at 200): OC1REF rises there, CH1N falls
+        // there and CH1 waits the dead time — even looked at late.
+        let mut t = tim1();
+        t.write(0x2C, 100, u32::MAX, 0);
+        t.write(0x18, 6 << 4 | 1 << 3, u32::MAX, 0);
+        t.write(0x20, 1 | 4, u32::MAX, 0);
+        t.write(0x44, MOE | 10, u32::MAX, 0);
+        t.write(0x00, CEN | ARPE | 1 << CMS_SHIFT, u32::MAX, 0);
+        t.sync(150);
+        assert_eq!((t.output(0), t.output_n(0)), (c, s));
+        t.write(0x34, 40, u32::MAX, 150);
+        assert_eq!(
+            (t.output(0), t.output_n(0)),
+            (c, s),
+            "not before the update"
+        );
+        t.sync(203);
+        assert_eq!((t.output(0), t.output_n(0)), (c, c));
+        assert_eq!(t.next_event(), Some(210));
+        t.sync(210);
+        assert_eq!((t.output(0), t.output_n(0)), (s, c));
     }
 }

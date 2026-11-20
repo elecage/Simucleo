@@ -1159,6 +1159,8 @@ pub struct HallBldc {
     net_b: [[f64; 3]; 3],
     /// A phase is chopped by PWM (look ahead less far).
     pwm: bool,
+    /// No hall sensors (M28): nothing to look ahead for.
+    pub sensorless: bool,
 }
 
 impl Default for HallBldc {
@@ -1189,6 +1191,7 @@ impl HallBldc {
             net_a: [0.0; 3],
             net_b: [[0.0; 3]; 3],
             pwm: false,
+            sensorless: false,
         }
     }
 
@@ -1338,7 +1341,14 @@ impl HallBldc {
         let driven = self.current.iter().any(|i| i.abs() > 0.5);
         if driven {
             let (t0, a0) = *self.stuck_since.get_or_insert((now, self.theta));
-            if now - t0 >= BLDC_STALL_TIME {
+            // A sensorless start holds the rotor still on purpose for a
+            // while (alignment): watch longer.
+            let window = if self.sensorless {
+                5.0 * BLDC_STALL_TIME
+            } else {
+                BLDC_STALL_TIME
+            };
+            if now - t0 >= window {
                 let stuck = (self.theta - a0).abs() < BLDC_STALL_SPEED * (now - t0);
                 if stuck && !self.stalled {
                     self.stall_new = true;
@@ -1421,7 +1431,7 @@ impl HallBldc {
     fn predict(&mut self) {
         self.next_hall = None;
         self.predicted_at = self.time;
-        if self.omega == 0.0 && self.idle() {
+        if self.sensorless || (self.omega == 0.0 && self.idle()) {
             return;
         }
         let mut probe = self.clone();

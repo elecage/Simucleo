@@ -3227,3 +3227,124 @@ fn bldc_pwm_speed_follows_the_pot_and_the_break_stops_driving() {
         board.circuit_warnings()
     );
 }
+
+// ---------------------------------------------------------------- M28
+
+/// The sensorless example as the web loads it (`pot`: wiper position).
+fn sensorless_circuit(pot: f64) -> simucleo_nucleo::Circuit {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../web/examples/hal-bldc-sensorless.simucleo.json"
+    );
+    let mut project: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    for p in project["parts"].as_array_mut().unwrap() {
+        if p["id"] == "pot" {
+            p["props"]["position"] = pot.into();
+        }
+    }
+    serde_json::from_value(serde_json::json!({
+        "parts": project["parts"],
+        "wires": project["wires"],
+    }))
+    .unwrap()
+}
+
+fn m28_signals() -> std::collections::HashMap<String, String> {
+    let mut s = m23_signals();
+    for (a, b) in [
+        ("A1", "PA1"),
+        ("A2", "PA4"),
+        ("A4", "PC1"),
+        ("A5", "PC0"),
+        ("CN10_24", "PB1"),
+        ("GND_P1", "GND"),
+        ("GND_P2", "GND"),
+    ] {
+        s.insert(a.to_string(), b.to_string());
+    }
+    s
+}
+
+/// The last line the firmware printed with `state` in it.
+fn last_state_line<'a>(text: &'a str, state: &str) -> Option<&'a str> {
+    text.lines().rev().find(|l| l.starts_with(state))
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-bldc-sensorless"]
+fn sensorless_bldc_aligns_ramps_and_closes_the_loop_on_zero_crossings() {
+    let signals = m28_signals();
+    let mut circuit = sensorless_circuit(0.5);
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-bldc-sensorless", "hal-bldc-sensorless"))
+        .unwrap();
+    board.set_circuit(&circuit, &simucleo_nucleo::BusCatalog::default(), &signals);
+    // Aligning: held still.
+    board.run_for_ns(400e6);
+    let v = board.circuit_frame(0.4);
+    assert!(part_visual(&v, "mot").rpm.unwrap().abs() < 100.0);
+    // Ramp, then closed loop: steady at about half the no-load speed.
+    board.run_for_ns(1600e6);
+    board.circuit_frame(1.6);
+    board.run_for_ns(1000e6);
+    let mid = part_visual(&board.circuit_frame(1.0), "mot").rpm.unwrap();
+    assert!(mid > 1400.0 && mid < 2000.0, "{mid}");
+    let text = console_text(&mut board);
+    assert!(text.contains("center-aligned 20 kHz, RCR 1"), "{text}");
+    let line = last_state_line(&text, "closed").unwrap_or_else(|| panic!("{text}"));
+    assert!(line.contains("duty  54 %"), "{line}");
+    assert!(
+        (printed_rpm_zc(line) - mid).abs() < 100.0,
+        "{line} vs {mid}"
+    );
+    assert!(!text.contains("lost the rotor"), "{text}");
+    // It commutated on crossings, not on timeouts: the count keeps pace.
+    let zc: u32 = line.rsplit(' ').next().unwrap().parse().unwrap();
+    assert!(zc > 500, "{line}");
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+    // The pot towards 3V3: faster; towards GND: slower.
+    set_part_props(
+        &mut board,
+        &mut circuit,
+        "pot",
+        serde_json::json!({"position": 0.1}),
+        &signals,
+    );
+    board.run_for_ns(1500e6);
+    board.circuit_frame(1.5);
+    board.run_for_ns(500e6);
+    let fast = part_visual(&board.circuit_frame(0.5), "mot").rpm.unwrap();
+    assert!(fast > mid * 1.3, "{mid} → {fast}");
+    set_part_props(
+        &mut board,
+        &mut circuit,
+        "pot",
+        serde_json::json!({"position": 0.9}),
+        &signals,
+    );
+    board.run_for_ns(1500e6);
+    board.circuit_frame(1.5);
+    board.run_for_ns(500e6);
+    let slow = part_visual(&board.circuit_frame(0.5), "mot").rpm.unwrap();
+    assert!(slow < mid * 0.7 && slow > 200.0, "{mid} → {slow}");
+    let text = console_text(&mut board);
+    assert!(!text.contains("lost the rotor"), "{text}");
+    let line = last_state_line(&text, "closed").unwrap();
+    assert!(
+        (printed_rpm_zc(line) - slow).abs() < 100.0,
+        "{line} vs {slow}"
+    );
+}
+
+/// The rpm in a line `closed duty  54 %  rpm 1711  zc 990`.
+fn printed_rpm_zc(line: &str) -> f64 {
+    let w: Vec<&str> = line.split_whitespace().collect();
+    let i = w.iter().position(|&x| x == "rpm").unwrap();
+    w[i + 1].parse().unwrap()
+}

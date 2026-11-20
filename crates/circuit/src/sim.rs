@@ -729,6 +729,8 @@ struct BldcPart {
     halls: [usize; 3],
     /// Its windings' inputs in the solve (U, V, W to the star point).
     inputs: [usize; 3],
+    /// No hall sensors (M28, part `bldc`).
+    sensorless: bool,
 }
 
 /// A 3-phase bridge module (DRV8302 class): INH/INL per phase.
@@ -2034,18 +2036,26 @@ impl CircuitSim {
                     e.kv = kv;
                     e.load = load;
                 }
-                "bldc-hall" => {
+                "bldc-hall" | "bldc" => {
                     // 3-phase BLDC (star) with three open-collector hall
-                    // sensors (device outputs 0–2: A, B, C).
+                    // sensors (device outputs 0–2: A, B, C); "bldc" (M28)
+                    // is the same motor without them (sensorless).
                     add_visual(&p.id, VisualKind::Motion, 0);
                     let pin = |n: &str| PinRef::new(&p.id, n);
-                    let halls = [
-                        node(pin("HA"), &mut map),
-                        node(pin("HB"), &mut map),
-                        node(pin("HC"), &mut map),
-                    ];
-                    for (i, &h) in halls.iter().enumerate() {
-                        dev_outputs.push((p.id.clone(), h, i));
+                    let sensorless = p.kind == "bldc";
+                    let mut halls = [0; 3];
+                    let (mut vcc, mut gnd) = (0, 0);
+                    if !sensorless {
+                        halls = [
+                            node(pin("HA"), &mut map),
+                            node(pin("HB"), &mut map),
+                            node(pin("HC"), &mut map),
+                        ];
+                        for (i, &h) in halls.iter().enumerate() {
+                            dev_outputs.push((p.id.clone(), h, i));
+                        }
+                        vcc = node(pin("VCC"), &mut map);
+                        gnd = node(pin("GND"), &mut map);
                     }
                     let phases = [
                         node(pin("U"), &mut map),
@@ -2072,14 +2082,15 @@ impl CircuitSim {
                         id: p.id.clone(),
                         phases,
                         links: [None, None, None],
-                        vcc: node(pin("VCC"), &mut map),
-                        gnd: node(pin("GND"), &mut map),
+                        vcc,
+                        gnd,
                         halls,
                         inputs,
+                        sensorless,
                     });
                     let load = prop_f64(p, "load", 0.0).clamp(0.0, 100.0) / 100.0;
                     match self.devices.get_mut(&p.id) {
-                        Some(Device::Bldc(b)) => {
+                        Some(Device::Bldc(b)) if b.sensorless == sensorless => {
                             b.advance(now_s);
                             b.load = load;
                         }
@@ -2087,6 +2098,7 @@ impl CircuitSim {
                             let mut b = HallBldc::new();
                             b.rebase(now_s);
                             b.load = load;
+                            b.sensorless = sensorless;
                             self.devices.insert(p.id.clone(), Device::Bldc(Box::new(b)));
                         }
                     }
@@ -4061,13 +4073,16 @@ impl CircuitSim {
                         }
                         v.angle = Some(b.degrees());
                         v.rpm = Some(b.rpm());
-                        v.unpowered = !b.powered;
+                        let on = b.powered || b.sensorless;
+                        v.unpowered = !on;
                         let h = b.hall();
-                        v.text = Some(format!("{}{}{}", h & 1, h >> 1 & 1, h >> 2 & 1));
+                        if !b.sensorless {
+                            v.text = Some(format!("{}{}{}", h & 1, h >> 1 & 1, h >> 2 & 1));
+                        }
                         v.motor = Some(MotorView {
                             coils: b.current.iter().map(|i| i / 6.0).collect(),
                             stalled: b.stalled,
-                            state: if b.powered { "on" } else { "off" }.into(),
+                            state: if on { "on" } else { "off" }.into(),
                             ..Default::default()
                         });
                     } else if let Some((out, supply)) = self.phase_out.get(&slot.id) {
@@ -4796,6 +4811,9 @@ fn hall_pull_ups(
     mcu: &[((u8, u8), usize)],
     warnings: &mut BTreeSet<String>,
 ) {
+    if part.sensorless {
+        return;
+    }
     for (k, &h) in part.halls.iter().enumerate() {
         let floats = b.powered
             && b.hall_output(k).is_none()
@@ -4827,7 +4845,14 @@ fn shoot_through_warnings(id: &str, shoot: [bool; 3], warnings: &mut BTreeSet<St
 
 /// Report a BLDC that stalled since the last look.
 fn bldc_warnings(id: &str, b: &mut HallBldc, warnings: &mut BTreeSet<String>) {
-    if std::mem::take(&mut b.stall_new) {
+    if !std::mem::take(&mut b.stall_new) {
+        return;
+    }
+    if b.sensorless {
+        warnings.insert(format!(
+            "{id}: the motor has current but does not turn — the commutation is not in step with the rotor (sensorless: align, then ramp up slowly enough before following the back-EMF zero crossings), or the load is more than its torque"
+        ));
+    } else {
         warnings.insert(format!(
             "{id}: the motor has current but does not turn — the commutation does not match the hall sensors (check the table and which hall and phase goes where), or the load is more than its torque"
         ));
@@ -7554,5 +7579,162 @@ mod tests {
         t += 0.2;
         motor(&mut s, t, "mot");
         assert!((probe(&s, "drv.1A") - probe(&s, "drv.1B")).abs() < 1e-3);
+    }
+
+    /// A sensorless BLDC on a 3-phase bridge (INH/INL on PB0–PB5), each
+    /// phase through 10 k / 2.2 k to PA1, PA4, PC1, and a virtual neutral
+    /// (10 k from each of those) on PC0.
+    fn sensorless_sim() -> CircuitSim {
+        let mut parts = vec![
+            part("br", "bridge-3ph", &[]),
+            part("mot", "bldc", &[]),
+            part("bat", "battery", &[("voltage", "12")]),
+        ];
+        let mut wires = vec![
+            wire(("bat", "+"), ("br", "PVDD")),
+            wire(("bat", "-"), ("mcu", "GND")),
+            wire(("br", "GND"), ("mcu", "GND")),
+        ];
+        for (i, n) in ["INHA", "INLA", "INHB", "INLB", "INHC", "INLC"]
+            .iter()
+            .enumerate()
+        {
+            wires.push(wire(("mcu", &format!("PB{i}")), ("br", n)));
+        }
+        for (out, ph, pin) in [
+            ("OUTA", "U", "PA1"),
+            ("OUTB", "V", "PA4"),
+            ("OUTC", "W", "PC1"),
+        ] {
+            let (a, b, n) = (format!("{ph}1"), format!("{ph}2"), format!("{ph}n"));
+            parts.push(part(&a, "resistor", &[("ohms", "10k")]));
+            parts.push(part(&b, "resistor", &[("ohms", "2.2k")]));
+            parts.push(part(&n, "resistor", &[("ohms", "10k")]));
+            wires.push(wire(("br", out), ("mot", ph)));
+            wires.push(wire(("br", out), (&a, "1")));
+            wires.push(wire((&a, "2"), (&b, "1")));
+            wires.push(wire((&b, "2"), ("mcu", "GND")));
+            wires.push(wire((&a, "2"), ("mcu", pin)));
+            wires.push(wire((&a, "2"), (&n, "1")));
+            wires.push(wire((&n, "2"), ("mcu", "PC0")));
+        }
+        sim(parts, wires)
+    }
+
+    /// The firmware's sensorless six-step (`hal-bldc-sensorless`) in Rust:
+    /// 20 kHz PWM on the high side (`duty`), the floating phase and the
+    /// neutral read at the middle of the on-time, a commutation half a step
+    /// after each zero crossing; aligned and ramped open loop first.
+    /// Returns (commutations, crossings) in closed loop and, for each
+    /// crossing, the floating phase's back-EMF over its amplitude then.
+    fn sensorless_run(s: &mut CircuitSim, secs: f64, duty: f64) -> (u32, u32, Vec<f64>) {
+        const HIGH: [usize; 6] = [0, 1, 1, 2, 2, 0];
+        const LOW: [usize; 6] = [2, 2, 0, 0, 1, 1];
+        const FLOAT: [usize; 6] = [1, 0, 2, 1, 0, 2];
+        const RISING: [bool; 6] = [true, false, true, false, true, false];
+        const SENSE: [(u8, u8); 3] = [(0, 1), (0, 4), (2, 1)];
+        let period = 50e-6;
+        let (mut step, mut comm_at, mut step_len) = (0usize, 0.0, 0.02);
+        let mut ramp = 0.02;
+        let mut due: Option<f64> = None;
+        let mut zc_seen = false;
+        let (mut comms, mut zcs, mut emf_at_zc) = (0, 0, Vec::new());
+        let mut t = 0.0;
+        let align = 0.5;
+        let mut closed = false;
+        while t < secs {
+            // The bridge for this period: on for duty × period, the low
+            // side the complement, 500 ns of dead time between them.
+            let dead = 500e-9;
+            let phases = [
+                (0.0, false, false),
+                (dead, true, false),
+                (duty * period, false, false),
+                (duty * period + dead, false, true),
+            ];
+            for (dt, on, comp) in phases {
+                let d = drives(s, |p| match p {
+                    (1, i @ 0..=5) => {
+                        let (ph, low) = (i as usize / 2, i % 2 == 1);
+                        let level = if ph == HIGH[step] {
+                            if low {
+                                comp
+                            } else {
+                                on
+                            }
+                        } else {
+                            ph == LOW[step] && low
+                        };
+                        if level {
+                            Drive::High
+                        } else {
+                            Drive::Low
+                        }
+                    }
+                    _ => Drive::Float,
+                });
+                s.update(at(t + dt), &d);
+                if !on {
+                    continue;
+                }
+                // Middle of the on-time: sample.
+                let ts = t + duty * period / 2.0;
+                s.refresh(at(ts));
+                let v = |p: (u8, u8)| s.mcu_voltage(p.0, p.1).unwrap();
+                let diff = v(SENSE[FLOAT[step]]) - v((2, 0));
+                let since = ts - comm_at;
+                if closed && !zc_seen && since > step_len / 4.0 && (diff > 0.0) == RISING[step] {
+                    zc_seen = true;
+                    zcs += 1;
+                    due = Some(ts + since);
+                    let Some(Device::Bldc(b)) = s.devices.get("mot") else {
+                        panic!()
+                    };
+                    let e = b.emf_at(s.seconds_at(at(ts)));
+                    let amp = e.iter().map(|x| x.abs()).fold(0.0, f64::max);
+                    emf_at_zc.push(e[FLOAT[step]] / amp);
+                }
+            }
+            t += period;
+            if t < align {
+                continue;
+            }
+            let next = due.get_or_insert(t + ramp);
+            if t >= *next {
+                step = (step + 1) % 6;
+                step_len = (3.0 * step_len + (t - comm_at)) / 4.0;
+                comm_at = t;
+                zc_seen = false;
+                due = None;
+                if closed {
+                    comms += 1;
+                } else {
+                    ramp *= 31.0 / 32.0;
+                    closed = ramp <= 0.004;
+                }
+            }
+        }
+        (comms, zcs, emf_at_zc)
+    }
+
+    #[test]
+    fn sensorless_bldc_runs_on_its_back_emf_zero_crossings() {
+        let mut s = sensorless_sim();
+        let (comms, zcs, emf) = sensorless_run(&mut s, 2.5, 0.5);
+        let v = motor(&mut s, 2.5, "mot");
+        let rpm = v.rpm.unwrap();
+        // Half the supply: about half the no-load speed.
+        assert!(rpm > 1300.0 && rpm < 1900.0, "{rpm}");
+        assert!(comms > 300, "{comms}");
+        // Every commutation came from a crossing.
+        assert!(zcs + 2 >= comms, "{zcs} crossings, {comms} commutations");
+        // After the hand-over from the ramp (the rotor lags the open-loop
+        // field then), each crossing is found within a sample of the real
+        // one: the floating phase's back-EMF is then near zero.
+        let worst = emf[5..].iter().map(|e| e.abs()).fold(0.0, f64::max);
+        assert!(worst < 0.1, "{worst}");
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        // No sensorless part: the hall motor's halls are not needed.
+        assert!(motor(&mut s, 2.5, "mot").text.is_none());
     }
 }

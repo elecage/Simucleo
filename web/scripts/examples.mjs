@@ -41,6 +41,7 @@ const EXAMPLES = [
   ["hal-esc-bldc", "hal-esc-bldc.elf", "HAL: brushless motor on a hobby ESC — 50 Hz servo pulses, arming at minimum throttle, then a pot on A0 sets the throttle; B1 cuts the signal (failsafe)"],
   ["hal-bldc-hall", "hal-bldc-hall.elf", "HAL: BLDC with hall sensors — EXTI on the halls commutates a 3-phase bridge six-step; B1 swaps two halls (wrong commutation: it stalls)"],
   ["hal-bldc-pwm", "hal-bldc-pwm.elf", "HAL: BLDC on TIM1 complementary PWM — CH1–CH3 and CH1N–CH3N with 500 ns dead time, six-step by COM events from the hall interrupts, a pot on A0 sets the duty; B1 breaks (EGR.BG) and resumes"],
+  ["hal-bldc-sensorless", "hal-bldc-sensorless.elf", "HAL: sensorless BLDC — TIM1 center-aligned complementary PWM (RCR 1: one update per period at its centre) samples the floating phase against a virtual neutral on the ADC; align, open-loop ramp, then commutation 30° after each back-EMF zero crossing (TIM2); a pot on A0 sets the duty"],
   ["freertos-two-tasks", "freertos-two-tasks.elf", "FreeRTOS (CMSIS-RTOS v2): Blink, Count and Button threads; B1 releases a semaphore — see the RTOS tab"],
   ["freertos-queue-uart", "freertos-queue-uart.elf", "FreeRTOS: UART RX ISR → queue → echo task; sensor → queue → logger with heap/stack stats"],
   ["bare-blinky", "bare-blinky.elf", "Bare metal: toggle PA5 with register writes"],

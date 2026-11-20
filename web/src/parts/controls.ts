@@ -4,6 +4,7 @@
 // the inspector sliders edit, so both stay in step. The editor (Canvas)
 // routes the gesture, throttles the writes and runs the timed ones.
 import { PITCH, type ControlPointer, type PartControl, type PropValues } from "./types";
+import { t } from "../i18n";
 
 const num = (v: string | number | undefined) => Number(v) || 0;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -26,7 +27,7 @@ export function rotaryKnob(prop: string, cx: number, cy: number, travel = 270): 
     return Math.hypot(dx, dy) < 2 ? null : (Math.atan2(dx, -dy) * 180) / Math.PI;
   };
   return {
-    hint: "노브를 잡고 돌리세요 — 시계 방향으로 돌리면 커집니다. 마우스 휠로도 조금씩 돌아갑니다.",
+    hint: t("노브를 잡고 돌리세요 — 시계 방향으로 돌리면 커집니다. 마우스 휠로도 조금씩 돌아갑니다."),
     start(p, props) {
       let value = num(props[prop]);
       let prev = angleAt(p);
@@ -119,8 +120,8 @@ export function fingerTouch(temp: string, humidity?: string): PartControl {
   const keys = humidity ? [temp, humidity] : [temp];
   return {
     hint: humidity
-      ? "누르고 있으면 손가락과 입김으로 온도·습도가 올라갑니다 — 떼면 천천히 돌아옵니다. 끌면 부품이 옮겨집니다."
-      : "누르고 있으면 손가락 체온으로 데워집니다 — 떼면 천천히 식습니다. 끌면 부품이 옮겨집니다.",
+      ? t("누르고 있으면 손가락과 입김으로 온도·습도가 올라갑니다 — 떼면 천천히 돌아옵니다. 끌면 부품이 옮겨집니다.")
+      : t("누르고 있으면 손가락 체온으로 데워집니다 — 떼면 천천히 식습니다. 끌면 부품이 옮겨집니다."),
     holdOnly: true,
     start(p, props, carry) {
       // Touched again while still cooling: the same room to return to.
@@ -179,7 +180,7 @@ const SHAKE_AMP: [number, number, number] = [1.5, -1.0, 0.5];
 
 /** A button on the sensor: one press shakes it (a few decaying swings). */
 export const shakeControl: PartControl = {
-  hint: "누르면 센서를 흔듭니다 — 0.5초쯤 흔들리며 중력에 가속도(ax·ay·az)가 더해집니다.",
+  hint: t("누르면 센서를 흔듭니다 — 0.5초쯤 흔들리며 중력에 가속도(ax·ay·az)가 더해집니다."),
   start(p) {
     const t0 = p.t;
     let over = false;
@@ -210,7 +211,7 @@ const FLICK_SPEED = 1.2;
  * shakes it as well, harder the faster the flick.
  */
 export const tiltControl: PartControl = {
-  hint: "끌어서 기울이세요 — 좌우는 roll, 위아래는 pitch. 빠르게 왔다 갔다 하면 흔들립니다. 모듈 가장자리를 끌면 옮겨집니다.",
+  hint: t("끌어서 기울이세요 — 좌우는 roll, 위아래는 pitch. 빠르게 왔다 갔다 하면 흔들립니다. 모듈 가장자리를 끌면 옮겨집니다."),
   start(p, props) {
     const roll0 = num(props.roll),
       pitch0 = num(props.pitch);
@@ -287,7 +288,7 @@ const STICK_SLOP = 0.25 * PITCH;
  */
 export function joystickStick(cx: number, cy: number, range: number): PartControl {
   return {
-    hint: "손잡이를 끌어 기울이세요 — 놓으면 가운데로 돌아옵니다. 움직이지 않고 누르면(클릭) 스틱 버튼(SW)이 눌립니다.",
+    hint: t("손잡이를 끌어 기울이세요 — 놓으면 가운데로 돌아옵니다. 움직이지 않고 누르면(클릭) 스틱 버튼(SW)이 눌립니다."),
     start(p) {
       const t0 = p.t;
       let moved = false;
@@ -347,7 +348,7 @@ const WAVE_MS = 1000;
  */
 export function personDrag(x0: number, x1: number, inView: (pos: number) => boolean): PartControl {
   return {
-    hint: "사람을 좌우로 끌어 센서 앞(부채꼴 안)을 지나가게 하세요 — 움직이는 동안만 움직임이 감지됩니다.",
+    hint: t("사람을 좌우로 끌어 센서 앞(부채꼴 안)을 지나가게 하세요 — 움직이는 동안만 움직임이 감지됩니다."),
     start(p, props) {
       const offset = (p.x - x0) / (x1 - x0) - num(props.person);
       let last = p.t;
@@ -381,7 +382,7 @@ export function personDrag(x0: number, x1: number, inView: (pos: number) => bool
 
 /** A button: motion while held, and for at least WAVE_MS. */
 export const waveControl: PartControl = {
-  hint: "누르면 센서 앞에서 움직임이 생깁니다(누르는 동안, 최소 1초).",
+  hint: t("누르면 센서 앞에서 움직임이 생깁니다(누르는 동안, 최소 1초)."),
   start(p) {
     const t0 = p.t;
     return {
@@ -409,7 +410,7 @@ export function shaftTurn(prop: string, cx: number, cy: number): PartControl {
     return Math.hypot(dx, dy) < 1.5 ? null : (Math.atan2(dx, -dy) * 180) / Math.PI;
   };
   return {
-    hint: "축을 잡고 돌리세요 — 드라이버가 꺼져 있으면(EN High) 손으로 돌아가고, 켜져 있으면 홀딩 토크가 되돌립니다. 마우스 휠로 1.8°씩.",
+    hint: t("축을 잡고 돌리세요 — 드라이버가 꺼져 있으면(EN High) 손으로 돌아가고, 켜져 있으면 홀딩 토크가 되돌립니다. 마우스 휠로 1.8°씩."),
     start(p, props) {
       let value = num(props[prop]);
       let prev = angleAt(p);

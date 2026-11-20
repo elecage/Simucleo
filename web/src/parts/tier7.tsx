@@ -2,12 +2,13 @@
 // module. Their models live in `simucleo_circuit::devices` (Hc05, Relay);
 // the HC-05's phone is the "블루투스" tab of the bottom panel.
 import { PITCH, type PartDef } from "./types";
+import { t } from "../i18n";
 
 const P = PITCH;
 
 const NoPower = ({ x, y }: { x: number; y: number }) => (
   <text x={x} y={y} textAnchor="middle" className="silk small unpowered" data-unpowered="1">
-    전원 부족
+    {t("전원 부족")}
   </text>
 );
 
@@ -17,28 +18,28 @@ const NoPower = ({ x, y }: { x: number; y: number }) => (
 const HC05_PINS = ["STATE", "RXD", "TXD", "GND", "VCC", "EN"];
 
 const HC05_LABEL: Record<string, string> = {
-  STATE: "STATE (휴대폰 연결 시 High)",
-  RXD: "RXD (MCU의 TX를 여기에)",
-  TXD: "TXD (MCU의 RX로)",
+  STATE: t("STATE (휴대폰 연결 시 High)"),
+  RXD: t("RXD (MCU의 TX를 여기에)"),
+  TXD: t("TXD (MCU의 RX로)"),
   GND: "GND",
-  VCC: "VCC (3.6–6 V, 보통 5V)",
-  EN: "EN/KEY (전원을 켤 때 High면 AT 모드)",
+  VCC: t("VCC (3.6–6 V, 보통 5V)"),
+  EN: t("EN/KEY (전원을 켤 때 High면 AT 모드)"),
 };
 
 /** What the module's LED does in each state (`visual.text`). */
 const HC05_STATE: Record<string, string> = {
-  waiting: "연결 대기",
-  connected: "연결됨",
-  at: "AT 모드",
-  off: "꺼짐",
+  waiting: t("연결 대기"),
+  connected: t("연결됨"),
+  at: t("AT 모드"),
+  off: t("꺼짐"),
 };
 
 export const hc05: PartDef = {
   kind: "hc05",
-  name: "블루투스 모듈 (HC-05)",
+  name: t("블루투스 모듈 (HC-05)"),
   category: "module",
   description:
-    "HC-05 블루투스 시리얼 모듈(ZS-040). 휴대폰과 블루투스로 이어져 UART를 그대로 전달합니다 — 아래 '블루투스 (HC-05)' 탭이 휴대폰 화면입니다. MCU의 TX를 RXD에, TXD를 MCU의 RX에 교차로 연결하세요: USART1은 D8(PA9, TX)·D2(PA10, RX), USART6은 PC6·PC7 또는 PA11·PA12. USART2(D1/D0)는 ST-LINK 가상 COM 포트가 쓰고 있습니다. 데이터 모드는 baud(기본 9600) 8N1 — 펌웨어의 보레이트와 다르면 글자가 깨집니다. 휴대폰이 연결되면 STATE가 High가 되고 LED가 천천히 두 번씩 깜박입니다(대기 중엔 빠르게). EN을 High로 둔 채 전원을 넣으면 38400 baud AT 모드: AT → OK, AT+NAME? → +NAME:HC-05, AT+UART=9600,0,0 등. VCC는 5V(3.6–6 V), 신호는 3.3 V.",
+    t("HC-05 블루투스 시리얼 모듈(ZS-040). 휴대폰과 블루투스로 이어져 UART를 그대로 전달합니다 — 아래 '블루투스 (HC-05)' 탭이 휴대폰 화면입니다. MCU의 TX를 RXD에, TXD를 MCU의 RX에 교차로 연결하세요: USART1은 D8(PA9, TX)·D2(PA10, RX), USART6은 PC6·PC7 또는 PA11·PA12. USART2(D1/D0)는 ST-LINK 가상 COM 포트가 쓰고 있습니다. 데이터 모드는 baud(기본 9600) 8N1 — 펌웨어의 보레이트와 다르면 글자가 깨집니다. 휴대폰이 연결되면 STATE가 High가 되고 LED가 천천히 두 번씩 깜박입니다(대기 중엔 빠르게). EN을 High로 둔 채 전원을 넣으면 38400 baud AT 모드: AT → OK, AT+NAME? → +NAME:HC-05, AT+UART=9600,0,0 등. VCC는 5V(3.6–6 V), 신호는 3.3 V."),
   w: 7,
   h: 12,
   pins: HC05_PINS.map((id, i) => ({ id, x: 0.5 + i + 0.5, y: 12, label: HC05_LABEL[id] })),
@@ -84,19 +85,19 @@ export const hc05: PartDef = {
 
 export const relay: PartDef = {
   kind: "relay",
-  name: "릴레이 모듈 (5V, 1채널)",
+  name: t("릴레이 모듈 (5V, 1채널)"),
   category: "actuator",
   description:
-    "SRD-05VDC-SL-C 릴레이에 구동 트랜지스터·다이오드·LED가 달린 모듈. VCC는 5V(코일은 3.75 V 이상에서 붙음), IN으로 코일을 켭니다: trigger=low(흔한 모듈)는 IN을 Low로, high는 High로 하면 켜집니다. 코일이 켜지면 약 10 ms 뒤 COM이 NC에서 NO로 넘어가고(접점이 잠깐 튑니다), 끄면 5 ms 뒤 돌아옵니다. 접점은 MCU와 전기적으로 분리된 스위치라 다른 전원(5V 등)으로 램프·LED·모터를 켤 수 있습니다: 전원 → COM, NO → 부하 → GND.",
+    t("SRD-05VDC-SL-C 릴레이에 구동 트랜지스터·다이오드·LED가 달린 모듈. VCC는 5V(코일은 3.75 V 이상에서 붙음), IN으로 코일을 켭니다: trigger=low(흔한 모듈)는 IN을 Low로, high는 High로 하면 켜집니다. 코일이 켜지면 약 10 ms 뒤 COM이 NC에서 NO로 넘어가고(접점이 잠깐 튑니다), 끄면 5 ms 뒤 돌아옵니다. 접점은 MCU와 전기적으로 분리된 스위치라 다른 전원(5V 등)으로 램프·LED·모터를 켤 수 있습니다: 전원 → COM, NO → 부하 → GND."),
   w: 10,
   h: 6,
   pins: [
     { id: "VCC", x: 0, y: 2, label: "VCC (5V)" },
     { id: "GND", x: 0, y: 3, label: "GND" },
-    { id: "IN", x: 0, y: 4, label: "IN (코일 제어)" },
-    { id: "NO", x: 10, y: 2, label: "NO (평상시 열림: 켜지면 COM과 연결)" },
-    { id: "COM", x: 10, y: 3, label: "COM (공통)" },
-    { id: "NC", x: 10, y: 4, label: "NC (평상시 닫힘: 꺼져 있을 때 COM과 연결)" },
+    { id: "IN", x: 0, y: 4, label: t("IN (코일 제어)") },
+    { id: "NO", x: 10, y: 2, label: t("NO (평상시 열림: 켜지면 COM과 연결)") },
+    { id: "COM", x: 10, y: 3, label: t("COM (공통)") },
+    { id: "NC", x: 10, y: 4, label: t("NC (평상시 닫힘: 꺼져 있을 때 COM과 연결)") },
   ],
   props: { trigger: "low" },
   propOptions: { trigger: ["low", "high"] },
@@ -144,7 +145,7 @@ export const relay: PartDef = {
         {/* Module LED: lit while the coil is driven. */}
         <circle cx={1.3 * P} cy={1.2 * P} r={0.3 * P} className={coil ? "relay-led on" : "relay-led"} data-relay-led={coil ? "1" : "0"} />
         <text x={5 * P} y={-0.3 * P} textAnchor="middle" className="silk small value">
-          {closed ? "COM–NO 연결" : "COM–NC 연결"}
+          {closed ? t("COM–NO 연결") : t("COM–NC 연결")}
         </text>
         {visual.unpowered && <NoPower x={5 * P} y={7 * P} />}
       </g>

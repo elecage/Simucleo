@@ -101,11 +101,18 @@ export function RunControls({
           ))}
         </select>
       )}
+      {/* Run and Pause share one width, the wider label's (the other is laid
+          out but hidden, and not part of the button's name): starting the
+          simulation must not reflow the toolbar. */}
       {runner.running ? (
-        <button onClick={() => runner.pause()}>{t("⏸ 일시정지")}</button>
+        <button className="run-toggle" onClick={() => runner.pause()}>
+          <span>{t("⏸ 일시정지")}</span>
+          <span className="ghost" aria-hidden="true">{t("▶ 실행")}</span>
+        </button>
       ) : (
-        <button onClick={runner.run} disabled={!loaded || !!f?.stopped}>
-          {t("▶ 실행")}
+        <button className="run-toggle" onClick={runner.run} disabled={!loaded || !!f?.stopped}>
+          <span>{t("▶ 실행")}</span>
+          <span className="ghost" aria-hidden="true">{t("⏸ 일시정지")}</span>
         </button>
       )}
       <button onClick={runner.reset} disabled={!loaded} title={t("B2 RESET 버튼과 같습니다")}>

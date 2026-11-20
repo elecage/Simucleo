@@ -4,7 +4,7 @@
 // over the toolchain package's session (a virtual file system that outlives
 // one command).
 import { parseDiagnostics, type Diagnostic } from "./diagnostics.ts";
-import { compileFlags, ELF_PATH, linkArgs, objectPath, PROJECT_ROOT, SDK_ROOT } from "./sdk.ts";
+import { compileFlags, ELF_PATH, linkArgs, objectPath, PROJECT_ROOT, SDK_ROOT, type Template } from "./sdk.ts";
 import type { TarEntry } from "./tar.ts";
 
 /** What the build needs of the toolchain's session (`createSession()`). */
@@ -46,8 +46,8 @@ export async function installSdk(session: ToolSession, entries: TarEntry[]): Pro
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
-/** Build `files` into an ELF. Errors stop before the link. */
-export async function buildProject(session: ToolSession, files: SourceFile[], written: Set<string> = new Set()): Promise<BuildResult> {
+/** Build `files` into an ELF against the `template`'s prebuilt parts. Errors stop before the link. */
+export async function buildProject(session: ToolSession, files: SourceFile[], written: Set<string> = new Set(), template: Template = "hal"): Promise<BuildResult> {
   const td = new TextDecoder();
   let log = "";
   // Files of an earlier build that are gone now must not be found by #include.
@@ -66,7 +66,7 @@ export async function buildProject(session: ToolSession, files: SourceFile[], wr
     .filter((d) => d !== ".")
     .sort();
   if (files.some((f) => f.path.endsWith(".h") && !f.path.includes("/"))) incDirs.unshift(".");
-  const flags = compileFlags(incDirs.map((d) => (d === "." ? "" : d))).map((f) => f.replace(/\/$/, ""));
+  const flags = compileFlags(incDirs.map((d) => (d === "." ? "" : d)), template).map((f) => f.replace(/\/$/, ""));
   const sources = files.filter((f) => f.path.endsWith(".c"));
   const diagnostics: Diagnostic[] = [];
   const objects: string[] = [];
@@ -101,7 +101,7 @@ export async function buildProject(session: ToolSession, files: SourceFile[], wr
 
   let err = "";
   await session.remove(ELF_PATH);
-  const rc = await session.exec(linkArgs(objects), {
+  const rc = await session.exec(linkArgs(objects, template), {
     stderr: (b) => {
       if (b) err += td.decode(b, { stream: true });
     },

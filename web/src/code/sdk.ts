@@ -23,8 +23,18 @@ export const ARCH_FLAGS = [
   "-mfloat-abi=hard",
 ];
 
+/**
+ * Which prebuilt parts a build links: "hal" (M33) the shared template of the
+ * examples, hal-common (its main.h, handlers, MSP, clock, printf to USART2);
+ * "cube" (M36) a configuration-tool project, which has its own main.h,
+ * stm32f4xx_hal_conf.h, stm32f4xx_it.c, MSP, SystemClock_Config and
+ * syscalls.c in its files and takes only the start-up code, SystemInit and the
+ * HAL drivers prebuilt.
+ */
+export type Template = "hal" | "cube";
+
 /** clang flags for a student's .c file. */
-export function compileFlags(projectIncludes: string[]): string[] {
+export function compileFlags(projectIncludes: string[], template: Template = "hal"): string[] {
   return [
     ...ARCH_FLAGS,
     // The prebuilt HAL is built by arm-none-eabi-gcc, whose EABI enums are as
@@ -34,7 +44,7 @@ export function compileFlags(projectIncludes: string[]): string[] {
     "-std=gnu17",
     "-nostdlibinc",
     ...projectIncludes.map((d) => `-I${PROJECT_ROOT}/${d}`),
-    ...SDK_INCLUDES.map((d) => `-I${SDK_ROOT}/${d}`),
+    ...SDK_INCLUDES.filter((d) => template === "hal" || d !== "include/hal-common").map((d) => `-I${SDK_ROOT}/${d}`),
     "-isystem",
     `${SDK_ROOT}/${SDK_LIBC}`,
     "-DUSE_HAL_DRIVER",
@@ -62,6 +72,9 @@ export const SDK_OBJECTS = [
   "clock_config.o",
   "syscalls.o",
 ].map((o) => `lib/obj/${o}`);
+/** What a "cube" project links prebuilt: the start-up code and SystemInit (the rest is its own). */
+export const CUBE_OBJECTS = ["startup_stm32f401xe.o", "system_stm32f4xx.o"].map((o) => `lib/obj/${o}`);
+export const objectsFor = (t: Template) => (t === "cube" ? CUBE_OBJECTS : SDK_OBJECTS);
 export const SDK_LIBS = ["lib/libgcc.a", "lib/libc_nano.a", "lib/libm.a", "lib/libnosys.a"];
 export const SDK_LINKER_SCRIPT = "lib/STM32F401RETx_FLASH.ld";
 
@@ -81,7 +94,7 @@ export const objectPath = (src: string) => `${OUT}/${src.replace(/[^A-Za-z0-9_.-
 export const ELF_PATH = `${OUT}/app.elf`;
 
 /** ld.lld's command line, the same order as arm-none-eabi-gcc's. */
-export function linkArgs(objects: string[]): string[] {
+export function linkArgs(objects: string[], template: Template = "hal"): string[] {
   const s = (p: string) => `${SDK_ROOT}/${p}`;
   return [
     "ld.lld",
@@ -92,7 +105,7 @@ export function linkArgs(objects: string[]): string[] {
     "--gc-sections",
     s("lib/crti.o"),
     s("lib/crtbegin.o"),
-    ...SDK_OBJECTS.map(s),
+    ...objectsFor(template).map(s),
     ...objects,
     s("lib/libhal.a"),
     "--start-group",

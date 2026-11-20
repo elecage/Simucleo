@@ -6,8 +6,13 @@
 import { safeSourcePath, type SourceFile } from "./build.ts";
 
 export interface CodeProject {
-  /** The prebuilt SDK the build links against. */
-  template: "hal";
+  /**
+   * The prebuilt SDK the build links against: "hal" links hal-common's
+   * start-up, handlers, MSP and clock (M33); "cube" is a project of the
+   * configuration tool (M36), whose stm32f4xx_it.c, MSP and
+   * SystemClock_Config are its own files, built from source.
+   */
+  template: "hal" | "cube";
   /** The bundled example it started from (`hal-blinky.elf`), if any. */
   base?: string;
   files: SourceFile[];
@@ -15,6 +20,10 @@ export interface CodeProject {
   active?: string;
   /** What the loaded ELF was built from: the files and the ELF's `elfKey`. */
   built?: { key: string; files: SourceFile[] };
+  /** M36 ("cube"): the configuration as a CubeMX .ioc text. */
+  ioc?: string;
+  /** M36 ("cube"): the STM32CubeF4 bundle its Drivers/ come from (packs.ts). */
+  drivers?: string;
 }
 
 export const MAIN_C = "Core/Src/main.c";
@@ -23,6 +32,8 @@ export const MAX_FILE_BYTES = 256 * 1024;
 export const MAX_CODE_BYTES = 1024 * 1024;
 /** The name the built firmware gets. */
 export const CODE_ELF = "code.elf";
+/** The largest .ioc a project keeps. */
+export const MAX_IOC_BYTES = 64 * 1024;
 
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 
@@ -52,13 +63,18 @@ function sanitizeFiles(x: unknown, notes: string[]): SourceFile[] {
 export function sanitizeCode(x: unknown, notes: string[] = []): CodeProject | undefined {
   if (!x || typeof x !== "object") return undefined;
   const c = x as Partial<CodeProject>;
-  if (c.template !== "hal") {
+  if (c.template !== "hal" && c.template !== "cube") {
     notes.push(`알 수 없는 코드 템플릿 '${String(c.template)}'은(는) 건너뜁니다.`);
     return undefined;
   }
   const files = sanitizeFiles(c.files, notes);
   if (!files.length) return undefined;
-  const out: CodeProject = { template: "hal", files };
+  const out: CodeProject = { template: c.template, files };
+  if (c.template === "cube") {
+    if (typeof c.ioc === "string" && bytes(c.ioc) <= MAX_IOC_BYTES) out.ioc = c.ioc;
+    else if (c.ioc !== undefined) notes.push("설정(.ioc)이 너무 커서 건너뜁니다.");
+    if (typeof c.drivers === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(c.drivers)) out.drivers = c.drivers;
+  }
   if (typeof c.base === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]*\.elf$/.test(c.base)) out.base = c.base;
   if (typeof c.active === "string" && files.some((f) => f.path === c.active)) out.active = c.active;
   if (c.built && typeof c.built === "object" && typeof c.built.key === "string" && /^\d+:[0-9a-f]{8}$/.test(c.built.key)) {
@@ -70,7 +86,14 @@ export function sanitizeCode(x: unknown, notes: string[] = []): CodeProject | un
 
 /** What a share link carries: the files to edit and rebuild, not the snapshot. */
 export function forShare(c: CodeProject): CodeProject {
-  return { template: c.template, ...(c.base ? { base: c.base } : {}), files: c.files, ...(c.active ? { active: c.active } : {}) };
+  return {
+    template: c.template,
+    ...(c.base ? { base: c.base } : {}),
+    files: c.files,
+    ...(c.active ? { active: c.active } : {}),
+    ...(c.ioc ? { ioc: c.ioc } : {}),
+    ...(c.drivers ? { drivers: c.drivers } : {}),
+  };
 }
 
 /** The files differ from what was built (the ELF is stale). */

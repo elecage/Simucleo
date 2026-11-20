@@ -14,6 +14,9 @@
 // gzip, the browser unpacks it, and the bytes no longer match the service
 // worker's integrity hash. Unpacked in JavaScript instead.)
 //     manifest.json                    sizes and a version (cache name)
+//   public/cube/                       the configuration tool's STM32CubeF4 driver
+//     <id>.tar.gz.bin                  bundles (M36): Drivers/, start-up, SystemInit,
+//     packs.json                       linker script at their CubeIDE project paths
 //     LICENSE*.txt / *.md              the package's licences
 //
 // The toolchain is not in the default offline cache (M29): the service
@@ -28,6 +31,8 @@ import { gzipSync } from "node:zlib";
 import { readTar, writeTar } from "../src/code/tar.ts";
 import { buildIndex, packIndex } from "../src/code/symbols.ts";
 import { SDK_LINK_FILES, TOOLCHAIN_ASSETS } from "../src/code/sdk.ts";
+import { PACKS, PACK_PREFIX, packUrl } from "../src/cube/packs.ts";
+import { packAvailable, packFiles } from "./cube-pack.mjs";
 
 const web = join(dirname(fileURLToPath(import.meta.url)), "..");
 const fw = join(web, "..", "firmware");
@@ -181,5 +186,32 @@ function toolchain() {
   console.log(`toolchain: ${manifest.llvm}, ${(total / 1048576).toFixed(1)} MB to download (SDK ${(sdkTar.length / 1024).toFixed(0)} KB), version ${version}`);
 }
 
+// ------------------------------------------------------------ driver bundles (M36)
+
+function cubePacks() {
+  const dir = join(web, "public", "cube");
+  mkdirSync(dir, { recursive: true });
+  const index = [];
+  for (const p of PACKS) {
+    if (!packAvailable(fw, p.id)) {
+      console.warn(`cube: bundle ${p.id} skipped, its sources are not vendored`);
+      continue;
+    }
+    const files = packFiles(fw, p.id);
+    const tar = gz(writeTar(files.map((f) => ({ name: PACK_PREFIX + f.path, data: f.data }))));
+    const url = packUrl(p.id);
+    writeIfChanged(join(web, "public", url), tar);
+    index.push({ id: p.id, url, bytes: tar.length, files: files.map((f) => ({ path: f.path, bytes: f.data.length })) });
+    console.log(`cube: ${p.id}, ${files.length} files, ${(tar.length / 1024).toFixed(0)} KB`);
+  }
+  writeIfChanged(join(dir, "packs.json"), Buffer.from(JSON.stringify(index) + "\n"));
+}
+
+function writeIfChanged(path, bytes) {
+  if (existsSync(path) && sha(readFileSync(path)) === sha(bytes)) return;
+  writeFileSync(path, bytes);
+}
+
 symbolIndex();
+cubePacks();
 toolchain();

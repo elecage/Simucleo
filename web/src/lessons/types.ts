@@ -5,7 +5,13 @@
 /** A project as in a `.simucleo.json` file (only parts and wires are used). */
 export interface InlineProject {
   parts: { id: string; kind: string; x: number; y: number; props?: Record<string, string | number> }[];
-  wires: { id?: string; a: { part: string; pin: string }; b: { part: string; pin: string }; color?: string }[];
+  wires: {
+    id?: string;
+    a: { part: string; pin: string };
+    b: { part: string; pin: string };
+    color?: string;
+    points?: { x: number; y: number }[];
+  }[];
 }
 
 /** Where the lesson starts. */

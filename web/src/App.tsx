@@ -18,8 +18,14 @@ import { unlockAudio, useBuzzerAudio } from "./sim/audio";
 import type { VisualState } from "./parts/types";
 import { colorCode, eSeries, formatOhms, parseOhms, type BandCount } from "./parts/ohms";
 import { LessonPanel } from "./lessons/LessonPanel";
+import { LessonEditor } from "./lessons/LessonEditor";
+import { TeacherView } from "./lessons/TeacherView";
+import type { Involved } from "./lessons/fromWiring";
+import { blankLesson, DRAFT_KEY, MINE_KEY, normalizeLesson, removeLesson, upsertLesson } from "./lessons/mine";
 import { ACTIVE_KEY, BACKUP_KEY } from "./lessons/progress";
+import type { LoadedResult } from "./lessons/teacher";
 import type { Lesson } from "./lessons/types";
+import type { WiringContext } from "./lessons/wiring";
 
 const WIRE_COLORS = ["#e53935", "#1e88e5", "#43a047", "#fdd835", "#fb8c00", "#8e24aa", "#212121"];
 const CATEGORY_LABEL: Record<string, string> = {
@@ -159,10 +165,46 @@ export function App() {
   // ------------------------------------------------------------ lessons
   const [lessonOpen, setLessonOpen] = useState(false);
   const [hasBackup, setHasBackup] = useState(false);
+  // M24: "내 레슨", the lesson editor's draft and preview, the teacher view.
+  const [myLessons, setMyLessons] = useState<Lesson[]>([]);
+  const [draft, setDraft] = useState<Lesson | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [preview, setPreview] = useState<{ lesson: Lesson; seq: number } | null>(null);
+  const [teacherOpen, setTeacherOpen] = useState(false);
+  const [teacherFiles, setTeacherFiles] = useState<LoadedResult[]>([]);
+  const [gradeMarks, setGradeMarks] = useState<Involved[] | null>(null);
   useEffect(() => {
     void idbGet<string>(ACTIVE_KEY).then((a) => a && setLessonOpen(true));
     void idbGet<string>(BACKUP_KEY).then((b) => setHasBackup(!!b));
+    // Stored lessons are normalized: a broken one (an older version, an edited
+    // database) shows its errors instead of crashing the list or the editor.
+    void idbGet<unknown>(MINE_KEY).then((l) =>
+      setMyLessons(Array.isArray(l) ? l.map(normalizeLesson).filter((x): x is Lesson => x !== null) : []),
+    );
+    void idbGet<unknown>(DRAFT_KEY).then((d) => {
+      const n = normalizeLesson(d);
+      if (n) setDraft(n);
+    });
   }, []);
+  const saveMine = (lessons: Lesson[]) => {
+    const next = lessons.reduce(upsertLesson, myLessons);
+    setMyLessons(next);
+    void idbSet(MINE_KEY, next);
+  };
+  const removeMine = (id: string) => {
+    const next = removeLesson(myLessons, id);
+    setMyLessons(next);
+    void idbSet(MINE_KEY, next);
+  };
+  const changeDraft = (l: Lesson) => {
+    setDraft(l);
+    void idbSet(DRAFT_KEY, l);
+  };
+  const openEditor = (l: Lesson | null) => {
+    if (l) changeDraft(normalizeLesson(structuredClone(l)) ?? blankLesson(myLessons.map((m) => m.id)));
+    else if (!draft) changeDraft(blankLesson(myLessons.map((m) => m.id)));
+    setEditorOpen(true);
+  };
   const startLesson = async (lesson: Lesson): Promise<boolean> => {
     if (
       dirty &&
@@ -327,6 +369,33 @@ export function App() {
     return s;
   }, [project, netlist, allPins]);
   const netOf = useCallback((p: PinRef) => netIndex.get(pinKey(p)) ?? new Set([pinKey(p)]), [netIndex]);
+
+  // Grading marks (M24): the pins of failed wiring checks with their nets,
+  // and the board pins of the signals they name.
+  const markSet = useMemo(() => {
+    if (!gradeMarks) return undefined;
+    const out = new Set<string>();
+    const board = project.parts.find((p) => p.kind === "nucleo-f401re");
+    for (const m of gradeMarks) {
+      for (const p of m.pins) for (const k of netOf(p)) out.add(k);
+      if (!board) continue;
+      for (const pin of PART_BY_KIND[board.kind].pins) {
+        if (m.signals.includes(nucleoSignal(pin.id) ?? "")) out.add(pinKey({ part: board.id, pin: pin.id }));
+      }
+    }
+    return out;
+  }, [gradeMarks, netOf, project.parts]);
+  // The circuit as the lesson editor's "현재 배선에서 검사 만들기" reads it.
+  const wiringCtx = useMemo<WiringContext>(
+    () => ({
+      parts: project.parts,
+      nets: netlist.nets,
+      boardSignal: (kind, pin) => (kind === "nucleo-f401re" ? nucleoSignal(pin) : undefined),
+      nameOf: (kind) => PART_BY_KIND[kind]?.name ?? kind,
+      warnings: [],
+    }),
+    [project.parts, netlist],
+  );
 
   // Nets that join two or more parts (breadboards excluded), with Nucleo pins
   // shown by signal so D13 and CN10-11 both read "nucleo.PA5".
@@ -503,7 +572,10 @@ export function App() {
         <RunControls runner={runner} examples={examples} onExampleProject={onExampleProject} />
         <button
           className={lessonOpen ? "lesson-toggle on" : "lesson-toggle"}
-          onClick={() => setLessonOpen((o) => !o)}
+          onClick={() => {
+            if (lessonOpen) setPreview(null);
+            setLessonOpen(!lessonOpen);
+          }}
           aria-pressed={lessonOpen}
           title="단계별 실습과 자동 채점"
         >
@@ -572,6 +644,7 @@ export function App() {
             onAllPins={setAllPins}
             onConnect={connectEnds}
             onDisconnect={disconnectEnd}
+            marks={markSet}
           />
         )}
         <div className="view-board" hidden={view !== "board"}>
@@ -588,6 +661,7 @@ export function App() {
             fitKey={shownFitKey}
             onViewCenter={(p) => (viewCenter.current = p)}
             reveal={reveal}
+            marks={markSet}
             onAddWire={(a, b, points) =>
               setProject((p) => {
                 // Both ends must exist when the wire is made (#2).
@@ -646,9 +720,37 @@ export function App() {
           onSetProp={setPartProp}
           onRestoreBackup={() => void restoreBackup()}
           hasBackup={hasBackup}
-          onClose={() => setLessonOpen(false)}
+          onClose={() => {
+            setLessonOpen(false);
+            setPreview(null);
+          }}
+          myLessons={myLessons}
+          onSaveMine={saveMine}
+          onRemoveMine={removeMine}
+          onEdit={openEditor}
+          onTeacher={() => setTeacherOpen(true)}
+          preview={preview}
+          onMarks={setGradeMarks}
         />
       )}
+      {editorOpen && draft && (
+        <LessonEditor
+          draft={draft}
+          onChange={changeDraft}
+          examples={examples}
+          project={project}
+          wiring={wiringCtx}
+          onSaveMine={(l) => saveMine([l])}
+          onPreview={(l) => {
+            setPreview((p) => ({ lesson: l, seq: (p?.seq ?? 0) + 1 }));
+            setEditorOpen(false);
+            setLessonOpen(true);
+          }}
+          onNew={() => changeDraft(blankLesson(myLessons.map((m) => m.id)))}
+          onClose={() => setEditorOpen(false)}
+        />
+      )}
+      {teacherOpen && <TeacherView files={teacherFiles} onFiles={setTeacherFiles} onClose={() => setTeacherOpen(false)} />}
 
       <aside className="inspector">
         <h3>속성</h3>

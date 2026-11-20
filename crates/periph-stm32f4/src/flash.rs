@@ -301,10 +301,20 @@ impl FlashIf {
         end
     }
 
+    /// An operation that cannot run: its error flag, and OPERR with the
+    /// error interrupt enabled (RM0368 3.8.4) so that interrupt-driven
+    /// callers hear of it.
+    fn fail(&mut self, flag: u32) {
+        self.sr |= flag;
+        if self.cr & ERRIE != 0 {
+            self.sr |= OPERR;
+        }
+    }
+
     fn start_erase(&mut self, now: Cycles) -> Option<Cycles> {
         let (ser, mer) = (self.cr & SER != 0, self.cr & MER != 0);
         if ser == mer || self.cr & PG != 0 {
-            self.sr |= PGSERR;
+            self.fail(PGSERR);
             return None;
         }
         let sectors: u8 = if mer {
@@ -312,13 +322,13 @@ impl FlashIf {
         } else {
             let snb = ((self.cr >> 3) & 0xF) as usize;
             if snb >= SECTORS.len() {
-                self.sr |= PGSERR;
+                self.fail(PGSERR);
                 return None;
             }
             1 << snb
         };
         if (0..8).any(|s| sectors & (1 << s) != 0 && self.protected(s)) {
-            self.sr |= WRPERR;
+            self.fail(WRPERR);
             return None;
         }
         let us: f64 = (0..8)
@@ -344,7 +354,7 @@ impl FlashIf {
         now: Cycles,
     ) -> Result<Cycles, FlashFault> {
         let fault = |s: &mut Self, flag: u32, f: FlashFault| {
-            s.sr |= flag;
+            s.fail(flag);
             Err(f)
         };
         if self.cr & LOCK != 0 {
@@ -627,6 +637,36 @@ mod tests {
         f.complete(&mut m);
         f.option_bytes &= !(1 << 17 | 1 << 19);
         assert_eq!(f.write_protected(), 0b1010);
+    }
+
+    #[test]
+    fn a_refused_operation_raises_the_error_interrupt_when_enabled() {
+        // OPERR (RM0368 3.8.4): set, with ERRIE, when an operation cannot
+        // run because of a protection, alignment or parallelism error.
+        let mut m = flash();
+        let mut f = unlocked();
+        f.option_bytes &= !(1 << 16); // sector 0 write-protected
+        let cr = ERRIE | 2 << 8 | SER;
+        f.write(0x10, cr, u32::MAX, 0);
+        assert!(f.write(0x10, cr | STRT, u32::MAX, 0).is_none());
+        assert_eq!(f.read(0x0C), WRPERR | OPERR);
+        assert!(f.irq_line(), "the error interrupt");
+        f.write(0x0C, WRPERR | OPERR, u32::MAX, 0);
+        assert!(!f.irq_line());
+        // A programming fault too.
+        f.write(0x10, ERRIE | 2 << 8 | PG, u32::MAX, 0);
+        assert!(f
+            .program(&mut m, 0x0802_0000, AccessSize::Byte, 0, 0)
+            .is_err());
+        assert_eq!(f.read(0x0C), PGPERR | OPERR);
+        assert!(f.irq_line());
+        // Without ERRIE only the error flag.
+        let mut f = unlocked();
+        f.write(0x10, 2 << 8 | PG, u32::MAX, 0);
+        assert!(f
+            .program(&mut m, 0x0802_0000, AccessSize::Byte, 0, 0)
+            .is_err());
+        assert_eq!(f.read(0x0C), PGPERR);
     }
 
     #[test]

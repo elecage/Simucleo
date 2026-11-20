@@ -119,8 +119,18 @@ impl Iwdg {
                 _ => self.access = false,
             },
             0x04 if self.access => {
+                // The prescaler sets the pace from now on: the ticks left
+                // stay, their length changes, and so does the reset time.
+                if self.running {
+                    self.count = self.counter_exact(now);
+                    self.reload_at = now;
+                }
                 self.pr = value & 7;
                 self.pvu_until = now + self.lsi_cycles(5.0);
+                if self.running {
+                    self.gen = self.gen.wrapping_add(1);
+                    return self.deadline();
+                }
             }
             0x08 if self.access => {
                 self.rlr = value & 0xFFF;
@@ -183,6 +193,23 @@ mod tests {
         w.write(0, 0, 0);
         w.write(8, 5, 0);
         assert_eq!(w.rlr, 999);
+    }
+
+    #[test]
+    fn a_new_prescaler_changes_the_pace_not_the_count() {
+        let mut w = Iwdg::default();
+        w.write(0, 0x5555, 0);
+        w.write(4, 0, 0); // /4: 8 kHz ticks
+        w.write(8, 799, 0);
+        assert_eq!(w.write(0, 0xCCCC, 0), Some(1_600_000)); // 100 ms
+                                                            // At 50 ms (400 ticks left) the prescaler goes to /256 (125 Hz
+                                                            // ticks): the 400 ticks left now take 3.2 s.
+        let gen = w.gen;
+        let end = w.write(4, 6, 800_000).expect("rescheduled");
+        assert_ne!(w.gen, gen, "the old deadline is stale");
+        assert_eq!(w.counter(800_000), 400);
+        assert_eq!(end, 800_000 + 400 * 128_000, "3.2 s at 16 MHz");
+        assert_eq!(w.deadline(), Some(end));
     }
 
     #[test]

@@ -150,6 +150,23 @@ L298N의 12 V는 코일에 정격 전류 0.4 A(단위 1.0)를 흘린다. A4988�
 전류 방향대로 한쪽이 VMOT, 다른 쪽이 GND다(초퍼의 PWM은 모델링하지 않음). 3상 브리지에서 두 스위치가 다 꺼진 순간이 PWM 주기
 안(데드타임, 한쪽만 초핑하는 오프 시간)이면 다이오드로 전류가 이어지는 쪽 레일에 붙는다.
 
+## 컬러 SPI TFT: ST7735S · ILI9341 (M35) ✅
+
+| 부품 | 프로토콜 / 모델 | 필요한 MCU 기능 | 비고 |
+|---|---|---|---|
+| **컬러 TFT 1.8인치** (ST7735S, 128×160, 빨간 기판) | 4선 SPI: CS Low 동안 SCK 상승 에지에 SDA를 MSB부터, A0(D/C)이 8번째 비트에서 Low면 명령·High면 파라미터/픽셀. 핀 VCC·GND·CS·RESET·A0·SDA·SCK·LED | **하드웨어 SPI**(SPI1: D13 SCK, D11 MOSI) 또는 GPIO **비트뱅잉**, CS·RESET·A0은 GPIO | `simucleo_circuit::tft`. 프레임 메모리 18비트/픽셀. 전원·RESET 뒤: 잠자기, 화면 꺼짐, 메모리는 무작위 잡음(지우지 않으면 DISPON 때 보임). SWRESET(0x01)·RESET 핀은 레지스터만 초기화하고 5 ms 동안 명령 무시, 리셋 뒤 120 ms 전의 SLPOUT도 무시(경고). SLPIN/SLPOUT(0x10/0x11, 뒤 5 ms), DISPOFF/DISPON(0x28/0x29), INVOFF/INVON(0x20/0x21), IDMOFF/IDMON(0x38/0x39, 8색), COLMOD(0x3A: 0x03 12비트, 0x05 RGB565, 0x06 18비트), MADCTL(0x36: MY·MX 뒤집기, MV 행·열 바꿈, BGR), CASET/RASET(0x2A/0x2B) 창, RAMWR(0x2C)는 창 안을 왼→오, 위→아래로 채우고 끝나면 처음으로. 창이 메모리를 넘거나 시작 > 끝이면 경고. 패널은 MADCTL 0일 때 180° 돌아가 붙어 있음(드라이버는 MY·MX = 0xC0). `tab`: black(128×160, RGB), red(BGR), green(132×162 메모리, 패널이 2열·1행 안쪽 — 오프셋을 안 주면 가장자리에 잡음 줄). 그 밖의 명령(프레임 속도·전원·감마)은 파라미터만 받음 |
+| **컬러 TFT 2.4/2.8인치** (ILI9341, 240×320) | 같은 명령 계열, 핀 VCC·GND·CS·RESET·DC·SDI(MOSI)·SCK·LED·SDO(MISO) | 하드웨어 SPI(MISO D12로 읽기) 또는 비트뱅잉 | COLMOD 0x55/0x66, 0x3C(쓰던 자리에서 이어 쓰기). SDO로 읽기(첫 바이트는 더미): 0x04, 0x09 상태, 0x0A 전원 모드(켜진 뒤 0x9C), 0x0B MADCTL, 0x0C COLMOD, 0xD3 ID4(0x00 0x93 0x41), 0xDA–0xDC, RAMRD 0x2E(픽셀당 R·G·B). 패널이 좌우로 뒤집혀 붙어 있고 BGR(드라이버는 MADCTL 0x48) |
+
+**화면과 성능.** 화면은 부품 안의 `<canvas>`에 픽셀 그대로(확대는 pixelated) 그린다. 프레임 JSON에는 상태(`tft`: 크기, `version`,
+켜짐, 백라이트, 반전, MADCTL, COLMOD)만 있고, 그림이 바뀐 프레임에서만 워커가 `Simulator.tftPixels(id)`로 RGB565 바이트(240×320이면
+150 KB)를 받아 ArrayBuffer로 넘긴다(복사 없이 transfer, 배치 안의 이전 그림은 버림). `version`은 모든 디스플레이와 리셋을 통틀어
+고유해서 바뀌었는지만 보면 된다. **LED**(백라이트)는 프레임 동안 High였던 비율만큼 밝다(PWM 밝기 조절); 연결하지 않으면 화면이
+거의 안 보이고 경고, RESET을 연결하지 않으면 리셋 상태에 머물고 경고. 그림이 켜지는 조건: VCC ≥ 2.8 V, RESET High, SLPOUT, DISPON.
+근사: 비트뱅잉으로는 SDO 읽기를 하지 않고(하드웨어 SPI만), LED 핀이 끌어가는 전류, 수직 스크롤(0x33/0x37)·부분 모드(0x30)·감마는 모델링하지 않는다.
+
+예제: `hal-tft-st7735`(SPI1 10.5 MHz, 하드웨어 리셋 → SWRESET → SLPOUT → COLMOD 16비트 → MADCTL 0xC0 → DISPON, 색 막대·5×7 글꼴
+글자·카운터·튀는 상자, B1로 INVON/INVOFF).
+
 ## 후속 후보
 
 MPU-6050 FIFO·인터럽트, UART 핀 수준 파형(지금은 바이트 단위라 TX 핀을 프로브해도 프레임이 보이지 않음), USB-UART 모듈, 2·4채널 릴레이, HC-05 마스터 모드(두 모듈끼리 연결), DS18B20 기생 전원, TM1637 키 스캔(0x42 읽기), BMP280 IIR 필터·SPI 모드·BME280(습도), 74HC165(병렬 입력 시프트 레지스터), 5 V로 동작하는 595의 출력 전압(지금은 3.3 V로 계산). 모터: 센서리스(역기전력 영점) BLDC, 중앙 정렬 PWM(TIM1 CMS)과 반복 카운터, ESC의 BEC 출력·캘리브레이션·소리, 스테퍼 공진을 보여 주는 토크–속도 곡선, TMC2208 같은 UART 설정 드라이버, 엔코더가 달린 DC 모터(PID).

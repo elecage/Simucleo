@@ -1,0 +1,68 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "컬러 TFT ST7735S (SPI1) 색 막대·카운터·튀는 상자",
+  "parts": [
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "tft", "kind": "tft-st7735", "x": 46, "y": 10, "props": { "tab": "black" } }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": { "part": "nucleo", "pin": "5V" },
+      "b": { "part": "tft", "pin": "VCC" },
+      "color": "#e53935",
+      "points": [{ "x": 23, "y": 38 }, { "x": 44, "y": 38 }, { "x": 44, "y": 8 }, { "x": 48, "y": 8 }]
+    },
+    {
+      "id": "w2",
+      "a": { "part": "nucleo", "pin": "GND_D" },
+      "b": { "part": "tft", "pin": "GND" },
+      "color": "#212121",
+      "points": [{ "x": 19, "y": 1 }, { "x": 49, "y": 1 }]
+    },
+    {
+      "id": "w3",
+      "a": { "part": "nucleo", "pin": "D10" },
+      "b": { "part": "tft", "pin": "CS" },
+      "color": "#fb8c00",
+      "points": [{ "x": 23, "y": 0 }, { "x": 50, "y": 0 }]
+    },
+    {
+      "id": "w4",
+      "a": { "part": "nucleo", "pin": "D9" },
+      "b": { "part": "tft", "pin": "RESET" },
+      "color": "#fdd835",
+      "points": [{ "x": 24, "y": -1 }, { "x": 51, "y": -1 }]
+    },
+    {
+      "id": "w5",
+      "a": { "part": "nucleo", "pin": "D8" },
+      "b": { "part": "tft", "pin": "A0" },
+      "color": "#43a047",
+      "points": [{ "x": 25, "y": -2 }, { "x": 52, "y": -2 }]
+    },
+    {
+      "id": "w6",
+      "a": { "part": "nucleo", "pin": "D11" },
+      "b": { "part": "tft", "pin": "SDA" },
+      "color": "#1e88e5",
+      "points": [{ "x": 22, "y": -3 }, { "x": 53, "y": -3 }]
+    },
+    {
+      "id": "w7",
+      "a": { "part": "nucleo", "pin": "D13" },
+      "b": { "part": "tft", "pin": "SCK" },
+      "color": "#8e24aa",
+      "points": [{ "x": 20, "y": -4 }, { "x": 54, "y": -4 }]
+    },
+    {
+      "id": "w8",
+      "a": { "part": "nucleo", "pin": "D7" },
+      "b": { "part": "tft", "pin": "LED" },
+      "color": "#00acc1",
+      "points": [{ "x": 26, "y": -5 }, { "x": 55, "y": -5 }]
+    }
+  ],
+  "firmware": { "name": "hal-tft-st7735", "example": "hal-tft-st7735.elf" }
+}

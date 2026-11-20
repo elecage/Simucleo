@@ -493,6 +493,7 @@ export function App() {
         register: v.register,
         digits: v.digits,
         motor: v.motor,
+        tft: v.tft && { ...v.tft, id: v.id },
       };
       if (v.id === "LD2") {
         if (boardId) out[boardId] = { ...out[boardId], brightness: state.brightness, overcurrent: state.overcurrent };

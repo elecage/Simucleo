@@ -3561,3 +3561,115 @@ fn swv_trace_itm_data_exceptions_and_profile() {
     board.run_for_ns(150e6);
     assert!(!board.swv_take().itm.is_empty());
 }
+
+// ------------------------------------------------- M35: colour TFT (ST7735S)
+
+/// The hal-tft-st7735 example's wiring as the web loads it.
+fn tft_example() -> (
+    simucleo_nucleo::Circuit,
+    std::collections::HashMap<String, String>,
+) {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../web/examples/hal-tft-st7735.simucleo.json"
+    );
+    let project: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let signals = [
+        ("5V", "5V"),
+        ("GND_D", "GND"),
+        ("D7", "PA8"),
+        ("D8", "PA9"),
+        ("D9", "PC7"),
+        ("D10", "PB6"),
+        ("D11", "PA7"),
+        ("D13", "PA5"),
+    ]
+    .into_iter()
+    .map(|(a, b)| (a.to_string(), b.to_string()))
+    .collect();
+    (
+        serde_json::from_value(web_project::circuit(&project)).unwrap(),
+        signals,
+    )
+}
+
+/// RGB565 of screen pixel (x, y) of the 128×160 TFT `tft`.
+fn tft_px(board: &Nucleo, x: usize, y: usize) -> u16 {
+    let b = board.tft_pixels("tft").unwrap();
+    assert_eq!(b.len(), 128 * 160 * 2, "the display is dark");
+    u16::from_le_bytes([b[2 * (y * 128 + x)], b[2 * (y * 128 + x) + 1]])
+}
+
+/// Top-left corner of the orange bouncing box.
+fn tft_box(board: &Nucleo) -> Option<(usize, usize)> {
+    (82..160)
+        .flat_map(|y| (0..128).map(move |x| (x, y)))
+        .find(|&(x, y)| tft_px(board, x, y) == 0xFD20)
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-tft-st7735"]
+fn st7735_tft_shows_colour_bars_text_and_a_moving_box() {
+    use simucleo_nucleo::BusCatalog;
+    let (circuit, signals) = tft_example();
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-tft-st7735", "hal-tft-st7735"))
+        .unwrap();
+    board.set_circuit(&circuit, &BusCatalog::default(), &signals);
+    // Within the reset and SLPOUT waits the display is still dark.
+    board.run_for_ns(200e6);
+    let v = visual_of(&board.circuit_frame(0.2), "tft").tft.unwrap();
+    assert!(!v.lit && v.backlight > 0.5, "{v:?}");
+    board.run_for_ns(500e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("init done, drawing\r\n"), "{text}");
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+    let v = visual_of(&board.circuit_frame(0.5), "tft").tft.unwrap();
+    assert!(v.lit && v.backlight > 0.99 && !v.inverted, "{v:?}");
+    assert_eq!((v.madctl, v.colmod), (0xC0, 0x05));
+
+    // The colour bars, the title bar and its white text.
+    let bars = [
+        0xF800, 0x07E0, 0x001F, 0xFFE0, 0x07FF, 0xF81F, 0xFFFF, 0x8410,
+    ];
+    for (i, c) in bars.into_iter().enumerate() {
+        assert_eq!(tft_px(&board, 16 * i + 8, 30), c, "bar {i}");
+    }
+    assert_eq!(tft_px(&board, 1, 1), 0x000F);
+    let white = |board: &Nucleo, y0: usize, y1: usize| {
+        (y0..y1)
+            .flat_map(|y| (0..128).map(move |x| (x, y)))
+            .filter(|&(x, y)| tft_px(board, x, y) == 0xFFFF)
+            .count()
+    };
+    assert!(white(&board, 2, 12) > 50, "title text");
+    let digits = white(&board, 52, 68);
+    assert!(digits > 20, "counter digits");
+
+    // The box moves; the counter goes on.
+    let a = tft_box(&board).expect("box drawn");
+    let version = v.version;
+    board.run_for_ns(300e6);
+    let b = tft_box(&board).expect("box drawn");
+    assert_ne!(a, b);
+    let v = visual_of(&board.circuit_frame(0.3), "tft").tft.unwrap();
+    assert_ne!(v.version, version);
+    let text = console_text(&mut board);
+    assert!(text.contains("count 1 box"), "{text}");
+
+    // B1 inverts the colours (INVON): red shows cyan.
+    board.set_user_button(true);
+    board.run_for_ns(100e6);
+    board.set_user_button(false);
+    board.run_for_ns(50e6);
+    assert!(console_text(&mut board).contains("B1: colours inverted"));
+    let v = visual_of(&board.circuit_frame(0.15), "tft").tft.unwrap();
+    assert!(v.inverted);
+    assert_eq!(tft_px(&board, 8, 30), 0x07FF);
+}

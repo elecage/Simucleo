@@ -38,6 +38,8 @@ export interface PartFrame {
   register?: import("../parts/types").ShiftView;
   digits?: import("../parts/types").DigitsView;
   motor?: import("../parts/types").MotorView;
+  /** M35: colour TFT display; `pixels` (RGB565 LE) only in a frame where `version` moved (see tftStore). */
+  tft?: import("../parts/types").TftView & { pixels?: Uint8Array };
 }
 
 /** An HC-05 module and what its phone received this frame (`simucleo_nucleo::BluetoothStatus`). */

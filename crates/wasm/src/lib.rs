@@ -1011,6 +1011,14 @@ impl Simulator {
         self.board.sd_wipe(id)
     }
 
+    /// M35: what the TFT display of part `id` shows, RGB565 little-endian
+    /// row by row (empty when it is dark or there is no such display). The
+    /// page asks for it only when the frame's `tft.version` moved.
+    #[wasm_bindgen(js_name = tftPixels)]
+    pub fn tft_pixels(&self, id: &str) -> Vec<u8> {
+        self.board.tft_pixels(id).unwrap_or_default()
+    }
+
     /// Insert a disk image into the SD card of part `id`.
     #[wasm_bindgen(js_name = sdLoad)]
     pub fn sd_load(&mut self, id: &str, image: &[u8]) -> bool {

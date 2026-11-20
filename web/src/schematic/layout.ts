@@ -140,6 +140,16 @@ const BOX_LAYOUT: Record<
     right: ["OUT"],
     subtitle: (p) => `PIR (HC-SR501) · ${p.mode === "L" ? t("단발 L") : t("재트리거 H")} · ${p.delay ?? 3} s`,
   },
+  "tft-st7735": {
+    left: ["VCC", "GND", "LED"],
+    right: ["SCK", "SDA", "CS", "A0", "RESET"],
+    subtitle: () => t("컬러 TFT 128×160 (ST7735S) · SPI"),
+  },
+  "tft-ili9341": {
+    left: ["VCC", "GND", "LED"],
+    right: ["SCK", "SDI", "SDO", "CS", "DC", "RESET"],
+    subtitle: () => t("컬러 TFT 240×320 (ILI9341) · SPI"),
+  },
   bmp280: {
     left: ["VCC", "GND"],
     right: ["SCL", "SDA"],

@@ -2459,6 +2459,8 @@ pub enum Device {
     Baro(Box<Bmp280>),
     /// M21: a BLDC whose hall sensors are open-collector outputs.
     Bldc(Box<crate::tier9::HallBldc>),
+    /// M35: an ST7735S / ILI9341 colour TFT controller.
+    Tft(Box<crate::tft::Tft>),
 }
 
 impl Device {

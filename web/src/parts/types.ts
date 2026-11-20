@@ -123,6 +123,8 @@ export interface VisualState {
   digits?: DigitsView;
   /** Motors and motor drivers (M21). */
   motor?: MotorView;
+  /** Colour TFT display (M35); its pixels are in `tftPicture(id)`. */
+  tft?: TftView & { id: string };
   /** The control (`data-drag`) being operated now. */
   control?: string;
   /** The pressable element held down now (`data-action`). */
@@ -140,6 +142,23 @@ export interface LcdView {
   backlight: boolean;
   cursor?: [number, number];
   blink: boolean;
+}
+
+/** What a colour TFT display shows (`simucleo_circuit::sim::TftView`). */
+export interface TftView {
+  width: number;
+  height: number;
+  /** Moves whenever the picture does. */
+  version: number;
+  /** Powered, out of reset, awake (SLPOUT) and DISPON: the panel shows its memory. */
+  lit: boolean;
+  /** Fraction of the frame the LED (backlight) pin was high. */
+  backlight: number;
+  sleeping: boolean;
+  display_on: boolean;
+  inverted: boolean;
+  madctl: number;
+  colmod: number;
 }
 
 /** What a 74HC595 holds (`simucleo_circuit::sim::ShiftView`). */

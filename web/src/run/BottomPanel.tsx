@@ -4,6 +4,7 @@ import { Waveform } from "./Waveform";
 import type { ScopeSettings } from "./scopeSettings";
 import { RtosView } from "./RtosView";
 import { SourceView } from "./SourceView";
+import type { SourceUpload } from "../upload/useSourceUpload";
 
 /** A fixed tab, or `bt:<part id>` for an HC-05's phone. */
 type Tab = "console" | "source" | "waveform" | "rtos" | "registers" | "memory" | `bt:${string}`;
@@ -17,6 +18,7 @@ export function BottomPanel({
   scopeSeq,
   onScope,
   status,
+  upload,
 }: {
   runner: Runner;
   parts?: { id: string; kind: string }[];
@@ -26,8 +28,14 @@ export function BottomPanel({
   onScope?: (s: ScopeSettings) => void;
   /** Items at the right end of the tab row (the offline status, M29). */
   status?: ReactNode;
+  /** Project folder / zip uploads (M39): the source tab comes to the front on each. */
+  upload?: SourceUpload;
 }) {
   const [tab, setTab] = useState<Tab>("console");
+  const uploadSeq = upload?.seq ?? 0;
+  useEffect(() => {
+    if (uploadSeq > 0) setTab("source");
+  }, [uploadSeq]);
   // The waveform view keeps its trigger and capture once opened.
   const [scopeOpened, setScopeOpened] = useState(false);
   useEffect(() => {
@@ -68,7 +76,7 @@ export function BottomPanel({
         {btPart && runner.bluetooth[btPart] && <Phone runner={runner} part={btPart} />}
         {/* Kept mounted: breakpoints and added sources survive tab switches. */}
         <div className="tab-keep" hidden={tab !== "source"}>
-          <SourceView runner={runner} />
+          <SourceView runner={runner} upload={upload} />
         </div>
         {(tab === "waveform" || scopeOpened) && (
           <div className="tab-keep" hidden={tab !== "waveform"}>

@@ -31,6 +31,8 @@ import type { WiringContext } from "./lessons/wiring";
 import { LESSONS } from "./lessons/index";
 import type { ResultsFile } from "./lessons/progress";
 import { ShareDialog, type ShareFirmware } from "./share/ShareDialog";
+import { useSourceUpload } from "./upload/useSourceUpload";
+import { fromDataTransfer } from "./upload/folder";
 import { ReceiveDialog } from "./share/ReceiveDialog";
 import { decodeShare, findFragment, type Received } from "./share/link";
 
@@ -337,6 +339,49 @@ export function App() {
     clearHash();
     setIncoming(null);
   };
+
+  // ------------------------------------- project folder / zip (M39)
+  const sourceUpload = useSourceUpload(runner);
+  // Files dragged over the window: a fixed overlay (it moves nothing), and a
+  // drop anywhere that nobody else took (the teacher view takes its own).
+  const [dropping, setDropping] = useState(false);
+  const { upload: uploadBundle } = sourceUpload;
+  useEffect(() => {
+    let depth = 0;
+    const files = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+    const enter = (e: DragEvent) => {
+      if (!files(e)) return;
+      depth++;
+      setDropping(true);
+    };
+    const leave = (e: DragEvent) => {
+      if (!files(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (!depth) setDropping(false);
+    };
+    const over = (e: DragEvent) => {
+      if (files(e) && !e.defaultPrevented) e.preventDefault();
+    };
+    const drop = (e: DragEvent) => {
+      depth = 0;
+      setDropping(false);
+      if (!files(e) || e.defaultPrevented) return;
+      e.preventDefault();
+      void fromDataTransfer(e.dataTransfer!).then(uploadBundle, (err: Error) =>
+        setNotice(`끌어다 놓은 것을 읽지 못했습니다: ${err.message}`),
+      );
+    };
+    window.addEventListener("dragenter", enter);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("dragover", over);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragenter", enter);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("drop", drop);
+    };
+  }, [uploadBundle]);
 
   // SD cards keep what the firmware wrote, per project (IndexedDB).
   const sdCards = useSdPersistence(runner, project, projectName);
@@ -795,7 +840,13 @@ export function App() {
         scopeSeq={scopeSeq}
         onScope={onScope}
         status={<PwaStatus />}
+        upload={sourceUpload}
       />
+      {dropping && !teacherOpen && (
+        <div className="drop-overlay" data-testid="drop-overlay">
+          📁 프로젝트 폴더나 zip(ELF·소스)을 놓으면 불러옵니다
+        </div>
+      )}
 
       {lessonOpen && (
         <LessonPanel

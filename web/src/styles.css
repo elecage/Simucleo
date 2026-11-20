@@ -667,3 +667,20 @@ main.schematic-on .notice { top: 44px; }
 .spectrum-cursor text { font-size: 11px; fill: #a855f7; font-weight: 700; }
 .spectrum-measure { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .spectrum-measure td, .spectrum-measure th { font-variant-numeric: tabular-nums; }
+
+/* M39: project folder / zip upload in the source tab, and the drop overlay. */
+.source-empty { display: flex; flex-direction: column; gap: 6px; }
+.upload-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding-bottom: 4px; position: relative; font-size: 13px; }
+.upload-menu, .upload-files { position: relative; }
+.upload-menu > summary, .upload-files > summary { cursor: pointer; list-style: none; padding: 2px 8px; border: 1px solid var(--border, #ccc); border-radius: 4px; user-select: none; }
+.upload-menu > summary::-webkit-details-marker, .upload-files > summary::-webkit-details-marker { display: none; }
+.upload-pop { position: absolute; z-index: 30; top: 100%; left: 0; margin-top: 2px; display: flex; flex-direction: column; gap: 4px; min-width: 220px; padding: 8px; background: var(--panel, #fff); border: 1px solid var(--border, #ccc); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18); }
+.upload-files[open] { flex-basis: 100%; }
+.upload-files[open] > summary { display: inline-block; }
+.upload-pop.wide { position: static; margin-top: 4px; max-height: 150px; overflow: auto; box-shadow: none; }
+.upload-pop ul { margin: 0 0 4px; padding-left: 18px; font-family: ui-monospace, monospace; font-size: 12px; }
+.upload-pop .hint { margin: 0; font-size: 12px; }
+.upload-msg { color: var(--muted); }
+.upload-msg.error { color: #c0392b; }
+.elf-choice { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; border: 1px solid var(--border, #ccc); border-radius: 6px; flex-basis: 100%; }
+.drop-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; pointer-events: none; background: rgba(30, 110, 200, 0.12); border: 4px dashed rgba(30, 110, 200, 0.7); font-size: 22px; font-weight: 600; color: #1e5fa8; }

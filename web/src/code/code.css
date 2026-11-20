@@ -14,6 +14,12 @@
 .code-file button { border: 0; background: transparent; padding: 2px 6px; font-family: ui-monospace, monospace; font-size: 12px; }
 .code-file .code-file-x { padding: 2px 4px; color: var(--muted); }
 .header-file { padding: 2px 6px; font-family: ui-monospace, monospace; font-size: 12px; }
+/* M36: more files (a configuration-tool project) scroll in the file list;
+   the buttons never wrap, so the bar keeps its height. */
+.code-bar > button, .code-bar > details, .code-files > button, .code-files > select { flex: 0 0 auto; white-space: nowrap; }
+.code-files .code-file { flex: 0 0 auto; white-space: nowrap; }
+.code-files select { max-width: 11em; }
+.code-cube-start { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .code-status { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); text-align: right; }
 .code-status.error { color: #c62828; }
 .code-menu { position: relative; }

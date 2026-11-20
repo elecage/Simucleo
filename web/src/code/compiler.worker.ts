@@ -4,9 +4,9 @@
 // "편집기 오프라인으로 받기" cached them).
 import { buildProject, installSdk, type SourceFile, type ToolSession } from "./build.ts";
 import { downloadBytes, prepare, type ClangModule } from "./toolchain.ts";
-import type { ToolchainManifest } from "./sdk.ts";
+import type { Template, ToolchainManifest } from "./sdk.ts";
 
-export type ToCompiler = { type: "load"; base: string } | { type: "build"; id: number; base: string; files: SourceFile[] };
+export type ToCompiler = { type: "load"; base: string } | { type: "build"; id: number; base: string; files: SourceFile[]; template?: Template };
 
 export type FromCompiler =
   | { type: "progress"; phase: "download" | "start"; done: number; total: number }
@@ -90,7 +90,7 @@ self.onmessage = (e: MessageEvent<ToCompiler>) => {
       try {
         const t0 = performance.now();
         const { session, written } = await load(m.base);
-        const r = await buildProject(session, m.files, written);
+        const r = await buildProject(session, m.files, written, m.template ?? "hal");
         // A copy: the file system's own buffer must not be transferred away.
         const elf = r.elf ? r.elf.slice() : null;
         post({ type: "built", id: m.id, ...r, elf, ms: { ...r.ms, total: performance.now() - t0 } }, elf ? [elf.buffer] : []);

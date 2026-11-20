@@ -18,6 +18,15 @@ import { maybeGunzip } from "./toolchain.ts";
 import { useEditorOffline } from "./offline.ts";
 import { elfKey } from "../upload/attach.ts";
 import type { SourceFile } from "./build.ts";
+import ConfigPanel from "../cube/ConfigPanel.tsx";
+import { emptyConfig, nucleoDefaults, type CubeConfig } from "../cube/config.ts";
+import { exportZip, importCubeProject, projectConfig, projectTree, safeProjectName, type ImportedFile } from "../cube/tree.ts";
+import { packFilesOf, packIndex } from "../cube/packload.ts";
+import { packById } from "../cube/packs.ts";
+import type { WiredPins } from "../cube/wiring.ts";
+import { readZip } from "../upload/zip.ts";
+import { decodeSource } from "../upload/folder.ts";
+import { download } from "../editor/project.ts";
 import "./code.css";
 
 // ---------------------------------------------------------- shared data
@@ -56,6 +65,7 @@ function sdkHeaders() {
 }
 
 const baseName = (p: string) => p.slice(p.lastIndexOf("/") + 1);
+const dirOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 const mb = (n: number) => (n / 1048576).toFixed(1);
 
 const SEVERITY_LABEL = { error: "오류", warning: "경고", note: "참고", info: "제안" } as const;
@@ -74,9 +84,11 @@ export interface CodePanelProps {
   visible?: boolean;
   /** The last session is back (its code may still be on its way before). */
   restored?: boolean;
+  /** M36: MCU pin → parts wired to it on the canvas, for the configuration tool's wiring check. */
+  wired?: WiredPins;
 }
 
-export default function CodePanel({ runner, code, onCode, examples, codeSeq, autoBuild = false, onAutoBuilt, visible = true, restored = true }: CodePanelProps) {
+export default function CodePanel({ runner, code, onCode, examples, codeSeq, autoBuild = false, onAutoBuilt, visible = true, restored = true, wired }: CodePanelProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const states = useRef(new Map<string, EditorState>());
@@ -97,6 +109,11 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
   const [notice, setNotice] = useState<string | null>(null);
   // Bumped when this tab replaces the code itself (an example's main.c).
   const [localSeq, setLocalSeq] = useState(0);
+  // M36: the configuration tool (open with a starting config for a new project).
+  const [config, setConfig] = useState<{ start?: CubeConfig; notes?: string[] } | null>(null);
+  const [packList, setPackList] = useState<{ path: string; bytes: number }[]>([]);
+  const importInput = useRef<HTMLInputElement>(null);
+  const importDir = useRef<HTMLInputElement>(null);
   const comp = useCompiler();
   const { offline, cacheOffline } = useEditorOffline();
   const editable = examples.filter((e) => e.code);
@@ -187,7 +204,13 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
       return;
     }
     if (!view.current) view.current = new EditorView({ state, parent: host.current });
-    else view.current.setState(state);
+    else {
+      view.current.setState(state);
+      // (The scroller keeps its offset across documents: a header opened
+      // from far down main.c showed its middle. Each document opens where
+      // its cursor is — a new one at the top.)
+      view.current.dispatch({ effects: EditorView.scrollIntoView(state.selection.main.head, { y: "start", yMargin: 0 }) });
+    }
   }, [active, header, headerText, codeSeq, localSeq, !!code]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => view.current?.destroy(), []);
 
@@ -196,10 +219,20 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
     setHeader(null);
     setActive(path);
   };
-  const openHeader = async (file: string) => {
+  const openHeader = async (file: string, from: "sdk" | "pack" | "ioc" = "sdk") => {
     if (view.current && header === null && states.current.has(active)) states.current.set(active, view.current.state);
     setHeader(file);
     setHeaderText(null);
+    if (from === "ioc") return setHeaderText(codeRef.current?.ioc ?? "");
+    if (from === "pack") {
+      try {
+        const f = (await packFilesOf(packById(codeRef.current?.drivers).id)).find((x) => x.path === file);
+        setHeaderText(f ? new TextDecoder("latin1").decode(f.data) : `/* ${file}: 드라이버 묶음에 없습니다 */`);
+      } catch (e) {
+        setHeaderText(`/* 드라이버 묶음을 받지 못했습니다: ${(e as Error).message} */`);
+      }
+      return;
+    }
     try {
       const h = await sdkHeaders();
       setHeaderText(h.get(file) ?? `/* ${file}: SDK에 없습니다 */`);
@@ -248,7 +281,7 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
     const files = filesRef.current;
     onCode({ ...c, files });
     setNotice(null);
-    const r = await compiler.build(files);
+    const r = await compiler.build(files, c.template);
     setResult({ ...r, at: Date.now() });
     pushDiagnostics(r.diagnostics);
     if (r.ok && r.elf) {
@@ -355,6 +388,62 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
       .finally(() => (opening.current = false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code, visible, restored, runner.firmwareExample, editable, codeSeq]);
+  // ------------------------------------------------ M36: configuration tool
+  const isCube = code?.template === "cube";
+  useEffect(() => {
+    if (!isCube) return;
+    void packIndex().then(
+      (l) => setPackList(l.find((x) => x.id === packById(code?.drivers).id)?.files ?? []),
+      () => setPackList([]),
+    );
+  }, [isCube, code?.drivers]);
+  const tree = useMemo(() => (code && isCube ? projectTree(code, packList) : []), [code, isCube, packList]);
+  const applyConfig = (p: CodeProject) => {
+    onCode(p);
+    setLocalSeq((k) => k + 1);
+  };
+  const exportProjectZip = async () => {
+    const c = codeRef.current;
+    if (!c) return;
+    setNotice(null);
+    try {
+      const pack = await packFilesOf(packById(c.drivers).id);
+      const zip = await exportZip({ ...c, files: filesRef.current }, pack);
+      download(`${safeProjectName(projectConfig(c).config.projectName)}.zip`, new Blob([zip as Uint8Array<ArrayBuffer>], { type: "application/zip" }));
+    } catch (e) {
+      setNotice(`zip을 만들지 못했습니다: ${(e as Error).message}`);
+    }
+  };
+  const importProject = async (list: FileList | null) => {
+    if (!list?.length) return;
+    setNotice(null);
+    try {
+      const files: ImportedFile[] = [];
+      const want = (p: string) => /\.(ioc|c|h)$/i.test(p) && !/(^|\/)Drivers\//.test(p);
+      for (const f of Array.from(list)) {
+        const path = (f.webkitRelativePath || f.name).replace(/\\/g, "/");
+        if (/\.zip$/i.test(path)) {
+          for (const e of await readZip(new Uint8Array(await f.arrayBuffer()), (x) => want(x.path))) files.push({ path: e.path, data: e.data });
+        } else if (want(path)) files.push({ path, data: new Uint8Array(await f.arrayBuffer()) });
+      }
+      const r = importCubeProject(files, decodeSource);
+      if (codeRef.current && !window.confirm(`'${r.root || "프로젝트"}'을(를) 불러와 지금 코드를 바꿀까요? (회로는 그대로)`)) return;
+      applyConfig(r.project);
+      setConfig({ notes: [`CubeIDE 프로젝트 '${r.root || "?"}'을(를) 가져왔습니다 (파일 ${r.project.files.length}개).`, ...r.warnings] });
+    } catch (e) {
+      setNotice(`가져오지 못했습니다: ${(e as Error).message}`);
+    } finally {
+      if (importInput.current) importInput.current.value = "";
+      if (importDir.current) importDir.current.value = "";
+    }
+  };
+  const importInputs = (
+    <>
+      <input ref={importInput} type="file" accept=".zip,.ioc,.c,.h" multiple hidden data-testid="cubeide-import" onChange={(e) => void importProject(e.target.files)} />
+      <input ref={importDir} type="file" hidden data-testid="cubeide-import-dir" {...{ webkitdirectory: "" }} onChange={(e) => void importProject(e.target.files)} />
+    </>
+  );
+  const configPanel = config && <ConfigPanel code={code} start={config.start} notes={config.notes} wired={wired} onApply={applyConfig} onClose={() => setConfig(null)} />;
 
   const removeCode = () => {
     if (!window.confirm("이 프로젝트의 코드를 모두 지울까요? (회로와 펌웨어는 그대로)")) return;
@@ -401,6 +490,9 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
   if (!code) {
     return (
       <div className="code-panel code-empty" data-testid="code-panel">
+        {/* First in both layouts: the configuration tool stays mounted when its project replaces the empty tab. */}
+        {configPanel}
+        {importInputs}
         <p>
           예제의 <code>main.c</code>를 고쳐 브라우저 안에서 빌드하고 바로 실행합니다. 회로는 그대로 둡니다. 처음 빌드할 때 컴파일러(약 20 MB)를
           한 번 받습니다.
@@ -419,6 +511,19 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
             ))}
           </select>
         </label>
+        <p className="code-cube-start">
+          또는 CubeMX처럼 핀·클럭·주변장치를 설정해 새 프로젝트를 만듭니다:{" "}
+          <button onClick={() => setConfig({ start: nucleoDefaults() })} data-testid="new-cube">
+            ⚙ 새 프로젝트(설정 도구)
+          </button>{" "}
+          <button onClick={() => setConfig({ start: emptyConfig() })} title="LD2·B1·USART2도 없이 SWD만 설정한 MCU" data-testid="new-cube-empty">
+            빈 MCU로
+          </button>{" "}
+          <button onClick={() => importInput.current?.click()} title="STM32CubeIDE 프로젝트 zip (.ioc와 Core/)">
+            📁 CubeIDE 프로젝트 가져오기 (zip)
+          </button>{" "}
+          <button onClick={() => importDir.current?.click()}>폴더…</button>
+        </p>
         {notice && <p className="error">{notice}</p>}
       </div>
     );
@@ -426,6 +531,8 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
 
   return (
     <div className={big ? "code-panel big" : "code-panel"} data-testid="code-panel">
+      {configPanel}
+      {importInputs}
       <div className="code-bar">
         <nav className="code-files" aria-label="코드 파일">
           {code.files.map((f) => (
@@ -444,6 +551,33 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
           <button onClick={() => void addFile()} title="새 .c/.h 파일 (main.h는 템플릿의 것을 복사해 바꿈)">
             + 파일
           </button>
+          {isCube && (
+            <select
+              aria-label="프로젝트 트리"
+              value=""
+              onChange={(e) => {
+                const n = tree.find((x) => x.path === e.target.value);
+                if (!n) return;
+                if (n.kind === "pack") void openHeader(n.path, "pack");
+                else if (n.kind === "ioc") void openHeader(n.path, "ioc");
+                else if (n.kind === "user" || n.kind === "generated") switchTo(n.path);
+              }}
+            >
+              <option value="">🗂 트리…</option>
+              {[...new Set(tree.map((n) => dirOf(n.path)))].map((dir) => (
+                <optgroup key={dir} label={dir || "(프로젝트)"}>
+                  {tree
+                    .filter((n) => dirOf(n.path) === dir)
+                    .map((n) => (
+                      <option key={n.path} value={n.path} disabled={n.kind === "ide"}>
+                        {n.readOnly ? "🔒 " : ""}
+                        {baseName(n.path)}
+                      </option>
+                    ))}
+                </optgroup>
+              ))}
+            </select>
+          )}
           <select aria-label="HAL 헤더 보기" value="" onChange={(e) => e.target.value && void openHeader(e.target.value)}>
             <option value="">헤더 보기…</option>
             {headerList.map((h) => (
@@ -456,6 +590,9 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
         <span className={result && !result.ok ? "code-status error" : "code-status"} data-testid="build-status">
           {status}
         </span>
+        <button onClick={() => setConfig({})} title="핀·클럭·주변장치를 설정하고 코드를 생성합니다 (CubeMX처럼)" data-testid="open-config">
+          ⚙ 설정(.ioc)
+        </button>
         <button className="primary" onClick={() => void build()} disabled={comp.building || comp.phase === "loading"} title="브라우저 안에서 컴파일·링크하고 실행합니다 (Ctrl+B)">
           ▶ 빌드
         </button>
@@ -487,6 +624,16 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
             <button onClick={() => compiler.load()} disabled={comp.phase !== "idle" && comp.phase !== "failed"}>
               컴파일러 미리 받기
             </button>
+            {isCube && (
+              <>
+                <button onClick={() => void exportProjectZip()} data-testid="export-zip">
+                  ⬇ zip으로 내보내기 (STM32CubeIDE)
+                </button>
+                <button onClick={() => code.ioc && download(`${safeProjectName(projectConfig(code).config.projectName)}.ioc`, new Blob([code.ioc], { type: "text/plain" }))}>⬇ .ioc 내보내기</button>
+              </>
+            )}
+            <button onClick={() => importInput.current?.click()}>📁 CubeIDE 프로젝트 가져오기 (zip)</button>
+            <button onClick={() => importDir.current?.click()}>📁 CubeIDE 프로젝트 폴더 가져오기</button>
             {code.base && <button onClick={() => void resetToExample()}>예제 원래 코드로 되돌리기</button>}
             <button onClick={removeCode}>코드 지우기</button>
             {comp.llvm && <span className="hint">{comp.llvm}{comp.loadMs ? ` · 시작 ${(comp.loadMs / 1000).toFixed(1)}초` : ""}</span>}

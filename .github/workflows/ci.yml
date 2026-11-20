@@ -148,6 +148,8 @@ jobs:
       # M33: the shipped compiler (public/toolchain/, made by npm run build
       # from firmware/editor-sdk and the compiler package) builds every
       # editable example's main.c in Node, and the ELFs run on the core.
+      # M36: projects of the configuration tool build with arm-none-eabi-gcc
+      # and with the shipped compiler, and both ELFs run the same.
       - name: In-browser compiler, in Node
         run: npm run test:toolchain
         working-directory: web

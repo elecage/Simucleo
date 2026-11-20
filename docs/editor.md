@@ -105,7 +105,8 @@ HAL 공통 파일(`clock_config.c` 등)도 예제처럼 소스가 보인다. HAL
 
 - 고칠 수 있는 것은 HAL 공통 틀의 예제다. 클럭 설정(`SystemClock_Config`), 인터럽트 처리 함수 파일(`stm32f4xx_it.c`), MSP는
   미리 빌드되어 있어 바꿀 수 없다 — 새 인터럽트 처리 함수(`EXTI15_10_IRQHandler` 등)는 내 파일에 쓰면 된다(시작 코드의 약한 기호를
-  대신함). FreeRTOS·FatFs 예제와 C++은 아직 안 된다.
+  대신함). FreeRTOS·FatFs 예제와 C++은 아직 안 된다. 클럭·인터럽트·MSP까지 내 파일로 두려면 설정 도구로 프로젝트를 만든다
+  ([config-tool.md](config-tool.md), M36).
 - 자동완성 2단계(clangd 같은 의미 분석)는 넣지 않았다. 색인과 내 파일을 훑는 정도라, 매크로로 만든 이름이나 복잡한 타입은 놓칠 수
   있다.
 - AI 제안(사용자 API 키)은 넣지 않았다.

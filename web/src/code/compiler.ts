@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 import type { FromCompiler, ToCompiler } from "./compiler.worker";
 import type { SourceFile } from "./build.ts";
 import type { Diagnostic } from "./diagnostics.ts";
+import type { Template } from "./sdk.ts";
 
 export interface CompilerState {
   phase: "idle" | "loading" | "ready" | "failed";
@@ -74,13 +75,13 @@ export const compiler = {
     set({ phase: "loading", error: null });
     send({ type: "load", base: base() });
   },
-  build(files: SourceFile[]): Promise<BuildOutput> {
+  build(files: SourceFile[], template: Template = "hal"): Promise<BuildOutput> {
     if (state.phase !== "ready") set({ phase: "loading", error: null });
     set({ building: true });
     const id = nextId++;
     return new Promise((resolve) => {
       pending.set(id, resolve);
-      send({ type: "build", id, base: base(), files });
+      send({ type: "build", id, base: base(), files, template });
     });
   },
 };

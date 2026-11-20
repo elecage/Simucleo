@@ -45,8 +45,16 @@ export interface CircuitJson {
 
 export const pinKey = (p: PinRef) => `${p.part}:${p.pin}`;
 
+/** Pins by id, per part kind (a breadboard has 400: no linear search per wire end and frame). */
+const pinIndex = new Map<string, Map<string, { x: number; y: number }>>();
+
 export function pinPosition(part: PlacedPart, pinId: string): { x: number; y: number } | undefined {
-  const pin = PART_BY_KIND[part.kind]?.pins.find((p) => p.id === pinId);
+  let pins = pinIndex.get(part.kind);
+  if (!pins) {
+    pins = new Map((PART_BY_KIND[part.kind]?.pins ?? []).map((p) => [p.id, p]));
+    if (PART_BY_KIND[part.kind]) pinIndex.set(part.kind, pins);
+  }
+  const pin = pins.get(pinId);
   return pin && { x: part.x + pin.x, y: part.y + pin.y };
 }
 

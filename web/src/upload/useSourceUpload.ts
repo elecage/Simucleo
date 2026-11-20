@@ -1,7 +1,7 @@
 // M39: uploading a whole project folder or zip. Finds the ELF (asks when
 // there are several), loads it, matches the sources once the core has read
 // its DWARF paths, and keeps them in IndexedDB with the firmware.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Runner } from "../sim/useRunner";
 import { idbGet, idbSet } from "../editor/project";
 import { attachSources, elfKey, isAttached, summary, type Attached } from "./attach";
@@ -155,5 +155,7 @@ export function useSourceUpload(runner: Runner, onLoad?: () => void): SourceUplo
     };
   }, [firmwareBytes]);
 
-  return { attached, message, choice, busy, seq, upload, choose };
+  // The same object while nothing changed: the source view, kept mounted
+  // while hidden, then skips the frames' redraws (M31).
+  return useMemo(() => ({ attached, message, choice, busy, seq, upload, choose }), [attached, message, choice, busy, seq, upload, choose]);
 }

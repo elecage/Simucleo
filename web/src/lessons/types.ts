@@ -116,8 +116,8 @@ export interface ConsoleValuesCheck extends CheckBase {
 }
 
 /**
- * The PWM duty of `pin` (0–1, averaged over a display frame) was between
- * `min` and `max`: at some moment (`mode: "some"`, the default) or the
+ * The PWM duty of `pin` (0–1, averaged over at least 16 ms of simulated
+ * time, see `dutyWindows`) was between `min` and `max`: at some moment (`mode: "some"`, the default) or the
  * whole time (`"always"`).
  */
 export interface DutyCheck extends CheckBase {

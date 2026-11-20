@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { btLinked, type Runner } from "../sim/useRunner";
-import { Waveform } from "./Waveform";
+import { scopeThrottled, Waveform } from "./Waveform";
 import type { ScopeSettings } from "./scopeSettings";
 import { RtosView } from "./RtosView";
 import { SourceView } from "./SourceView";
@@ -8,6 +8,34 @@ import type { SourceUpload } from "../upload/useSourceUpload";
 
 /** A fixed tab, or `bt:<part id>` for an HC-05's phone. */
 type Tab = "console" | "source" | "waveform" | "rtos" | "registers" | "memory" | `bt:${string}`;
+
+/** What changes with every frame: a hidden tab does not redraw for these (M31). */
+const LIVE: ReadonlySet<string> = new Set(["frame", "speed", "console", "bluetooth", "memory"]);
+
+/**
+ * For `memo`: a tab kept mounted while hidden (the source view, the
+ * waveform view) redraws only when shown, or when something other than
+ * the running simulation's live state changed (a breakpoint placed, a
+ * pause, new firmware). Its frame listeners keep collecting meanwhile.
+ */
+export function sameWhileHidden<P extends { runner: Runner; active?: boolean }>(a: P, b: P): boolean {
+  if (b.active || a.active !== b.active) return false;
+  return onlyLiveChanged(a, b);
+}
+function onlyLiveChanged<P extends { runner: Runner }>(a: P, b: P): boolean {
+  for (const k of Object.keys(b) as (keyof P)[]) if (k !== "runner" && a[k] !== b[k]) return false;
+  for (const k of Object.keys(b.runner) as (keyof Runner)[]) {
+    if (!LIVE.has(k) && a.runner[k] !== b.runner[k]) return false;
+  }
+  return true;
+}
+const KeptSource = memo(SourceView, sameWhileHidden);
+const KeptWaveform = memo(
+  Waveform,
+  (a, b) =>
+    sameWhileHidden(a, b) ||
+    (!!a.active && !!b.active && b.runner.running && scopeThrottled(b.runner.running) && onlyLiveChanged(a, b)),
+);
 
 const hex = (v: number, w = 8) => "0x" + (v >>> 0).toString(16).toUpperCase().padStart(w, "0");
 
@@ -76,11 +104,11 @@ export function BottomPanel({
         {btPart && runner.bluetooth[btPart] && <Phone runner={runner} part={btPart} />}
         {/* Kept mounted: breakpoints and added sources survive tab switches. */}
         <div className="tab-keep" hidden={tab !== "source"}>
-          <SourceView runner={runner} upload={upload} />
+          <KeptSource runner={runner} upload={upload} active={tab === "source"} />
         </div>
         {(tab === "waveform" || scopeOpened) && (
           <div className="tab-keep" hidden={tab !== "waveform"}>
-            <Waveform
+            <KeptWaveform
               runner={runner}
               active={tab === "waveform"}
               parts={parts}

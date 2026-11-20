@@ -222,9 +222,9 @@ export type ToWorker =
   /** Analog probes: "PA1" or "part.pin". */
   | { type: "analogProbes"; specs: string[] }
   /** Set the oscilloscope trigger (null: none) and arm it. */
-  | { type: "trigger"; config: TriggerConfig | null }
+  | { type: "trigger"; config: TriggerConfig | null; gen: number }
   /** Wait for the next trigger (Single). */
-  | { type: "armTrigger" }
+  | { type: "armTrigger"; gen: number }
   | { type: "console"; text: string }
   | { type: "bluetooth"; part: string; text: string }
   | { type: "bluetoothConnect"; part: string; on: boolean }
@@ -243,7 +243,23 @@ export type ToWorker =
   | { type: "sdLoad"; part: string; bytes: ArrayBuffer }
   | { type: "sdSnapshot"; part: string }
   | { type: "sdRestore"; part: string; bytes: ArrayBuffer }
-  | { type: "sdWipe"; part: string };
+  | { type: "sdWipe"; part: string }
+  /** M31: frames to the page at most `hz` times a second, in batches (null: each frame as it is made). */
+  | { type: "uiRate"; hz: number | null }
+  /** M31: the page has drawn the last batch. */
+  | { type: "ack" };
+
+/** One frame as the worker hands it to the page. */
+export interface FrameMsg {
+  frame: SimFrame;
+  /** Text the virtual COM port received since the last frame. */
+  console: string;
+  running: boolean;
+  /** The `epoch` of the last reset that asked for one (0 before). */
+  epoch: number;
+  /** The `gen` of the last trigger setting or arming made before this frame. */
+  triggerGen: number;
+}
 
 export type FromWorker =
   | { type: "ready"; version: string }
@@ -258,7 +274,11 @@ export type FromWorker =
       speed: number;
       /** The `epoch` of the last reset that asked for one (0 before). */
       epoch: number;
+      /** See `FrameMsg.triggerGen`. */
+      triggerGen: number;
     }
+  /** M31: the frames made since the last batch, oldest first (performance mode). */
+  | { type: "frames"; frames: FrameMsg[]; speed: number }
   | { type: "memory"; addr: number; bytes: Uint8Array }
   | { type: "sdImage"; part: string; bytes: Uint8Array }
   | { type: "sdSnapshot"; part: string; bytes: Uint8Array }

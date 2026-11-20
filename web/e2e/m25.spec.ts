@@ -191,7 +191,9 @@ test("NeoPixel chain: the decoded GRB frame is what the ring and the strip show"
   expect(rs.filter((r) => r.error)).toEqual([]);
   // Three frames of 20 pixels (12 on the ring, 8 on the strip), numbered from each reset.
   const pixels = rs.filter((r) => r.kind === "pixel");
-  expect(pixels.map((r) => r.text.match(/#(\d+) #/)?.[1])).toEqual(
+  // (On a mismatch: where each row of the table is, in µs from the trigger.)
+  const where = rs.map((r) => `${r.kind === "pixel" ? r.text.match(/#(\d+) #/)?.[1] : r.kind}@${Math.round(r.t / 1000)}`).join(" ");
+  expect(pixels.map((r) => r.text.match(/#(\d+) #/)?.[1]), where).toEqual(
     Array.from({ length: 60 }, (_, i) => String(i % 20)),
   );
   expect(rs.filter((r) => r.kind === "reset").length).toBe(3);

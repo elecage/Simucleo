@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type MutableRefObject, type PointerEvent as RPointerEvent } from "react";
 import { PART_BY_KIND } from "../parts";
-import { PITCH, type ControlPointer, type ControlSession, type PropValues, type VisualState } from "../parts/types";
-import { pinKey, pinPosition, type PinRef, type Point, type Project } from "./model";
+import { PITCH, type ControlPointer, type ControlSession, type PartDef, type PropValues, type VisualState } from "../parts/types";
+import { pinKey, pinPosition, type PlacedPart as PartInstance, type PinRef, type Point, type Project } from "./model";
+import { usePerfLite } from "../sim/perfStore";
+import { countRender } from "../sim/renderCount";
+import { sameJson } from "../sim/sameJson";
 
 interface Props {
   project: Project;
@@ -77,6 +80,97 @@ const DRAG_START = 4;
 
 const clampScale = (s: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
 
+/** What a part's body and pins do with the pointer: the canvas's latest handlers, behind a ref (M31). */
+interface PartHandlers {
+  bodyOver(e: RPointerEvent, def: PartDef): void;
+  bodyLeave(): void;
+  bodyDown(e: RPointerEvent, part: PartInstance, def: PartDef): void;
+  pinDown(e: RPointerEvent, ref: PinRef): void;
+  pinEnter(ref: PinRef, label: string): void;
+  pinLeave(): void;
+}
+type Handlers = MutableRefObject<PartHandlers>;
+
+interface BodyProps {
+  part: PartInstance;
+  selected: boolean;
+  /** Control writes drawn but not sent yet. */
+  extra: PropValues | undefined;
+  visual: VisualState | undefined;
+  /** The pressed element's action, if this part's. */
+  action: string | undefined;
+  /** The control held down, if this part's. */
+  control: string | undefined;
+  /** Out of view in performance mode: the simulator's changes wait (M31). */
+  frozen: boolean;
+  h: Handlers;
+}
+
+/**
+ * A part's body. Memoized (M31): a frame redraws only the parts whose
+ * state changed — a breadboard's 400 holes are not drawn again for every
+ * blink of an LED.
+ */
+const PartBody = memo(
+  function PartBody({ part, selected, extra, visual, action, control, h }: BodyProps) {
+    countRender("part");
+    const def = PART_BY_KIND[part.kind];
+    return (
+      <g
+        data-id={part.id}
+        transform={`translate(${part.x * PITCH} ${part.y * PITCH})`}
+        className={selected ? "part selected" : "part"}
+      >
+        <g
+          onPointerOver={(e) => h.current.bodyOver(e, def)}
+          onPointerLeave={() => h.current.bodyLeave()}
+          onPointerDown={(e) => h.current.bodyDown(e, part, def)}
+        >
+          {def.render({ ...def.props, ...part.props, ...extra }, {
+            ...(visual ?? {}),
+            pressed: action !== undefined && action !== "reset",
+            action,
+            control,
+          })}
+        </g>
+      </g>
+    );
+  },
+  (a, b) =>
+    a.part === b.part &&
+    a.selected === b.selected &&
+    a.extra === b.extra &&
+    a.action === b.action &&
+    a.control === b.control &&
+    a.h === b.h &&
+    ((a.frozen && b.frozen) || sameJson(a.visual, b.visual)),
+);
+
+/** A part's pin markers; `special` lists the pins drawn other than plain: `id=class` lines. */
+const PinGroup = memo(function PinGroup({ part, special, h }: { part: PartInstance; special: string; h: Handlers }) {
+  const cls = new Map(special ? special.split("\n").map((l) => l.split("=") as [string, string]) : []);
+  return (
+    <g transform={`translate(${part.x * PITCH} ${part.y * PITCH})`} data-pins={part.id}>
+      {(PART_BY_KIND[part.kind]?.pins ?? []).map((pin) => {
+        const ref = { part: part.id, pin: pin.id };
+        return (
+          <circle
+            key={pin.id}
+            data-pin={pin.id}
+            cx={pin.x * PITCH}
+            cy={pin.y * PITCH}
+            r={4.2}
+            className={cls.get(pin.id) ?? "pin"}
+            onPointerDown={(e) => h.current.pinDown(e, ref)}
+            onPointerEnter={() => h.current.pinEnter(ref, `${part.id}.${pin.label ?? pin.id}`)}
+            onPointerLeave={() => h.current.pinLeave()}
+          />
+        );
+      })}
+    </g>
+  );
+});
+
 /** SVG path of a wire through its bend points; without any, a gentle sag like a real jumper. */
 function wirePath(a: Point, b: Point, points: Point[]): string {
   if (points.length === 0) {
@@ -103,6 +197,8 @@ export function Canvas({
   reveal,
   marks,
 }: Props) {
+  countRender("canvas");
+  const lite = usePerfLite();
   const svgRef = useRef<SVGSVGElement>(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: BASE_SCALE });
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -284,14 +380,25 @@ export function Canvas({
     if (fitKey) fitRef.current();
   }, [fitKey]);
 
+  // (Only when the view moves: the caller's callback is new on every
+  // render, and reading the size right after a commit forces a layout —
+  // once per simulator frame, M31.)
+  const onViewCenterRef = useRef(onViewCenter);
+  onViewCenterRef.current = onViewCenter;
   useEffect(() => {
     const el = svgRef.current;
-    if (!el || !onViewCenter) return;
-    onViewCenter({
-      x: (view.x + el.clientWidth / view.scale / 2) / PITCH,
-      y: (view.y + el.clientHeight / view.scale / 2) / PITCH,
-    });
-  }, [view, onViewCenter]);
+    if (!el) return;
+    const report = () =>
+      onViewCenterRef.current?.({
+        x: (view.x + el.clientWidth / view.scale / 2) / PITCH,
+        y: (view.y + el.clientHeight / view.scale / 2) / PITCH,
+      });
+    report();
+    // … and when the canvas changes size (shown again, window resized).
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [view]);
 
   // Pan just enough to show a part that is (partly) outside the view.
   const revealRef = useRef<(id: string) => void>(() => {});
@@ -498,119 +605,119 @@ export function Canvas({
   const previewEnd = (snapTarget && absPin(snapTarget)) ?? mouse;
   const selectedWire = project.wires.find((w) => w.id === selected);
 
+  // The handlers the memoized bodies and pins call, always the latest.
+  const handlers = useRef<PartHandlers>(null as unknown as PartHandlers);
+  handlers.current = {
+    bodyOver: (e, def) => {
+      const el = (e.target as Element).closest("[data-drag]");
+      const hint = el && def.controls?.[el.getAttribute("data-drag")!]?.hint;
+      const r = svgRef.current!.getBoundingClientRect();
+      setControlHint(hint ? { text: hint, x: e.clientX - r.left, y: e.clientY - r.top } : null);
+    },
+    bodyLeave: () => setControlHint(null),
+    bodyDown: (e, part, def) => {
+      e.stopPropagation();
+      if (pending) {
+        wiringClick(toCanvas(e));
+        return;
+      }
+      const p = toCanvas(e);
+      const name = (e.target as Element).closest("[data-drag]")?.getAttribute("data-drag");
+      const control = name ? def.controls?.[name] : undefined;
+      if (name && control && onPropChange) {
+        // Operate the part (knob, lamp, touch…); the rest of its body moves it.
+        onSelect(part.id);
+        const key = `${part.id}|${name}`;
+        // Still cooling from the last touch: carry on from there.
+        const before = live.current.get(key);
+        const session = control.start(pointerIn(e, part.id), propsOf(part.id), before?.session.carry);
+        live.current.set(key, { part: part.id, control: name, session, held: true });
+        if (session.set) writeProps(part.id, session.set);
+        if (session.tick) startTicking();
+        setHeld({ part: part.id, control: name });
+        startDrag(e, {
+          kind: "control",
+          key,
+          part: part.id,
+          sx: e.clientX,
+          sy: e.clientY,
+          holdOnly: !!control.holdOnly,
+          dx: p.x / PITCH - part.x,
+          dy: p.y / PITCH - part.y,
+        });
+        return;
+      }
+      const action = (e.target as Element).closest("[data-action]")?.getAttribute("data-action");
+      if (action && onPartAction) {
+        setPressed({ part: part.id, action });
+        onPartAction(part.id, action, true);
+        return;
+      }
+      onSelect(part.id);
+      startDrag(e, { kind: "part", id: part.id, dx: p.x / PITCH - part.x, dy: p.y / PITCH - part.y });
+    },
+    pinDown: (e, ref) => {
+      e.stopPropagation();
+      if (livePending) {
+        finishWire(ref);
+        return;
+      }
+      // Start a wire: click-and-click, or drag to the other pin.
+      setPending({ start: ref, points: [] });
+      setMouse(toCanvas(e));
+      startDrag(e, { kind: "wire", sx: e.clientX, sy: e.clientY, moved: false });
+    },
+    pinEnter: (pin, label) => setHover({ pin, label }),
+    pinLeave: () => setHover(null),
+  };
+
+  // Performance mode: parts out of view keep their last look (M31).
+  const vw = (svgRef.current?.clientWidth ?? 1200) / view.scale;
+  const vh = (svgRef.current?.clientHeight ?? 800) / view.scale;
+  const outOfView = (part: PartInstance, def: PartDef) => {
+    const m = 4 * PITCH; // what a part draws beyond its box (a glow, a lamp)
+    const [x0, y0] = [part.x * PITCH - m, part.y * PITCH - m];
+    const [x1, y1] = [(part.x + def.w) * PITCH + m, (part.y + def.h) * PITCH + m];
+    return x1 < view.x || y1 < view.y || x0 > view.x + vw || y0 > view.y + vh;
+  };
+
   const renderBodies = (parts: typeof project.parts) =>
     parts.map((part) => {
       const def = PART_BY_KIND[part.kind];
       if (!def) return null;
       return (
-        <g
+        <PartBody
           key={part.id}
-          data-id={part.id}
-          transform={`translate(${part.x * PITCH} ${part.y * PITCH})`}
-          className={selected === part.id ? "part selected" : "part"}
-        >
-          <g
-            onPointerOver={(e) => {
-              const el = (e.target as Element).closest("[data-drag]");
-              const hint = el && def.controls?.[el.getAttribute("data-drag")!]?.hint;
-              const r = svgRef.current!.getBoundingClientRect();
-              setControlHint(hint ? { text: hint, x: e.clientX - r.left, y: e.clientY - r.top } : null);
-            }}
-            onPointerLeave={() => setControlHint(null)}
-            onPointerDown={(e) => {
-              e.stopPropagation();
-              if (pending) {
-                wiringClick(toCanvas(e));
-                return;
-              }
-              const p = toCanvas(e);
-              const name = (e.target as Element).closest("[data-drag]")?.getAttribute("data-drag");
-              const control = name ? def.controls?.[name] : undefined;
-              if (name && control && onPropChange) {
-                // Operate the part (knob, lamp, touch…); the rest of its body moves it.
-                onSelect(part.id);
-                const key = `${part.id}|${name}`;
-                // Still cooling from the last touch: carry on from there.
-                const before = live.current.get(key);
-                const session = control.start(pointerIn(e, part.id), propsOf(part.id), before?.session.carry);
-                live.current.set(key, { part: part.id, control: name, session, held: true });
-                if (session.set) writeProps(part.id, session.set);
-                if (session.tick) startTicking();
-                setHeld({ part: part.id, control: name });
-                startDrag(e, {
-                  kind: "control",
-                  key,
-                  part: part.id,
-                  sx: e.clientX,
-                  sy: e.clientY,
-                  holdOnly: !!control.holdOnly,
-                  dx: p.x / PITCH - part.x,
-                  dy: p.y / PITCH - part.y,
-                });
-                return;
-              }
-              const action = (e.target as Element).closest("[data-action]")?.getAttribute("data-action");
-              if (action && onPartAction) {
-                setPressed({ part: part.id, action });
-                onPartAction(part.id, action, true);
-                return;
-              }
-              onSelect(part.id);
-              startDrag(e, { kind: "part", id: part.id, dx: p.x / PITCH - part.x, dy: p.y / PITCH - part.y });
-            }}
-          >
-            {def.render({ ...def.props, ...part.props, ...overlay[part.id] }, {
-              ...(visuals?.[part.id] ?? {}),
-              pressed: pressed?.part === part.id && pressed.action !== "reset",
-              action: pressed?.part === part.id ? pressed.action : undefined,
-              control: held?.part === part.id ? held.control : undefined,
-            })}
-          </g>
-        </g>
+          part={part}
+          selected={selected === part.id}
+          extra={overlay[part.id]}
+          visual={visuals?.[part.id]}
+          action={pressed?.part === part.id ? pressed.action : undefined}
+          control={held?.part === part.id ? held.control : undefined}
+          frozen={lite && outOfView(part, def)}
+          h={handlers}
+        />
       );
     });
 
+  // Pins drawn other than plain, by part: `id=class` lines (see PinGroup).
+  const special = new Map<string, string[]>();
+  const mark = (key: string | null | undefined, cls: string) => {
+    if (!key) return;
+    const i = key.indexOf(":");
+    const [part, pin] = [key.slice(0, i), key.slice(i + 1)];
+    const list = special.get(part) ?? [];
+    if (list.some((l) => l.startsWith(pin + "="))) return; // the first class wins
+    list.push(`${pin}=${cls}`);
+    special.set(part, list);
+  };
+  mark(pending && pinKey(pending.start), "pin pending");
+  mark(snapKey, "pin snap");
+  for (const k of highlighted) mark(k, "pin hot");
+  for (const k of marks ?? []) mark(k, "pin marked");
   const renderPins = (parts: typeof project.parts) =>
     parts.map((part) => (
-      <g key={part.id} transform={`translate(${part.x * PITCH} ${part.y * PITCH})`} data-pins={part.id}>
-        {(PART_BY_KIND[part.kind]?.pins ?? []).map((pin) => {
-          const ref = { part: part.id, pin: pin.id };
-          const key = pinKey(ref);
-          const cls =
-            pending && pinKey(pending.start) === key
-              ? "pin pending"
-              : snapKey === key
-                ? "pin snap"
-                : highlighted.has(key)
-                  ? "pin hot"
-                  : marks?.has(key)
-                    ? "pin marked"
-                    : "pin";
-          return (
-            <circle
-              key={pin.id}
-              data-pin={pin.id}
-              cx={pin.x * PITCH}
-              cy={pin.y * PITCH}
-              r={4.2}
-              className={cls}
-              onPointerDown={(e) => {
-                e.stopPropagation();
-                if (livePending) {
-                  finishWire(ref);
-                  return;
-                }
-                // Start a wire: click-and-click, or drag to the other pin.
-                setPending({ start: ref, points: [] });
-                setMouse(toCanvas(e));
-                startDrag(e, { kind: "wire", sx: e.clientX, sy: e.clientY, moved: false });
-              }}
-              onPointerEnter={() => setHover({ pin: ref, label: `${part.id}.${pin.label ?? pin.id}` })}
-              onPointerLeave={() => setHover(null)}
-            />
-          );
-        })}
-      </g>
+      <PinGroup key={part.id} part={part} special={(special.get(part.id) ?? []).sort().join("\n")} h={handlers} />
     ));
 
   return (

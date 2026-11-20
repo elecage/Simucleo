@@ -1,0 +1,371 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "RC522 RFID 출입 카드 (SPI)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "rfid",
+      "kind": "rfid-rc522",
+      "x": 40,
+      "y": -19,
+      "props": {
+        "card": 0
+      }
+    },
+    {
+      "id": "ledr",
+      "kind": "led-5mm",
+      "x": 47,
+      "y": 9,
+      "props": {
+        "color": "red"
+      }
+    },
+    {
+      "id": "rr",
+      "kind": "resistor",
+      "x": 49,
+      "y": 12,
+      "props": {
+        "ohms": "220"
+      }
+    },
+    {
+      "id": "ledg",
+      "kind": "led-5mm",
+      "x": 47,
+      "y": 14,
+      "props": {
+        "color": "green"
+      }
+    },
+    {
+      "id": "rg",
+      "kind": "resistor",
+      "x": 49,
+      "y": 17,
+      "props": {
+        "ohms": "220"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "D10"
+      },
+      "b": {
+        "part": "rfid",
+        "pin": "SDA"
+      },
+      "color": "#fdd835",
+      "points": [
+        {
+          "x": 23,
+          "y": -6
+        },
+        {
+          "x": 41,
+          "y": -6
+        }
+      ]
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "D13"
+      },
+      "b": {
+        "part": "rfid",
+        "pin": "SCK"
+      },
+      "color": "#fb8c00",
+      "points": [
+        {
+          "x": 20,
+          "y": -5
+        },
+        {
+          "x": 42,
+          "y": -5
+        }
+      ]
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D11"
+      },
+      "b": {
+        "part": "rfid",
+        "pin": "MOSI"
+      },
+      "color": "#1e88e5",
+      "points": [
+        {
+          "x": 22,
+          "y": -4
+        },
+        {
+          "x": 43,
+          "y": -4
+        }
+      ]
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D12"
+      },
+      "b": {
+        "part": "rfid",
+        "pin": "MISO"
+      },
+      "color": "#8e24aa",
+      "points": [
+        {
+          "x": 21,
+          "y": -3
+        },
+        {
+          "x": 44,
+          "y": -3
+        }
+      ]
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "b": {
+        "part": "rfid",
+        "pin": "GND"
+      },
+      "color": "#212121",
+      "points": [
+        {
+          "x": 19,
+          "y": -2
+        },
+        {
+          "x": 46,
+          "y": -2
+        }
+      ]
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "nucleo",
+        "pin": "D9"
+      },
+      "b": {
+        "part": "rfid",
+        "pin": "RST"
+      },
+      "color": "#00897b",
+      "points": [
+        {
+          "x": 24,
+          "y": -1
+        },
+        {
+          "x": 47,
+          "y": -1
+        }
+      ]
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "rfid",
+        "pin": "3V3"
+      },
+      "color": "#e53935",
+      "points": [
+        {
+          "x": 22,
+          "y": 38
+        },
+        {
+          "x": 59,
+          "y": 38
+        },
+        {
+          "x": 59,
+          "y": -6
+        },
+        {
+          "x": 48,
+          "y": -6
+        }
+      ]
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "nucleo",
+        "pin": "D6"
+      },
+      "b": {
+        "part": "rr",
+        "pin": "2"
+      },
+      "color": "#ef5350",
+      "points": [
+        {
+          "x": 27,
+          "y": 1
+        },
+        {
+          "x": 55,
+          "y": 1
+        },
+        {
+          "x": 55,
+          "y": 12
+        }
+      ]
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "rr",
+        "pin": "1"
+      },
+      "b": {
+        "part": "ledr",
+        "pin": "A"
+      },
+      "color": "#ef5350",
+      "points": [
+        {
+          "x": 49,
+          "y": 13
+        },
+        {
+          "x": 48,
+          "y": 13
+        }
+      ]
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "rg",
+        "pin": "2"
+      },
+      "color": "#43a047",
+      "points": [
+        {
+          "x": 26,
+          "y": 0
+        },
+        {
+          "x": 56,
+          "y": 0
+        },
+        {
+          "x": 56,
+          "y": 17
+        }
+      ]
+    },
+    {
+      "id": "w11",
+      "a": {
+        "part": "rg",
+        "pin": "1"
+      },
+      "b": {
+        "part": "ledg",
+        "pin": "A"
+      },
+      "color": "#43a047",
+      "points": [
+        {
+          "x": 49,
+          "y": 18
+        },
+        {
+          "x": 48,
+          "y": 18
+        }
+      ]
+    },
+    {
+      "id": "w12",
+      "a": {
+        "part": "ledr",
+        "pin": "K"
+      },
+      "b": {
+        "part": "ledg",
+        "pin": "K"
+      },
+      "color": "#212121",
+      "points": [
+        {
+          "x": 46,
+          "y": 12
+        },
+        {
+          "x": 46,
+          "y": 17
+        }
+      ]
+    },
+    {
+      "id": "w13",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_P2"
+      },
+      "b": {
+        "part": "ledg",
+        "pin": "K"
+      },
+      "color": "#212121",
+      "points": [
+        {
+          "x": 25,
+          "y": 37
+        },
+        {
+          "x": 45,
+          "y": 37
+        },
+        {
+          "x": 45,
+          "y": 17
+        }
+      ]
+    }
+  ],
+  "firmware": {
+    "name": "hal-rfid-rc522",
+    "example": "hal-rfid-rc522.elf"
+  }
+}

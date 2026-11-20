@@ -140,6 +140,11 @@ const BOX_LAYOUT: Record<
     right: ["OUT"],
     subtitle: (p) => `PIR (HC-SR501) · ${p.mode === "L" ? t("단발 L") : t("재트리거 H")} · ${p.delay ?? 3} s`,
   },
+  "rfid-rc522": {
+    left: ["3V3", "GND", "RST"],
+    right: ["SDA", "SCK", "MOSI", "MISO", "IRQ"],
+    subtitle: () => t("RFID 리더 (MFRC522) · SPI"),
+  },
   bmp280: {
     left: ["VCC", "GND"],
     right: ["SCL", "SDA"],

@@ -40,6 +40,7 @@ const EXAMPLES = [
   ["hal-joystick-oled", "hal-joystick-oled.elf", "HAL: KY-023 joystick on ADC1 (A0, A1) and D4 moves a dot on an SSD1306 OLED — drag the stick, click it to press"],
   ["hal-pir-alarm", "hal-pir-alarm.elf", "HAL: HC-SR501 PIR on D7 (EXTI) lights an LED on D6 and logs motion — drag the person through the sensor's view"],
   ["hal-bmp280", "hal-bmp280.elf", "HAL: BMP280 on I2C1 — trimming registers, forced measurements and the Bosch compensation code print temperature, pressure and altitude"],
+  ["hal-rfid-rc522", "hal-rfid-rc522.elf", "HAL: RC522 RFID reader on SPI1 — REQA, anticollision and SELECT print the UID of the card dragged onto the antenna; the key fob is allowed (green LED, a visit counter written to block 5), other cards are denied (red LED); MIFARE Classic block 4 and Ultralight pages read"],
   ["hal-neopixel-chain", "hal-neopixel-chain.elf", "HAL: a 12-LED NeoPixel ring with an 8-LED strip on its DOUT, one 20-LED frame by TIM3 PWM + DMA"],
   ["hal-stepper-a4988", "hal-stepper-a4988.elf", "HAL: NEMA17 stepper on an A4988 — TIM2 PWM STEP pulses with an acceleration ramp, 1/8 steps, back and forth one revolution; B1 switches the driver off so the shaft turns by hand"],
   ["hal-stepper-l298n", "hal-stepper-l298n.elf", "HAL: NEMA17 stepper on an L298N H-bridge — the half-step sequence on IN1–IN4 from a TIM4 interrupt, ENA/ENB 80 % PWM"],

@@ -150,6 +150,15 @@ L298N의 12 V는 코일에 정격 전류 0.4 A(단위 1.0)를 흘린다. A4988�
 전류 방향대로 한쪽이 VMOT, 다른 쪽이 GND다(초퍼의 PWM은 모델링하지 않음). 3상 브리지에서 두 스위치가 다 꺼진 순간이 PWM 주기
 안(데드타임, 한쪽만 초핑하는 오프 시간)이면 다이오드로 전류가 이어지는 쪽 레일에 붙는다.
 
+## RFID 리더 RC522 (M35) ✅
+
+| 부품 | 프로토콜 / 모델 | 필요한 MCU 기능 | 비고 |
+|---|---|---|---|
+| **RC522 RFID 리더** (NXP MFRC522, 13.56 MHz, ISO 14443 A) | SPI 모드 0: SDA(NSS) Low 뒤 첫 바이트가 주소(비트 7 = 읽기, 주소는 비트 6–1). 쓰기는 이어지는 바이트가 같은 레지스터로(FIFO 연속 쓰기), 읽기는 이어지는 바이트가 다음 주소이고 답은 한 바이트 늦게, 0x00으로 끝. 레지스터: CommandReg(Idle, Mem, GenerateRandomID, CalcCRC, Transmit, Receive, Transceive, MFAuthent, SoftReset), FIFODataReg/FIFOLevelReg(64바이트, FlushBuffer, BufferOvfl), ComIrqReg/DivIrqReg(Set1/Set2), ComIEnReg/DivIEnReg, ErrorReg, Status1/2(MFCrypto1On, ModemState), ControlReg(RxLastBits, TStart/StopNow), BitFramingReg(StartSend, TxLastBits), CollReg, ModeReg(CRC 프리셋), Tx/RxModeReg(TxCRCEn/RxCRCEn), TxControlReg(안테나), TxASKReg(100 % ASK), TModeReg/TPrescaler/TReload/TCounterVal(타이머), CRCResultReg, VersionReg 0x92 | 하드웨어 SPI(SPI1) + GPIO(SDA, RST) | 공중 시간 106 kbit/s(바이트당 9비트)와 카드의 프레임 지연, MIFARE WRITE의 EEPROM 쓰기 2.5 ms. 타이머: f = 13.56 MHz / (2·TPrescaler + 1), TAuto면 송신이 끝날 때 시작해 카드의 첫 비트에 멈춤 — 카드가 없으면 (TReload + 1) 틱 뒤 TimerIRq(라이브러리 설정 25 ms). IRQ 핀은 오픈 드레인(IRqInv: Low = 요청, DivIEnReg IRQPushPull이면 푸시풀). RST(NRSTPD) Low면 하드 파워다운(레지스터 리셋, MISO 놓음, 안테나 꺼짐), 모듈에 10 kΩ 풀업. 3.3V에 3.6 V 넘게(5 V) 이으면 경고. 안테나가 꺼지면(TxControlReg, SoftReset, PowerDown) 카드도 전원을 잃고 IDLE부터 |
+| **RFID 카드·태그** (속성 `card`: 0 없음, 1 카드 A, 2 카드 B, 3 키 태그, 4 NFC 스티커) | ISO 14443-3 상태(IDLE, READY, ACTIVE, HALT, READY*/ACTIVE*): REQA(7비트 0x26)·WUPA(0x52) → ATQA, 캐스케이드 레벨별 ANTICOLLISION(NVB 0x20 → UID + BCC)과 SELECT(NVB 0x70 + CRC_A → SAK), HLTA. 상태에 맞지 않는 프레임이면 조용히 IDLE(HALT에서 깨어났으면 HALT)로 — 그래서 HALT 없이 REQA를 다시 보내면 한 번은 답이 없다(실제 카드와 같음) | — | MIFARE Classic 1K(4바이트 UID, ATQA 04 00, SAK 08, 섹터 트레일러 키 FF…FF, 접근 비트 FF 07 80 69): MFAuthent는 키 A/B가 트레일러와 같고 UID가 맞으면 MFCrypto1On을 켠다 — **Crypto1 암호 자체는 흉내내지 않는다**(평문 프레임을 주고받되 리더의 MFCrypto1On과 카드의 인증 상태가 다르면 카드가 알아듣지 못함: StopCrypto1을 잊으면 다음 카드가 안 읽힌다). READ(16바이트 + CRC_A, 트레일러의 키 A는 0으로), 두 단계 WRITE(4비트 ACK 0xA), 접근 조건 검사(데이터 블록·트레일러, 읽을 수 있는 키 B로는 인증해도 접근 거부, 블록 0 쓰기 금지, 잘못된 접근 비트면 섹터 잠김) → NAK 0x4, CRC 오류 → NAK 0x5. Ultralight(7바이트 UID 두 캐스케이드, ATQA 44 00, SAK 00): READ 4페이지, WRITE(0xA2), COMPATIBILITY WRITE, 잠금·OTP 비트. 카드를 내려놓아도 메모리는 남는다. 값 블록 명령·여러 카드 충돌·RxAlign·SPI 모드 검사는 미구현. 카드를 끌어 안테나에 놓거나 클릭 |
+
+예제: `hal-rfid-rc522`(REQA로 카드를 찾아 UID 출력, 키 태그면 녹색 LED와 방문 횟수를 블록 5에 쓰기, 아니면 빨간 LED, Classic 블록 4·Ultralight 페이지 4–7 읽기, HALT 뒤 WUPA로 카드가 그대로 있는지 확인).
+
 ## 후속 후보
 
 MPU-6050 FIFO·인터럽트, UART 핀 수준 파형(지금은 바이트 단위라 TX 핀을 프로브해도 프레임이 보이지 않음), USB-UART 모듈, 2·4채널 릴레이, HC-05 마스터 모드(두 모듈끼리 연결), DS18B20 기생 전원, TM1637 키 스캔(0x42 읽기), BMP280 IIR 필터·SPI 모드·BME280(습도), 74HC165(병렬 입력 시프트 레지스터), 5 V로 동작하는 595의 출력 전압(지금은 3.3 V로 계산). 모터: 센서리스(역기전력 영점) BLDC, 중앙 정렬 PWM(TIM1 CMS)과 반복 카운터, ESC의 BEC 출력·캘리브레이션·소리, 스테퍼 공진을 보여 주는 토크–속도 곡선, TMC2208 같은 UART 설정 드라이버, 엔코더가 달린 DC 모터(PID).

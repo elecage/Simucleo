@@ -9,6 +9,7 @@
 pub mod devices;
 pub mod models;
 pub mod netlist;
+pub mod rc522;
 pub mod sim;
 pub mod tier8;
 pub mod tier9;

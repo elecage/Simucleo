@@ -955,6 +955,7 @@ impl CircuitSim {
                 Device::Baro(x) => **x = Bmp280::new(x.address, x.temp, x.pressure),
                 // The shaft stays where it is; the clock starts again.
                 Device::Bldc(x) => x.rebase(0.0),
+                Device::Rfid(r) => r.power_cycle(),
             }
         }
         self.i2c_active.clear();
@@ -2340,6 +2341,47 @@ impl CircuitSim {
                             .insert(p.id.clone(), Device::Matrix(Max7219::new(count)));
                     }
                 }
+                "rfid-rc522" => {
+                    // RC522 module (M35): SPI with SDA as NSS, IRQ an open-
+                    // drain output, RST (NRSTPD) with a 10 kΩ pull-up.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("3V3"), &mut map), node(pin("GND"), &mut map));
+                    let rst = node(pin("RST"), &mut map);
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: crate::rc522::VMIN,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    elements.push(Element::Resistor {
+                        a: vcc,
+                        b: rst,
+                        r: 10_000.0,
+                    });
+                    dev_outputs.push((p.id.clone(), node(pin("IRQ"), &mut map), 0));
+                    spi_parts.push(SpiPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        sck: node(pin("SCK"), &mut map),
+                        mosi: node(pin("MOSI"), &mut map),
+                        miso: Some(node(pin("MISO"), &mut map)),
+                        cs: node(pin("SDA"), &mut map),
+                        dc: None,
+                        res: Some(rst),
+                        vmin: crate::rc522::VMIN,
+                    });
+                    let card = prop_f64(p, "card", 0.0).clamp(0.0, 9.0) as usize;
+                    if !matches!(self.devices.get(&p.id), Some(Device::Rfid(_))) {
+                        self.devices
+                            .insert(p.id.clone(), Device::Rfid(Box::default()));
+                    }
+                    if let Some(Device::Rfid(r)) = self.devices.get_mut(&p.id) {
+                        r.set_card(card);
+                    }
+                }
                 "oled-ssd1306-spi" | "sd-card" => {
                     let vis = add_visual(&p.id, VisualKind::Sensor, 1);
                     let pin = |n: &str| PinRef::new(&p.id, n);
@@ -3223,6 +3265,7 @@ impl CircuitSim {
                 }
             }
         }
+        self.observe_rfid(&sol);
         self.drives = Some(drives.to_vec());
         self.observe_lines(now_s, &sol);
         self.observe_matrices(&sol);
@@ -4276,6 +4319,13 @@ impl CircuitSim {
                                 .into(),
                             );
                         }
+                        Some(Device::Rfid(r)) => {
+                            r.advance(
+                                self.clock.1 + (time as f64 - self.clock.0 as f64) / self.clock.2,
+                            );
+                            v.on = Some(if r.field { 1.0 } else { 0.0 });
+                            v.text = Some(r.card_state().into());
+                        }
                         Some(Device::Sd(sd)) => {
                             if !powered_now {
                                 sd.power_cycle();
@@ -4391,6 +4441,26 @@ impl CircuitSim {
             }
             let high = |n: usize| sol.v[n] > VDD / 2.0;
             m.pins(high(part.clk), high(part.cs), high(part.din));
+        }
+    }
+
+    /// MFRC522 modules (M35): supply, NRSTPD and the end of an SPI frame
+    /// (SDA/NSS high).
+    fn observe_rfid(&mut self, sol: &Solution) {
+        for part in &self.spi_parts {
+            let Some(Device::Rfid(r)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            let supply = sol.v[part.vcc] - sol.v[part.gnd];
+            let high = |n: usize| sol.v[n] - sol.v[part.gnd] > 0.5 * supply.max(0.0);
+            let rst = part.res.is_some_and(high);
+            r.pins(supply >= part.vmin, rst, sol.v[part.cs] >= 0.3 * VDD);
+            if supply > crate::rc522::VMAX {
+                self.warnings.insert(format!(
+                    "{}: the MFRC522 runs on 3.3 V (2.5–3.6 V) — {supply:.1} V on 3.3V can damage it",
+                    part.id
+                ));
+            }
         }
     }
 
@@ -4560,6 +4630,7 @@ impl CircuitSim {
             return 0xFF;
         };
         let miso_n = miso.and_then(|p| self.mcu_node(p));
+        let now_s = self.seconds_at(time);
         let name = |(port, pin): (u8, u8)| format!("P{}{}", (b'A' + port) as char, pin);
         let mut reply = 0xFF;
         let mut drivers = Vec::new();
@@ -4592,6 +4663,16 @@ impl CircuitSim {
                     }
                 }
                 Some(Device::Matrix(m)) => overflow.push((part.id.clone(), m.byte(out))),
+                Some(Device::Rfid(rfid)) => {
+                    let r = rfid.exchange(now_s, out);
+                    match (part.miso, miso_n) {
+                        (Some(a), Some(b)) if a == b => {
+                            reply &= r;
+                            drivers.push(part.id.clone());
+                        }
+                        _ => {}
+                    }
+                }
                 Some(Device::Sd(sd)) => {
                     let r = sd.exchange(out);
                     match (part.miso, miso_n) {
@@ -5907,6 +5988,145 @@ mod tests {
         );
         s.update(0, &drives(&s, |_| Drive::Float));
         assert_eq!(read_ay(&mut s), -8192 + 12288);
+    }
+
+    /// An RC522 on SPI1 (PA5/PA6/PA7), SDA on PB6, IRQ on PA8 and RST on
+    /// PA9, powered from `supply`.
+    fn rc522_sim(supply: &str) -> CircuitSim {
+        sim(
+            vec![part("rfid", "rfid-rc522", &[])],
+            vec![
+                wire(("rfid", "3V3"), ("mcu", supply)),
+                wire(("rfid", "GND"), ("mcu", "GND")),
+                wire(("rfid", "SCK"), ("mcu", "PA5")),
+                wire(("rfid", "MISO"), ("mcu", "PA6")),
+                wire(("rfid", "MOSI"), ("mcu", "PA7")),
+                wire(("rfid", "SDA"), ("mcu", "PB6")),
+                wire(("rfid", "IRQ"), ("mcu", "PA8")),
+                wire(("rfid", "RST"), ("mcu", "PA9")),
+            ],
+        )
+    }
+
+    /// Drive SDA (PB6), RST (PA9: None = not driven) and pull PA8 up.
+    fn rc522_pins(s: &mut CircuitSim, t: Cycles, cs_high: bool, rst: Option<bool>) {
+        let level = |h: bool| if h { Drive::High } else { Drive::Low };
+        let d = drives(s, |p| match p {
+            (1, 6) => level(cs_high),
+            (0, 9) => rst.map_or(Drive::Float, level),
+            (0, 8) => Drive::PullUp,
+            _ => Drive::Float,
+        });
+        s.update(t, &d);
+    }
+
+    /// One register access as the MFRC522 libraries do it: SDA low,
+    /// address byte, data byte, SDA high. Returns the second MISO byte.
+    fn rc522_access(s: &mut CircuitSim, t: &mut Cycles, addr_byte: u8, data: u8) -> u8 {
+        let (sck, mosi, miso) = ((0, 5), (0, 7), Some((0, 6)));
+        rc522_pins(s, *t, false, Some(true));
+        s.spi(*t, sck, mosi, miso, addr_byte);
+        let r = s.spi(*t + 16, sck, mosi, miso, data);
+        rc522_pins(s, *t + 32, true, Some(true));
+        *t += 48;
+        r
+    }
+
+    #[test]
+    fn rc522_answers_on_spi_and_a_placed_card_raises_irq() {
+        use crate::rc522::*;
+        let mut s = rc522_sim("3V3");
+        let mut t = 0;
+        rc522_pins(&mut s, t, true, Some(true));
+        let rd = |s: &mut CircuitSim, t: &mut Cycles, a: u8| rc522_access(s, t, 0x80 | a << 1, 0);
+        let wr = |s: &mut CircuitSim, t: &mut Cycles, a: u8, v: u8| {
+            rc522_access(s, t, a << 1, v);
+        };
+        assert_eq!(rd(&mut s, &mut t, VERSION_REG), 0x92);
+        // The address without the shift (a classic mistake) reads another
+        // register: 0x37 >> 1 = 0x1B (reserved, 0).
+        assert_eq!(rc522_access(&mut s, &mut t, 0x80 | VERSION_REG, 0), 0x00);
+        // Not selected: nobody drives MISO.
+        assert_eq!(
+            s.spi(t, (0, 5), (0, 7), Some((0, 6)), 0x80 | VERSION_REG << 1),
+            0xFF
+        );
+        // Antenna on, 100 % ASK, TAuto timer 25 ms, RxIEn on the IRQ pin.
+        for (a, v) in [
+            (TX_ASK, 0x40),
+            (MODE, 0x3D),
+            (T_MODE, 0x80),
+            (T_PRESCALER, 0xA9),
+            (T_RELOAD_H, 0x03),
+            (T_RELOAD_L, 0xE8),
+            (TX_CONTROL, 0x83),
+            (COM_IEN, 0xA0),
+            (COM_IRQ, 0x7F),
+        ] {
+            wr(&mut s, &mut t, a, v);
+        }
+        let v = s.end_frame(t, 0.01);
+        assert_eq!(visual(&v, "rfid").on, Some(1.0), "field on");
+        assert_eq!(visual(&v, "rfid").text.as_deref(), Some("none"));
+        let irq = |s: &CircuitSim| s.mcu_voltage(0, 8).unwrap() > VDD / 2.0;
+        assert!(irq(&s), "IRQ released, pulled up");
+        set_props(&mut s, "rfid", &[("card", "1")], t);
+        let v = s.end_frame(t, 0.01);
+        assert_eq!(visual(&v, "rfid").text.as_deref(), Some("idle"));
+        // REQA: 7 bits.
+        wr(&mut s, &mut t, FIFO_DATA, 0x26);
+        wr(&mut s, &mut t, BIT_FRAMING, 0x07);
+        wr(&mut s, &mut t, COMMAND, CMD_TRANSCEIVE);
+        wr(&mut s, &mut t, BIT_FRAMING, 0x87);
+        let due = s.next_event().expect("the answer is scheduled");
+        assert!(irq(&s));
+        // ATQA arrives within about 0.4 ms (16 MHz cycles).
+        let mut at = t;
+        while irq(&s) && at < t + 16_000 {
+            at = s.next_event().unwrap_or(at + 160).max(at + 1);
+            rc522_pins(&mut s, at, true, Some(true));
+        }
+        assert!(!irq(&s), "IRQ low on RxIRq");
+        assert!(at >= due && at - t > 16 * 100, "{} cycles", at - t);
+        t = at + 16;
+        assert_eq!(rd(&mut s, &mut t, FIFO_LEVEL), 2);
+        assert_eq!(rd(&mut s, &mut t, FIFO_DATA), 0x04);
+        assert_eq!(rd(&mut s, &mut t, FIFO_DATA), 0x00);
+        let v = s.end_frame(t, 0.01);
+        assert_eq!(visual(&v, "rfid").text.as_deref(), Some("ready"));
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        // NRSTPD low: hard power-down, MISO released, field off.
+        rc522_pins(&mut s, t, false, Some(false));
+        assert_eq!(
+            s.spi(t, (0, 5), (0, 7), Some((0, 6)), 0x80 | VERSION_REG << 1),
+            0xFF
+        );
+        let v = s.end_frame(t + 10, 0.01);
+        assert_eq!(visual(&v, "rfid").on, Some(0.0));
+        assert_eq!(visual(&v, "rfid").text.as_deref(), Some("off"));
+        // RST left open: the module's pull-up keeps the chip running.
+        let t = t + 100;
+        let d = drives(&s, |p| match p {
+            (1, 6) => Drive::Low,
+            _ => Drive::Float,
+        });
+        s.update(t, &d);
+        s.spi(t, (0, 5), (0, 7), Some((0, 6)), 0x80 | VERSION_REG << 1);
+        assert_eq!(s.spi(t, (0, 5), (0, 7), Some((0, 6)), 0), 0x92);
+    }
+
+    #[test]
+    fn rc522_on_5v_warns() {
+        let mut s = rc522_sim("5V");
+        rc522_pins(&mut s, 0, true, Some(true));
+        assert!(
+            s.warnings.iter().any(|w| w.contains("3.3 V")),
+            "{:?}",
+            s.warnings
+        );
+        let mut s = rc522_sim("3V3");
+        rc522_pins(&mut s, 0, true, Some(true));
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
     }
 
     #[test]

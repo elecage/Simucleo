@@ -11,6 +11,7 @@ export const DATA: Record<string, string> = {
   "센서리스 BLDC (역기전력 영점, 중앙 정렬 PWM)": "Sensorless BLDC (back-EMF zero crossing, center-aligned PWM)",
   "HC-05 블루투스로 LD2 켜고 끄기": "Turn LD2 on and off over HC-05 Bluetooth",
   "BMP280 기압·온도·고도 (I2C)": "BMP280 pressure, temperature and altitude (I2C)",
+  "RC522 RFID 출입 카드 (SPI)": "RC522 RFID access card (SPI)",
   "버튼 인터럽트 (EXTI)": "Button interrupt (EXTI)",
   "부저 멜로디": "Buzzer melody",
   "DHT22 온습도 (입력 캡처)": "DHT22 temperature and humidity (input capture)",

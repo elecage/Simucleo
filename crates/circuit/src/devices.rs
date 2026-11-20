@@ -2459,6 +2459,8 @@ pub enum Device {
     Baro(Box<Bmp280>),
     /// M21: a BLDC whose hall sensors are open-collector outputs.
     Bldc(Box<crate::tier9::HallBldc>),
+    /// M35: MFRC522 RFID reader and the cards placed on it.
+    Rfid(Box<crate::rc522::Mfrc522>),
 }
 
 impl Device {
@@ -2488,6 +2490,7 @@ impl Device {
             Device::Relay(r) => r.advance(now),
             Device::Pir(p) => p.advance(now),
             Device::Bldc(b) => b.advance_if_due(now),
+            Device::Rfid(r) => r.advance(now),
             _ => {}
         }
     }
@@ -2510,6 +2513,7 @@ impl Device {
             Device::Tm(x) => x.ack.then_some(false),
             Device::Pir(p) => p.powered().then_some(p.out),
             Device::Bldc(b) => b.hall_output(index),
+            Device::Rfid(r) => r.irq_pin(),
             // STATE (0) is high while a phone is connected; TXD (1) idles high.
             Device::Bluetooth(b) => match index {
                 0 => Some(b.powered && b.connected && !b.at_mode),
@@ -2530,6 +2534,7 @@ impl Device {
             Device::Relay(r) => r.next(),
             Device::Pir(p) => p.next(),
             Device::Bldc(b) => b.next_hall,
+            Device::Rfid(r) => r.next(),
             _ => None,
         }
     }

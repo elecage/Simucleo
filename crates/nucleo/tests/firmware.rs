@@ -3561,3 +3561,98 @@ fn swv_trace_itm_data_exceptions_and_profile() {
     board.run_for_ns(150e6);
     assert!(!board.swv_take().itm.is_empty());
 }
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-rfid-rc522"]
+fn rc522_reads_the_uid_and_blocks_of_the_card_placed_on_it() {
+    let n = "nucleo";
+    let mut signals = m19_signals();
+    signals.insert("D9".into(), "PC7".into());
+    let mut circuit = m19_circuit(
+        serde_json::json!([
+            {"id": "rfid", "kind": "rfid-rc522", "props": {"card": 0}},
+            {"id": "rg", "kind": "resistor", "props": {"ohms": "220"}},
+            {"id": "green", "kind": "led-5mm", "props": {"color": "green"}},
+            {"id": "rr", "kind": "resistor", "props": {"ohms": "220"}},
+            {"id": "red", "kind": "led-5mm", "props": {"color": "red"}}
+        ]),
+        &[
+            ((n, "3V3"), ("rfid", "3V3")),
+            (("rfid", "GND"), (n, "GND")),
+            ((n, "D13"), ("rfid", "SCK")),
+            ((n, "D12"), ("rfid", "MISO")),
+            ((n, "D11"), ("rfid", "MOSI")),
+            ((n, "D10"), ("rfid", "SDA")),
+            ((n, "D9"), ("rfid", "RST")),
+            ((n, "D7"), ("rg", "1")),
+            (("rg", "2"), ("green", "A")),
+            (("green", "K"), (n, "GND")),
+            ((n, "D6"), ("rr", "1")),
+            (("rr", "2"), ("red", "A")),
+            (("red", "K"), (n, "GND")),
+        ],
+    );
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-rfid-rc522", "hal-rfid-rc522"))
+        .unwrap();
+    board.set_circuit(&circuit, &simucleo_nucleo::BusCatalog::default(), &signals);
+    board.run_for_ns(300e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("MFRC522 version 0x92 (v2.0)"), "{text}");
+    assert!(text.contains("Place a card"), "{text}");
+    assert!(!text.contains("UID"), "{text}");
+    let mut place = |board: &mut Nucleo, card: u32| {
+        set_part_props(
+            board,
+            &mut circuit,
+            "rfid",
+            serde_json::json!({ "card": card }),
+            &signals,
+        );
+        board.run_for_ns(350e6);
+        // The LEDs as they are at the end (frames average over their time).
+        board.circuit_frame(0.0);
+        board.run_for_ns(50e6);
+        console_text(board)
+    };
+    let lit = |board: &mut Nucleo, id: &str| {
+        part_visual(&board.circuit_frame(0.0), id).brightness[0] > 0.3
+    };
+    // The key fob: allowed; its visits counter goes up on each placing.
+    let text = place(&mut board, 3);
+    assert!(
+        text.contains("UID: C1 9A 6E 22  (ATQA 04 00, SAK 08, MIFARE Classic 1K)"),
+        "{text}"
+    );
+    assert!(text.contains("access granted"), "{text}");
+    assert!(text.contains("block 4: 'Fob: staff #42..'"), "{text}");
+    assert!(text.contains("visits: 1 (write block 5: OK)"), "{text}");
+    assert!(lit(&mut board, "green") && !lit(&mut board, "red"));
+    let text = place(&mut board, 0);
+    assert!(text.contains("card removed"), "{text}");
+    assert!(!lit(&mut board, "green"));
+    let text = place(&mut board, 3);
+    assert!(text.contains("visits: 2 (write block 5: OK)"), "{text}");
+    // Swapping straight to another card: the fob leaves, card A arrives.
+    let text = place(&mut board, 1);
+    assert!(text.contains("card removed"), "{text}");
+    assert!(text.contains("UID: 7A 3B 1C 9D"), "{text}");
+    assert!(text.contains("access denied"), "{text}");
+    assert!(text.contains("block 4: 'Card A: guest...'"), "{text}");
+    assert!(!text.contains("visits"), "{text}");
+    assert!(lit(&mut board, "red") && !lit(&mut board, "green"));
+    // The Ultralight sticker: 7-byte UID over two cascade levels.
+    let text = place(&mut board, 4);
+    assert!(
+        text.contains("UID: 04 A1 B2 C3 D4 E5 80  (ATQA 44 00, SAK 00, MIFARE Ultralight)"),
+        "{text}"
+    );
+    assert!(text.contains("pages 4-7: 'Sticker: hello R'"), "{text}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}

@@ -6,7 +6,8 @@ import { CUBE } from "./cube.ts";
 import { DATA } from "./data.ts";
 import { LESSONS } from "./lessons.ts";
 import { PARTS } from "./parts.ts";
+import { RFID } from "./rfid.ts";
 import { RUN } from "./run.ts";
 
-export const GROUPS: Record<string, Record<string, string>> = { APP, CODE, CUBE, DATA, LESSONS, PARTS, RUN };
+export const GROUPS: Record<string, Record<string, string>> = { APP, CODE, CUBE, DATA, LESSONS, PARTS, RFID, RUN };
 export const EN: Record<string, string> = Object.assign({}, ...Object.values(GROUPS));

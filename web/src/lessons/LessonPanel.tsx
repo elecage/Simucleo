@@ -68,6 +68,14 @@ interface Props {
   onMarks?: (marks: Involved[] | null) => void;
 }
 
+/** The bundled lessons by `track` (M32), in the order of their first lesson. */
+const TRACKS: [string | undefined, LessonEntry[]][] = (() => {
+  const m = new Map<string | undefined, LessonEntry[]>();
+  for (const e of LESSONS) m.set(e.lesson.track, [...(m.get(e.lesson.track) ?? []), e]);
+  return [...m];
+})();
+const items = (list: string[]) => list.map((t) => `- ${t}`);
+
 const now = () => new Date().toISOString();
 const fmtTime = (iso: string) => new Date(iso).toLocaleString("ko-KR");
 const KINDS = new Set(Object.keys(PART_BY_KIND));
@@ -277,6 +285,13 @@ export function LessonPanel({
     const rec = new Recording();
     const epoch = (Date.now() % 1_000_000_000) + 1;
     const partOf = (kind: string) => project.parts.find((p) => p.kind === kind)?.id;
+    // `B1`, a kind (its first part), or a kind and a key (`keypad-4x4:5`).
+    const target = (press: string) => {
+      if (press === "B1") return "B1";
+      const [kind, key] = press.split(":");
+      const id = partOf(kind);
+      return id ? (key !== undefined ? `${id}:${key}` : id) : press;
+    };
     setGrading({ elapsed: 0, total });
     runner.setProbes(probedPins(lesson), "lesson");
     // Stimuli are timed on frames: at ×1 a frame covers at most ~100 ms of
@@ -295,7 +310,7 @@ export function LessonPanel({
       for (const st of stimuli) {
         if ("press" in st.s && st.done && !st.released) {
           st.released = true;
-          runner.press(st.s.press === "B1" ? "B1" : (partOf(st.s.press) ?? st.s.press), false);
+          runner.press(target(st.s.press), false);
         }
       }
     };
@@ -328,12 +343,20 @@ export function LessonPanel({
         const s = st.s;
         if (!st.done && t >= s.at) {
           st.done = true;
-          if ("press" in s) runner.press(s.press === "B1" ? "B1" : (partOf(s.press) ?? s.press), true);
-          else onSetProp(s.set.kind, s.set.prop, s.set.value);
+          if ("press" in s) runner.press(target(s.press), true);
+          else if ("set" in s) onSetProp(s.set.kind, s.set.prop, s.set.value);
+          else if ("connect" in s) {
+            const id = partOf(s.connect);
+            if (id) runner.bluetoothConnect(id, true);
+          } else if (!s.to || s.to === "console") runner.sendConsole(s.send + "\r\n");
+          else {
+            const id = partOf(s.to);
+            if (id) runner.bluetoothSend(id, s.send);
+          }
         }
         if ("press" in s && st.done && !st.released && t >= s.at + (s.ms ?? 100)) {
           st.released = true;
-          runner.press(s.press === "B1" ? "B1" : (partOf(s.press) ?? s.press), false);
+          runner.press(target(s.press), false);
         }
       }
       setGrading({ elapsed: t, total });
@@ -397,6 +420,7 @@ export function LessonPanel({
       <li key={l.id} data-lesson={l.id}>
         <div>
           <b>{l.title}</b> <span className="lesson-level">{l.level}</span>
+          {l.minutes !== undefined && <span className="dim"> · 약 {l.minutes}분</span>}
           {p?.completedAt && <span title={`완료 ${fmtTime(p.completedAt)}`}> ✅</span>}
         </div>
         <div className="hint">{l.goal}</div>
@@ -471,10 +495,30 @@ export function LessonPanel({
         </button>
       </header>
 
-      {!lesson ? (
+      {!loaded ? (
+        // Until the saved progress is read: the list would otherwise flip to the
+        // lesson that was open before a reload.
+        <p className="hint">불러오는 중…</p>
+      ) : !lesson ? (
         <>
           <p className="hint">실습을 고르면 시작 회로와 펌웨어를 불러옵니다. 배선 검사는 바로바로, 동작 검사는 '채점'으로 확인합니다.</p>
-          <ol className="lesson-list">{LESSONS.map((e) => lessonItem(e, false))}</ol>
+          {TRACKS.length > 1 || TRACKS[0]?.[0] ? (
+            <div className="lesson-tracks">
+              {TRACKS.map(([track, entries]) => (
+                <details key={track ?? ""} className="lesson-track" data-track={track ?? ""} open>
+                  <summary>
+                    <b>{track ?? "기타"}</b>{" "}
+                    <span className="dim">
+                      {entries.filter((e) => progress[e.lesson.id]?.completedAt).length}/{entries.length} 완료
+                    </span>
+                  </summary>
+                  <ol className="lesson-list">{entries.map((e) => lessonItem(e, false))}</ol>
+                </details>
+              ))}
+            </div>
+          ) : (
+            <ol className="lesson-list">{LESSONS.map((e) => lessonItem(e, false))}</ol>
+          )}
           <section className="lesson-mine" aria-label="내 레슨">
             <h3>내 레슨</h3>
             {mineEntries.length ? (
@@ -531,8 +575,20 @@ export function LessonPanel({
             </div>
           )}
           <p className="hint">
-            <span className="lesson-level">{lesson.level}</span> {lesson.goal}
+            {lesson.track && <span className="lesson-level">{lesson.track}</span>} <span className="lesson-level">{lesson.level}</span>
+            {lesson.minutes !== undefined && <span className="lesson-level">약 {lesson.minutes}분</span>} {lesson.goal}
           </p>
+          {(lesson.objectives?.length || lesson.prereq) && (
+            <details className="lesson-intro" open={!mine?.gradedAt}>
+              <summary>학습 목표{lesson.prereq ? " · 선수 학습" : ""}</summary>
+              {lesson.objectives?.length ? <Markdown text={items(lesson.objectives)} /> : null}
+              {lesson.prereq && (
+                <div className="lesson-prereq">
+                  <b>선수 학습</b> <Markdown text={lesson.prereq} />
+                </div>
+              )}
+            </details>
+          )}
           <p className="hint" data-testid="lesson-firmware">
             펌웨어: {runner.firmware ?? "없음"}
             {lesson.firmware === "upload" && " — 직접 빌드한 ELF를 'ELF 업로드'로 올리세요."}
@@ -546,6 +602,12 @@ export function LessonPanel({
             {lesson.steps.map((s, i) => {
               // A step with nothing to check (reading, building firmware) is never "done".
               const stepDone = s.checks.length > 0 && s.checks.every((c, j) => passed({ c, key: checkKey(i, j) }));
+              const theory = s.theory && (
+                <div className="lesson-theory">
+                  <b>📘 개념</b>
+                  <Markdown text={s.theory} />
+                </div>
+              );
               return (
                 <li key={i} className={i === currentStep ? "lesson-step current" : stepDone ? "lesson-step done" : "lesson-step"} data-step={i}>
                   <h3>
@@ -556,9 +618,19 @@ export function LessonPanel({
                     <details>
                       <summary className="dim">설명 보기</summary>
                       <Markdown text={s.text} />
+                      {theory}
                     </details>
                   ) : (
-                    <Markdown text={s.text} />
+                    <>
+                      <Markdown text={s.text} />
+                      {theory}
+                    </>
+                  )}
+                  {s.hint && (
+                    <details className="lesson-hint">
+                      <summary>💡 힌트</summary>
+                      <Markdown text={s.hint} />
+                    </details>
                   )}
                   <ul className="lesson-checks">
                     {s.checks.map((c, j) => {
@@ -584,6 +656,18 @@ export function LessonPanel({
               );
             })}
           </ol>
+          {lesson.mistakes?.length ? (
+            <details className="lesson-mistakes">
+              <summary>⚠ 흔한 실수</summary>
+              <Markdown text={items(lesson.mistakes)} />
+            </details>
+          ) : null}
+          {lesson.challenges?.length ? (
+            <details className="lesson-challenges" open={complete}>
+              <summary>🚀 도전 과제 (빨리 끝낸 사람)</summary>
+              <Markdown text={items(lesson.challenges)} />
+            </details>
+          ) : null}
           <div className="lesson-grade">
             {grading ? (
               <>

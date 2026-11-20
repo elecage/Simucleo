@@ -203,7 +203,8 @@ const lessons = readdirSync(lessonDir)
 const kinds = new Set(
   readdirSync(join(web, "src", "parts"))
     .filter((f) => f.endsWith(".tsx"))
-    .flatMap((f) => [...readFileSync(join(web, "src", "parts", f), "utf8").matchAll(/kind: "([a-z0-9-]+)"/g)].map((m) => m[1])),
+    // `kind: "led-5mm"`, and kinds made by a factory (`buzzer("buzzer-passive", …)`).
+    .flatMap((f) => [...readFileSync(join(web, "src", "parts", f), "utf8").matchAll(/kind: "([a-z0-9-]+)"|buzzer\(\s*"([a-z0-9-]+)"/g)].map((m) => m[1] ?? m[2])),
 );
 const bundled = readFileSync(join(web, "scripts", "examples.mjs"), "utf8");
 

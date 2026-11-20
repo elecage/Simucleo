@@ -76,3 +76,21 @@ button.small, .file-btn.small { font-size: 12px; padding: 2px 8px; }
   .badge.verified, .editor-ok { background: #14532d; color: #dcfce7; border-color: #166534; }
   .badge.tampered, .editor-errors { background: #7f1d1d; color: #fee2e2; border-color: #991b1b; }
 }
+
+/* Curriculum (M32): tracks in the list, concept boxes, hints, common mistakes, challenges. */
+.lesson-track { margin: 6px 0; border-bottom: 1px solid var(--border); }
+.lesson-track > summary { cursor: pointer; padding: 4px 0; }
+.lesson-track .lesson-list { margin: 4px 0 6px; }
+.lesson-intro, .lesson-mistakes, .lesson-challenges { margin: 6px 0; }
+.lesson-intro > summary, .lesson-mistakes > summary, .lesson-challenges > summary, .lesson-hint > summary { cursor: pointer; font-weight: 600; }
+.lesson-prereq { margin-top: 4px; }
+.lesson-theory { background: #eff6ff; border-left: 3px solid #3b82f6; border-radius: 4px; padding: 4px 8px; margin: 6px 0; }
+.lesson-hint { margin: 4px 0; color: var(--muted); }
+.lesson-hint[open] { color: inherit; }
+.lesson-mistakes { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px; padding: 4px 8px; }
+.lesson-challenges { background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 4px 8px; }
+@media (prefers-color-scheme: dark) {
+  .lesson-theory { background: #1e3a5f; }
+  .lesson-mistakes { background: #422006; border-color: #92400e; }
+  .lesson-challenges { background: #052e16; border-color: #166534; }
+}

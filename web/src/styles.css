@@ -634,3 +634,23 @@ main.schematic-on .notice { top: 44px; }
 .decode-text { font-weight: 400; font-family: ui-monospace, monospace; white-space: pre-wrap; }
 .decode-table .swatch { display: inline-block; width: 12px; height: 12px; margin-right: 3px; vertical-align: -2px; border: 1px solid #0003; border-radius: 2px; }
 .decode-table caption .swatch { margin-right: 1px; }
+/* M27: math channels, spectrum view */
+.math-trace polyline { stroke: #db2777; }
+.math-trace line.adiv { stroke: var(--border); stroke-dasharray: 1 4; }
+.math-trace line.azero { stroke: #db2777; opacity: 0.35; stroke-dasharray: 4 3; }
+.wave-label.math-label b { color: #db2777; }
+.scope-view { display: inline-flex; gap: 0; }
+.scope-view button { border-radius: 0; margin-left: -1px; }
+.scope-view button:first-child { border-radius: 4px 0 0 4px; }
+.scope-view button:last-child { border-radius: 0 4px 4px 0; }
+.scope-view button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.spectrum { display: flex; flex-direction: column; gap: 6px; }
+.spectrum-svg { width: 100%; display: block; user-select: none; }
+.spectrum-svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.spectrum-trace { fill: none; stroke: #7c3aed; stroke-width: 1.2; }
+.spectrum-peak path { fill: #f59e0b; }
+.spectrum-peak text { font-size: 10px; fill: #b45309; font-weight: 700; }
+.spectrum-cursor line { stroke: #a855f7; stroke-dasharray: 3 3; }
+.spectrum-cursor text { font-size: 11px; fill: #a855f7; font-weight: 700; }
+.spectrum-measure { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.spectrum-measure td, .spectrum-measure th { font-variant-numeric: tabular-nums; }

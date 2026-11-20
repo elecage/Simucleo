@@ -1,8 +1,11 @@
 // Waveform view settings kept in the project file (M25): probed pins,
 // analog channels, decoders, trigger (with a content trigger) and
 // timebase. Pure functions, unit tested in test/m25.test.ts.
+// M27: math channels and the spectrum view (test/m27.test.ts).
 import { parseNumber, type ContentMatch, type Format, type Parity } from "./decode.ts";
+import { MATH_OPS, type MathOp } from "./math.ts";
 import { TIMEBASE_NS } from "./scope.ts";
+import { FFT_SIZES, WINDOWS, type WindowKind } from "./spectrum.ts";
 
 export type DecoderType = "uart" | "i2c" | "spi" | "onewire" | "tm1637" | "ws2812" | "nec";
 
@@ -86,6 +89,47 @@ export interface TriggerSettings {
   content: ContentCfg;
 }
 
+/** A math channel (M27), named `M<id>`. */
+export interface MathCfg {
+  id: number;
+  op: MathOp;
+  /** Sources: a probed pin ("PA5", 0/3.3 V), an analog channel "V(…)", or (for M2) "M1". */
+  a: string;
+  /** The second source of A+B, A−B, A×B. */
+  b: string;
+  /** k·A + c. */
+  gain: number;
+  bias: number;
+  /** The moving average's window (µs). */
+  windowUs: number;
+  vdiv: number;
+  /** Volts at the row's middle. */
+  offset: number;
+}
+
+/** At most this many math channels. */
+export const MAX_MATH = 2;
+
+export type SpectrumView = "time" | "spectrum" | "split";
+
+/** The spectrum view (M27). */
+export interface SpectrumCfg {
+  view: SpectrumView;
+  /** A pin, "V(…)" or "M<id>" ("" = the first channel shown). */
+  source: string;
+  window: WindowKind;
+  n: number;
+  /** Magnitude in dBV, or linear (V RMS). */
+  db: boolean;
+  logFreq: boolean;
+  /** Linear axis: up to 12.5 × the fundamental (else the Nyquist frequency). */
+  fit: boolean;
+  /** Peak markers. */
+  peaks: number;
+  /** Over the visible window, or between the cursors. */
+  range: "view" | "cursors";
+}
+
 export interface ScopeSettings {
   pins: string[];
   analog: AnalogCfg[];
@@ -94,6 +138,17 @@ export interface ScopeSettings {
   /** Time per division (ns). */
   divNs: number;
   trigger: TriggerSettings;
+  math: MathCfg[];
+  spectrum: SpectrumCfg;
+}
+
+export function defaultSpectrum(): SpectrumCfg {
+  return { view: "time", source: "", window: "hann", n: 8192, db: true, logFreq: false, fit: true, peaks: 5, range: "view" };
+}
+
+/** A new math channel: A − B of the first two channels given. */
+export function newMath(id: number, sources: string[]): MathCfg {
+  return { id, op: "sub", a: sources[0] ?? "", b: sources[1] ?? sources[0] ?? "", gain: 1, bias: 0, windowUs: 1000, vdiv: 1, offset: 0 };
 }
 
 export const DEFAULT_CONTENT: ContentCfg = { kind: "byte", text: "0x41", rw: "any", index: 0, color: "", addr: "" };
@@ -117,6 +172,8 @@ export function defaultScope(): ScopeSettings {
       hysteresis: 0.1,
       content: { ...DEFAULT_CONTENT },
     },
+    math: [],
+    spectrum: defaultSpectrum(),
   };
 }
 
@@ -226,6 +283,36 @@ export function sanitizeScope(raw: unknown): ScopeSettings | undefined {
       lsbFirst: x.lsbFirst === true,
     });
   }
+  const math: MathCfg[] = [];
+  for (const m of Array.isArray(raw.math) ? raw.math : []) {
+    if (!isObj(m) || math.length >= MAX_MATH) continue;
+    let id = num(m.id, 0, (v) => Number.isInteger(v) && v >= 1 && v <= MAX_MATH);
+    if (!id || math.some((q) => q.id === id)) id = [1, 2].find((k) => !math.some((q) => q.id === k))!;
+    math.push({
+      id,
+      op: pick(m.op, MATH_OPS, "sub"),
+      a: str(m.a, ""),
+      b: str(m.b, ""),
+      gain: num(m.gain, 1),
+      bias: num(m.bias, 0),
+      windowUs: num(m.windowUs, 1000, (v) => v > 0),
+      vdiv: num(m.vdiv, 1, (v) => v > 0),
+      offset: num(m.offset, 0),
+    });
+  }
+  const sp = isObj(raw.spectrum) ? raw.spectrum : {};
+  const ds = defaultSpectrum();
+  const spectrum: SpectrumCfg = {
+    view: pick(sp.view, ["time", "spectrum", "split"] as const, ds.view),
+    source: str(sp.source, ds.source),
+    window: pick(sp.window, WINDOWS, ds.window),
+    n: num(sp.n, ds.n, (v) => FFT_SIZES.includes(v)),
+    db: sp.db !== false,
+    logFreq: sp.logFreq === true,
+    fit: sp.fit !== false,
+    peaks: num(sp.peaks, ds.peaks, (v) => Number.isInteger(v) && v >= 0 && v <= 20),
+    range: pick(sp.range, ["view", "cursors"] as const, ds.range),
+  };
   const t = isObj(raw.trigger) ? raw.trigger : {};
   const c = isObj(t.content) ? t.content : {};
   const content: ContentCfg = {
@@ -254,5 +341,7 @@ export function sanitizeScope(raw: unknown): ScopeSettings | undefined {
       hysteresis: num(t.hysteresis, d.trigger.hysteresis, (v) => v >= 0),
       content,
     },
+    math,
+    spectrum,
   };
 }

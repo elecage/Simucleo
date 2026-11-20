@@ -1065,6 +1065,10 @@ impl CircuitSim {
 
     fn rebuild(&mut self) {
         self.cache.clear();
+        // The motors' current coefficients came from the old network.
+        self.mech_last.clear();
+        self.duties_last.clear();
+        self.net_last = (Vec::new(), Vec::new());
         self.drives = None;
         self.current = None;
         let parts = self.circuit.parts.clone();
@@ -7451,6 +7455,46 @@ mod tests {
             !s.warnings.iter().any(|w| w.contains("short")),
             "{:?}",
             s.warnings
+        );
+    }
+
+    #[test]
+    fn editing_a_series_resistor_with_the_drive_held_changes_the_coil_current() {
+        // The motors' coefficients are solved again after a circuit edit
+        // even when the windings and the drive key stay the same.
+        let mut s = l298n_sim("off");
+        let mut c = s.circuit.clone();
+        c.parts.push(part("rs", "resistor", &[("ohms", "25")]));
+        for w in &mut c.wires {
+            if w.b.pin == "A+" {
+                w.b = PinRef::new("rs", "1");
+            }
+        }
+        c.wires.push(wire(("rs", "2"), ("mot", "A+")));
+        s.set_circuit(&c, 0);
+        coils(&mut s, 0.01, 0b0101, [true; 2]);
+        let m = motor(&mut s, 0.3, "mot").motor.unwrap();
+        let with_25 = 12.0 / (STEPPER_COIL_R + 25.0 + 2.0 * L298N_R_ON) / STEPPER_RATED;
+        assert!((m.coils[0] - with_25).abs() < 0.02, "{:?}", m.coils);
+        for p in &mut c.parts {
+            if p.id == "rs" {
+                p.props.insert("ohms".into(), "75".into());
+            }
+        }
+        s.set_circuit(&c, at(0.3));
+        coils(&mut s, 0.31, 0b0101, [true; 2]);
+        let m = motor(&mut s, 0.6, "mot").motor.unwrap();
+        let with_75 = 12.0 / (STEPPER_COIL_R + 75.0 + 2.0 * L298N_R_ON) / STEPPER_RATED;
+        assert!(
+            (m.coils[0] - with_75).abs() < 0.02,
+            "{:?} vs {with_75}",
+            m.coils
+        );
+        // The probes agree: the drop across it is I × 75 Ω.
+        let drop = probe(&s, "rs.1") - probe(&s, "rs.2");
+        assert!(
+            (drop - m.coils[0] * STEPPER_RATED * 75.0).abs() < 0.05,
+            "{drop}"
         );
     }
 

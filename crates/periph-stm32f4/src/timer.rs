@@ -883,6 +883,17 @@ impl Timer {
         Some(self.ref_cycle.saturating_sub(back * self.tick()))
     }
 
+    /// The next update event does more than set UIF: a DMA request (UDE,
+    /// or CCDS with a CCxDE), MOE set again (AOE), or the end of a one-pulse
+    /// run (OPM). Such an update must be run, not skipped arithmetically.
+    fn update_has_effects(&self) -> bool {
+        let dma_on_update =
+            self.dier & UDE != 0 || (self.cr2 & CCDS != 0 && self.dier & 0x1E00 != 0);
+        // AOE sets MOE again at the next update.
+        let aoe = self.info.advanced && self.bdtr & (AOE | MOE) == AOE && !self.break_active();
+        dma_on_update || aoe || self.cr1 & OPM != 0
+    }
+
     /// Bring the counter and flags up to `now`.
     fn advance_to(&mut self, now: Cycles) {
         if !self.running()
@@ -926,6 +937,12 @@ impl Timer {
                 self.update_event(true);
                 self.uev_at = self.ref_cycle;
             }
+            // A zero ARR loaded by that update stops a center-aligned
+            // counter (as at the entry).
+            if self.center() && self.arr_act == 0 {
+                self.ref_cycle = now;
+                return;
+            }
             let flag = self.flags_match(self.down());
             for ch in 0..self.info.channels as usize {
                 if self.ccr_act[ch] == self.cnt {
@@ -945,7 +962,12 @@ impl Timer {
                 } else {
                     (self.arr_act as u64 + 1, 1)
                 };
-                let periods = (now - self.ref_cycle) / tick / period;
+                let mut periods = (now - self.ref_cycle) / tick / period;
+                // Stop short of an update with side effects (the repetition
+                // counter runs out after `rep` more turns): the loop runs it.
+                if self.cr1 & UDIS == 0 && self.update_has_effects() {
+                    periods = periods.min(self.rep as u64 / turns);
+                }
                 if periods > 0 {
                     self.ref_cycle += periods * period * tick;
                     if self.turns(periods * turns) > 0 && self.cr1 & UDIS == 0 {
@@ -1120,16 +1142,7 @@ impl Timer {
         };
         let any_pwm = (0..self.info.channels as usize)
             .any(|ch| self.output_enabled(ch) && matches!(self.oc_mode(ch), Some(6 | 7)));
-        let dma_on_update =
-            self.dier & UDE != 0 || (self.cr2 & CCDS != 0 && self.dier & 0x1E00 != 0);
-        // AOE sets MOE again at the next update.
-        let aoe = self.info.advanced && self.bdtr & (AOE | MOE) == AOE && !self.break_active();
-        if self.dier & UIF != 0
-            || dma_on_update
-            || !self.shadows_settled()
-            || self.cr1 & OPM != 0
-            || aoe
-        {
+        if self.dier & UIF != 0 || !self.shadows_settled() || self.update_has_effects() {
             consider(Some(self.ticks_to_update()));
         }
         // Edge-aligned PWM outputs change at every wrap; center-aligned
@@ -1870,6 +1883,72 @@ mod tests {
         t.sync(4);
         t.write(0x0C, CC_IF[0], u32::MAX, 4);
         assert_eq!(t.next_event(), Some(13));
+    }
+
+    #[test]
+    fn a_late_sync_does_not_skip_an_update_with_side_effects() {
+        // ARR 9, RCR 2: the update is at 30. A sync straight to 30 must run
+        // it — one-pulse mode stops there, UDE asks for a DMA transfer.
+        let mut t = tim1();
+        t.write(0x2C, 9, u32::MAX, 0);
+        t.write(0x30, 2, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x00, CEN | OPM, u32::MAX, 0);
+        assert_eq!(t.next_event(), Some(30));
+        t.sync(30);
+        assert!(!t.running(), "one pulse ends at the update");
+        assert_ne!(t.sr & UIF, 0);
+        // Not before it: syncing past 20 only leaves it running.
+        let mut t = tim1();
+        t.write(0x2C, 9, u32::MAX, 0);
+        t.write(0x30, 2, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x00, CEN | OPM, u32::MAX, 0);
+        t.sync(29);
+        assert!(t.running());
+        t.sync(1_000);
+        assert!(!t.running());
+        assert_eq!(t.read(0x24), 0);
+        // UDE: the request at 30.
+        let mut t = tim1();
+        t.write(0x2C, 9, u32::MAX, 0);
+        t.write(0x30, 2, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x0C, UDE, u32::MAX, 0);
+        t.dma_req = 0;
+        t.write(0x00, CEN, u32::MAX, 0);
+        t.sync(29);
+        assert_eq!(t.dma_req & 1, 0);
+        t.sync(30);
+        assert_eq!(t.dma_req & 1, 1, "the update's DMA request");
+        // Center-aligned, RCR 3: updates every fourth turn (at 32 with ARR 8).
+        let mut t = tim1();
+        t.write(0x2C, 8, u32::MAX, 0);
+        t.write(0x30, 3, u32::MAX, 0);
+        t.write(0x00, 1 << CMS_SHIFT, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x00, 1 << CMS_SHIFT | CEN | OPM, u32::MAX, 0);
+        t.sync(31);
+        assert!(t.running());
+        t.sync(32);
+        assert!(!t.running(), "stopped at the fourth turn");
+    }
+
+    #[test]
+    fn a_zero_arr_loaded_at_an_update_stops_a_center_aligned_counter() {
+        let mut t = tim3();
+        t.write(0x2C, 8, u32::MAX, 0);
+        t.write(0x14, 1, u32::MAX, 0);
+        t.write(0x10, 0, u32::MAX, 0);
+        t.write(0x00, CEN | ARPE | 1 << CMS_SHIFT, u32::MAX, 0);
+        t.write(0x2C, 0, u32::MAX, 0); // preloaded: loads at the update
+        t.sync(8);
+        t.sync(1_000); // no panic, no counting
+        assert_eq!(t.next_event(), None);
     }
 
     #[test]

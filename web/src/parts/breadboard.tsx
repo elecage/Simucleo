@@ -1,4 +1,5 @@
 import { PITCH, type PartDef, type PinDef } from "./types";
+import { t } from "../i18n";
 
 const COLS = 30;
 const TOP = ["a", "b", "c", "d", "e"];
@@ -33,7 +34,7 @@ for (const [rail, y] of Object.entries(RAIL_Y)) {
 
 export const breadboardHalf: PartDef = {
   kind: "breadboard-half",
-  name: "브레드보드 (하프)",
+  name: t("브레드보드 (하프)"),
   category: "basic",
   w: W,
   h: H + 1,

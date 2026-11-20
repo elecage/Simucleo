@@ -4,12 +4,13 @@
 import { FINGER_C, fingerTouch, slideHandle, type Slide } from "./controls";
 import { Fingertip } from "./feedback";
 import { PITCH, type LcdView, type PartDef, type VisualState } from "./types";
+import { t } from "../i18n";
 
 const P = PITCH;
 
 const NoPower = ({ x, y }: { x: number; y: number }) => (
   <text x={x} y={y} textAnchor="middle" className="silk small unpowered" data-unpowered="1">
-    전원 부족
+    {t("전원 부족")}
   </text>
 );
 
@@ -59,18 +60,18 @@ export function Digit({ x, y, levels, color }: { x: number; y: number; levels: n
 const SEG_COLOR: Record<string, string> = { red: "#ff3b30", green: "#34c759", blue: "#3b82f6", yellow: "#ffd60a", white: "#f5f5f5" };
 
 const SEG_HINT =
-  "세그먼트 a–g, dp는 위에서부터 시계 방향(a 위, b 오른쪽 위, c 오른쪽 아래, d 아래, e 왼쪽 아래, f 왼쪽 위, g 가운데)입니다. 세그먼트마다 저항(330–470 Ω)을 다세요.";
+  t("세그먼트 a–g, dp는 위에서부터 시계 방향(a 위, b 오른쪽 위, c 오른쪽 아래, d 아래, e 왼쪽 아래, f 왼쪽 위, g 가운데)입니다. 세그먼트마다 저항(330–470 Ω)을 다세요.");
 
 export const sevenSegment: PartDef = {
   kind: "seven-segment",
-  name: "7세그먼트 (1자리)",
+  name: t("7세그먼트 (1자리)"),
   category: "display",
-  description: `${SEG_HINT} 공통 캐소드면 COM을 GND에, 공통 애노드면 3V3에 연결합니다.`,
+  description: t("{hint} 공통 캐소드면 COM을 GND에, 공통 애노드면 3V3에 연결합니다.", { hint: SEG_HINT }),
   w: 4,
   h: 7,
   pins: [
-    ...["g", "f", "COM", "a", "b"].map((id, i) => ({ id: i === 2 ? "COM" : id, x: i, y: 0, label: id === "COM" ? "COM (공통)" : `${id} 세그먼트` })),
-    ...["e", "d", "COM2", "c", "dp"].map((id, i) => ({ id, x: i, y: 7, label: id === "COM2" ? "COM (공통)" : `${id} 세그먼트` })),
+    ...["g", "f", "COM", "a", "b"].map((id, i) => ({ id: i === 2 ? "COM" : id, x: i, y: 0, label: id === "COM" ? t("COM (공통)") : t("{id} 세그먼트", { id }) })),
+    ...["e", "d", "COM2", "c", "dp"].map((id, i) => ({ id, x: i, y: 7, label: id === "COM2" ? t("COM (공통)") : t("{id} 세그먼트", { id }) })),
   ],
   buses: [["COM", "COM2"]],
   props: { common: "cathode", color: "red" },
@@ -85,14 +86,14 @@ export const sevenSegment: PartDef = {
 
 export const sevenSegment4: PartDef = {
   kind: "seven-segment-4",
-  name: "7세그먼트 (4자리)",
+  name: t("7세그먼트 (4자리)"),
   category: "display",
-  description: `${SEG_HINT} 네 자리가 세그먼트 핀을 함께 쓰고 자리마다 공통 핀(D1–D4)이 있어, 한 번에 한 자리씩 빠르게 돌아가며 켜야 합니다(멀티플렉싱).`,
+  description: t("{hint} 네 자리가 세그먼트 핀을 함께 쓰고 자리마다 공통 핀(D1–D4)이 있어, 한 번에 한 자리씩 빠르게 돌아가며 켜야 합니다(멀티플렉싱).", { hint: SEG_HINT }),
   w: 20,
   h: 8,
   pins: [
-    ...["D1", "a", "f", "D2", "D3", "b"].map((id, i) => ({ id, x: 7 + i, y: 0, label: id.startsWith("D") ? `${id} (자리 공통)` : `${id} 세그먼트` })),
-    ...["e", "d", "dp", "c", "g", "D4"].map((id, i) => ({ id, x: 7 + i, y: 8, label: id.startsWith("D") ? `${id} (자리 공통)` : `${id} 세그먼트` })),
+    ...["D1", "a", "f", "D2", "D3", "b"].map((id, i) => ({ id, x: 7 + i, y: 0, label: id.startsWith("D") ? t("{id} (자리 공통)", { id }) : t("{id} 세그먼트", { id }) })),
+    ...["e", "d", "dp", "c", "g", "D4"].map((id, i) => ({ id, x: 7 + i, y: 8, label: id.startsWith("D") ? t("{id} (자리 공통)", { id }) : t("{id} 세그먼트", { id }) })),
   ],
   props: { common: "cathode", color: "red" },
   propOptions: { common: ["cathode", "anode"], color: ["red", "green", "blue", "yellow", "white"] },
@@ -121,15 +122,15 @@ const KEYS = [
 
 export const keypad: PartDef = {
   kind: "keypad-4x4",
-  name: "키패드 4×4",
+  name: t("키패드 4×4"),
   category: "input",
   description:
-    "멤브레인 키패드. 키를 누르면 그 줄(R1–R4)과 칸(C1–C4)이 이어집니다. 줄 하나를 Low로 하고 칸들을 풀업 입력으로 읽는 식으로 스캔하세요. 키를 클릭해 누릅니다.",
+    t("멤브레인 키패드. 키를 누르면 그 줄(R1–R4)과 칸(C1–C4)이 이어집니다. 줄 하나를 Low로 하고 칸들을 풀업 입력으로 읽는 식으로 스캔하세요. 키를 클릭해 누릅니다."),
   w: 9,
   h: 12,
   pins: [
-    ...[1, 2, 3, 4].map((i) => ({ id: `R${i}`, x: i, y: 12, label: `R${i} (줄)` })),
-    ...[1, 2, 3, 4].map((i) => ({ id: `C${i}`, x: 4 + i, y: 12, label: `C${i} (칸)` })),
+    ...[1, 2, 3, 4].map((i) => ({ id: `R${i}`, x: i, y: 12, label: t("R{i} (줄)", { i }) })),
+    ...[1, 2, 3, 4].map((i) => ({ id: `C${i}`, x: 4 + i, y: 12, label: t("C{i} (칸)", { i }) })),
   ],
   render: (_props, visual) => (
     <g>
@@ -163,10 +164,10 @@ export const keypad: PartDef = {
 
 export const rotaryEncoder: PartDef = {
   kind: "rotary-encoder",
-  name: "로터리 엔코더",
+  name: t("로터리 엔코더"),
   category: "input",
   description:
-    "KY-040 모듈. 한 칸(detent) 돌릴 때마다 CLK와 DT가 한 주기씩 바뀌고, 시계 방향이면 CLK가 먼저 바뀝니다. 타이머 엔코더 모드(TIMx_CH1/CH2)로 세거나 EXTI로 읽으세요. 모듈에 10 kΩ 풀업이 있습니다. ⟲ ⟳를 눌러 돌리고, 손잡이를 누르면 SW가 GND로 연결됩니다.",
+    t("KY-040 모듈. 한 칸(detent) 돌릴 때마다 CLK와 DT가 한 주기씩 바뀌고, 시계 방향이면 CLK가 먼저 바뀝니다. 타이머 엔코더 모드(TIMx_CH1/CH2)로 세거나 EXTI로 읽으세요. 모듈에 10 kΩ 풀업이 있습니다. ⟲ ⟳를 눌러 돌리고, 손잡이를 누르면 SW가 GND로 연결됩니다."),
   w: 5,
   h: 7,
   pins: ["CLK", "DT", "SW", "+", "GND"].map((id, i) => ({ id, x: i, y: 7, label: id === "+" ? "+ (VCC)" : id })),
@@ -203,10 +204,10 @@ export const rotaryEncoder: PartDef = {
 
 export const thermistor: PartDef = {
   kind: "thermistor",
-  name: "서미스터 (NTC)",
+  name: t("서미스터 (NTC)"),
   category: "sensor",
   description:
-    `온도가 오르면 저항이 줄어드는 NTC. R = R25 · exp(B (1/T − 1/298.15 K)). 고정 저항과 분압기로 묶어 아날로그 핀에서 읽으세요. 머리를 누르고 있으면 손가락 체온(약 ${FINGER_C} °C)으로 데워지고, 떼면 식습니다.`,
+    t("온도가 오르면 저항이 줄어드는 NTC. R = R25 · exp(B (1/T − 1/298.15 K)). 고정 저항과 분압기로 묶어 아날로그 핀에서 읽으세요. 머리를 누르고 있으면 손가락 체온(약 {finger} °C)으로 데워지고, 떼면 식습니다.", { finger: FINGER_C }),
   w: 1,
   h: 3,
   pins: [
@@ -215,7 +216,7 @@ export const thermistor: PartDef = {
   ],
   props: { ohms: "10k", beta: 3950, temp: 25 },
   propOptions: { ohms: ["10k", "100k"] },
-  ranges: { temp: { min: -40, max: 125, step: 0.5, label: "온도", unit: "°C" } },
+  ranges: { temp: { min: -40, max: 125, step: 0.5, label: t("온도"), unit: "°C" } },
   controls: { touch: fingerTouch("temp") },
   render: (props, visual) => (
     <g data-drag="touch" data-temp={Number(props.temp)}>
@@ -246,21 +247,21 @@ const SONAR: Slide = {
 
 export const ultrasonic: PartDef = {
   kind: "hc-sr04",
-  name: "초음파 거리센서",
+  name: t("초음파 거리센서"),
   category: "sensor",
   description:
-    "HC-SR04P(3.3–5 V). TRIG에 10 µs 이상 High 펄스를 주면, ECHO가 소리가 왕복한 시간만큼 High가 됩니다(1 cm당 약 58 µs, 400 cm 넘으면 38 ms). 입력 캡처로 재면 정확합니다. 앞의 장애물(손)을 위아래로 끌어 거리를 바꿉니다(2–450 cm, 가까운 쪽이 더 세밀). 모듈을 끌면 옮겨집니다.",
+    t("HC-SR04P(3.3–5 V). TRIG에 10 µs 이상 High 펄스를 주면, ECHO가 소리가 왕복한 시간만큼 High가 됩니다(1 cm당 약 58 µs, 400 cm 넘으면 38 ms). 입력 캡처로 재면 정확합니다. 앞의 장애물(손)을 위아래로 끌어 거리를 바꿉니다(2–450 cm, 가까운 쪽이 더 세밀). 모듈을 끌면 옮겨집니다."),
   w: 9,
   h: 5,
   pins: ["VCC", "TRIG", "ECHO", "GND"].map((id, i) => ({ id, x: 3 + i, y: 5, label: id })),
   props: { distance: 50 },
-  ranges: { distance: { min: 2, max: 450, step: 1, label: "거리", unit: "cm" } },
+  ranges: { distance: { min: 2, max: 450, step: 1, label: t("거리"), unit: "cm" } },
   controls: {
     obstacle: slideHandle(
       "distance",
       0,
       SONAR,
-      "장애물을 위아래로 끌어 거리를 바꾸세요 (2–450 cm). 모듈을 끌면 옮겨집니다.",
+      t("장애물을 위아래로 끌어 거리를 바꾸세요 (2–450 cm). 모듈을 끌면 옮겨집니다."),
     ),
   },
   render: (props, visual) => {
@@ -284,7 +285,7 @@ export const ultrasonic: PartDef = {
         <g data-drag="obstacle" className={held ? "obstacle held" : "obstacle"} data-distance-grid={d.toFixed(2)}>
           <rect x={1 * P} y={y - 1.2 * P} width={7 * P} height={1.2 * P} rx={1.5} className="obstacle-wall" />
           <text x={4.5 * P} y={y - 0.35 * P} textAnchor="middle" className="obstacle-label">
-            ✋ 장애물
+            {t("✋ 장애물")}
           </text>
           {/* A wider grip than the board itself. */}
           <rect x={0.5 * P} y={y - 1.7 * P} width={8 * P} height={2 * P} fill="transparent" />
@@ -309,19 +310,19 @@ export const ultrasonic: PartDef = {
 
 export const ds18b20: PartDef = {
   kind: "ds18b20",
-  name: "디지털 온도센서 (DS18B20)",
+  name: t("디지털 온도센서 (DS18B20)"),
   category: "sensor",
   description:
-    `1-Wire. DQ를 480 µs 이상 Low로 하면(리셋) 센서가 존재 펄스로 답합니다. 쓰기 슬롯은 짧은 Low(1)·긴 Low(0), 읽기 슬롯에서 0이면 센서가 선을 Low로 잡습니다. SKIP ROM(0xCC) → CONVERT T(0x44) → 750 ms 뒤 READ SCRATCHPAD(0xBE). 변환 전에는 85 °C가 읽힙니다. 모듈에 4.7 kΩ 풀업이 있습니다. 센서마다 고유한 64비트 ROM 코드(패밀리 0x28, 48비트 일련번호, CRC8)가 있어 여러 개를 한 선에 이을 수 있습니다(멀티드롭): SEARCH ROM(0xF0)으로 모두 찾고 MATCH ROM(0x55) + 8바이트로 하나를 고릅니다. 여러 개일 때 READ ROM(0x33)은 응답이 겹쳐 CRC가 틀립니다. serial에 16진수 12자리를 쓰면 일련번호가 바뀝니다(비우면 부품 이름에서 정해짐). 센서를 누르고 있으면 손가락 체온(약 ${FINGER_C} °C)으로 데워지고, 떼면 식습니다.`,
+    t("1-Wire. DQ를 480 µs 이상 Low로 하면(리셋) 센서가 존재 펄스로 답합니다. 쓰기 슬롯은 짧은 Low(1)·긴 Low(0), 읽기 슬롯에서 0이면 센서가 선을 Low로 잡습니다. SKIP ROM(0xCC) → CONVERT T(0x44) → 750 ms 뒤 READ SCRATCHPAD(0xBE). 변환 전에는 85 °C가 읽힙니다. 모듈에 4.7 kΩ 풀업이 있습니다. 센서마다 고유한 64비트 ROM 코드(패밀리 0x28, 48비트 일련번호, CRC8)가 있어 여러 개를 한 선에 이을 수 있습니다(멀티드롭): SEARCH ROM(0xF0)으로 모두 찾고 MATCH ROM(0x55) + 8바이트로 하나를 고릅니다. 여러 개일 때 READ ROM(0x33)은 응답이 겹쳐 CRC가 틀립니다. serial에 16진수 12자리를 쓰면 일련번호가 바뀝니다(비우면 부품 이름에서 정해짐). 센서를 누르고 있으면 손가락 체온(약 {finger} °C)으로 데워지고, 떼면 식습니다.", { finger: FINGER_C }),
   w: 3,
   h: 5,
   pins: [
     { id: "GND", x: 0, y: 5, label: "GND" },
-    { id: "DQ", x: 1, y: 5, label: "DQ (데이터)" },
+    { id: "DQ", x: 1, y: 5, label: t("DQ (데이터)") },
     { id: "VDD", x: 2, y: 5, label: "VDD" },
   ],
   props: { temp: 25, serial: "" },
-  ranges: { temp: { min: -55, max: 125, step: 0.0625, label: "온도", unit: "°C" } },
+  ranges: { temp: { min: -55, max: 125, step: 0.0625, label: t("온도"), unit: "°C" } },
   controls: { touch: fingerTouch("temp") },
   render: (props, visual) => (
     <g data-drag="touch" data-temp={Number(props.temp)}>
@@ -401,10 +402,10 @@ function LcdScreen({ lcd, x, y }: { lcd: LcdView | undefined; x: number; y: numb
 
 export const lcdI2c: PartDef = {
   kind: "lcd-i2c",
-  name: "문자 LCD 16×2 (I2C)",
+  name: t("문자 LCD 16×2 (I2C)"),
   category: "display",
   description:
-    "HD44780 LCD에 PCF8574 I2C 백팩(주소 0x27, 일부는 0x3F). 백팩의 P0 RS, P1 RW, P2 E, P3 백라이트, P4–P7 D4–D7. 4비트 모드로 초기화(0x3, 0x3, 0x3, 0x2)한 뒤 바이트를 두 니블로 보냅니다. VCC는 5V.",
+    t("HD44780 LCD에 PCF8574 I2C 백팩(주소 0x27, 일부는 0x3F). 백팩의 P0 RS, P1 RW, P2 E, P3 백라이트, P4–P7 D4–D7. 4비트 모드로 초기화(0x3, 0x3, 0x3, 0x2)한 뒤 바이트를 두 니블로 보냅니다. VCC는 5V."),
   w: 30,
   h: 12,
   pins: ["GND", "VCC", "SDA", "SCL"].map((id, i) => ({ id, x: 0, y: 4 + i, label: id })),
@@ -424,10 +425,10 @@ export const lcdI2c: PartDef = {
 
 export const stepper: PartDef = {
   kind: "stepper-28byj48",
-  name: "스테퍼 모터 (28BYJ-48)",
+  name: t("스테퍼 모터 (28BYJ-48)"),
   category: "actuator",
   description:
-    "5 V 단극 스테퍼 + ULN2003 드라이버 보드. IN1–IN4 중 High인 코일이 켜집니다. 반스텝 순서 1, 1+2, 2, 2+3, 3, 3+4, 4, 4+1을 돌면 출력축이 4096 반스텝에 한 바퀴 돕니다. 반스텝 사이가 약 1 ms보다 짧으면 따라가지 못합니다.",
+    t("5 V 단극 스테퍼 + ULN2003 드라이버 보드. IN1–IN4 중 High인 코일이 켜집니다. 반스텝 순서 1, 1+2, 2, 2+3, 3, 3+4, 4, 4+1을 돌면 출력축이 4096 반스텝에 한 바퀴 돕니다. 반스텝 사이가 약 1 ms보다 짧으면 따라가지 못합니다."),
   w: 12,
   h: 9,
   pins: [

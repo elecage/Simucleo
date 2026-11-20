@@ -4,12 +4,13 @@
 import { BREATH_RH, FINGER_C, fingerTouch } from "./controls";
 import { Fingertip } from "./feedback";
 import { PITCH, type PartDef, type VisualState } from "./types";
+import { t } from "../i18n";
 
 const P = PITCH;
 
 const NoPower = ({ x, y }: { x: number; y: number }) => (
   <text x={x} y={y} textAnchor="middle" className="silk small unpowered" data-unpowered="1">
-    전원 부족
+    {t("전원 부족")}
   </text>
 );
 
@@ -104,7 +105,7 @@ export const oledI2c: PartDef = {
   name: "OLED 128×64 (I2C)",
   category: "display",
   description:
-    "SSD1306 0.96인치 OLED, I2C 주소 0x3C (뒷면 점퍼로 0x3D). VCC는 3V3, SCL/SDA는 D15/D14 (I2C1). 모듈에 풀업 저항이 있습니다.",
+    t("SSD1306 0.96인치 OLED, I2C 주소 0x3C (뒷면 점퍼로 0x3D). VCC는 3V3, SCL/SDA는 D15/D14 (I2C1). 모듈에 풀업 저항이 있습니다."),
   w: 12,
   h: 9,
   pins: OLED_I2C_PINS.map((p) => ({ id: p.name, x: p.x, y: 0, label: p.name })),
@@ -128,14 +129,14 @@ export const oledSpi: PartDef = {
   name: "OLED 128×64 (SPI)",
   category: "display",
   description:
-    "SSD1306 OLED의 4선 SPI 버전. D0 = SCK (D13), D1 = MOSI (D11), CS·DC·RES는 아무 GPIO. DC가 High면 데이터, Low면 명령. RES를 Low로 하면 초기화됩니다.",
+    t("SSD1306 OLED의 4선 SPI 버전. D0 = SCK (D13), D1 = MOSI (D11), CS·DC·RES는 아무 GPIO. DC가 High면 데이터, Low면 명령. RES를 Low로 하면 초기화됩니다."),
   w: 12,
   h: 9,
   pins: OLED_SPI_PINS.map((p) => ({
     id: p.name,
     x: p.x,
     y: 0,
-    label: { D0: "D0 (SCK)", D1: "D1 (MOSI)", RES: "RES (리셋, Low)", DC: "DC (데이터/명령)", CS: "CS (선택, Low)" }[p.name] ?? p.name,
+    label: { D0: "D0 (SCK)", D1: "D1 (MOSI)", RES: t("RES (리셋, Low)"), DC: t("DC (데이터/명령)"), CS: t("CS (선택, Low)") }[p.name] ?? p.name,
   })),
   render: (_props, visual) => <OledBody visual={visual} pins={OLED_SPI_PINS} label="SSD1306 SPI" />,
 };
@@ -151,15 +152,15 @@ const RTC_PINS = [
 
 export const rtc: PartDef = {
   kind: "rtc-ds3231",
-  name: "RTC 시계 (DS3231)",
+  name: t("RTC 시계 (DS3231)"),
   category: "module",
   description:
-    "I2C 주소 0x68. 레지스터 0x00–0x06에 초·분·시·요일·일·월·연도가 BCD로 들어 있습니다. 시뮬레이션을 시작한 시각에서 출발하고, 백업 배터리가 있어 보드를 리셋해도 계속 갑니다.",
+    t("I2C 주소 0x68. 레지스터 0x00–0x06에 초·분·시·요일·일·월·연도가 BCD로 들어 있습니다. 시뮬레이션을 시작한 시각에서 출발하고, 백업 배터리가 있어 보드를 리셋해도 계속 갑니다."),
   w: 6,
   h: 5,
   pins: RTC_PINS.map((p) => ({ id: p.name, x: p.x, y: 5, label: p.name })),
   props: { temp: 25 },
-  ranges: { temp: { min: -40, max: 85, step: 0.25, label: "온도", unit: "°C" } },
+  ranges: { temp: { min: -40, max: 85, step: 0.25, label: t("온도"), unit: "°C" } },
   render: (_props, visual) => {
     const [date, time] = (visual.text ?? "").split(" ");
     return (
@@ -193,17 +194,17 @@ const AHT_PINS = [
 
 export const aht20: PartDef = {
   kind: "aht20",
-  name: "온습도 센서 (AHT20)",
+  name: t("온습도 센서 (AHT20)"),
   category: "sensor",
   description:
-    `I2C 주소 0x38. 0xBE로 보정, 0xAC 0x33 0x00으로 측정을 시작하면 80 ms 뒤 상태 + 습도 20비트 + 온도 20비트 + CRC를 읽을 수 있습니다. 센서를 누르고 있으면 손가락 체온(약 ${FINGER_C} °C)과 입김(습도 ${BREATH_RH} %)으로 값이 오르고, 떼면 원래대로 돌아옵니다.`,
+    t("I2C 주소 0x38. 0xBE로 보정, 0xAC 0x33 0x00으로 측정을 시작하면 80 ms 뒤 상태 + 습도 20비트 + 온도 20비트 + CRC를 읽을 수 있습니다. 센서를 누르고 있으면 손가락 체온(약 {finger} °C)과 입김(습도 {breath} %)으로 값이 오르고, 떼면 원래대로 돌아옵니다.", { finger: FINGER_C, breath: BREATH_RH }),
   w: 3,
   h: 4,
   pins: AHT_PINS.map((p) => ({ id: p.name, x: p.x, y: 4, label: p.name === "VCC" ? "VIN (VCC)" : p.name })),
   props: { temp: 25, humidity: 50 },
   ranges: {
-    temp: { min: -40, max: 85, step: 0.5, label: "온도", unit: "°C" },
-    humidity: { min: 0, max: 100, step: 1, label: "습도", unit: "%" },
+    temp: { min: -40, max: 85, step: 0.5, label: t("온도"), unit: "°C" },
+    humidity: { min: 0, max: 100, step: 1, label: t("습도"), unit: "%" },
   },
   controls: { touch: fingerTouch("temp", "humidity") },
   render: (props, visual) => (
@@ -234,13 +235,13 @@ const SD_PINS = [
 
 export const sdCard: PartDef = {
   kind: "sd-card",
-  name: "SD 카드 모듈",
+  name: t("SD 카드 모듈"),
   category: "module",
   description:
-    "SPI 모드 SDHC 카드 (512바이트 블록 주소). VCC는 5V (모듈의 레귤레이터, 3 V 이상), SCK/MISO/MOSI는 D13/D12/D11 (SPI1), CS는 아무 GPIO. 카드 내용은 속성 창에서 디스크 이미지로 내려받거나 넣을 수 있습니다.",
+    t("SPI 모드 SDHC 카드 (512바이트 블록 주소). VCC는 5V (모듈의 레귤레이터, 3 V 이상), SCK/MISO/MOSI는 D13/D12/D11 (SPI1), CS는 아무 GPIO. 카드 내용은 속성 창에서 디스크 이미지로 내려받거나 넣을 수 있습니다."),
   w: 7,
   h: 6,
-  pins: SD_PINS.map((p) => ({ id: p.name, x: p.x, y: 6, label: p.name === "CS" ? "CS (선택, Low)" : p.name })),
+  pins: SD_PINS.map((p) => ({ id: p.name, x: p.x, y: 6, label: p.name === "CS" ? t("CS (선택, Low)") : p.name })),
   props: { size: 32 },
   propOptions: { size: ["16", "32", "64", "128"] },
   render: (props, visual) => (

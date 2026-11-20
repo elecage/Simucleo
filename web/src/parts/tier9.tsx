@@ -5,10 +5,11 @@
 // `simucleo_circuit::tier9`.
 import { shaftTurn } from "./controls";
 import { PITCH, type MotorView, type PartDef, type VisualState } from "./types";
+import { t } from "../i18n";
 
 const P = PITCH;
 
-const NoPower = ({ x, y, text = "전원 부족" }: { x: number; y: number; text?: string }) => (
+const NoPower = ({ x, y, text = t("전원 부족") }: { x: number; y: number; text?: string }) => (
   <text x={x} y={y} textAnchor="middle" className="silk small unpowered" data-unpowered="1">
     {text}
   </text>
@@ -39,18 +40,18 @@ function CurrentBar({ x, y, w, value, label, name }: { x: number; y: number; w: 
 
 export const battery: PartDef = {
   kind: "battery",
-  name: "DC 전원 (배터리/어댑터)",
+  name: t("DC 전원 (배터리/어댑터)"),
   category: "basic",
   description:
-    "모터용 직류 전원: 12 V 어댑터, 3S 리튬폴리머(11.1 V) 배터리 등. 보드의 5V·3V3로는 스텝 드라이버(VMOT 8 V 이상)나 ESC를 돌릴 수 없습니다. +를 모터 전원 입력(VMOT, 12V, PVDD, BAT+)에, −를 GND에 연결하고, 신호의 기준이 같도록 −를 Nucleo의 GND와도 이어 주세요(공통 접지). 전압은 슬라이더로 바꿉니다.",
+    t("모터용 직류 전원: 12 V 어댑터, 3S 리튬폴리머(11.1 V) 배터리 등. 보드의 5V·3V3로는 스텝 드라이버(VMOT 8 V 이상)나 ESC를 돌릴 수 없습니다. +를 모터 전원 입력(VMOT, 12V, PVDD, BAT+)에, −를 GND에 연결하고, 신호의 기준이 같도록 −를 Nucleo의 GND와도 이어 주세요(공통 접지). 전압은 슬라이더로 바꿉니다."),
   w: 5,
   h: 4,
   pins: [
-    { id: "+", x: 1, y: 4, label: "+ (모터 전원)" },
+    { id: "+", x: 1, y: 4, label: t("+ (모터 전원)") },
     { id: "-", x: 4, y: 4, label: "− (GND)" },
   ],
   props: { voltage: 12 },
-  ranges: { voltage: { min: 3, max: 24, step: 0.1, label: "전압", unit: "V" } },
+  ranges: { voltage: { min: 3, max: 24, step: 0.1, label: t("전압"), unit: "V" } },
   render: (props) => {
     const v = Number(props.voltage) || 0;
     return (
@@ -63,7 +64,7 @@ export const battery: PartDef = {
           {fmt(v, 1)} V
         </text>
         <text x={3.3 * P} y={2.6 * P} textAnchor="middle" className="silk tiny battery-label">
-          + 빨강 · − 검정
+          {t("+ 빨강 · − 검정")}
         </text>
       </g>
     );
@@ -73,27 +74,27 @@ export const battery: PartDef = {
 // ---------------------------------------------------- NEMA17 stepper
 
 const NEMA_PINS: [string, string, string][] = [
-  ["A+", "#111", "A+ (검정, 코일 A)"],
-  ["A-", "#16a34a", "A− (초록, 코일 A)"],
-  ["B+", "#dc2626", "B+ (빨강, 코일 B)"],
-  ["B-", "#2563eb", "B− (파랑, 코일 B)"],
+  ["A+", "#111", t("A+ (검정, 코일 A)")],
+  ["A-", "#16a34a", t("A− (초록, 코일 A)")],
+  ["B+", "#dc2626", t("B+ (빨강, 코일 B)")],
+  ["B-", "#2563eb", t("B− (파랑, 코일 B)")],
 ];
 /** Shaft centre in part units. */
 const NEMA_C = { x: 4.5 * P, y: 4.2 * P };
 
 export const stepperNema17: PartDef = {
   kind: "stepper-nema17",
-  name: "스테퍼 모터 (NEMA17 바이폴라)",
+  name: t("스테퍼 모터 (NEMA17 바이폴라)"),
   category: "actuator",
   description:
-    "42 mm NEMA17 바이폴라 스테퍼: 코일 두 개(A: A+/A−, B: B+/B−), 한 바퀴 200스텝(1.8°), 홀딩 토크 40 N·cm. 두 코일 전류의 방향 벡터 atan2(I_B, I_A)가 회전자를 끌어당기고, 전기각 한 주기(360°)가 4스텝 = 7.2°입니다. 드라이버(A4988/DRV8825 또는 L298N)의 출력 쌍에 코일 하나씩 연결하세요(1A/1B → A+/A−, 2A/2B → B+/B−). 한 코일의 두 선을 바꾸면 반대로 돕니다. 멈춘 상태에서 갑자기 빠르게(약 1100 스텝/s 이상) 스텝을 주거나 부하가 토크보다 크면 회전자가 자기장을 놓쳐 스텝을 잃습니다(탈조) — 가속 램프로 천천히 올리세요. 드라이버가 꺼져 있으면(EN High) 축을 손으로 돌릴 수 있고, 켜져 있으면 홀딩 토크가 되돌립니다. 부하(브레이크) 슬라이더로 탈조를 일으켜 보세요.",
+    t("42 mm NEMA17 바이폴라 스테퍼: 코일 두 개(A: A+/A−, B: B+/B−), 한 바퀴 200스텝(1.8°), 홀딩 토크 40 N·cm. 두 코일 전류의 방향 벡터 atan2(I_B, I_A)가 회전자를 끌어당기고, 전기각 한 주기(360°)가 4스텝 = 7.2°입니다. 드라이버(A4988/DRV8825 또는 L298N)의 출력 쌍에 코일 하나씩 연결하세요(1A/1B → A+/A−, 2A/2B → B+/B−). 한 코일의 두 선을 바꾸면 반대로 돕니다. 멈춘 상태에서 갑자기 빠르게(약 1100 스텝/s 이상) 스텝을 주거나 부하가 토크보다 크면 회전자가 자기장을 놓쳐 스텝을 잃습니다(탈조) — 가속 램프로 천천히 올리세요. 드라이버가 꺼져 있으면(EN High) 축을 손으로 돌릴 수 있고, 켜져 있으면 홀딩 토크가 되돌립니다. 부하(브레이크) 슬라이더로 탈조를 일으켜 보세요."),
   w: 9,
   h: 10,
   pins: NEMA_PINS.map(([id, , label], i) => ({ id, x: 3 + i, y: 10, label })),
   props: { load: 0, inertia: 0, turn: 0 },
   ranges: {
-    load: { min: 0, max: 60, step: 1, label: "부하 (브레이크)", unit: "N·cm" },
-    inertia: { min: 0, max: 500, step: 10, label: "축에 단 관성", unit: "g·cm²" },
+    load: { min: 0, max: 60, step: 1, label: t("부하 (브레이크)"), unit: "N·cm" },
+    inertia: { min: 0, max: 500, step: 10, label: t("축에 단 관성"), unit: "g·cm²" },
   },
   controls: { shaft: shaftTurn("turn", NEMA_C.x, NEMA_C.y) },
   render: (_props, visual: VisualState) => {
@@ -148,14 +149,14 @@ export const stepperNema17: PartDef = {
           </g>
         </g>
         <text x={cx} y={-0.4 * P} textAnchor="middle" className="silk small value" data-readout="1">
-          {fmt(angle, 1)}° · {fmt(steps, 1)} 스텝 · {fmt(rpm)} rpm
+          {t("{angle}° · {steps} 스텝 · {rpm} rpm", { angle: fmt(angle, 1), steps: fmt(steps, 1), rpm: fmt(rpm) })}
         </text>
         {/* Coil currents, signed. */}
         <CurrentBar x={cx} y={6.4 * P} w={4 * P} value={coils[0] ?? 0} label="A" name="A" />
         <CurrentBar x={cx} y={7.4 * P} w={4 * P} value={coils[1] ?? 0} label="B" name="B" />
         {(stalled || lost > 0) && (
           <text x={cx} y={11.2 * P} textAnchor="middle" className={stalled ? "silk small stall on" : "silk small stall"} data-stall={stalled ? "1" : "0"}>
-            {stalled ? "탈조! " : ""}잃은 스텝 {lost}
+            {stalled ? t("탈조! ") : ""}{t("잃은 스텝 {lost}", { lost })}
           </text>
         )}
       </g>
@@ -168,38 +169,38 @@ export const stepperNema17: PartDef = {
 const DRV_LEFT = ["EN", "MS1", "MS2", "MS3", "RST", "SLP", "STEP", "DIR"];
 const DRV_RIGHT = ["VMOT", "GND", "2B", "2A", "1A", "1B", "VDD", "GND2"];
 const DRV_LABEL: Record<string, string> = {
-  EN: "EN (Low = 출력 켜짐, 보드에서 풀다운)",
-  MS1: "MS1 / M0 (마이크로스텝, 풀다운)",
-  MS2: "MS2 / M1 (마이크로스텝, 풀다운)",
-  MS3: "MS3 / M2 (마이크로스텝, 풀다운)",
-  RST: "RST (Low = 리셋, 떠 있음: SLP에 연결)",
-  SLP: "SLP (Low = 절전, 보드에서 풀업)",
-  STEP: "STEP (상승 에지마다 한 마이크로스텝)",
-  DIR: "DIR (회전 방향)",
-  VMOT: "VMOT (모터 전원 8–35 V)",
-  GND: "GND (모터 전원)",
-  "2B": "2B (코일 B)",
-  "2A": "2A (코일 B)",
-  "1A": "1A (코일 A)",
-  "1B": "1B (코일 A)",
-  VDD: "VDD (로직 전원 3–5.5 V, 3V3에)",
-  GND2: "GND (로직)",
+  EN: t("EN (Low = 출력 켜짐, 보드에서 풀다운)"),
+  MS1: t("MS1 / M0 (마이크로스텝, 풀다운)"),
+  MS2: t("MS2 / M1 (마이크로스텝, 풀다운)"),
+  MS3: t("MS3 / M2 (마이크로스텝, 풀다운)"),
+  RST: t("RST (Low = 리셋, 떠 있음: SLP에 연결)"),
+  SLP: t("SLP (Low = 절전, 보드에서 풀업)"),
+  STEP: t("STEP (상승 에지마다 한 마이크로스텝)"),
+  DIR: t("DIR (회전 방향)"),
+  VMOT: t("VMOT (모터 전원 8–35 V)"),
+  GND: t("GND (모터 전원)"),
+  "2B": t("2B (코일 B)"),
+  "2A": t("2A (코일 B)"),
+  "1A": t("1A (코일 A)"),
+  "1B": t("1B (코일 A)"),
+  VDD: t("VDD (로직 전원 3–5.5 V, 3V3에)"),
+  GND2: t("GND (로직)"),
 };
 const DRV_STATE: Record<string, string> = {
-  on: "출력 켜짐",
-  disabled: "꺼짐 (EN High)",
-  sleep: "절전 (SLP Low)",
-  reset: "리셋 (RST Low)",
-  "no-vmot": "VMOT 없음",
-  "no-vdd": "VDD 없음",
+  on: t("출력 켜짐"),
+  disabled: t("꺼짐 (EN High)"),
+  sleep: t("절전 (SLP Low)"),
+  reset: t("리셋 (RST Low)"),
+  "no-vmot": t("VMOT 없음"),
+  "no-vdd": t("VDD 없음"),
 };
 
 export const a4988: PartDef = {
   kind: "a4988",
-  name: "스텝 드라이버 (A4988 / DRV8825)",
+  name: t("스텝 드라이버 (A4988 / DRV8825)"),
   category: "module",
   description:
-    "바이폴라 스테퍼용 스텝/방향 드라이버 캐리어 보드(Pololu 형). STEP 핀이 Low→High로 바뀔 때마다 DIR 방향으로 한 마이크로스텝 움직이고, 코일 전류를 사인/코사인 표에 맞춰 조절합니다(1A/1B = 코일 A, 2A/2B = 코일 B). 마이크로스텝(MS1 MS2 MS3): 000 풀, 100 1/2, 010 1/4, 110 1/8, 111 1/16. model을 DRV8825로 바꾸면 M0 M1 M2: 001 1/16, 101·011·111 1/32. STEP 펄스는 High·Low 모두 1 µs 이상(DRV8825는 1.9 µs). EN이 High, SLP가 Low, RST가 Low이면 출력이 꺼져 모터가 헐거워집니다 — RST는 보드에서 떠 있으니 SLP에 연결하세요. VMOT에 8–35 V 모터 전원(DC 전원 부품)과 GND, VDD에 3V3(A4988의 High 판정은 0.7 × VDD). current는 전류 제한 가변저항(Vref)으로 정한 정격 전류의 비율입니다.",
+    t("바이폴라 스테퍼용 스텝/방향 드라이버 캐리어 보드(Pololu 형). STEP 핀이 Low→High로 바뀔 때마다 DIR 방향으로 한 마이크로스텝 움직이고, 코일 전류를 사인/코사인 표에 맞춰 조절합니다(1A/1B = 코일 A, 2A/2B = 코일 B). 마이크로스텝(MS1 MS2 MS3): 000 풀, 100 1/2, 010 1/4, 110 1/8, 111 1/16. model을 DRV8825로 바꾸면 M0 M1 M2: 001 1/16, 101·011·111 1/32. STEP 펄스는 High·Low 모두 1 µs 이상(DRV8825는 1.9 µs). EN이 High, SLP가 Low, RST가 Low이면 출력이 꺼져 모터가 헐거워집니다 — RST는 보드에서 떠 있으니 SLP에 연결하세요. VMOT에 8–35 V 모터 전원(DC 전원 부품)과 GND, VDD에 3V3(A4988의 High 판정은 0.7 × VDD). current는 전류 제한 가변저항(Vref)으로 정한 정격 전류의 비율입니다."),
   w: 6,
   h: 9,
   pins: [
@@ -209,7 +210,7 @@ export const a4988: PartDef = {
   buses: [["GND", "GND2"]],
   props: { model: "A4988", current: 100 },
   propOptions: { model: ["A4988", "DRV8825"] },
-  ranges: { current: { min: 10, max: 100, step: 5, label: "전류 제한 (Vref)", unit: "%" } },
+  ranges: { current: { min: 10, max: 100, step: 5, label: t("전류 제한 (Vref)"), unit: "%" } },
   render: (props, visual) => {
     const m = visual.motor;
     const state = m?.state ?? "no-vdd";
@@ -235,13 +236,13 @@ export const a4988: PartDef = {
         {/* The current-limit trimmer. */}
         <circle cx={3 * P} cy={2 * P} r={0.55 * P} className="pir-trim" />
         <text x={3 * P} y={6.3 * P} textAnchor="middle" className="silk tiny drv-label" data-micro-label="1">
-          {visual.text ?? "1/1"} 스텝
+          {t("{micro} 스텝", { micro: visual.text ?? "1/1" })}
         </text>
         <text x={3 * P} y={7.2 * P} textAnchor="middle" className={on ? "silk tiny drv-label" : "silk tiny drv-off"} data-state-label={state}>
           {DRV_STATE[state] ?? state}
         </text>
         <circle cx={3 * P} cy={8.3 * P} r={0.35 * P} className={on ? "drv-led on" : "drv-led"} />
-        {visual.unpowered && <NoPower x={3 * P} y={-0.5 * P} text={state === "no-vdd" ? "VDD 없음" : "VMOT 없음"} />}
+        {visual.unpowered && <NoPower x={3 * P} y={-0.5 * P} text={state === "no-vdd" ? t("VDD 없음") : t("VMOT 없음")} />}
       </g>
     );
   },
@@ -251,27 +252,27 @@ export const a4988: PartDef = {
 
 const L298_BOTTOM = ["12V", "GND", "5V", "ENA", "IN1", "IN2", "IN3", "IN4", "ENB"];
 const L298_LABEL: Record<string, string> = {
-  "12V": "12V (모터 전원 VS, 7 V 이상이면 보드의 5 V 레귤레이터도 동작)",
+  "12V": t("12V (모터 전원 VS, 7 V 이상이면 보드의 5 V 레귤레이터도 동작)"),
   GND: "GND",
-  "5V": "5V (로직 전원 입력/출력)",
-  ENA: "ENA (브리지 A 켜기, PWM — jumpers=off일 때)",
-  ENB: "ENB (브리지 B 켜기, PWM — jumpers=off일 때)",
+  "5V": t("5V (로직 전원 입력/출력)"),
+  ENA: t("ENA (브리지 A 켜기, PWM — jumpers=off일 때)"),
+  ENB: t("ENB (브리지 B 켜기, PWM — jumpers=off일 때)"),
   IN1: "IN1 (OUT1)",
   IN2: "IN2 (OUT2)",
   IN3: "IN3 (OUT3)",
   IN4: "IN4 (OUT4)",
-  OUT1: "OUT1 (브리지 A)",
-  OUT2: "OUT2 (브리지 A)",
-  OUT3: "OUT3 (브리지 B)",
-  OUT4: "OUT4 (브리지 B)",
+  OUT1: t("OUT1 (브리지 A)"),
+  OUT2: t("OUT2 (브리지 A)"),
+  OUT3: t("OUT3 (브리지 B)"),
+  OUT4: t("OUT4 (브리지 B)"),
 };
 
 export const l298n: PartDef = {
   kind: "l298n",
-  name: "H-브리지 모듈 (L298N, 2채널)",
+  name: t("H-브리지 모듈 (L298N, 2채널)"),
   category: "module",
   description:
-    "L298N 듀얼 H-브리지 모듈. 브리지 A: IN1·IN2 → OUT1·OUT2, 브리지 B: IN3·IN4 → OUT3·OUT4. IN1 High·IN2 Low면 OUT1→OUT2 방향, 반대면 반대 방향, 같으면 브레이크(전류 0). ENA/ENB가 Low면 그 브리지가 꺼지고, PWM을 주면 코일 전류가 듀티만큼으로 평균됩니다 — 모듈의 ENA/ENB 점퍼를 빼야(jumpers=off) 핀이 쓰입니다. 바이폴라 스테퍼는 코일 A를 OUT1/OUT2에, 코일 B를 OUT3/OUT4에 연결하고 펌웨어가 풀스텝(A+, B+, A−, B−) 또는 반스텝(A+, A+B+, B+, …) 순서를 직접 만듭니다. 순서가 틀려 자기장이 180° 뒤집히면(예: A+ 다음 A−) 회전자가 어느 쪽으로 돌지 몰라 떨기만 합니다. 12V에 모터 전원, GND는 Nucleo와 공통. 입력의 High는 2.3 V 이상(3.3 V 출력으로 됨).",
+    t("L298N 듀얼 H-브리지 모듈. 브리지 A: IN1·IN2 → OUT1·OUT2, 브리지 B: IN3·IN4 → OUT3·OUT4. IN1 High·IN2 Low면 OUT1→OUT2 방향, 반대면 반대 방향, 같으면 브레이크(전류 0). ENA/ENB가 Low면 그 브리지가 꺼지고, PWM을 주면 코일 전류가 듀티만큼으로 평균됩니다 — 모듈의 ENA/ENB 점퍼를 빼야(jumpers=off) 핀이 쓰입니다. 바이폴라 스테퍼는 코일 A를 OUT1/OUT2에, 코일 B를 OUT3/OUT4에 연결하고 펌웨어가 풀스텝(A+, B+, A−, B−) 또는 반스텝(A+, A+B+, B+, …) 순서를 직접 만듭니다. 순서가 틀려 자기장이 180° 뒤집히면(예: A+ 다음 A−) 회전자가 어느 쪽으로 돌지 몰라 떨기만 합니다. 12V에 모터 전원, GND는 Nucleo와 공통. 입력의 High는 2.3 V 이상(3.3 V 출력으로 됨)."),
   w: 10,
   h: 10,
   pins: [
@@ -317,7 +318,7 @@ export const l298n: PartDef = {
         {jumpers &&
           [4, 9].map((x) => <rect key={x} x={(x - 0.35) * P} y={7.9 * P} width={0.7 * P} height={0.7 * P} className="l298-jumper" />)}
         <circle cx={8.6 * P} cy={1.2 * P} r={0.35 * P} className={powered ? "drv-led on" : "drv-led"} />
-        {visual.unpowered && <NoPower x={5 * P} y={-0.5 * P} text="12V 없음" />}
+        {visual.unpowered && <NoPower x={5 * P} y={-0.5 * P} text={t("12V 없음")} />}
       </g>
     );
   },
@@ -326,34 +327,34 @@ export const l298n: PartDef = {
 // ---------------------------------------------------------- ESC + BLDC
 
 const ESC_STATE: Record<string, string> = {
-  off: "꺼짐 (배터리 없음)",
-  waiting: "신호 대기",
-  arming: "아밍 중… (최저 스로틀 1초)",
-  "throttle-high": "아밍 거부 — 스로틀을 내리세요",
-  armed: "아밍됨",
-  failsafe: "페일세이프 — 신호 끊김",
+  off: t("꺼짐 (배터리 없음)"),
+  waiting: t("신호 대기"),
+  arming: t("아밍 중… (최저 스로틀 1초)"),
+  "throttle-high": t("아밍 거부 — 스로틀을 내리세요"),
+  armed: t("아밍됨"),
+  failsafe: t("페일세이프 — 신호 끊김"),
 };
 const ESC_C = { x: 8 * P, y: 3.6 * P };
 
 export const escBldc: PartDef = {
   kind: "esc-bldc",
-  name: "ESC + 브러시리스 모터 (프로펠러)",
+  name: t("ESC + 브러시리스 모터 (프로펠러)"),
   category: "actuator",
   description:
-    "취미용 ESC(BLHeli 계열)와 아웃러너 BLDC 모터, 프로펠러. 신호는 서보와 같은 50 Hz 펄스: 1000 µs = 정지 … 2000 µs = 최대 스로틀. 전원을 넣은 뒤 최저 스로틀(1000 µs)을 1초 이상 받아야 '아밍'되어 돌기 시작합니다(삐 소리) — 처음부터 스로틀이 올라가 있으면 아밍을 거부합니다. 신호가 0.5초 넘게 끊기면 페일세이프로 모터를 멈추고 다시 아밍해야 합니다. 최고 속도는 KV × 배터리 전압(1000 KV × 11.1 V = 11100 rpm), 속도는 스로틀을 1차 지연으로 따라갑니다. BAT+/BAT−에 배터리(DC 전원 부품, 2–4S: 7–17 V), SIG를 PWM 핀에, GND를 Nucleo GND에. 부하 슬라이더로 프로펠러를 잡아 보세요.",
+    t("취미용 ESC(BLHeli 계열)와 아웃러너 BLDC 모터, 프로펠러. 신호는 서보와 같은 50 Hz 펄스: 1000 µs = 정지 … 2000 µs = 최대 스로틀. 전원을 넣은 뒤 최저 스로틀(1000 µs)을 1초 이상 받아야 '아밍'되어 돌기 시작합니다(삐 소리) — 처음부터 스로틀이 올라가 있으면 아밍을 거부합니다. 신호가 0.5초 넘게 끊기면 페일세이프로 모터를 멈추고 다시 아밍해야 합니다. 최고 속도는 KV × 배터리 전압(1000 KV × 11.1 V = 11100 rpm), 속도는 스로틀을 1차 지연으로 따라갑니다. BAT+/BAT−에 배터리(DC 전원 부품, 2–4S: 7–17 V), SIG를 PWM 핀에, GND를 Nucleo GND에. 부하 슬라이더로 프로펠러를 잡아 보세요."),
   w: 12,
   h: 9,
   pins: [
-    { id: "SIG", x: 1, y: 9, label: "SIG (흰색/노랑, 서보 펄스)" },
-    { id: "GND", x: 2, y: 9, label: "GND (검정, 신호 기준 = 배터리 −)" },
-    { id: "BAT+", x: 9, y: 9, label: "BAT+ (빨강, 배터리 +)" },
-    { id: "BAT-", x: 10, y: 9, label: "BAT− (검정, 배터리 −)" },
+    { id: "SIG", x: 1, y: 9, label: t("SIG (흰색/노랑, 서보 펄스)") },
+    { id: "GND", x: 2, y: 9, label: t("GND (검정, 신호 기준 = 배터리 −)") },
+    { id: "BAT+", x: 9, y: 9, label: t("BAT+ (빨강, 배터리 +)") },
+    { id: "BAT-", x: 10, y: 9, label: t("BAT− (검정, 배터리 −)") },
   ],
   buses: [["GND", "BAT-"]],
   props: { kv: 1000, load: 0 },
   ranges: {
-    kv: { min: 300, max: 3000, step: 50, label: "모터 KV", unit: "rpm/V" },
-    load: { min: 0, max: 100, step: 1, label: "부하 (프로펠러 잡기)", unit: "%" },
+    kv: { min: 300, max: 3000, step: 50, label: t("모터 KV"), unit: "rpm/V" },
+    load: { min: 0, max: 100, step: 1, label: t("부하 (프로펠러 잡기)"), unit: "%" },
   },
   render: (_props, visual) => {
     const m = visual.motor;
@@ -376,7 +377,7 @@ export const escBldc: PartDef = {
         <rect x={0.6 * P} y={6} width={3.8 * P} height={0.6 * P} className="coil-track" transform={`translate(0 ${6.2 * P - 6})`} />
         <rect x={0.6 * P} y={6.2 * P} width={3.8 * P * throttle} height={0.6 * P} className="coil-bar pos" data-throttle-bar="1" />
         <text x={2.5 * P} y={7.4 * P} textAnchor="middle" className="silk tiny esc-label">
-          스로틀 {fmt(throttle * 100)} %
+          {t("스로틀 {pct} %", { pct: fmt(throttle * 100) })}
         </text>
         {/* Three phase wires to the motor. */}
         {[0, 1, 2].map((i) => (
@@ -404,15 +405,15 @@ export const escBldc: PartDef = {
         </text>
         {(m?.beeps ?? 0) > 0 && (
           <text x={2.5 * P} y={3.4 * P} textAnchor="middle" className="silk tiny esc-label" data-beep="1">
-            ♪ 삐 ×{m?.beeps}
+            {t("♪ 삐 ×{n}", { n: m?.beeps ?? 0 })}
           </text>
         )}
         {m?.stalled && (
           <text x={cx} y={-0.4 * P} textAnchor="middle" className="silk small stall on">
-            모터가 막힘!
+            {t("모터가 막힘!")}
           </text>
         )}
-        {visual.unpowered && <NoPower x={cx} y={8.4 * P} text="배터리 없음" />}
+        {visual.unpowered && <NoPower x={cx} y={8.4 * P} text={t("배터리 없음")} />}
       </g>
     );
   },
@@ -421,28 +422,28 @@ export const escBldc: PartDef = {
 // ------------------------------------------------- BLDC with hall sensors
 
 const BLDC_PINS: [string, string, string][] = [
-  ["U", "#eab308", "U (상 1, 노랑)"],
-  ["V", "#16a34a", "V (상 2, 초록)"],
-  ["W", "#2563eb", "W (상 3, 파랑)"],
-  ["HA", "#9ca3af", "HA (홀 A, 오픈 컬렉터: 풀업 필요)"],
-  ["HB", "#9ca3af", "HB (홀 B, 오픈 컬렉터)"],
-  ["HC", "#9ca3af", "HC (홀 C, 오픈 컬렉터)"],
-  ["VCC", "#d32f2f", "VCC (홀 센서 전원 5V)"],
+  ["U", "#eab308", t("U (상 1, 노랑)")],
+  ["V", "#16a34a", t("V (상 2, 초록)")],
+  ["W", "#2563eb", t("W (상 3, 파랑)")],
+  ["HA", "#9ca3af", t("HA (홀 A, 오픈 컬렉터: 풀업 필요)")],
+  ["HB", "#9ca3af", t("HB (홀 B, 오픈 컬렉터)")],
+  ["HC", "#9ca3af", t("HC (홀 C, 오픈 컬렉터)")],
+  ["VCC", "#d32f2f", t("VCC (홀 센서 전원 5V)")],
   ["GND", "#222", "GND"],
 ];
 const BLDC_C = { x: 4.5 * P, y: 4 * P };
 
 export const bldcHall: PartDef = {
   kind: "bldc-hall",
-  name: "BLDC 모터 (홀 센서)",
+  name: t("BLDC 모터 (홀 센서)"),
   category: "actuator",
   description:
-    "3상 BLDC 모터(42BLY 계열, 4극쌍, 12 V에서 약 3300 rpm)와 홀 센서 세 개. 홀 A·B·C(코드 = C B A 비트)가 회전자가 여섯 개의 60° 구간 중 어디 있는지 알려 줍니다: 101 → U+ W−, 001 → V+ W−, 011 → V+ U−, 010 → W+ U−, 110 → W+ V−, 100 → U+ V−. 펌웨어가 홀 인터럽트(EXTI, 양쪽 에지)마다 3상 브리지의 상 하나를 전원에, 하나를 GND에 연결하면(6스텝 정류) 다음 구간으로 끌려가며 돕니다. 표가 틀리거나 홀·상을 바꿔 연결하면 제자리에서 떨거나 멈춥니다. 홀 출력은 오픈 컬렉터라 핀의 풀업(GPIO_PULLUP)이나 10 kΩ 풀업이 필요합니다. U·V·W를 브리지의 OUTA·OUTB·OUTC에, VCC를 5V에.",
+    t("3상 BLDC 모터(42BLY 계열, 4극쌍, 12 V에서 약 3300 rpm)와 홀 센서 세 개. 홀 A·B·C(코드 = C B A 비트)가 회전자가 여섯 개의 60° 구간 중 어디 있는지 알려 줍니다: 101 → U+ W−, 001 → V+ W−, 011 → V+ U−, 010 → W+ U−, 110 → W+ V−, 100 → U+ V−. 펌웨어가 홀 인터럽트(EXTI, 양쪽 에지)마다 3상 브리지의 상 하나를 전원에, 하나를 GND에 연결하면(6스텝 정류) 다음 구간으로 끌려가며 돕니다. 표가 틀리거나 홀·상을 바꿔 연결하면 제자리에서 떨거나 멈춥니다. 홀 출력은 오픈 컬렉터라 핀의 풀업(GPIO_PULLUP)이나 10 kΩ 풀업이 필요합니다. U·V·W를 브리지의 OUTA·OUTB·OUTC에, VCC를 5V에."),
   w: 10,
   h: 10,
   pins: BLDC_PINS.map(([id, , label], i) => ({ id, x: 1 + i, y: 10, label })),
   props: { load: 0 },
-  ranges: { load: { min: 0, max: 20, step: 0.5, label: "부하 (브레이크)", unit: "N·cm" } },
+  ranges: { load: { min: 0, max: 20, step: 0.5, label: t("부하 (브레이크)"), unit: "N·cm" } },
   render: (_props, visual) => bldcBody(visual, true),
 };
 
@@ -505,10 +506,10 @@ function bldcBody(visual: VisualState, withHalls: boolean) {
       ))}
       {m?.stalled && (
         <text x={cx} y={11.2 * P} textAnchor="middle" className="silk small stall on" data-stall="1">
-          {withHalls ? "멈춤! 정류가 홀과 맞지 않음" : "멈춤! 정류가 회전자와 맞지 않음"}
+          {withHalls ? t("멈춤! 정류가 홀과 맞지 않음") : t("멈춤! 정류가 회전자와 맞지 않음")}
         </text>
       )}
-      {withHalls && visual.unpowered && <NoPower x={cx} y={11.2 * P} text="홀 센서 전원 없음" />}
+      {withHalls && visual.unpowered && <NoPower x={cx} y={11.2 * P} text={t("홀 센서 전원 없음")} />}
     </g>
   );
 }
@@ -517,15 +518,15 @@ function bldcBody(visual: VisualState, withHalls: boolean) {
 
 export const bldcSensorless: PartDef = {
   kind: "bldc",
-  name: "BLDC 모터 (센서리스)",
+  name: t("BLDC 모터 (센서리스)"),
   category: "actuator",
   description:
-    "홀 센서 없는 3상 BLDC 모터(홀 센서 BLDC와 같은 모터: 4극쌍, 상 저항 1 Ω, 12 V에서 약 3300 rpm). 회전자 위치는 역기전력으로 압니다: 6스텝에서 떠 있는 상의 전압은 중성점(별결선 중심) 전압에 그 상의 역기전력을 더한 값이라, 각 60° 구간의 가운데에서 중성점을 지나갑니다(영점). 영점에서 30° 뒤에 정류하면 됩니다. 멈춰 있으면 역기전력이 없어 먼저 한 스텝으로 정렬하고, 열린 루프로 점점 빠르게 정류한 뒤 영점을 따라갑니다. 상마다 10 kΩ/2.2 kΩ 분압기를 ADC 핀에, 세 분압점을 10 kΩ 세 개로 모으면 가상 중성점이 됩니다. U·V·W를 3상 브리지의 OUTA·OUTB·OUTC에.",
+    t("홀 센서 없는 3상 BLDC 모터(홀 센서 BLDC와 같은 모터: 4극쌍, 상 저항 1 Ω, 12 V에서 약 3300 rpm). 회전자 위치는 역기전력으로 압니다: 6스텝에서 떠 있는 상의 전압은 중성점(별결선 중심) 전압에 그 상의 역기전력을 더한 값이라, 각 60° 구간의 가운데에서 중성점을 지나갑니다(영점). 영점에서 30° 뒤에 정류하면 됩니다. 멈춰 있으면 역기전력이 없어 먼저 한 스텝으로 정렬하고, 열린 루프로 점점 빠르게 정류한 뒤 영점을 따라갑니다. 상마다 10 kΩ/2.2 kΩ 분압기를 ADC 핀에, 세 분압점을 10 kΩ 세 개로 모으면 가상 중성점이 됩니다. U·V·W를 3상 브리지의 OUTA·OUTB·OUTC에."),
   w: 10,
   h: 10,
   pins: BLDC_PINS.slice(0, 3).map(([id, , label], i) => ({ id, x: 1 + i, y: 10, label })),
   props: { load: 0 },
-  ranges: { load: { min: 0, max: 20, step: 0.5, label: "부하 (브레이크)", unit: "N·cm" } },
+  ranges: { load: { min: 0, max: 20, step: 0.5, label: t("부하 (브레이크)"), unit: "N·cm" } },
   render: (_props, visual) => bldcBody(visual, false),
 };
 
@@ -535,18 +536,18 @@ const PH_IN = ["INHA", "INLA", "INHB", "INLB", "INHC", "INLC"];
 
 export const bridge3ph: PartDef = {
   kind: "bridge-3ph",
-  name: "3상 브리지 모듈 (DRV8302 형)",
+  name: t("3상 브리지 모듈 (DRV8302 형)"),
   category: "module",
   description:
-    "BLDC용 3상 하프 브리지 모듈. 상마다 하이사이드(INHx: 출력을 PVDD에)와 로사이드(INLx: 출력을 GND에) 스위치 입력이 있고, 둘 다 Low면 출력이 떠 있습니다. 한 상의 INH와 INL을 동시에 High로 하면 전원이 단락(관통 전류, shoot-through)되므로 모듈이 그 상을 끄고 경고합니다. 스위치(MOSFET)가 꺼지는 데 150 ns쯤 걸리므로, 한쪽이 꺼진 뒤 그보다 빨리 다른 쪽이 켜져도 관통 전류입니다 — TIM1 상보 출력(CHx/CHxN)에 데드타임(BDTR.DTG)을 넣는 이유. 입력을 2 kHz 이상 PWM으로 켜고 끄면 주기마다 듀티를 재어 상 전압을 평균(듀티 × PVDD)으로 모터에 주므로 듀티가 곧 토크·속도입니다. 정적인 GPIO로 켜도 됩니다. 막대: 스위치마다 켜져 있던 비율. 입력은 보드에서 풀다운, High는 2 V 이상. PVDD에 6–60 V 모터 전원(DC 전원 부품), GND는 Nucleo와 공통.",
+    t("BLDC용 3상 하프 브리지 모듈. 상마다 하이사이드(INHx: 출력을 PVDD에)와 로사이드(INLx: 출력을 GND에) 스위치 입력이 있고, 둘 다 Low면 출력이 떠 있습니다. 한 상의 INH와 INL을 동시에 High로 하면 전원이 단락(관통 전류, shoot-through)되므로 모듈이 그 상을 끄고 경고합니다. 스위치(MOSFET)가 꺼지는 데 150 ns쯤 걸리므로, 한쪽이 꺼진 뒤 그보다 빨리 다른 쪽이 켜져도 관통 전류입니다 — TIM1 상보 출력(CHx/CHxN)에 데드타임(BDTR.DTG)을 넣는 이유. 입력을 2 kHz 이상 PWM으로 켜고 끄면 주기마다 듀티를 재어 상 전압을 평균(듀티 × PVDD)으로 모터에 주므로 듀티가 곧 토크·속도입니다. 정적인 GPIO로 켜도 됩니다. 막대: 스위치마다 켜져 있던 비율. 입력은 보드에서 풀다운, High는 2 V 이상. PVDD에 6–60 V 모터 전원(DC 전원 부품), GND는 Nucleo와 공통."),
   w: 8,
   h: 9,
   pins: [
-    ...PH_IN.map((id, i) => ({ id, x: 0, y: 1 + i, label: `${id} (${id[2] === "H" ? "하이사이드" : "로사이드"} ${id[3]})` })),
+    ...PH_IN.map((id, i) => ({ id, x: 0, y: 1 + i, label: `${id} (${id[2] === "H" ? t("하이사이드") : t("로사이드")} ${id[3]})` })),
     { id: "OUTA", x: 8, y: 2, label: "OUTA (→ U)" },
     { id: "OUTB", x: 8, y: 3, label: "OUTB (→ V)" },
     { id: "OUTC", x: 8, y: 4, label: "OUTC (→ W)" },
-    { id: "PVDD", x: 5, y: 9, label: "PVDD (모터 전원 6–60 V)" },
+    { id: "PVDD", x: 5, y: 9, label: t("PVDD (모터 전원 6–60 V)") },
     { id: "GND", x: 6, y: 9, label: "GND" },
   ],
   render: (_props, visual) => {
@@ -589,7 +590,7 @@ export const bridge3ph: PartDef = {
           );
         })}
         <text x={7.2 * P} y={5.4 * P} textAnchor="end" className="silk tiny drv-label">
-          H 위 · L 아래 · 막대 듀티
+          {t("H 위 · L 아래 · 막대 듀티")}
         </text>
         <rect x={2.6 * P} y={6} width={2.4 * P} height={1.6 * P} className="chip" transform={`translate(0 ${5.8 * P - 6})`} />
         <text x={3.8 * P} y={6.8 * P} textAnchor="middle" className="silk chip-label">
@@ -600,12 +601,12 @@ export const bridge3ph: PartDef = {
             {n}
           </text>
         ))}
-        {visual.unpowered && <NoPower x={4 * P} y={-0.5 * P} text="PVDD 없음" />}
+        {visual.unpowered && <NoPower x={4 * P} y={-0.5 * P} text={t("PVDD 없음")} />}
         {shoot && (
           <g data-shoot-warning="1">
             <rect x={0.6 * P} y={7 * P} width={1.9 * P} height={1.2 * P} rx={0.3} className="shoot-badge" />
             <text x={1.55 * P} y={7.8 * P} textAnchor="middle" className="silk tiny shoot-text">
-              관통!
+              {t("관통!")}
             </text>
           </g>
         )}

@@ -35,7 +35,8 @@ function detect(): Lang {
     // storage blocked: fall through to the browser's languages
   }
   const nav = globalThis.navigator;
-  if (!nav || typeof nav.languages === "undefined") return "ko"; // Node (tests)
+  // Node (tests): no `location`; Node 21+ does have navigator.languages (from its locale).
+  if (!nav || typeof nav.languages === "undefined" || !globalThis.location) return "ko";
   const langs = nav.languages?.length ? nav.languages : [nav.language];
   return langs.some((l) => /^ko\b/i.test(l ?? "")) ? "ko" : "en";
 }
@@ -62,7 +63,15 @@ export function setLangForTest(l: Lang) {
   current = l;
 }
 
-export type Vars = Record<string, string | number>;
+/**
+ * A worker's language, from the page's message: a worker has no localStorage
+ * and its own URL, so it cannot find the page's choice by itself.
+ */
+export function setLang(l: Lang) {
+  current = l;
+}
+
+export type Vars =Record<string, string | number>;
 
 const PLACEHOLDER = /\{(\w+)(?:([|#])([^{}]*))?\}/g;
 

@@ -3,6 +3,7 @@
 // (so the source view shows those lines even after more edits). Saved with
 // the project (autosave, project file) and, without the snapshot, in share
 // links. Pure; unit tested in test/m33.test.ts.
+import { t } from "../i18n/index.ts";
 import { safeSourcePath, type SourceFile } from "./build.ts";
 
 export interface CodeProject {
@@ -44,13 +45,13 @@ function sanitizeFiles(x: unknown, notes: string[]): SourceFile[] {
   for (const f of x as Partial<SourceFile>[]) {
     if (!f || typeof f.path !== "string" || typeof f.text !== "string") continue;
     if (!safeSourcePath(f.path)) {
-      notes.push(`코드 파일 이름 '${String(f.path).slice(0, 60)}'은(는) 쓸 수 없어 건너뜁니다.`);
+      notes.push(t("코드 파일 이름 '{name}'은(는) 쓸 수 없어 건너뜁니다.", { name: String(f.path).slice(0, 60) }));
       continue;
     }
     if (out.some((o) => o.path === f.path)) continue;
     const n = bytes(f.text);
     if (n > MAX_FILE_BYTES || total + n > MAX_CODE_BYTES || out.length >= MAX_FILES) {
-      notes.push(`코드 파일 ${f.path}은(는) 너무 커서(또는 너무 많아서) 건너뜁니다.`);
+      notes.push(t("코드 파일 {name}은(는) 너무 커서(또는 너무 많아서) 건너뜁니다.", { name: f.path }));
       continue;
     }
     total += n;
@@ -64,7 +65,7 @@ export function sanitizeCode(x: unknown, notes: string[] = []): CodeProject | un
   if (!x || typeof x !== "object") return undefined;
   const c = x as Partial<CodeProject>;
   if (c.template !== "hal" && c.template !== "cube") {
-    notes.push(`알 수 없는 코드 템플릿 '${String(c.template)}'은(는) 건너뜁니다.`);
+    notes.push(t("알 수 없는 코드 템플릿 '{name}'은(는) 건너뜁니다.", { name: String(c.template) }));
     return undefined;
   }
   const files = sanitizeFiles(c.files, notes);
@@ -72,7 +73,7 @@ export function sanitizeCode(x: unknown, notes: string[] = []): CodeProject | un
   const out: CodeProject = { template: c.template, files };
   if (c.template === "cube") {
     if (typeof c.ioc === "string" && bytes(c.ioc) <= MAX_IOC_BYTES) out.ioc = c.ioc;
-    else if (c.ioc !== undefined) notes.push("설정(.ioc)이 너무 커서 건너뜁니다.");
+    else if (c.ioc !== undefined) notes.push(t("설정(.ioc)이 너무 커서 건너뜁니다."));
     if (typeof c.drivers === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(c.drivers)) out.drivers = c.drivers;
   }
   if (typeof c.base === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]*\.elf$/.test(c.base)) out.base = c.base;

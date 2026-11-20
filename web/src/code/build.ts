@@ -3,6 +3,7 @@
 // toolchain does — the compiler worker in the browser, Node in the tests —
 // over the toolchain package's session (a virtual file system that outlives
 // one command).
+import { t } from "../i18n/index.ts";
 import { parseDiagnostics, type Diagnostic } from "./diagnostics.ts";
 import { compileFlags, ELF_PATH, linkArgs, objectPath, PROJECT_ROOT, SDK_ROOT, type Template } from "./sdk.ts";
 import type { TarEntry } from "./tar.ts";
@@ -56,7 +57,7 @@ export async function buildProject(session: ToolSession, files: SourceFile[], wr
   }
   written.clear();
   for (const f of files) {
-    if (!safeSourcePath(f.path)) throw new Error(`허용되지 않는 파일 이름: ${f.path}`);
+    if (!safeSourcePath(f.path)) throw new Error(t("허용되지 않는 파일 이름: {name}", { name: f.path }));
     await session.writeFile(`${PROJECT_ROOT}/${f.path}`, f.text);
     written.add(f.path);
   }

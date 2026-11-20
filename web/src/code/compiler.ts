@@ -2,6 +2,7 @@
 // first build (or "컴파일러 받기"), its download progress and the builds.
 import { useSyncExternalStore } from "react";
 import type { FromCompiler, ToCompiler } from "./compiler.worker";
+import { lang, t } from "../i18n/index.ts";
 import type { SourceFile } from "./build.ts";
 import type { Diagnostic } from "./diagnostics.ts";
 import type { Template } from "./sdk.ts";
@@ -56,7 +57,7 @@ function ensureWorker(): Worker {
       done?.({ ok: m.ok, elf: m.elf, diagnostics: m.diagnostics, log: m.log, ms: m.ms });
     }
   };
-  w.onerror = (e) => set({ phase: "failed", error: e.message || "컴파일러 워커를 시작하지 못했습니다" });
+  w.onerror = (e) => set({ phase: "failed", error: e.message || t("컴파일러 워커를 시작하지 못했습니다") });
   worker = w;
   return w;
 }
@@ -73,7 +74,7 @@ export const compiler = {
   load() {
     if (state.phase === "ready" || state.phase === "loading") return;
     set({ phase: "loading", error: null });
-    send({ type: "load", base: base() });
+    send({ type: "load", base: base(), lang: lang() });
   },
   build(files: SourceFile[], template: Template = "hal"): Promise<BuildOutput> {
     if (state.phase !== "ready") set({ phase: "loading", error: null });
@@ -81,7 +82,7 @@ export const compiler = {
     const id = nextId++;
     return new Promise((resolve) => {
       pending.set(id, resolve);
-      send({ type: "build", id, base: base(), files, template });
+      send({ type: "build", id, base: base(), lang: lang(), files, template });
     });
   },
 };

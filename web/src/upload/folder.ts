@@ -1,6 +1,7 @@
 // A whole project folder or zip (M39): from what the student picked or
 // dropped, find the firmware ELF and the source files, without reading what
 // we do not need (object files, build output, images).
+import { t } from "../i18n/index.ts";
 import { isZip, readZip, ZipError, MAX_UNPACKED } from "./zip.ts";
 
 /** A file from a picked or dropped folder, read only when needed. */
@@ -98,7 +99,7 @@ export async function collect(files: PickedFile[]): Promise<Collected> {
   for (const f of files) {
     if (isZipPath(f.path)) {
       const buf = await f.bytes();
-      if (!isZip(buf)) throw new ZipError(`${f.path}: zip 파일이 아닙니다.`);
+      if (!isZip(buf)) throw new ZipError(t("{name}: zip 파일이 아닙니다.", { name: f.path }));
       const want = (e: { path: string; size: number }) =>
         (isSourcePath(e.path) && e.size <= MAX_SOURCE_FILE) || (isElfPath(e.path) && e.size <= MAX_ELF);
       const inner = await readZip(buf, want, MAX_UNPACKED - unpacked);

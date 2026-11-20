@@ -2,11 +2,14 @@
 // thread, started only when the student first builds. The toolchain files
 // come from toolchain/ next to the page (the service worker serves them when
 // "편집기 오프라인으로 받기" cached them).
+import { setLang, t, type Lang } from "../i18n/index.ts";
 import { buildProject, installSdk, type SourceFile, type ToolSession } from "./build.ts";
 import { downloadBytes, prepare, type ClangModule } from "./toolchain.ts";
 import type { Template, ToolchainManifest } from "./sdk.ts";
 
-export type ToCompiler = { type: "load"; base: string } | { type: "build"; id: number; base: string; files: SourceFile[]; template?: Template };
+// `lang`: the page's language (a worker has no localStorage and its own URL),
+// for the messages built here.
+export type ToCompiler = { type: "load"; base: string; lang?: Lang } | { type: "build"; id: number; base: string; lang?: Lang; files: SourceFile[]; template?: Template };
 
 export type FromCompiler =
   | { type: "progress"; phase: "download" | "start"; done: number; total: number }
@@ -51,7 +54,7 @@ function load(base: string) {
   ready ??= (async () => {
     const t0 = performance.now();
     const mr = await fetch(new URL("toolchain/manifest.json", base));
-    if (!mr.ok) throw new Error(mr.status === 404 ? "이 사이트에는 컴파일러가 들어 있지 않습니다 (빌드할 때 toolchain/이 만들어지지 않음)" : `toolchain/manifest.json: HTTP ${mr.status}`);
+    if (!mr.ok) throw new Error(mr.status === 404 ? t("이 사이트에는 컴파일러가 들어 있지 않습니다 (빌드할 때 toolchain/이 만들어지지 않음)") : `toolchain/manifest.json: HTTP ${mr.status}`);
     const manifest = (await mr.json()) as ToolchainManifest;
     step = "clang.js";
     const mod = (await import(/* @vite-ignore */ new URL("toolchain/clang.js", base).href)) as ClangModule;
@@ -84,6 +87,7 @@ let queue: Promise<unknown> = Promise.resolve();
 
 self.onmessage = (e: MessageEvent<ToCompiler>) => {
   const m = e.data;
+  if (m.lang) setLang(m.lang);
   if (m.type === "load") void load(m.base).catch(() => {});
   else if (m.type === "build") {
     queue = queue.then(async () => {

@@ -222,9 +222,9 @@ export type ToWorker =
   /** Analog probes: "PA1" or "part.pin". */
   | { type: "analogProbes"; specs: string[] }
   /** Set the oscilloscope trigger (null: none) and arm it. */
-  | { type: "trigger"; config: TriggerConfig | null }
+  | { type: "trigger"; config: TriggerConfig | null; gen: number }
   /** Wait for the next trigger (Single). */
-  | { type: "armTrigger" }
+  | { type: "armTrigger"; gen: number }
   | { type: "console"; text: string }
   | { type: "bluetooth"; part: string; text: string }
   | { type: "bluetoothConnect"; part: string; on: boolean }
@@ -257,6 +257,8 @@ export interface FrameMsg {
   running: boolean;
   /** The `epoch` of the last reset that asked for one (0 before). */
   epoch: number;
+  /** The `gen` of the last trigger setting or arming made before this frame. */
+  triggerGen: number;
 }
 
 export type FromWorker =
@@ -272,6 +274,8 @@ export type FromWorker =
       speed: number;
       /** The `epoch` of the last reset that asked for one (0 before). */
       epoch: number;
+      /** See `FrameMsg.triggerGen`. */
+      triggerGen: number;
     }
   /** M31: the frames made since the last batch, oldest first (performance mode). */
   | { type: "frames"; frames: FrameMsg[]; speed: number }

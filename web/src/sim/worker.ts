@@ -19,6 +19,8 @@ const meter = new RatioMeter();
 let achieved = 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let epoch = 0;
+/** The `gen` of the last trigger message (see `FrameMsg.triggerGen`). */
+let triggerGen = 0;
 
 // M31: frames go to the page in batches at most `uiHz` times a second and
 // only once it has drawn the last one (null: each frame at once, as
@@ -42,7 +44,7 @@ function flush() {
 function sendFrame(now = true) {
   if (!sim) return;
   const frame = JSON.parse(sim.frame()) as SimFrame;
-  const m: FrameMsg = { frame, console: sim.takeConsole(), running, epoch };
+  const m: FrameMsg = { frame, console: sim.takeConsole(), running, epoch, triggerGen };
   if (uiHz === null) {
     post({ type: "frame", ...m, speed: achieved });
     return;
@@ -176,9 +178,11 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       sim.setAnalogProbes(JSON.stringify(m.specs));
       break;
     case "trigger":
+      triggerGen = m.gen;
       sim.setTrigger(m.config ? JSON.stringify(m.config) : "");
       break;
     case "armTrigger":
+      triggerGen = m.gen;
       sim.armTrigger();
       break;
     case "console":

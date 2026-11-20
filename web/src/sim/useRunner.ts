@@ -17,6 +17,7 @@ import type {
 } from "./protocol";
 import type { CircuitJson } from "../editor/model";
 import { boardSignals, busCatalog } from "../parts";
+import { dropStaleCaptures } from "./staleCapture";
 import { connectPerf, perfLongTask, perfRunning, perfUpdate } from "./perfStore";
 
 const CONSOLE_LIMIT = 20_000;
@@ -168,6 +169,8 @@ export interface FrameEvent {
   console: string;
   running: boolean;
   epoch: number;
+  /** See `FrameMsg.triggerGen`. */
+  triggerGen: number;
 }
 export type FrameListener = (e: FrameEvent) => void;
 
@@ -194,6 +197,8 @@ function afterPaint(cb: (paintMs: number) => void) {
 
 export function useRunner(): Runner {
   const listeners = useRef(new Set<FrameListener>());
+  /** The `gen` of the last trigger message sent (see `FrameMsg.triggerGen`). */
+  const triggerGen = useRef(0);
   const probeOwners = useRef(new Map<string, string[]>());
   const worker = useRef<Worker | null>(null);
   const [ready, setReady] = useState(false);
@@ -264,6 +269,7 @@ export function useRunner(): Runner {
     /** Frames from the worker, one or a batch (M31): every one to the listeners, the last one on screen. */
     const deliver = (msgs: FrameMsg[], speed: number, batched: boolean) => {
       const t0 = performance.now();
+      msgs = dropStaleCaptures(msgs, triggerGen.current);
       for (const m of msgs) for (const l of listeners.current) l(m);
       const last = msgs[msgs.length - 1];
       setFrame(last.frame);
@@ -324,7 +330,7 @@ export function useRunner(): Runner {
           setAssigned((a) => ({ n: a.n + 1, target: m.target, result: m.result }));
           break;
         case "frame":
-          deliver([{ frame: m.frame, console: m.console, running: m.running, epoch: m.epoch }], m.speed, false);
+          deliver([{ frame: m.frame, console: m.console, running: m.running, epoch: m.epoch, triggerGen: m.triggerGen }], m.speed, false);
           break;
         case "frames":
           if (m.frames.length) deliver(m.frames, m.speed, true);
@@ -380,8 +386,8 @@ export function useRunner(): Runner {
         send({ type: "probes", pins: [...new Set([...probeOwners.current.values()].flat())] });
       },
       setAnalogProbes: (specs: string[]) => send({ type: "analogProbes", specs }),
-      setTrigger: (config: TriggerConfig | null) => send({ type: "trigger", config }),
-      armTrigger: () => send({ type: "armTrigger" }),
+      setTrigger: (config: TriggerConfig | null) => send({ type: "trigger", config, gen: ++triggerGen.current }),
+      armTrigger: () => send({ type: "armTrigger", gen: ++triggerGen.current }),
       sendConsole: (text: string) => send({ type: "console", text }),
       clearConsole: () => setConsole(""),
       bluetoothSend: (part: string, text: string) => {

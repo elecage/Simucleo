@@ -28,6 +28,7 @@ import {
 } from "../src/sim/perf.ts";
 import { benchRun, BENCH_FRAME_MS, type BenchSim } from "../src/sim/benchRun.ts";
 import { sameJson } from "../src/sim/sameJson.ts";
+import { dropStaleCaptures } from "../src/sim/staleCapture.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -277,3 +278,26 @@ test(
     assert.equal(b.takeConsole(), consoleA);
   },
 );
+
+test("a capture made under an older trigger setting is dropped, the rest of its frame kept", () => {
+  const capture = { source: "PB4" } as never;
+  const msg = (triggerGen: number, withCapture = true) => ({
+    frame: { timeMs: triggerGen, scope: { state: "stopped", capture: withCapture ? capture : null } } as never,
+    triggerGen,
+  });
+  // Frames batched before the page set the trigger again (gen 2): the
+  // capture of gen 1 is not the one asked for; gen 2's is.
+  const out = dropStaleCaptures([msg(1), msg(2)], 2) as { frame: { timeMs: number; scope: { state: string; capture: unknown } } }[];
+  assert.equal(out[0].frame.scope.capture, null);
+  assert.equal(out[0].frame.scope.state, "stopped");
+  assert.equal(out[0].frame.timeMs, 1);
+  assert.equal(out[1].frame.scope.capture, capture);
+  // Frames without a capture pass as they are.
+  const plain = msg(1, false);
+  assert.equal(dropStaleCaptures([plain], 2)[0], plain);
+  // The worker stamps each frame with the gen of the last trigger message.
+  const worker = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../src/sim/worker.ts"), "utf8");
+  assert.match(worker, /case "trigger":\s*triggerGen = m\.gen;/);
+  assert.match(worker, /case "armTrigger":\s*triggerGen = m\.gen;/);
+  assert.match(worker, /const m: FrameMsg = \{[^}]*triggerGen \}/);
+});

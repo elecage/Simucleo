@@ -38,6 +38,7 @@
 | **M39 · 소스 폴더·zip 업로드** ✅ | STM32CubeIDE 프로젝트 폴더나 zip을 끌어다 놓거나 고르면(폴더 고르기·zip·여러 파일, 앱 어디에나 놓기) ELF를 찾고(`Debug/`·`Release/`의 `.elf` 먼저, 여러 개면 고름, `.axf`·`.out`은 ELF 머리 확인) DWARF의 빌드 경로(`C:\Users\…`, `/home/…`, `../Core/Src/…`)와 올린 파일을 뒤쪽 경로가 가장 많이 겹치는 것끼리 짝지음. 직접 쓴 zip 읽기(stored·deflate, 데이터 설명자, UTF-8 이름, CRC-32, 폭탄·`..` 거절), 연결된 소스를 ELF와 함께 IndexedDB에 저장, 소스 탭의 연결·빠진 파일 목록, ELF만 있을 때 소스만 붙이기 | Windows 경로로 빌드한 CubeIDE식 프로젝트(`firmware/cubeide-blinky`)를 폴더·zip·끌어다 놓기로 올리면 `main.c`에서 중단점에 멈추고 새로 고쳐도 남으며, `..`가 든 zip과 너무 큰 zip은 아무것도 바꾸지 않고 거절된다 |
 | **M31 · 저사양 기기 성능 모드** ✅ | 실제 배속을 창(1.5–2초)으로 정확히 재기(시뮬레이터와 화면 중 느린 쪽), 화면 비용 측정(메시지 처리 + 렌더·커밋 + 페인트, 긴 작업), 성능 모드 자동·끄기·켜기(브라우저에 저장, 3초 버벅이면 켜고 10초 여유면 끄는 히스테리시스): 워커 프레임을 묶어 30 → 15 → 10 → 5 Hz로 보내되 페이지가 그린 뒤에만 다음 묶음, 파형 10 Hz, 화면 밖 부품 정지, 빛 번짐 필터 없음. 모드와 상관없이: 숨은 탭 다시 그리지 않기, 부품·핀 메모, 핀 색인, 프레임마다 강제 레이아웃 없애기, 워커 박자 고침. 예제별 벤치마크(`scripts/bench.mjs`, 네이티브·WASM)와 CI 검사(네이티브 ×1.5), 기기 점검(예제 3개, 충분·성능 모드 권장·느림) | 페이지 스레드를 6배 느리게 하면 성능 모드가 저절로 켜지고 알림이 뜨며 툴바·캔버스는 그대로, 켜면 페이지 작업이 절반 아래로 줄고 실제 배속은 그대로, 끄고 켠 두 실행의 에지·콘솔·채점이 시뮬레이션 시간으로 같고, 숨은 탭이 다시 그려지지 않고, 기기 점검이 판정을 낸다 |
 | **M33 · 브라우저 안 C 편집·빌드** ✅ | 아래 탭의 **코드**: CodeMirror 6 편집기(C 강조, 줄 번호, 괄호 짝, 찾기, 되돌리기, 파일 탭, 읽기 전용 HAL 헤더), clang + ld.lld(WebAssembly, 전용 워커, 처음 빌드할 때 약 20 MB 받음)로 학생 `.c`만 컴파일해 gcc로 미리 빌드한 HAL·CMSIS·시작 코드·newlib-nano·libgcc와 링크(`-O0 -g`, `-fshort-enums`), 빌드하면 바로 실행·소스 디버깅, 오류·경고를 줄에 밑줄과 문제 목록으로(빌드 막음), 헤더에서 뽑은 기호 색인 자동완성(시그니처·설명, `.`·`->` 뒤 멤버, 인자 힌트), 규칙 기반 제안 8가지와 "왜?", 프로젝트 자동 저장·파일·공유 링크(소스만, 받는 쪽이 빌드), 실습 시작 코드, "편집기 오프라인으로 받기"(기본 오프라인 캐시와 따로) | hal-blinky의 `main.c`를 500 → 120 ms로 고쳐 빌드하면 몇 초 안에 LD2가 시뮬레이션 시간으로 120 ms마다 토글하고, 고친 줄에 중단점이 걸리며, 문법 오류는 그 줄에 표시되고 빌드되지 않고, 코드 탭이 제안하는 예제 43개가 모두 빌드되어 gcc 빌드와 같이 돌고, 오프라인에서도 빌드된다 |
+| **M36 · CubeMX식 설정 도구** ✅ | 코드 탭의 **⚙ 설정(.ioc)**: STM32F401RETx LQFP64 핀 배치(핀마다 신호 메뉴, AF·EXTI·라벨 검사, Nucleo 헤더 이름), 클럭 트리(HSI·HSE 바이패스·PLL·버스 분주·플래시 대기, CubeMX 한계를 빨갛게), 주변장치(USART1·2·6, I2C1–3, SPI1–3, TIM1–5·9–11 PWM, ADC1, GPIO, NVIC, SYS), 한국어 문제 목록과 캔버스 회로와의 배선 대조 → CubeMX 배치의 `main.c`·`it`·`msp`·`hal_conf`(USER CODE 영역) 생성, 다시 생성할 때 영역 유지·없어진 영역은 `#if 0`·파일별 차이 미리 보기, `.ioc` 읽기·쓰기(지원 밖은 경고), CubeIDE식 트리(`Drivers/`는 STM32CubeF4 HAL 1.8.6 묶음, 읽기 전용), CubeIDE zip 내보내기·가져오기, 브라우저 빌드의 "cube" 틀 | PA5 출력 + USART2를 설정해 생성하고 USER CODE에 쓴 코드를 빌드하면 LD2가 토글하고 콘솔이 나오며, 보레이트를 바꿔 다시 생성해도 코드가 남고, 생성한 모든 스냅숏 설정이 gcc와 브라우저 툴체인 양쪽에서 빌드되어 `Error_Handler` 없이 설정한 클럭으로 돈다 |
 | 이후 | 추가 부품, 넷 이름 붙이기, CAN(F401에는 CAN 주변장치가 없어 MCP2515 SPI CAN 컨트롤러 + TJA1050 부품과 비트 스트림이 먼저 필요)·1-Wire 오버드라이브·RC5 등 다른 IR 디코더, NEC 반복 코드·확장 NEC 조건, 수학 채널로 트리거(시뮬레이터 안의 수학), 스펙트럼 평균·스펙트로그램, 상 인덕턴스(전류 리플)·데드타임 동안의 실제 다이오드 전압, A4988 초퍼 PWM과 A4988 뒤 직렬 저항, FOC·전류 감지(ADC 주입 변환을 TIM1 트리거로), 엔코더 DC 모터 PID 등 | |
 
 상세 부품 계획은 [parts.md](parts.md)를 참고한다.
@@ -46,19 +47,75 @@
 
 별도 서버 없이 정적 사이트(GitHub Pages)로 운영하는 것을 전제로 한다. 시뮬레이션은 학생 브라우저에서 돈다.
 
-1. **M36 · CubeMX식 설정 도구**: 핀 배치·클럭 트리·주변장치 페이지 → `MX_*_Init` 코드 생성, `.ioc` 불러오기 → CubeIDE식 프로젝트
-   트리(Core/Inc·Src·Startup, Drivers/STM32F4xx_HAL_Driver·CMSIS는 고를 수 있는 STM32CubeF4 버전에서 복사), 다시 생성해도 USER CODE
-   영역 유지, CubeIDE로 열리는 zip 내보내기와 CubeIDE 프로젝트 가져오기
-2. **M34 · 영어 UI**(다국어)
-3. **SWO/SWV**: ITM 자극 포트 콘솔(printf), DWT 데이터 트레이스(변수 값 그래프), PC 샘플링 프로파일, 예외 트레이스 타임라인
-4. **M35 · 부품 추가**: 컬러 TFT(ST7735/ILI9341), RFID(RC522), MCP2515 CAN 모듈 + CAN 해독, 열전대(MAX6675/MAX31855: K형 온도·냉접점·
+1. **M34 · 영어 UI**(다국어)
+2. **SWO/SWV**: ITM 자극 포트 콘솔(printf), DWT 데이터 트레이스(변수 값 그래프), PC 샘플링 프로파일, 예외 트레이스 타임라인
+3. **M35 · 부품 추가**: 컬러 TFT(ST7735/ILI9341), RFID(RC522), MCP2515 CAN 모듈 + CAN 해독, 열전대(MAX6675/MAX31855: K형 온도·냉접점·
    단선/단락 오류, 가열 조작)
-5. **M37 · 보드 펌웨어 교체 실습**: 부트로더·IAP(UART 수신 → 플래시 지우기/쓰기 → 검증 → 점프), FLASH 컨트롤러 지우기/쓰기 모델,
+4. **M37 · 보드 펌웨어 교체 실습**: 부트로더·IAP(UART 수신 → 플래시 지우기/쓰기 → 검증 → 점프), FLASH 컨트롤러 지우기/쓰기 모델,
    VTOR, 이중 이미지·롤백
 
 나중에: **수업 세션 실시간 모니터링**(선생님이 학생 화면·진행 상황을 실시간으로 봄). 서버가 필요하므로 학교 서버의 WebSocket 중계 방식을 권장.
 
 ## 현재 상태
+
+### M36 완료 (CubeMX식 설정 도구)
+
+![설정 도구의 코드 생성 탭. USART2 보레이트를 9600으로 바꾸자 main.c에 "+1 −1 USER CODE 4곳 유지", 차이 보기에 huart2.Init.BaudRate = 115200(−)과 9600(+)](images/m36-generate.png)
+
+코드 탭의 **⚙ 설정(.ioc)**에서 CubeMX처럼 핀·클럭·주변장치를 고르면 `MX_*_Init`이 든 STM32CubeIDE식 프로젝트를 만들고, 그 자리에서
+브라우저 안 빌드로 돌린다. 다시 생성해도 `USER CODE` 영역은 남고, `.ioc`와 CubeIDE zip으로 오간다. 사용법은 [config-tool.md](config-tool.md).
+
+- [x] **MCU 데이터**(`src/cube/mcu.ts`): STM32F401RETx LQFP64의 64핀(입출력 50, PB11 자리는 VCAP1), 모델링한 주변장치의 대체 기능(AF 번호,
+  HAL 매크로), ADC 입력, Nucleo 헤더 이름(보드 부품의 핀 표를 `parts/nucleo-pins.ts`로 빼 함께 씀)
+- [x] **설정 모델**(`config.ts`): 핀(신호, 라벨, 풀, 속도, 오픈 드레인, 처음 값, EXTI 에지), USART1·2·6, I2C1–3, SPI1–3, TIM1–5·9–11(PWM
+  채널), ADC1(랭크), NVIC(그룹 4), SYS. 신호를 고르면 주변장치가 켜지고 마지막 핀을 풀면 꺼짐, 주변장치를 켜면 흔한 핀에. 한국어 검사:
+  두 핀에 같은 신호, AF에 없는 신호, 같은 EXTI 줄, 필요한 핀 없음, 라벨 겹침·C 이름 아님, SWD·콘솔 핀, 보레이트 오차, I2C의 APB1, SPI SCK
+  42 MHz, PSC·ARR 범위, PWM 핀 없는 채널, ADC 채널·스캔·클럭 36 MHz, NVIC 범위, HSE와 PH0
+- [x] **클럭 트리**(`clock.ts`): HSI·HSE(끄기·바이패스·크리스털) → PLL(M·N·P·Q) → SYSCLK → AHB·APB1·APB2(타이머 ×2), 플래시 대기(자동이면 최소),
+  전압 스케일. CubeMX의 한계(84/42/84 MHz, VCO 입력 0.95–2.1·출력 192–432 MHz, 스케일 3의 60 MHz, 대기, USB 48 MHz)를 빨간 상자와 목록으로.
+  기본은 CubeMX의 Nucleo 값 HSI/16 × 336 / 4 = 84 MHz. Nucleo에 없는 HSE 크리스털은 경고
+- [x] **코드 생성**(`codegen.ts`): `main.c`, `main.h`, `stm32f4xx_it.c`·`.h`, `stm32f4xx_hal_msp.c`, `stm32f4xx_hal_conf.h`(쓰는 모듈만)를
+  CubeMX의 배치와 `USER CODE` 영역 이름으로, `syscalls.c`·`sysmem.c`(없을 때만), 새 프로젝트의 시작 코드(`__io_putchar` → USART2)
+- [x] **USER CODE 유지**(`usercode.ts`): 영역을 이름으로 짝지어 옮기고, 없어진 영역의 코드는 파일 끝 `USER CODE BEGIN Orphaned`에 `#if 0`으로.
+  다시 생성하기 전에 파일마다 새 파일·같음·바뀐 줄, 남는 영역, 없어진 영역, 영역 밖에서 고쳐 사라질 줄 수와 줄 단위 차이(`diff.ts`)를
+  보여 준다. 사라질 줄은 프로젝트의 옛 설정이 만드는 코드와 비교해 센다 — 설정 변경으로 바뀌는 줄은 세지 않는다
+- [x] **.ioc**(`ioc.ts`): Java properties(이스케이프된 키·값, 줄 잇기)를 읽어 지원하는 부분을 모델로, 나머지(DMA, FreeRTOS, RTC, 가상 핀,
+  다른 MCU, PWM이 아닌 타이머 모드, ADC 내부 채널 …)는 오류 없이 한국어 경고로 건너뜀. CubeMX 형식으로 정렬해 다시 씀
+- [x] **프로젝트 트리·드라이버 묶음**(`tree.ts`, `packs.ts`, `scripts/cube-pack.mjs`): `firmware/vendor`의 HAL 1.8.6·CMSIS F4 2.6.11·CMSIS Core를
+  CubeIDE 경로로 묶어 `public/cube/cubef4-hal-1.8.6.tar.gz.bin`(60개 파일, 478 KB, 기본 오프라인 캐시)으로. 코드 탭의 **🗂 트리**가
+  `Core/`, `Drivers/`, 시작 코드, `system_stm32f4xx.c`, 링커 스크립트(묶음 파일은 🔒 읽기 전용, 프로젝트에 저장하지 않음), `.ioc`를 보여 줌.
+  프로젝트(`template: "cube"`, `.ioc`, 묶음 id)는 자동 저장·파일·공유 링크에
+- [x] **CubeIDE와 오가기**: zip 내보내기(직접 쓴 zip 쓰기 `zipwrite.ts`, `CompressionStream` deflate) — `.project`, `.cproject`(Debug, MCU ARM
+  GCC), `.ioc`, `Core/`, `Drivers/`, 라이선스. CubeIDE 프로젝트 가져오기(zip·폴더): `.ioc`가 설정, `Core/`의 파일이 내 파일, `Debug/`·
+  `Drivers/`는 빼고, 빠진 생성 파일은 채움
+- [x] **브라우저 안 빌드의 "cube" 틀**(`sdk.ts`): 프로젝트의 `stm32f4xx_it.c`·MSP·`SystemClock_Config`·`syscalls.c`를 소스에서 컴파일하고
+  `hal-common` 헤더는 쓰지 않음. 미리 빌드한 것은 시작 코드·`SystemInit`·`libhal.a`만. M33의 "hal" 틀은 그대로
+- [x] **설정 창**(`ConfigPanel.tsx`): 코드 탭의 ⤢ 크게처럼 회로 위에 떠 툴바·캔버스가 움직이지 않음. 핀 배치(패키지 그림의 핀 메뉴, 목록,
+  핀 설정), 클럭(편집할 수 있는 트리), 주변장치(폼, PWM 주파수·듀티 계산), 코드 생성(위 미리 보기). 아래 문제 목록과 **배선 대조**
+  (`wiring.ts`: 캔버스의 부품이 이어진 핀이 설정되지 않음, LED에 입력, 버튼에 출력, 서보에 PWM 아님, 가변저항에 ADC 아닌 핀; 직렬 저항 뒤의
+  LED도 셈)
+- [x] 측정(이 컨테이너, 4코어): 생성한 `main.c`는 스냅숏 설정마다 256–541줄. Node 통합 테스트에서 8가지 설정을 gcc와 브라우저 툴체인으로
+  모두 빌드해 돌리는 데 23초. 코드 탭 청크는 698 KB(gzip 231 KB; M33 문서의 561 KB에서), 기본 오프라인 캐시는 묶음 2개 파일(약 0.48 MB)이 더해져
+  172개·54.6 MB
+- [x] 테스트: 웹 단위 24개(`web/test/m36.test.ts` — 패키지 핀, AF·핀·HAL 매크로, 헤더 이름, 신호로 주변장치 켜고 끄기, Nucleo 기본값에 문제 없음,
+  충돌 검사, 클럭 기본값과 한계, PWM 주파수·듀티, 주변장치별 생성 스냅숏 8가지(`test/data/m36/snapshots`)와 CubeMX의 함수·값, USER CODE
+  유지와 Orphaned, 다시 생성 계획(유지·없어짐·사라질 줄, syscalls.c는 없을 때만), `.ioc` 이스케이프·직접 쓴 `.ioc` 3개(`test/data/m36`)와 경고·왕복,
+  드라이버 묶음, 새 프로젝트 트리·저장·공유, zip 내보내기를 읽어 다시 가져오기, `.ioc`와 `main.c`만 있는 가져오기, "cube" 틀의 컴파일·링크 인자,
+  주변장치 켜기의 핀, 차이 보기, 배선 대조), Node 통합 4개(`m36-toolchain.test.ts`, CI의 `npm run test:toolchain` — arm-none-eabi-gcc
+  (`-O0 -g3 -Wall`, 묶음의 HAL 소스)와 브라우저 툴체인으로 빌드한 두 ELF가 WASM 코어에서: LD2가 100 ms마다 토글하고 printf가 콘솔에,
+  `HAL_RCC_GetHCLKFreq()` 84 MHz, 보레이트를 바꿔 다시 생성해도 사용자 코드가 남아 빌드·실행 / TIM2 PWM 1 kHz·25 % / 스냅숏 8가지가
+  `Core/`에 gcc 경고 없이 빌드되고 `Error_Handler` 없이 시작하며 코어 클럭이 설정대로(42·84 MHz) / HSE 크리스털은 실제 보드처럼
+  `Error_Handler`), E2E 6개(`web/e2e/m36.spec.ts`, 전체 213개: PA5 출력 + USART2를 설정해 생성, USER CODE에 쓰고 빌드하면 LD2 200 ms·
+  콘솔 출력 / 보레이트 변경 다시 생성의 차이·유지(사라질 줄 없음)·빌드 / SYSCLK 168 MHz가 빨갛고 생성이 막혔다가 풀림 / `.ioc` 불러오기
+  (TIM2 PWM 1000 Hz·25 %, HSE PLL, DMA 경고) / zip 내보내기의 파일과 트리의 읽기 전용 HAL 소스 / CubeIDE zip 가져오기(`Debug/` 빠짐, FreeRTOS
+  경고, 빌드); 툴바·캔버스 위치가 같음). 웹 단위 전체 379개. 하나씩 망가뜨려 해당 테스트가 실패하는 것을 확인했다 — 단위: USER CODE 옮기기,
+  Orphaned 블록, 사라질 줄을 옛 설정의 코드와 비교, AF 검사, 같은 EXTI 줄, SYSCLK 84 MHz, APB1 42 MHz, `.ioc` 값의 `:` 이스케이프,
+  "cube" 틀에서 `hal-common` 빼기, 배선 대조의 LED·입력 핀(처음에는 통과해서 검사를 더함), zip의 `.cproject`, `syscalls.c` 생성 /
+  Node: "cube" 틀이 미리 빌드한 hal-common 오브젝트까지 링크하면 `SystemClock_Config`·`Error_Handler`·`HAL_MspInit`·`NMI_Handler`가
+  겹쳐(ld.lld "duplicate symbol") 브라우저 빌드가 실패
+- 한계: STM32F401RETx 하나, 드라이버 묶음 하나(버전 메뉴는 있지만 항목은 하나). 타이머는 PWM 출력만, USART는 비동기만, DMA·FreeRTOS·RTC·USB·I2S·
+  ADC 내부 채널·NSS·흐름 제어 없음. NVIC는 그룹 4만, HSE는 8 MHz. `.ioc`·`.project`·`.cproject`는 형식을 따라 쓴 것이고 실제 CubeMX가 만든
+  `.ioc`나 CubeIDE에서 열기는 자동 테스트로 확인하지 못했다. CubeIDE 프로젝트 가져오기는 `.ioc`가 있어야 한다. `Drivers/`는 읽기 전용
 
 ### M33 완료 (브라우저 안 C 편집·빌드)
 

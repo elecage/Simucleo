@@ -8,6 +8,8 @@
 
 ![PWM으로 RGB LED와 LD2 밝기 제어](docs/images/m3-pwm-rgb.png)
 
+> **M34: English UI.** 툴바의 언어 메뉴에서 **English**를 고르면 메뉴·안내·부품·설정 도구·채점 힌트와 레슨 38개 전체가 영어로 바뀐다(브라우저가 한국어가 아니면 처음부터 영어). The whole interface and all 38 lessons are available in English — pick **English** in the toolbar, or open the site with `?lang=en` ([영어 UI와 번역](docs/i18n.md)).
+>
 > **M36: CubeMX식 설정 도구.** 코드 탭의 **⚙ 새 프로젝트(설정 도구)**나 **⚙ 설정(.ioc)**에서 STM32CubeMX처럼 LQFP64 핀을 눌러 신호를
 > 고르고, 클럭 트리(84 MHz를 넘으면 빨갛게)와 USART·I2C·SPI·TIM PWM·ADC를 정하면 `MX_*_Init`이 든 CubeIDE식 프로젝트(`Core/`, 읽기 전용
 > `Drivers/`는 STM32CubeF4 HAL 1.8.6)를 만들어 바로 브라우저 안에서 빌드해 돌린다. 설정을 바꿔 다시 생성하면 파일별 차이를 먼저 보여 주고
@@ -179,6 +181,7 @@
 - [오프라인에서 쓰기 — 설치, 오프라인, 업데이트](docs/offline.md)
 - [링크·QR로 공유하기 — 보내기, 받기, 선생님께 보내기, 형식](docs/share.md)
 - [저사양 기기에서 쓰기 — 기기 점검, 성능 모드, 예제별 속도](docs/performance.md)
+- [영어 UI와 번역](docs/i18n.md): 언어 고르기, 문자열을 `t()`로 쓰는 법, 레슨 영어 파일
 - [실습(레슨) 안내 — 선생님용](docs/lessons.md): 수업에서 쓰기, 결과 제출받기와 모아보기, 레슨 편집기, 새 실습 파일 쓰기(모든 검사 종류, 형식 검사)
 - [외부 부품 계획](docs/parts.md)
 - ADR: [Rust+WASM](docs/adr/0001-rust-wasm-web.md) · [CPU 백엔드](docs/adr/0002-cpu-backends.md) · [펌웨어 범위](docs/adr/0003-firmware-scope.md) · [배선 편집기](docs/adr/0004-wiring-editor.md)

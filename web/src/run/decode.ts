@@ -756,10 +756,19 @@ export function findMatches(anns: Annotation[], m: ContentMatch, after = -Infini
   const out: number[] = [];
   if (m.kind === "text") {
     if (!m.text) return out;
-    const chars = anns.filter((a) => a.kind === "data" && !a.error && a.value !== undefined);
-    const text = chars.map((a) => String.fromCharCode(a.value!)).join("");
-    for (let i = text.indexOf(m.text); i >= 0; i = text.indexOf(m.text, i + 1)) {
-      if (chars[i].start > after) out.push(chars[i].start);
+    // Runs of good frames: a frame with a framing or parity error ends a
+    // run, so a text never matches across a byte that was not received.
+    const runs: Annotation[][] = [[]];
+    for (const a of anns) {
+      if (a.kind !== "data" || a.value === undefined) continue;
+      if (a.error) runs.push([]);
+      else runs[runs.length - 1].push(a);
+    }
+    for (const chars of runs) {
+      const text = chars.map((a) => String.fromCharCode(a.value!)).join("");
+      for (let i = text.indexOf(m.text); i >= 0; i = text.indexOf(m.text, i + 1)) {
+        if (chars[i].start > after) out.push(chars[i].start);
+      }
     }
     return out;
   }

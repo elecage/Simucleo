@@ -393,6 +393,16 @@ test("content match: UART byte, text, I2C address with R/W, pixel index and colo
   assert.deepEqual(findMatches(u, { kind: "text", text: "Help" }), []);
   // Only after a time.
   assert.deepEqual(findMatches(u, { kind: "byte", value: 0x41 }, u[1].start), []);
+  // A bad frame between two good ones is a break: "O", corrupt "X", "K"
+  // never matches "OK", but each side still matches on its own.
+  const bad: Annotation[] = [
+    { start: 0, end: 10, kind: "data", value: 0x4f },
+    { start: 10, end: 20, kind: "data", value: 0x58, error: "프레이밍 오류" },
+    { start: 20, end: 30, kind: "data", value: 0x4b },
+    { start: 30, end: 40, kind: "data", value: 0x21 },
+  ];
+  assert.deepEqual(findMatches(bad, { kind: "text", text: "OK" }), []);
+  assert.deepEqual(findMatches(bad, { kind: "text", text: "K!" }), [20]);
 
   const i2c: Annotation[] = [
     { start: 0, end: 0, kind: "start" },

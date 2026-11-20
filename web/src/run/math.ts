@@ -262,3 +262,54 @@ export function wavePoints(w: Wave, from: number, to: number, width: number, y: 
   if (out[out.length - 1] !== end) out.push(end);
   return out.join(" ");
 }
+
+/** A wave and the span it is known over (unknown before `from` and after `to`). */
+export interface Sourced {
+  wave: Wave;
+  from: number;
+  to: number;
+}
+
+/**
+ * A live analog trace (times in ms, known from `since`) as a wave in ns
+ * relative to `nowMs`, from `fromMs` on; known only from where the trace
+ * really starts (the probe added, or history dropped), not from `fromMs`.
+ */
+export function liveAnalog(t: { v0: number; samples: [number, number][]; since: number }, nowMs: number, fromMs: number): Sourced {
+  const i = lowerBound(t.samples, fromMs);
+  const samples = t.samples.slice(i).map(([m, v]) => [(m - nowMs) * 1e6, v] as [number, number]);
+  return { wave: { v0: i === 0 ? t.v0 : t.samples[i - 1][1], samples }, from: (Math.max(t.since, fromMs) - nowMs) * 1e6, to: 0 };
+}
+
+/** The same for a live digital trace (as 0/3.3 V). */
+export function liveDigital(t: { level0: boolean; edges: [number, boolean][]; since: number }, nowMs: number, fromMs: number): Sourced {
+  let lo = 0;
+  let hi = t.edges.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (t.edges[mid][0] < fromMs) lo = mid + 1;
+    else hi = mid;
+  }
+  const edges = t.edges.slice(lo).map(([m, l]) => [(m - nowMs) * 1e6, l] as [number, boolean]);
+  return {
+    wave: fromDigital({ level0: lo === 0 ? t.level0 : t.edges[lo - 1][1], edges }),
+    from: (Math.max(t.since, fromMs) - nowMs) * 1e6,
+    to: 0,
+  };
+}
+
+/**
+ * A math channel from its sources and where it is known: where both
+ * sources are, and for a moving average only once its window lies
+ * entirely in the known part. Null if a source is missing or unusable.
+ */
+export function mathChannel(def: MathDef, a: Sourced | null, b?: Sourced | null): Sourced | null {
+  if (!a || b === null) return null;
+  const w = mathWave(def, a.wave, b?.wave);
+  if (!w) return null;
+  return {
+    wave: w,
+    from: Math.max(a.from, b?.from ?? -Infinity) + (def.op === "avg" ? def.windowNs : 0),
+    to: Math.min(a.to, b?.to ?? Infinity),
+  };
+}

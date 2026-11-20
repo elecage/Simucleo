@@ -4,9 +4,30 @@
 // file (`npm test`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { combine, fromDigital, mathWave, measureWave, movingAverage, waveAt, wavePoints, type Wave } from "../src/run/math.ts";
+import {
+  combine,
+  fromDigital,
+  liveAnalog,
+  liveDigital,
+  mathChannel,
+  mathWave,
+  measureWave,
+  movingAverage,
+  waveAt,
+  wavePoints,
+  type Wave,
+} from "../src/run/math.ts";
 import { analyze, fft, peaks, resample, spectrum, windowFn, type WindowKind } from "../src/run/spectrum.ts";
-import { defaultScope, defaultSpectrum, newMath, sanitizeScope, type ScopeSettings } from "../src/run/scopeSettings.ts";
+import {
+  defaultScope,
+  defaultSpectrum,
+  fixMathSources,
+  mathSources,
+  newMath,
+  sanitizeScope,
+  type MathCfg,
+  type ScopeSettings,
+} from "../src/run/scopeSettings.ts";
 import { parseWith, serialize, type CatalogEntry } from "../src/editor/projectFormat.ts";
 
 const close = (a: number, b: number, tol: number, what = "") => assert.ok(Math.abs(a - b) <= tol, `${what} ${a} ≉ ${b} (±${tol})`);
@@ -246,6 +267,101 @@ test("spectrum of PWM through the whole chain: the fundamental within a bin, off
   close(s.fundamental!.freq, 1e9 / T, sp.df);
   assert.ok(s.harmonics[1].dbc < -40, `H2 ${s.harmonics[1].dbc}`);
   close(s.harmonics[2].dbc, 20 * Math.log10(1 / 3), 0.5);
+});
+
+test("a tone a few bins above DC reads its own RMS, not the windowed offset's (Codex review)", () => {
+  const n = 8192;
+  for (const k of [2, 3, 5]) {
+    const x = new Float64Array(n);
+    for (let i = 0; i < n; i++) x[i] = 1.65 + 0.1 * Math.sin((2 * Math.PI * k * i) / n);
+    for (const w of ["hann", "hamming", "blackman", "rect"] as WindowKind[]) {
+      if (k <= (w === "blackman" ? 3 : w === "rect" ? 1 : 2)) continue; // inside DC's own lobe
+      const sp = spectrum(x, 1, w, false);
+      const s = analyze(sp);
+      close(s.fundamental!.freq, k, 0.01, `${w} k=${k}`);
+      close(s.fundamental!.vrms, 0.1 * Math.SQRT1_2, 1e-6, `${w} k=${k} rms`);
+      close(peaks(sp, 1)[0].vrms, 0.1 * Math.SQRT1_2, 1e-6, `${w} k=${k} peak`);
+      // DC is still read on its own, exactly.
+      close(s.dc, 1.65, 1e-12);
+      close(sp.mag[0], 1.65, 1e-12);
+    }
+  }
+  // A 0/3.3 V PWM over eight periods: harmonic ratios unaffected by the 1.65 V mean.
+  const s = analyze(spectrum(resample(pwm(1, 0.5, 8), 0, 8, 4096), 8, "hann"));
+  close(s.fundamental!.vrms, (2 * 3.3) / Math.PI / Math.SQRT2, 1e-3);
+  close(s.harmonics[2].dbc, 20 * Math.log10(1 / 3), 0.05);
+});
+
+// ------------------------------------------------- math sources (Codex review)
+
+const avgM1: MathCfg = { ...newMath(1, ["V(pot.W)"]), op: "avg", a: "V(pot.W)" };
+const CH = ["V(pot.W)", "PA5"];
+
+test("math sources: a moving average feeds −A and k·A + c, not A ± B, A × B or another average", () => {
+  const m2 = (op: MathCfg["op"]): MathCfg => ({ ...newMath(2, CH), op, a: "M1" });
+  for (const op of ["neg", "scale"] as const) assert.deepEqual(mathSources(m2(op), [avgM1, m2(op)], CH), [...CH, "M1"], op);
+  for (const op of ["add", "sub", "mul", "avg"] as const) assert.deepEqual(mathSources(m2(op), [avgM1, m2(op)], CH), CH, op);
+  // A step M1 feeds anything.
+  const subM1: MathCfg = { ...newMath(1, CH) };
+  assert.deepEqual(mathSources(m2("avg"), [subM1, m2("avg")], CH), [...CH, "M1"]);
+  // M1 never takes itself or M2.
+  assert.deepEqual(mathSources(subM1, [subM1, m2("neg")], CH), CH);
+  // −avg is computed (a straight-line wave) …
+  const x = pwm(10, 0.5, 4);
+  const avg = mathChannel({ op: "avg", gain: 1, bias: 0, windowNs: 10 }, { wave: x, from: 0, to: 40 })!;
+  const neg = mathChannel({ op: "neg", gain: 1, bias: 0, windowNs: 0 }, avg)!;
+  assert.equal(neg.wave.linear, true);
+  close(measureWave(neg.wave, 20, 30)!.mean, -1.65, 1e-9);
+  assert.equal(neg.from, 10);
+});
+
+test("math sources: switching the operation (or M1's, or removing M1) replaces a source it cannot take", () => {
+  const m2: MathCfg = { ...newMath(2, CH), op: "neg", a: "M1", b: "M1" };
+  // Valid as it is: kept.
+  assert.deepEqual(fixMathSources([avgM1, m2], CH), [avgM1, m2]);
+  // M2 becomes A − B: M1 (an average) is no longer a source, for A nor B.
+  const sub = fixMathSources([avgM1, { ...m2, op: "sub" }], CH)[1];
+  assert.deepEqual([sub.a, sub.b], ["V(pot.W)", "V(pot.W)"]);
+  // M2 becomes a moving average: the same.
+  assert.equal(fixMathSources([avgM1, { ...m2, op: "avg" }], CH)[1].a, "V(pot.W)");
+  // M1 turned into an average under M2 = M1 × PA5.
+  const mul: MathCfg = { ...m2, op: "mul", a: "M1", b: "PA5" };
+  const stepM1: MathCfg = newMath(1, CH);
+  assert.deepEqual(fixMathSources([stepM1, mul], CH)[1], mul);
+  assert.deepEqual(fixMathSources([{ ...stepM1, op: "avg" }, mul], CH)[1], { ...mul, a: "V(pot.W)" });
+  // M1 removed.
+  assert.equal(fixMathSources([m2], CH)[0].a, "V(pot.W)");
+  // Not a math channel: left alone (it shows as missing).
+  const gone: MathCfg = { ...m2, op: "sub", a: "PB9" };
+  assert.equal(fixMathSources([gone], CH)[0].a, "PB9");
+});
+
+// ------------------------------------------------- live history (Codex review)
+
+test("live analog: known only from where its trace starts, and an average only once its window is inside", () => {
+  // A probe added at 1000 ms; now 1005 ms; the view asks from 990 ms (a 10 ms window + 5 ms average).
+  const t = { v0: 1.2, samples: [[1002, 2.2]] as [number, number][], since: 1000 };
+  const a = liveAnalog(t, 1005, 990);
+  assert.equal(a.from, -5e6);
+  assert.equal(a.to, 0);
+  assert.deepEqual(a.wave.samples, [[-3e6, 2.2]]);
+  // History older than asked for: from the request on.
+  assert.equal(liveAnalog({ ...t, since: 0 }, 1005, 990).from, -15e6);
+  const d = liveDigital({ level0: false, edges: [[1001, true], [1003, false]], since: 1000 }, 1005, 990);
+  assert.equal(d.from, -5e6);
+  assert.deepEqual(d.wave.samples, [[-4e6, 3.3], [-2e6, 0]]);
+  // A 2 ms average is known from 2 ms after the trace starts; one of 6 ms not yet at all.
+  const avg2 = mathChannel({ op: "avg", gain: 1, bias: 0, windowNs: 2e6 }, a)!;
+  assert.equal(avg2.from, -3e6);
+  const avg6 = mathChannel({ op: "avg", gain: 1, bias: 0, windowNs: 6e6 }, a)!;
+  assert.ok(avg6.from > avg6.to);
+  // So the view measures nothing for it (from max(−window, from) to min(0, to)).
+  assert.equal(measureWave(avg6.wave, Math.max(-10e6, avg6.from), Math.min(0, avg6.to)), undefined);
+  // A − B is known where both are.
+  const b = liveAnalog({ v0: 0, samples: [], since: 1003 }, 1005, 990);
+  assert.equal(mathChannel({ op: "sub", gain: 1, bias: 0, windowNs: 0 }, a, b)!.from, -2e6);
+  // A missing source: none.
+  assert.equal(mathChannel({ op: "sub", gain: 1, bias: 0, windowNs: 0 }, a, null), null);
 });
 
 // ------------------------------------------------- settings

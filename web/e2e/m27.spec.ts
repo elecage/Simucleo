@@ -272,3 +272,67 @@ test("math and spectrum settings are saved in the project and opened again", asy
   await expect(page.locator("[data-math]")).toHaveCount(2);
   expect(await shown()).toEqual(want);
 });
+
+test("math: −A and k·A + c of a moving average; an operation that cannot take it replaces the source", async ({ page }) => {
+  await loadExample(page, "hal-adc-servo");
+  await runButton(page).click();
+  await expect(consoleOut(page)).toContainText("pot 2047", { timeout: 5000 });
+  await openScope(page);
+  await page.getByLabel("아날로그 채널 추가").selectOption("pot.W");
+  await page.getByRole("button", { name: "수학 채널 추가" }).click();
+  await page.getByLabel("M1 연산").selectOption("avg");
+  await page.getByLabel("M1 평균 창 (µs)").fill("2000");
+  await page.getByRole("button", { name: "수학 채널 추가" }).click();
+  await page.getByLabel("M2 연산").selectOption("neg");
+  // The average is offered to −A …
+  await page.getByLabel("M2 소스 A").selectOption("M1");
+  const mean = (id: string) => num(page, `analog-${id}`, "data-mean");
+  await expect.poll(() => mean("M1"), { timeout: 5000 }).toBeGreaterThan(1.6);
+  await expect.poll(async () => (await mean("M2")) + (await mean("M1")), { timeout: 5000 }).toBeCloseTo(0, 6);
+  // … and to k·A + c.
+  await page.getByLabel("M2 연산").selectOption("scale");
+  await expect(page.getByLabel("M2 소스 A")).toHaveValue("M1");
+  await page.getByLabel("M2 배율 k").fill("2");
+  await page.getByLabel("M2 더할 값 c (V)").fill("-1");
+  await expect.poll(async () => (await mean("M2")) - (2 * (await mean("M1")) - 1), { timeout: 5000 }).toBeCloseTo(0, 6);
+  // A − B cannot take it: the source becomes the first channel, and M1 is not offered.
+  await page.getByLabel("M2 연산").selectOption("sub");
+  await expect(page.getByLabel("M2 소스 A")).toHaveValue("V(pot.W)");
+  await expect(page.getByLabel("M2 소스 A").locator("option[value=M1]")).toHaveCount(0);
+  await expect(page.getByLabel("M2 소스 B").locator("option[value=M1]")).toHaveCount(0);
+  // (B, a channel, is kept.) The wiper less itself: 0 V.
+  await expect(page.getByLabel("M2 소스 B")).toHaveValue("PA5");
+  await page.getByLabel("M2 소스 B").selectOption("V(pot.W)");
+  await expect.poll(() => mean("M2"), { timeout: 5000 }).toBeCloseTo(0, 6);
+});
+
+test("live: a new probe's moving average is unknown until its window holds recorded history", async ({ page }) => {
+  test.setTimeout(60000);
+  await loadExample(page, "hal-adc-servo");
+  await runButton(page).click();
+  await expect(consoleOut(page)).toContainText("pot 2047", { timeout: 5000 });
+  await openScope(page);
+  // A math channel on a channel probed just now: a 1.5 s average needs 1.5 s of its history.
+  await page.getByRole("button", { name: "수학 채널 추가" }).click();
+  await page.getByLabel("아날로그 채널 추가").selectOption("pot.W");
+  await page.getByLabel("M1 연산").selectOption("avg");
+  await page.getByLabel("M1 소스 A").selectOption("V(pot.W)");
+  await page.getByLabel("M1 평균 창 (µs)").fill("1500000");
+  await page.getByRole("button", { name: "시간 + 스펙트럼" }).click();
+  await page.getByLabel("스펙트럼 소스").selectOption("M1");
+  const t0 = Number(await plot(page).getAttribute("data-now-ms"));
+  // Unknown: no measurements, the whole row hatched, no spectrum.
+  const row = page.getByTestId("analog-M1");
+  await expect(page.getByTestId("analog-pot.W")).toHaveAttribute("data-mean", /\d/);
+  await expect(row).not.toHaveAttribute("data-mean", /./);
+  await expect(page.locator("[data-mtrace=M1] rect.scope-invalid")).toHaveCount(1);
+  await expect(page.getByTestId("fft-info")).toHaveCount(0);
+  // Once the window lies in the recorded part: the wiper's 1.65 V.
+  await expect.poll(async () => Number((await row.getAttribute("data-mean")) ?? NaN), { timeout: 20000 }).toBeCloseTo(1.65, 1);
+  expect(Number(await plot(page).getAttribute("data-now-ms")) - t0).toBeGreaterThan(1500);
+  await expect(page.getByTestId("fft-info")).toHaveCount(1);
+  // Longer than the history kept (4 s): never known.
+  await page.getByLabel("M1 평균 창 (µs)").fill("5000000");
+  await expect(row).not.toHaveAttribute("data-mean", /./);
+  await expect(page.getByTestId("fft-info")).toHaveCount(0);
+});

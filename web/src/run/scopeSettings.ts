@@ -3,7 +3,7 @@
 // timebase. Pure functions, unit tested in test/m25.test.ts.
 // M27: math channels and the spectrum view (test/m27.test.ts).
 import { parseNumber, type ContentMatch, type Format, type Parity } from "./decode.ts";
-import { MATH_OPS, type MathOp } from "./math.ts";
+import { BINARY, MATH_OPS, type MathOp } from "./math.ts";
 import { TIMEBASE_NS } from "./scope.ts";
 import { FFT_SIZES, WINDOWS, type WindowKind } from "./spectrum.ts";
 
@@ -149,6 +149,42 @@ export function defaultSpectrum(): SpectrumCfg {
 /** A new math channel: A − B of the first two channels given. */
 export function newMath(id: number, sources: string[]): MathCfg {
   return { id, op: "sub", a: sources[0] ?? "", b: sources[1] ?? sources[0] ?? "", gain: 1, bias: 0, windowUs: 1000, vdiv: 1, offset: 0 };
+}
+
+/** Whether a math channel's result is a straight-line wave: a moving average, or −A / k·A + c of one. */
+export function mathLinear(m: MathCfg, all: MathCfg[]): boolean {
+  if (m.op === "avg") return true;
+  if (m.op !== "neg" && m.op !== "scale") return false;
+  const src = all.find((q) => q.id < m.id && `M${q.id}` === m.a);
+  return src ? mathLinear(src, all) : false;
+}
+
+/**
+ * The sources `m` can take with its operation: the view's channels, and
+ * the math channels before it — but a straight-line one (a moving average)
+ * only for −A and k·A + c (A ± B, A × B and another moving average need
+ * steps).
+ */
+export function mathSources(m: MathCfg, all: MathCfg[], channels: string[]): string[] {
+  const takesLinear = m.op === "neg" || m.op === "scale";
+  return [...channels, ...all.filter((q) => q.id < m.id && (takesLinear || !mathLinear(q, all))).map((q) => `M${q.id}`)];
+}
+
+/**
+ * Math channels after a change (an operation switched, a channel removed):
+ * a math-channel source its operation can no longer take becomes the first
+ * channel (B only matters for A ± B, A × B).
+ */
+export function fixMathSources(all: MathCfg[], channels: string[]): MathCfg[] {
+  const out: MathCfg[] = [];
+  for (const m of [...all].sort((p, q) => p.id - q.id)) {
+    const ok = mathSources(m, out, channels);
+    const fix = (src: string) => (/^M\d+$/.test(src) && !ok.includes(src) ? (channels[0] ?? "") : src);
+    const a = fix(m.a);
+    const b = BINARY.includes(m.op) ? fix(m.b) : m.b;
+    out.push(a === m.a && b === m.b ? m : { ...m, a, b });
+  }
+  return out;
 }
 
 export const DEFAULT_CONTENT: ContentCfg = { kind: "byte", text: "0x41", rw: "any", index: 0, color: "", addr: "" };

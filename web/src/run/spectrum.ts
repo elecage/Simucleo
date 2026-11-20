@@ -118,7 +118,7 @@ export interface Spectrum {
   fs: number;
   n: number;
   window: WindowKind;
-  /** Single-sided RMS volts per bin 0 … n/2 (bin 0: |mean|). */
+  /** Single-sided RMS volts per bin 0 … n/2 (bin 0: |mean|; the others from the signal less its mean). */
   mag: Float64Array;
   /** The power of each bin (V² RMS), for sums over a tone's lobe. */
   pow: Float64Array;
@@ -146,7 +146,9 @@ export function spectrum(x: Float64Array, spanS: number, window: WindowKind, box
   }
   const re = new Float64Array(n);
   const im = new Float64Array(n);
-  for (let i = 0; i < n; i++) re[i] = x[i] * w[i];
+  // The mean comes off before windowing: a windowed offset spreads over
+  // DC's whole lobe (bins 1…L) and would add to a tone that low.
+  for (let i = 0; i < n; i++) re[i] = (x[i] - mean) * w[i];
   fft(re, im);
   const half = n / 2;
   const mag = new Float64Array(half + 1);
@@ -161,6 +163,9 @@ export function spectrum(x: Float64Array, spanS: number, window: WindowKind, box
     // Parseval: a tone's lobe sums to its mean square.
     pow[k] = ((one ? 1 : 2) * p) / (n * sw2);
   }
+  // Bin 0 is the mean itself (exact).
+  mag[0] = Math.abs(mean);
+  pow[0] = mean * mean;
   return { df: 1 / spanS, fs: n / spanS, n, window, mag, pow, dc: mean };
 }
 
@@ -237,7 +242,7 @@ export interface SpectrumStats {
   thd?: number;
   /** Fundamental against what is left (all AC power but the fundamental and those harmonics), dB. */
   snr?: number;
-  /** AC RMS (V): everything above DC's lobe. */
+  /** AC RMS (V): everything but the mean. */
   acRms: number;
 }
 
@@ -245,7 +250,8 @@ export interface SpectrumStats {
 export function analyze(sp: Spectrum, maxOrder = 10): SpectrumStats {
   const L = LOBE[sp.window];
   let ac = 0;
-  for (let k = L + 1; k < sp.pow.length; k++) ac += sp.pow[k];
+  // (Bins 1 … L hold no DC: the mean came off before windowing.)
+  for (let k = 1; k < sp.pow.length; k++) ac += sp.pow[k];
   const stats: SpectrumStats = { dc: sp.dc, harmonics: [], acRms: Math.sqrt(ac) };
   const top = argmax(sp.mag, Math.min(L + 1, sp.mag.length - 1), sp.mag.length - 1);
   if (top <= L || !(sp.mag[top] > 0)) return stats;
@@ -263,7 +269,7 @@ export function analyze(sp: Spectrum, maxOrder = 10): SpectrumStats {
     const c = Math.round(f / sp.df);
     const k = h === 1 ? top : argmax(sp.mag, Math.max(L + 1, c - 1), Math.min(sp.mag.length - 1, c + 1));
     let p = 0;
-    for (let j = Math.max(L + 1, k - L); j <= Math.min(sp.pow.length - 1, k + L); j++) {
+    for (let j = Math.max(1, k - L); j <= Math.min(sp.pow.length - 1, k + L); j++) {
       if (taken.has(j)) continue;
       taken.add(j);
       p += sp.pow[j];

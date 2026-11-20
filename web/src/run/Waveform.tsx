@@ -62,6 +62,8 @@ import {
   DECODER_TYPES,
   MAX_MATH,
   PIN_ROLES,
+  fixMathSources,
+  mathSources,
   contentKinds,
   contentMatch,
   defaultScope,
@@ -77,7 +79,7 @@ import {
   type TriggerSettings,
 } from "./scopeSettings";
 import { captureCsv, captureVcd } from "./export";
-import { BINARY, MATH_OPS, fromDigital, mathWave, measureWave, wavePoints, type MathOp, type Wave } from "./math";
+import { BINARY, MATH_OPS, fromDigital, liveAnalog, liveDigital, mathChannel, measureWave, wavePoints, type MathOp, type Sourced } from "./math";
 import { SpectrumPanel } from "./Spectrum";
 
 const PIN_NAMES = [
@@ -111,6 +113,8 @@ interface Trace {
 interface ATrace {
   v0: number;
   samples: [number, number][];
+  /** Known from here on (ms): the probe added, or older samples dropped. */
+  since: number;
 }
 
 const KIND_TEXT: Record<AnnotationKind, string> = {
@@ -343,7 +347,7 @@ export function Waveform({
         for (const a of f.analog ?? []) {
           let t = atraces.current.get(a.name);
           if (!t) {
-            t = { v0: a.v0, samples: [] };
+            t = { v0: a.v0, samples: [], since: f.timeMs };
             atraces.current.set(a.name, t);
           }
           for (const s of a.samples) t.samples.push(s);
@@ -353,6 +357,7 @@ export function Waveform({
             t.v0 = t.samples[drop - 1][1];
             t.samples.splice(0, drop);
           }
+          t.since = Math.max(t.since, keepFrom);
         }
         const synth = f.probes
           .filter((p) => p.synth)
@@ -493,30 +498,17 @@ export function Waveform({
       }
       if (name.startsWith("V(")) {
         const t = atraces.current.get(name);
-        if (!t) return null;
-        const i = lowerBound(t.samples, liveFromMs);
-        const samples = t.samples.slice(i).map(([m, v]) => [(m - now) * 1e6, v] as [number, number]);
-        return { wave: { v0: i === 0 ? t.v0 : t.samples[i - 1][1], samples }, from: (liveFromMs - now) * 1e6, to: 0 };
+        return t ? liveAnalog(t, now, liveFromMs) : null;
       }
       const t = traces.current.get(name);
-      if (!t) return null;
-      const i = lowerBound(t.edges, liveFromMs);
-      const edges = t.edges.slice(i).map(([m, l]) => [(m - now) * 1e6, l] as [number, boolean]);
-      return { wave: fromDigital({ level0: i === 0 ? t.level0 : t.edges[i - 1][1], edges }), from: (Math.max(t.since, liveFromMs) - now) * 1e6, to: 0 };
+      return t ? liveDigital(t, now, liveFromMs) : null;
     };
     const mathWaves = new Map<string, Sourced | null>();
     const lookup = (n: string) => (mathWaves.has(n) ? mathWaves.get(n)! : sourceWave(n));
     for (const m of JSON.parse(mathKey) as MathCfg[]) {
       const a = lookup(m.a);
       const b = BINARY.includes(m.op) ? lookup(m.b) : undefined;
-      const windowNs = m.windowUs * 1e3;
-      const w = a && b !== null ? mathWave({ op: m.op, gain: m.gain, bias: m.bias, windowNs }, a.wave, b?.wave) : null;
-      mathWaves.set(
-        `M${m.id}`,
-        w && a
-          ? { wave: w, from: Math.max(a.from, b?.from ?? -Infinity) + (m.op === "avg" ? windowNs : 0), to: Math.min(a.to, b?.to ?? Infinity) }
-          : null,
-      );
+      mathWaves.set(`M${m.id}`, mathChannel({ op: m.op, gain: m.gain, bias: m.bias, windowNs: m.windowUs * 1e3 }, a, b));
     }
     return { sourceWave, mathWaves };
     // (The live traces change in place with each frame: `waveKey` is `now` then.)
@@ -595,13 +587,11 @@ export function Waveform({
   const addPins = (list: string[]) => setPins((p) => [...p, ...list.filter((n) => n && !p.includes(n))]);
   const updateDecoder = (id: number, patch: Partial<DecoderCfg>) =>
     setDecoders((ds) => ds.map((d) => (d.id === id ? { ...d, ...patch } : d)));
-  const updateMath = (id: number, patch: Partial<MathCfg>) => setMath((ms) => ms.map((m) => (m.id === id ? { ...m, ...patch } : m)));
-  /** What a math channel can take: probed pins (0/3.3 V), analog channels, and M1 for M2 (unless M1 averages). */
-  const mathSources = (m: MathCfg): string[] => [
-    ...analogNames,
-    ...pins,
-    ...math.filter((q) => q.id < m.id && q.op !== "avg").map((q) => `M${q.id}`),
-  ];
+  /** What a math channel can take: analog channels, probed pins (0/3.3 V), and M1 for M2 (see `mathSources`). */
+  const channels = [...analogNames, ...pins];
+  // (A source the new operation cannot take is replaced, also in later channels.)
+  const updateMath = (id: number, patch: Partial<MathCfg>) =>
+    setMath((ms) => fixMathSources(ms.map((m) => (m.id === id ? { ...m, ...patch } : m)), channels));
   // The spectrum: its channel, over the visible window or between the cursors.
   const specSources: [string, string][] = [
     ...pins.map((p) => [p, `${p} (디지털 0/3.3 V)`] as [string, string]),
@@ -846,7 +836,13 @@ export function Waveform({
         {math.length === 0 && <span className="hint">A±B·A×B·−A·k·A+c·이동 평균 채널을 만들고, 아무 채널의 스펙트럼을 봅니다.</span>}
       </div>
       {math.map((m) => (
-        <MathControls key={m.id} m={m} sources={mathSources(m)} onChange={(patch) => updateMath(m.id, patch)} onRemove={() => setMath((ms) => ms.filter((q) => q.id !== m.id))} />
+        <MathControls
+          key={m.id}
+          m={m}
+          sources={mathSources(m, math, channels)}
+          onChange={(patch) => updateMath(m.id, patch)}
+          onRemove={() => setMath((ms) => fixMathSources(ms.filter((q) => q.id !== m.id), channels))}
+        />
       ))}
       <div className="wave-controls scope-controls">
         <b>디코더</b>
@@ -1722,12 +1718,6 @@ function Measurements({
   );
 }
 
-/** A channel as a wave and the span (ns) it is known over. */
-interface Sourced {
-  wave: Wave;
-  from: number;
-  to: number;
-}
 
 const OP_TEXT: Record<MathOp, string> = {
   sub: "A − B",

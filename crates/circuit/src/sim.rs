@@ -40,6 +40,7 @@ use crate::tier9::{
     StepDriver, BLDC_R, STEPPER_COIL_R, STEPPER_RATED,
 };
 
+use crate::mcp2515::{CanNet, CanPart, Chips, Mcp2515};
 use crate::netlist::{build_netlist, BusCatalog, Circuit, PartCatalog, PartInstance, PinRef, Wire};
 
 /// Simulated time in core clock cycles.
@@ -482,6 +483,11 @@ pub struct CircuitSim {
     voltage_log: Vec<(Cycles, Vec<Option<f64>>)>,
     /// Bus device parts and where their pins are.
     bus_parts: Vec<BusPart>,
+    /// M35: MCP2515 CAN modules, the buses between them, and the probed
+    /// part pins ("can1.CANH") that show a bus's bits.
+    can_parts: Vec<CanPart>,
+    can: CanNet,
+    can_probes: Vec<String>,
     /// Their state (display RAM, clock, …), by part id.
     devices: HashMap<String, Device>,
     spi_parts: Vec<SpiPart>,
@@ -868,6 +874,9 @@ impl CircuitSim {
             voltage_last: Vec::new(),
             voltage_log: Vec::new(),
             bus_parts: Vec::new(),
+            can_parts: Vec::new(),
+            can: CanNet::default(),
+            can_probes: Vec::new(),
             spi_parts: Vec::new(),
             wire_parts: Vec::new(),
             matrix_parts: Vec::new(),
@@ -955,8 +964,10 @@ impl CircuitSim {
                 Device::Baro(x) => **x = Bmp280::new(x.address, x.temp, x.pressure),
                 // The shaft stays where it is; the clock starts again.
                 Device::Bldc(x) => x.rebase(0.0),
+                Device::Can(c) => c.power_cycle(),
             }
         }
+        self.can.reset_time();
         self.i2c_active.clear();
         // Simulated time starts again from 0 s: the motors keep where their
         // shafts are; the drivers start from home, the ESCs from scratch.
@@ -1202,6 +1213,7 @@ impl CircuitSim {
         let mut bad_values: Vec<String> = Vec::new();
         let mut bus_parts = Vec::new();
         let mut spi_parts = Vec::new();
+        let mut can_parts: Vec<CanPart> = Vec::new();
         let mut wire_parts = Vec::new();
         let mut matrix_parts = Vec::new();
         let mut dev_outputs = Vec::new();
@@ -2340,6 +2352,70 @@ impl CircuitSim {
                             .insert(p.id.clone(), Device::Matrix(Max7219::new(count)));
                     }
                 }
+                "can-mcp2515" => {
+                    // M35: MCP2515 + TJA1050 module. SPI on SCK/SI/SO/CS,
+                    // INT push-pull; the transceiver biases CANH and CANL
+                    // to VCC/2, the J1 jumper puts 120 Ω across them.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    let (canh, canl) = (node(pin("CANH"), &mut map), node(pin("CANL"), &mut map));
+                    let cs = node(pin("CS"), &mut map);
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: crate::mcp2515::CHIP_VMIN,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    for line in [canh, canl] {
+                        for (a, b) in [(vcc, line), (line, gnd)] {
+                            elements.push(Element::Resistor { a, b, r: 50_000.0 });
+                        }
+                    }
+                    let term = p.props.get("term").is_none_or(truthy);
+                    if term {
+                        elements.push(Element::Resistor {
+                            a: canh,
+                            b: canl,
+                            r: 120.0,
+                        });
+                    }
+                    dev_outputs.push((p.id.clone(), node(pin("INT"), &mut map), 0));
+                    spi_parts.push(SpiPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        sck: node(pin("SCK"), &mut map),
+                        mosi: node(pin("SI"), &mut map),
+                        miso: Some(node(pin("SO"), &mut map)),
+                        cs,
+                        dc: None,
+                        res: None,
+                        vmin: crate::mcp2515::CHIP_VMIN,
+                    });
+                    can_parts.push(CanPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        cs,
+                        canh,
+                        canl,
+                        term,
+                    });
+                    let osc = if prop_str(p, "osc", "8").starts_with("16") {
+                        16e6
+                    } else {
+                        8e6
+                    };
+                    match self.devices.get_mut(&p.id) {
+                        Some(Device::Can(c)) => c.osc = osc,
+                        _ => {
+                            self.devices
+                                .insert(p.id.clone(), Device::Can(Box::new(Mcp2515::new(osc))));
+                        }
+                    }
+                }
                 "oled-ssd1306-spi" | "sd-card" => {
                     let vis = add_visual(&p.id, VisualKind::Sensor, 1);
                     let pin = |n: &str| PinRef::new(&p.id, n);
@@ -2567,6 +2643,12 @@ impl CircuitSim {
         link_warnings.extend(link_bldcs(&mut bldc_parts, &phase_bridges));
         self.warnings.extend(link_warnings.iter().cloned());
         self.value_warnings.extend(link_warnings);
+        let (buses, can_warnings) = crate::mcp2515::group_buses(&can_parts);
+        self.can.set_buses(buses);
+        self.can_parts = can_parts;
+        self.warnings.extend(can_warnings.iter().cloned());
+        self.value_warnings.extend(can_warnings);
+        self.can_logging();
         let ids: Vec<String> = stepper_parts.iter().map(|m| m.id.clone()).collect();
         self.steppers.retain(|id, _| ids.contains(id));
         let ids: Vec<String> = driver_parts.iter().map(|m| m.id.clone()).collect();
@@ -3036,10 +3118,12 @@ impl CircuitSim {
     /// may have changed.
     pub fn update(&mut self, time: Cycles, drives: &[Drive]) -> Option<Vec<Option<bool>>> {
         let first = self.current.is_none();
-        self.inputs_changed = false;
+        // (Input changes since the last call count too: a chip's output
+        // that moved with an SPI byte, such as the MCP2515's INT.)
         self.update_inner(time, drives);
         self.current.as_ref()?;
-        (first || self.inputs_changed).then(|| self.inputs_now.clone())
+        let changed = std::mem::take(&mut self.inputs_changed);
+        (first || changed).then(|| self.inputs_now.clone())
     }
 
     /// The solution for a drive key, from the cache or solved now.
@@ -3061,6 +3145,7 @@ impl CircuitSim {
     /// What the devices drive and where the relay contacts are, after the
     /// MCU's pins in the drive key.
     fn device_key(&mut self, now_s: f64) -> Vec<Drive> {
+        self.advance_can(now_s);
         let mut key = Vec::new();
         for (id, _, idx) in &self.dev_outputs {
             let out = self.devices.get_mut(id).and_then(|d| {
@@ -3226,6 +3311,7 @@ impl CircuitSim {
         self.drives = Some(drives.to_vec());
         self.observe_lines(now_s, &sol);
         self.observe_matrices(&sol);
+        self.observe_can(&sol);
         self.observe_relays(now_s, &sol);
         self.observe_shift_registers(&sol);
         self.observe_tm1637(now_s, &sol);
@@ -4276,6 +4362,10 @@ impl CircuitSim {
                                 .into(),
                             );
                         }
+                        Some(Device::Can(c)) => {
+                            v.text = Some(c.display());
+                            v.on = Some(if c.int_active() { 1.0 } else { 0.0 });
+                        }
                         Some(Device::Sd(sd)) => {
                             if !powered_now {
                                 sd.power_cycle();
@@ -4404,6 +4494,7 @@ impl CircuitSim {
             .chain(self.relay_parts.iter().map(|r| &r.id))
             .filter_map(|id| self.devices.get(id).and_then(|d| d.next_change()))
             .chain(self.phase_state.values().filter_map(|b| b.next_change()))
+            .chain(self.can_next())
             .map(|t| c + ((t - s) * hz).ceil().max(0.0) as Cycles)
             // A probed net that a turning motor's back-EMF moves.
             .chain(
@@ -4411,6 +4502,115 @@ impl CircuitSim {
                     .then(|| self.x_time + (EMF_PROBE_INTERVAL * hz).ceil() as Cycles),
             )
             .min()
+    }
+
+    /// The CAN chips by part id.
+    fn can_chips(&mut self) -> Chips<'_> {
+        self.devices
+            .iter_mut()
+            .filter_map(|(id, d)| match d {
+                Device::Can(c) => Some((id.as_str(), c.as_mut())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Bring the CAN buses up to `now` (s).
+    fn advance_can(&mut self, now: f64) {
+        if self.can_parts.is_empty() {
+            return;
+        }
+        let mut can = std::mem::take(&mut self.can);
+        can.advance(&mut self.can_chips(), now);
+        self.can = can;
+    }
+
+    /// When the CAN buses next do something (s).
+    fn can_next(&self) -> Option<f64> {
+        if self.can_parts.is_empty() {
+            return None;
+        }
+        self.can
+            .next_event(self.devices.iter().filter_map(|(id, d)| match d {
+                Device::Can(c) => Some((id.as_str(), &**c)),
+                _ => None,
+            }))
+    }
+
+    /// The CAN modules' supply, transceiver supply and chip select.
+    fn observe_can(&mut self, sol: &Solution) {
+        for part in &self.can_parts {
+            let Some(Device::Can(c)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            let vs = sol.v[part.vcc] - sol.v[part.gnd];
+            let powered = vs >= crate::mcp2515::CHIP_VMIN;
+            if c.powered && !powered {
+                c.power_cycle();
+            }
+            c.powered = powered;
+            c.transceiver = vs >= crate::mcp2515::TRANSCEIVER_VMIN;
+            if powered && !c.transceiver {
+                self.warnings.insert(format!(
+                    "{}: the TJA1050 transceiver needs 5 V (VCC is {vs:.1} V) — the module cannot reach the CAN bus",
+                    part.id
+                ));
+            }
+            if sol.v[part.cs] >= 0.3 * VDD {
+                c.deselect();
+            }
+        }
+    }
+
+    /// Probe part pins as a CAN bus's level: `"can1.CANH"` or
+    /// `"can1.CANL"` of a CAN module shows the bus it is on (high:
+    /// recessive, as a transceiver's RXD). Other names show nothing.
+    pub fn set_line_probes(&mut self, names: &[String]) {
+        self.can_probes = names.to_vec();
+        self.can_logging();
+    }
+
+    /// The bus a line probe shows.
+    fn line_bus(&self, name: &str) -> Option<usize> {
+        let (part, pin) = name.split_once('.')?;
+        if !matches!(pin, "CANH" | "CANL") || !self.can_parts.iter().any(|p| p.id == part) {
+            return None;
+        }
+        self.can.bus_of(part)
+    }
+
+    fn can_logging(&mut self) {
+        let buses: Vec<usize> = self
+            .can_probes
+            .iter()
+            .filter_map(|n| self.line_bus(n))
+            .collect();
+        self.can.set_logging(&buses);
+    }
+
+    /// Levels of the line probes now (`None`: not a CAN pin).
+    pub fn line_levels(&self) -> Vec<Option<bool>> {
+        self.can_probes
+            .iter()
+            .map(|n| self.line_bus(n).map(|b| self.can.level(b)))
+            .collect()
+    }
+
+    /// Level changes of the line probes up to `time`: (seconds, probe,
+    /// level).
+    pub fn take_line_edges(&mut self, time: Cycles) -> Vec<(f64, usize, bool)> {
+        let now = self.seconds_at(time);
+        let edges = self.can.take_edges(now);
+        let probes: Vec<Option<usize>> = self.can_probes.iter().map(|n| self.line_bus(n)).collect();
+        let mut out = Vec::new();
+        for (bus, t, level) in edges {
+            for (k, b) in probes.iter().enumerate() {
+                if *b == Some(bus) {
+                    out.push((t, k, level));
+                }
+            }
+        }
+        out
     }
 
     /// Turn a rotary encoder by `detents` (negative: counter-clockwise),
@@ -4563,6 +4763,8 @@ impl CircuitSim {
         let name = |(port, pin): (u8, u8)| format!("P{}{}", (b'A' + port) as char, pin);
         let mut reply = 0xFF;
         let mut drivers = Vec::new();
+        let now_s = self.seconds_at(time);
+        self.advance_can(now_s);
         // Bits that left a matrix on DOUT during this byte, by part.
         let mut overflow = Vec::new();
         for i in 0..self.spi_parts.len() {
@@ -4592,8 +4794,12 @@ impl CircuitSim {
                     }
                 }
                 Some(Device::Matrix(m)) => overflow.push((part.id.clone(), m.byte(out))),
-                Some(Device::Sd(sd)) => {
-                    let r = sd.exchange(out);
+                Some(Device::Sd(_)) | Some(Device::Can(_)) => {
+                    let r = match self.devices.get_mut(&part.id) {
+                        Some(Device::Sd(sd)) => sd.exchange(out),
+                        Some(Device::Can(c)) => c.spi_byte(out, now_s),
+                        _ => 0xFF,
+                    };
                     match (part.miso, miso_n) {
                         (Some(a), Some(b)) if a == b => {
                             reply &= r;
@@ -7839,5 +8045,183 @@ mod tests {
         assert!(s.warnings.is_empty(), "{:?}", s.warnings);
         // No sensorless part: the hall motor's halls are not needed.
         assert!(motor(&mut s, 2.5, "mot").text.is_none());
+    }
+    /// M35: two MCP2515 modules on SPI1 (CS PB6 and PB0), INT of `b` on
+    /// PA10, CANH to CANH and CANL to CANL.
+    fn can_pair(props: &[(&str, &str)]) -> CircuitSim {
+        let mut w = vec![];
+        for (id, cs) in [("a", "PB6"), ("b", "PB0")] {
+            w.extend([
+                wire((id, "VCC"), ("mcu", "5V")),
+                wire((id, "GND"), ("mcu", "GND")),
+                wire((id, "SCK"), ("mcu", "PA5")),
+                wire((id, "SI"), ("mcu", "PA7")),
+                wire((id, "SO"), ("mcu", "PA6")),
+                wire((id, "CS"), ("mcu", cs)),
+            ]);
+        }
+        w.extend([
+            wire(("b", "INT"), ("mcu", "PA10")),
+            wire(("a", "CANH"), ("b", "CANH")),
+            wire(("a", "CANL"), ("b", "CANL")),
+        ]);
+        sim(
+            vec![
+                part("a", "can-mcp2515", props),
+                part("b", "can-mcp2515", props),
+            ],
+            w,
+        )
+    }
+
+    /// The MCU's drives with `low` (if any) of the two CS pins low.
+    fn can_drives(s: &CircuitSim, low: Option<(u8, u8)>) -> Vec<Drive> {
+        drives(s, |p| match p {
+            (1, 6) | (1, 0) if Some(p) == low => Drive::Low,
+            (1, 6) | (1, 0) => Drive::High,
+            (0, 10) => Drive::PullUp,
+            _ => Drive::Float,
+        })
+    }
+
+    /// CS `cs` low, the bytes, CS high; returns what came back on MISO.
+    fn can_spi(s: &mut CircuitSim, t: &mut Cycles, cs: (u8, u8), bytes: &[u8]) -> Vec<u8> {
+        let d = can_drives(s, Some(cs));
+        s.update(*t, &d);
+        let out = bytes
+            .iter()
+            .map(|&b| s.spi(*t, (0, 5), (0, 7), Some((0, 6)), b))
+            .collect();
+        *t += 100;
+        let d = can_drives(s, None);
+        s.update(*t, &d);
+        *t += 100;
+        out
+    }
+
+    /// Both modules at 125 kbit/s (8 MHz), any message into RXB0 with its
+    /// interrupt, normal mode.
+    fn can_setup(s: &mut CircuitSim, t: &mut Cycles) {
+        for cs in [(1, 6), (1, 0)] {
+            can_spi(s, t, cs, &[0xC0]);
+            can_spi(s, t, cs, &[0x02, 0x28, 0x85, 0xB1, 0x01, 0x01]);
+            can_spi(s, t, cs, &[0x02, 0x60, 0x60]);
+            can_spi(s, t, cs, &[0x05, 0x0F, 0xE0, 0x00]);
+            assert_eq!(can_spi(s, t, cs, &[0x03, 0x0E, 0])[2], 0x00, "normal mode");
+        }
+    }
+
+    /// Run the circuit's own events up to `until`.
+    fn can_run(s: &mut CircuitSim, t: &mut Cycles, until: Cycles) {
+        let d = can_drives(s, None);
+        while let Some(e) = s.next_event() {
+            if e > until {
+                break;
+            }
+            *t = e;
+            s.update(e, &d);
+        }
+        *t = until.max(*t);
+        s.update(*t, &d);
+    }
+
+    #[test]
+    fn mcp2515_modules_send_frames_over_the_bus() {
+        let mut s = can_pair(&[]);
+        let (ca, cb) = ((1, 6), (1, 0));
+        let mut t = 0;
+        let pa10 = s.mcu_pins().iter().position(|&p| p == (0, 10)).unwrap();
+        can_setup(&mut s, &mut t);
+        s.set_line_probes(&["a.CANH".into(), "b.CANL".into(), "PA1".into()]);
+        assert_eq!(s.line_levels(), [Some(true), Some(true), None]);
+        assert_eq!(s.inputs_now[pa10], Some(true), "INT idles high");
+        // a: ID 0x123, 2 bytes, then RTS.
+        can_spi(&mut s, &mut t, ca, &[0x40, 0x24, 0x60, 0, 0, 2, 0xCA, 0xFE]);
+        can_spi(&mut s, &mut t, ca, &[0x81]);
+        assert!(s.next_event().is_some_and(|e| e > t));
+        // At 16 MHz: 11 bits to join, then about 60 bits of 8 µs.
+        can_run(&mut s, &mut t, 16_000_000 / 100);
+        assert_eq!(s.inputs_now[pa10], Some(false), "INT low");
+        let rx = can_spi(&mut s, &mut t, cb, &[0x90, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(rx[1..], [0x24, 0x60, 0, 0, 2, 0xCA, 0xFE]);
+        assert_eq!(
+            s.inputs_now[pa10],
+            Some(true),
+            "READ RX BUFFER cleared RX0IF"
+        );
+        // a got its TX0IF, TXREQ is clear.
+        assert_eq!(can_spi(&mut s, &mut t, ca, &[0xA0, 0])[1], 0x08);
+        let edges = s.take_line_edges(t);
+        assert!(edges.len() > 20, "{}", edges.len());
+        assert!(edges.iter().any(|e| e.1 == 0) && edges.iter().any(|e| e.1 == 1));
+        assert!(!edges[0].2, "SOF is dominant");
+        // SOF 11 bits after the last mode change (8 µs bits at 16 MHz).
+        let sof = edges[0].0;
+        assert!(sof > 11.0 * 8e-6, "{sof}");
+        let v = s.end_frame(t, 0.01);
+        let text = visual(&v, "b").text.clone().unwrap();
+        assert!(
+            text.starts_with("normal 125 kbit/s error-active TEC 0 REC 0 TX 0 RX 1"),
+            "{text}"
+        );
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    }
+
+    #[test]
+    fn mcp2515_without_termination_gets_no_ack() {
+        let mut s = can_pair(&[("term", "off")]);
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.contains("no 120 Ω termination")),
+            "{:?}",
+            s.warnings
+        );
+        let mut t = 0;
+        can_setup(&mut s, &mut t);
+        can_spi(&mut s, &mut t, (1, 6), &[0x40, 0x24, 0x60, 0, 0, 1, 0x55]);
+        can_spi(&mut s, &mut t, (1, 6), &[0x81]);
+        can_run(&mut s, &mut t, 16_000_000 / 100);
+        // TXERR, TXREQ still set (retransmitting), TEC up; b got nothing.
+        let ctrl = can_spi(&mut s, &mut t, (1, 6), &[0x03, 0x30, 0])[2];
+        assert_eq!(ctrl & 0x18, 0x18, "{ctrl:#x}");
+        let tec = can_spi(&mut s, &mut t, (1, 6), &[0x03, 0x1C, 0])[2];
+        assert!(tec >= 8, "{tec}");
+        assert_eq!(can_spi(&mut s, &mut t, (1, 0), &[0xA0, 0])[1] & 1, 0);
+    }
+
+    #[test]
+    fn mcp2515_wiring_faults_are_warned() {
+        let mut s = can_pair(&[]);
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        // CANH to CANL.
+        let mut c = s.circuit.clone();
+        c.wires
+            .retain(|w| !(w.a.pin == "CANH" || w.a.pin == "CANL"));
+        c.wires.push(wire(("a", "CANH"), ("b", "CANL")));
+        c.wires.push(wire(("a", "CANL"), ("b", "CANH")));
+        s.set_circuit(&c, 0);
+        assert!(
+            s.warnings.iter().any(|w| w.contains("CANH is wired to")),
+            "{:?}",
+            s.warnings
+        );
+        // 3.3 V supply: the transceiver does not work.
+        let mut c = s.circuit.clone();
+        for w in &mut c.wires {
+            if w.b.pin == "5V" {
+                w.b.pin = "3V3".into();
+            }
+        }
+        s.set_circuit(&c, 0);
+        let d = can_drives(&s, None);
+        s.update(10, &d);
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.contains("TJA1050 transceiver needs 5 V")),
+            "{:?}",
+            s.warnings
+        );
     }
 }

@@ -601,7 +601,7 @@ test("project file: broken or unknown settings get their defaults", () => {
         pins: ["PA5", "PZ9", 3, "PA5", "PB10"],
         analog: [{ spec: "pot.W", vdiv: -1 }, { vdiv: 1 }, { spec: "pot.W" }],
         decoders: [
-          { type: "can", pins: ["PA11"] },
+          { type: "lin", pins: ["PA11"] },
           { id: 4, type: "tm1637", pins: ["PB0"] },
           { id: 4, type: "ws2812", pins: [], baud: "fast" },
           { type: "spi", pins: ["PA5", "PA7", "", "x"], mode: 7 },

@@ -2459,6 +2459,8 @@ pub enum Device {
     Baro(Box<Bmp280>),
     /// M21: a BLDC whose hall sensors are open-collector outputs.
     Bldc(Box<crate::tier9::HallBldc>),
+    /// M35: an MCP2515 CAN controller (its bus is `sim`'s `CanNet`).
+    Can(Box<crate::mcp2515::Mcp2515>),
 }
 
 impl Device {
@@ -2510,6 +2512,8 @@ impl Device {
             Device::Tm(x) => x.ack.then_some(false),
             Device::Pir(p) => p.powered().then_some(p.out),
             Device::Bldc(b) => b.hall_output(index),
+            // INT: push-pull, low while an enabled interrupt is pending.
+            Device::Can(c) => c.powered.then_some(!c.int_active()),
             // STATE (0) is high while a phone is connected; TXD (1) idles high.
             Device::Bluetooth(b) => match index {
                 0 => Some(b.powered && b.connected && !b.at_mode),

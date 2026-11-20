@@ -36,6 +36,15 @@ pub enum Kind {
     Leader,
     /// NEC repeat code (9 ms mark, 2.25 ms space, mark).
     Repeat,
+    /// CAN (M35): start of frame, data length code, CRC, ACK slot, end of
+    /// frame, and a stuff or form error. The identifier is an `Address`
+    /// (`read`: a remote frame), data bytes are `Data`.
+    Sof,
+    Dlc,
+    Crc,
+    Ack,
+    Eof,
+    Error,
 }
 
 impl Kind {
@@ -51,6 +60,12 @@ impl Kind {
             Kind::Pixel => "pixel",
             Kind::Leader => "leader",
             Kind::Repeat => "repeat",
+            Kind::Sof => "sof",
+            Kind::Dlc => "dlc",
+            Kind::Crc => "crc",
+            Kind::Ack => "ack",
+            Kind::Eof => "eof",
+            Kind::Error => "error",
         }
     }
 }
@@ -123,7 +138,8 @@ pub enum Parity {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DecoderSpec {
-    /// `uart`, `i2c`, `spi`, `onewire`, `tm1637`, `ws2812` or `nec`.
+    /// `uart`, `i2c`, `spi`, `onewire`, `tm1637`, `ws2812`, `nec` or `can`
+    /// (whose bit rate is `baud`).
     #[serde(rename = "type")]
     pub kind: String,
     /// The pins of its roles (see `roles`); `""` for an optional one left
@@ -148,7 +164,7 @@ impl DecoderSpec {
     /// How many pins the decoder takes and how many of them it needs.
     pub fn roles(&self) -> Option<(usize, usize)> {
         Some(match self.kind.as_str() {
-            "uart" | "onewire" | "ws2812" | "nec" => (1, 1),
+            "uart" | "onewire" | "ws2812" | "nec" | "can" => (1, 1),
             "i2c" | "tm1637" => (2, 2),
             // SCK, MOSI, MISO, CS.
             "spi" => (4, 2),
@@ -1177,6 +1193,303 @@ impl Nec {
     }
 }
 
+// ------------------------------------------------------------------- CAN
+
+/// CRC-15 of CAN (polynomial 0x4599).
+fn can_crc(bits: &[bool]) -> u32 {
+    let mut crc: u32 = 0;
+    for &b in bits {
+        let next = b != (crc & 0x4000 != 0);
+        crc = (crc << 1) & 0x7FFF;
+        if next {
+            crc ^= 0x4599;
+        }
+    }
+    crc
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CanField {
+    Id,
+    B12,
+    Ide,
+    Eid,
+    Rtr,
+    R1,
+    R0,
+    Dlc,
+    Data,
+    Crc,
+    CrcDel,
+    Ack,
+    AckDel,
+    Eof,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CanSt {
+    Idle,
+    Wait,
+    Frame,
+}
+
+/// The bit-level state machine of the TypeScript `CanBits`.
+#[derive(Debug, Clone)]
+struct CanBits {
+    bit: f64,
+    st: CanSt,
+    count: u32,
+    field: CanField,
+    n: u32,
+    v: u32,
+    start: f64,
+    last: bool,
+    run: u32,
+    stuffing: bool,
+    raw: Vec<bool>,
+    id: u32,
+    rtr: bool,
+    len: u32,
+    id_start: f64,
+    dlc_start: f64,
+}
+
+impl CanBits {
+    fn idle(&self, level: bool) -> bool {
+        (self.st == CanSt::Idle && level) || (self.st == CanSt::Wait && !level)
+    }
+
+    fn error(&mut self, t: f64, out: &mut Vec<Item>) {
+        out.push(Item::new(Kind::Error, t, t + self.bit).fault(Some(Fault::Other)));
+        self.st = CanSt::Wait;
+        self.count = 0;
+    }
+
+    fn next(&mut self, f: CanField) {
+        self.field = f;
+        self.n = 0;
+        self.v = 0;
+    }
+
+    fn push(&mut self, b: bool, t: f64, out: &mut Vec<Item>) {
+        match self.st {
+            CanSt::Wait => {
+                self.count = if b { self.count + 1 } else { 0 };
+                if self.count >= 7 {
+                    self.st = CanSt::Idle;
+                }
+                return;
+            }
+            CanSt::Idle => {
+                if b {
+                    return;
+                }
+                out.push(Item::new(Kind::Sof, t, t + self.bit));
+                self.st = CanSt::Frame;
+                self.raw.clear();
+                self.raw.push(false);
+                self.last = false;
+                self.run = 1;
+                self.stuffing = true;
+                self.next(CanField::Id);
+                self.id_start = t + self.bit;
+                return;
+            }
+            CanSt::Frame => {}
+        }
+        if self.stuffing {
+            if self.run == 5 {
+                if b == self.last {
+                    return self.error(t, out);
+                }
+                self.last = b;
+                self.run = 1;
+                return;
+            }
+            if self.field == CanField::CrcDel {
+                self.stuffing = false;
+            } else if b == self.last {
+                self.run += 1;
+            } else {
+                self.last = b;
+                self.run = 1;
+            }
+        }
+        if self.n == 0 {
+            self.start = t;
+        }
+        self.n += 1;
+        self.v = self.v * 2 + b as u32;
+        let end = t + self.bit;
+        use CanField::*;
+        let f = self.field;
+        if !matches!(f, Crc | CrcDel | Ack | AckDel | Eof) {
+            self.raw.push(b);
+        }
+        let address = |start: f64, end: f64, id: u32, rtr: bool| {
+            let mut a = Item::new(Kind::Address, start, end).value(id);
+            a.addr = Some(id);
+            a.read = Some(rtr);
+            a
+        };
+        match f {
+            Id => {
+                if self.n == 11 {
+                    self.id = self.v;
+                    self.next(B12);
+                }
+            }
+            B12 => {
+                self.rtr = b;
+                self.next(Ide);
+            }
+            Ide => {
+                if !b {
+                    out.push(address(self.id_start, t, self.id, self.rtr));
+                    self.dlc_start = t;
+                    self.next(R0);
+                } else {
+                    self.next(Eid);
+                }
+            }
+            Eid => {
+                if self.n == 18 {
+                    self.id = self.id * 0x40000 + self.v;
+                    self.next(Rtr);
+                }
+            }
+            Rtr => {
+                self.rtr = b;
+                out.push(address(self.id_start, end, self.id, b));
+                self.dlc_start = end;
+                self.next(R1);
+            }
+            R1 => self.next(R0),
+            R0 => self.next(Dlc),
+            Dlc => {
+                if self.n == 4 {
+                    self.len = if self.rtr { 0 } else { self.v.min(8) };
+                    out.push(Item::new(Kind::Dlc, self.dlc_start, end).value(self.v));
+                    self.next(if self.len > 0 { Data } else { Crc });
+                }
+            }
+            Data => {
+                if self.n == 8 {
+                    out.push(Item::new(Kind::Data, self.start, end).value(self.v));
+                    self.len -= 1;
+                    self.next(if self.len > 0 { Data } else { Crc });
+                }
+            }
+            Crc => {
+                if self.n == 15 {
+                    let ok = can_crc(&self.raw) == self.v;
+                    out.push(
+                        Item::new(Kind::Crc, self.start, end)
+                            .value(self.v)
+                            .fault((!ok).then_some(Fault::Other)),
+                    );
+                    self.next(CrcDel);
+                }
+            }
+            CrcDel => {
+                if !b {
+                    return self.error(t, out);
+                }
+                self.next(Ack);
+            }
+            Ack => {
+                out.push(Item::new(Kind::Ack, t, end).fault(b.then_some(Fault::Other)));
+                self.next(AckDel);
+            }
+            AckDel => {
+                if !b {
+                    return self.error(t, out);
+                }
+                self.next(Eof);
+            }
+            Eof => {
+                if !b {
+                    return self.error(t, out);
+                }
+                if self.n == 7 {
+                    out.push(Item::new(Kind::Eof, self.start, end));
+                    self.st = CanSt::Idle;
+                }
+            }
+        }
+    }
+}
+
+/// CAN frames on one line (high = recessive), bit by bit from the runs
+/// between edges: a run holds round(length / bit time) bits.
+#[derive(Debug, Clone)]
+pub struct Can {
+    bit: f64,
+    level: bool,
+    /// Start of the present run (−∞: before the first edge).
+    s: f64,
+    /// Bits of the present run handled.
+    done: f64,
+    m: CanBits,
+}
+
+impl Can {
+    fn new(bitrate: f64, level: bool) -> Self {
+        let bit = 1e9 / bitrate;
+        Self {
+            bit,
+            level,
+            s: f64::NEG_INFINITY,
+            done: 0.0,
+            m: CanBits {
+                bit,
+                // Starting on a dominant level: in the middle of something.
+                st: if level { CanSt::Idle } else { CanSt::Wait },
+                count: 0,
+                field: CanField::Id,
+                n: 0,
+                v: 0,
+                start: 0.0,
+                last: false,
+                run: 0,
+                stuffing: false,
+                raw: Vec::new(),
+                id: 0,
+                rtr: false,
+                len: 0,
+                id_start: 0.0,
+                dlc_start: 0.0,
+            },
+        }
+    }
+
+    /// The bits of the present run known by `e`.
+    fn feed(&mut self, e: f64, out: &mut Vec<Item>) {
+        if self.s == f64::NEG_INFINITY {
+            return;
+        }
+        let n = ((e - self.s) / self.bit + 0.5).floor();
+        while self.done < n {
+            if self.m.idle(self.level) {
+                self.done = n;
+                break;
+            }
+            self.m.push(self.level, self.s + self.done * self.bit, out);
+            self.done += 1.0;
+        }
+    }
+
+    fn edge(&mut self, t: f64, l: bool, out: &mut Vec<Item>) {
+        if l == self.level {
+            return;
+        }
+        self.feed(t, out);
+        self.level = l;
+        self.s = t;
+        self.done = 0.0;
+    }
+}
+
 // --------------------------------------------------------------- Decoder
 
 /// One streaming decoder.
@@ -1188,6 +1501,7 @@ pub enum Decoder {
     OneWire(OneWire),
     Ws2812(Ws2812),
     Nec(Nec),
+    Can(Box<Can>),
 }
 
 impl Decoder {
@@ -1211,6 +1525,7 @@ impl Decoder {
             "onewire" => Decoder::OneWire(OneWire::new(l(0))),
             "ws2812" => Decoder::Ws2812(Ws2812::new(l(0), from)),
             "nec" => Decoder::Nec(Nec::new(l(0))),
+            "can" => Decoder::Can(Box::new(Can::new(spec.baud.max(1.0), l(0)))),
             _ => return None,
         })
     }
@@ -1224,6 +1539,7 @@ impl Decoder {
             Decoder::OneWire(d) => d.edge(t, level, out),
             Decoder::Ws2812(d) => d.edge(t, level, out),
             Decoder::Nec(d) => d.edge(t, level, out),
+            Decoder::Can(d) => d.edge(t, level, out),
         }
     }
 
@@ -1233,6 +1549,7 @@ impl Decoder {
             Decoder::Uart(d) => d.advance(now, out),
             Decoder::TwoWire(d) => d.advance_to(now, true, out),
             Decoder::Spi(d) => d.advance_to(now, true, out),
+            Decoder::Can(d) => d.feed(now, out),
             Decoder::OneWire(_) | Decoder::Ws2812(_) | Decoder::Nec(_) => {}
         }
     }

@@ -396,6 +396,45 @@
    "nucleo:CN7_24 nucleo:VIN"
   ]
  },
+ "examples/hal-can-mcp2515.simucleo.json": {
+  "parts": [
+   "can1 can-mcp2515 {\"term\":\"on\",\"osc\":\"8 MHz\"}",
+   "can2 can-mcp2515 {\"term\":\"on\",\"osc\":\"8 MHz\"}",
+   "nucleo nucleo-f401re {}"
+  ],
+  "nets": [
+   "can1:CANH can2:CANH",
+   "can1:CANL can2:CANL",
+   "can1:CS nucleo:CN10_17 nucleo:D10",
+   "can1:GND can2:GND nucleo:CN10_20 nucleo:CN10_32 nucleo:CN10_9 nucleo:CN7_19 nucleo:CN7_20 nucleo:CN7_22 nucleo:CN7_8 nucleo:GND_D nucleo:GND_P1 nucleo:GND_P2",
+   "can1:INT nucleo:CN10_33 nucleo:D2",
+   "can1:SCK can2:SCK nucleo:CN10_11 nucleo:D13",
+   "can1:SI can2:SI nucleo:CN10_15 nucleo:D11",
+   "can1:SO can2:SO nucleo:CN10_13 nucleo:D12",
+   "can1:VCC can2:VCC nucleo:5V nucleo:CN10_8 nucleo:CN7_18",
+   "can2:CS nucleo:CN10_19 nucleo:D9",
+   "can2:INT nucleo:CN10_21 nucleo:D8",
+   "nucleo:3V3 nucleo:AREF nucleo:CN10_7 nucleo:CN7_16 nucleo:CN7_5",
+   "nucleo:A0 nucleo:CN7_28",
+   "nucleo:A1 nucleo:CN7_30",
+   "nucleo:A2 nucleo:CN7_32",
+   "nucleo:A3 nucleo:CN7_34",
+   "nucleo:A4 nucleo:CN7_36",
+   "nucleo:A5 nucleo:CN7_38",
+   "nucleo:CN10_23 nucleo:D7",
+   "nucleo:CN10_25 nucleo:D6",
+   "nucleo:CN10_27 nucleo:D5",
+   "nucleo:CN10_29 nucleo:D4",
+   "nucleo:CN10_3 nucleo:D15",
+   "nucleo:CN10_31 nucleo:D3",
+   "nucleo:CN10_35 nucleo:D1",
+   "nucleo:CN10_37 nucleo:D0",
+   "nucleo:CN10_5 nucleo:D14",
+   "nucleo:CN7_12 nucleo:IOREF",
+   "nucleo:CN7_14 nucleo:RESET",
+   "nucleo:CN7_24 nucleo:VIN"
+  ]
+ },
  "examples/hal-dht-capture.simucleo.json": {
   "parts": [
    "dht dht {\"model\":\"DHT22\",\"temp\":22.5,\"humidity\":48.3}",

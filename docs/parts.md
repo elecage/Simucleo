@@ -150,6 +150,14 @@ L298N의 12 V는 코일에 정격 전류 0.4 A(단위 1.0)를 흘린다. A4988�
 전류 방향대로 한쪽이 VMOT, 다른 쪽이 GND다(초퍼의 PWM은 모델링하지 않음). 3상 브리지에서 두 스위치가 다 꺼진 순간이 PWM 주기
 안(데드타임, 한쪽만 초핑하는 오프 시간)이면 다이오드로 전류가 이어지는 쪽 레일에 붙는다.
 
+## CAN 버스 모듈 — MCP2515 + TJA1050 (M35) ✅
+
+| 부품 | 프로토콜 / 모델 | 필요한 MCU 기능 | 비고 |
+|---|---|---|---|
+| **CAN 버스 모듈** (`can-mcp2515`: MCP2515 + TJA1050, 8 MHz 크리스털) | SPI(모드 0,0): RESET 0xC0, READ 0x03, WRITE 0x02, READ RX BUFFER 0x90/0x92/0x94/0x96(CS가 오르면 RXnIF 지움), LOAD TX BUFFER 0x40–0x45, RTS 0x81–0x87, READ STATUS 0xA0, RX STATUS 0xB0, BIT MODIFY 0x05(비트 수정이 되는 레지스터만, 나머지는 마스크 0xFF). 레지스터 맵: CANCTRL/CANSTAT(모드 설정·정상·루프백·수신 전용·슬립, ABAT, OSM, ICOD), CNF1–3(비트레이트 = 1 / (2·(BRP+1)/f_osc × (1 + PRSEG+1 + PHSEG1+1 + PHSEG2+1)), BTLMODE 0이면 PS2 = max(PS1, 2)), TXBnCTRL/SIDH/SIDL/EID/DLC/D0–7(TXP 우선순위), RXB0/RXB1(RXM 00 필터·01 표준만·10 확장만·11 전부, BUKT 롤오버, FILHIT, RXRTR), 마스크 RXM0–1·필터 RXF0–5(확장 ID 29비트, 표준 프레임은 EID 비트가 데이터 0–1바이트를 거름), CANINTE/CANINTF와 INT 핀(푸시풀, Low = 켜진 플래그), EFLG(EWARN·RXWAR·TXWAR·RXEP·TXEP·TXBO·RX0OVR·RX1OVR), TEC/REC | 하드웨어 SPI + CS GPIO, INT는 GPIO 입력(폴링이나 EXTI) | 필터·마스크·CNF는 설정 모드에서만 써진다(아니면 무시 — 흔한 실수). 버스: CANH끼리·CANL끼리 이은 모듈들이 한 버스. 버스가 비면(인터미션 3비트 뒤) 기다리던 노드들이 동시에 시작해 ID로 중재(진 쪽 MLOA, 나중에 재시도); 프레임은 비트 단위(스터프 비트, CRC-15)로 만들어 송신 노드의 비트 시간만큼 걸리고, 끝날 때 결과를 적용(수신 노드는 마스크·필터대로 RXB0/RXB1, 넘치면 RXnOVR). ACK는 같은 비트레이트(±1 %)의 정상 모드 노드가 준다. ACK 없음(노드 혼자, 종단 저항 없음 — J1 점퍼가 하나도 없음): ACK 오류 + 오류 플래그, TXERR·MERRF, TEC +8, 재전송(OSM이면 한 번만); 에러 패시브(TEC ≥ 128)에서 ACK만 없으면 TEC는 128에 머문다(ISO 11898). 비트레이트가 다른 에러 액티브 노드는 프레임을 오류 플래그로 깨뜨리고(송신 TEC +8, 수신 REC +1) — 그래서 버스 오프(TEC > 255, 128 × 11 리세시브 비트 뒤 자동 복귀)까지 간다. VCC 4.5 V 미만이면 TJA1050이 버스에 닿지 못함(경고, 송신은 비트 오류). CANH↔CANL 바꿔 연결·CANH와 CANL 단락·종단 없음·종단 셋 이상은 경고. 모듈 위에 모드·비트레이트·TEC/REC·에러 상태·보낸/받은 수, INT LED. 파형 창: `can1.CANH`/`can1.CANL`을 디지털 프로브로 추가하면 그 버스의 차동 신호(High = 리세시브, 트랜시버의 RXD처럼)가 비트 에지 그대로 보이고, **CAN** 디코더(`decodeCan`, 비트레이트 선택)가 SOF·ID(11/29비트, RTR)·DLC·데이터·CRC(검사)·ACK·EOF와 스터프·형식 오류를 풀며, 해독 트리거는 ID(`주소`, R = 리모트 프레임)나 데이터 바이트로 건다(시뮬레이터 안의 같은 디코더 `crates/wasm/src/decode.rs`, 패리티 검사). 아날로그 채널로 CANH/CANL을 보면 바이어스 2.5 V와 120 Ω 종단만 보인다(비트 단위 전압은 그리지 않음). 웨이크업 필터·CLKOUT·RXnBF/TXnRTS 핀·SOF 출력·발진기 시작 시간은 미구현 |
+
+예제: `hal-can-mcp2515` — 모듈 두 개가 SPI1(CS D10·D9, INT D2·D8)에, 125 kbit/s. 노드 A가 100 ms마다 ID 0x123 카운터, 노드 B가 500 ms마다 확장 ID 0x18FF1234를 보내고, 받은 프레임을 USART2로 찍는다. B1을 누르면 노드 B가 250 kbit/s ↔ 125 kbit/s: 다른 비트레이트면 ACK가 없고 TEC가 올라 에러 패시브·버스 오프가 콘솔에 나온다.
+
 ## 후속 후보
 
 MPU-6050 FIFO·인터럽트, UART 핀 수준 파형(지금은 바이트 단위라 TX 핀을 프로브해도 프레임이 보이지 않음), USB-UART 모듈, 2·4채널 릴레이, HC-05 마스터 모드(두 모듈끼리 연결), DS18B20 기생 전원, TM1637 키 스캔(0x42 읽기), BMP280 IIR 필터·SPI 모드·BME280(습도), 74HC165(병렬 입력 시프트 레지스터), 5 V로 동작하는 595의 출력 전압(지금은 3.3 V로 계산). 모터: 센서리스(역기전력 영점) BLDC, 중앙 정렬 PWM(TIM1 CMS)과 반복 카운터, ESC의 BEC 출력·캘리브레이션·소리, 스테퍼 공진을 보여 주는 토크–속도 곡선, TMC2208 같은 UART 설정 드라이버, 엔코더가 달린 DC 모터(PID).

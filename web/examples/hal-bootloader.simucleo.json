@@ -11,5 +11,9 @@
       "props": {}
     }
   ],
-  "wires": []
+  "wires": [],
+  "firmware": {
+    "name": "hal-bootloader",
+    "example": "hal-bootloader.elf"
+  }
 }

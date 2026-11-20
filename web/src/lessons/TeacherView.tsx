@@ -3,6 +3,7 @@
 // Files are read in the browser; nothing is uploaded anywhere.
 import { useMemo, useState, type DragEvent } from "react";
 import { download } from "../editor/project";
+import { t } from "../i18n";
 import { LESSONS } from "./index";
 import { PART_BY_KIND } from "../parts";
 import { decodeShare, findFragments } from "../share/link";
@@ -26,7 +27,7 @@ interface Props {
   onClose(): void;
 }
 
-const BADGE: Record<string, string> = { verified: "✅ 검증됨", tampered: "⚠ 변조됨", unverified: "검증 안 됨" };
+const BADGE: Record<string, string> = { verified: t("✅ 검증됨"), tampered: t("⚠ 변조됨"), unverified: t("검증 안 됨") };
 
 /** Checks per step of the bundled lessons: older files that lack ungraded checks are completed from these. */
 const KNOWN: KnownLessons = Object.fromEntries(LESSONS.map((e) => [e.lesson.id, e.lesson.steps.map((s) => s.checks.length)]));
@@ -60,13 +61,20 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
   const addLinks = async (text: string) => {
     const frags = findFragments(text);
     const read: LoadedResult[] = [];
-    if (!frags.length) read.push({ source: "붙여 넣은 글", kind: "json", integrity: "unverified", error: "Simucleo 공유 링크(#s1=…)가 없습니다" });
+    if (!frags.length) read.push({ source: t("붙여 넣은 글"), kind: "json", integrity: "unverified", error: t("Simucleo 공유 링크(#s1=…)가 없습니다") });
     for (const [i, frag] of frags.entries()) {
       try {
         const r = await decodeShare(frag, PART_BY_KIND);
-        read.push(r.result ?? { source: `링크 ${i + 1}`, kind: "json", integrity: "unverified", error: "이 링크에는 실습 결과가 없습니다 (회로만 든 공유 링크)" });
+        read.push(
+          r.result ?? {
+            source: t("링크 {n}", { n: i + 1 }),
+            kind: "json",
+            integrity: "unverified",
+            error: t("이 링크에는 실습 결과가 없습니다 (회로만 든 공유 링크)"),
+          },
+        );
       } catch (e) {
-        read.push({ source: `링크 ${i + 1}`, kind: "json", integrity: "unverified", error: (e as Error).message });
+        read.push({ source: t("링크 {n}", { n: i + 1 }), kind: "json", integrity: "unverified", error: (e as Error).message });
       }
     }
     onFiles([...files, ...read]);
@@ -80,7 +88,7 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
   const sortBy = (by: string) => setSort((s) => (s.by === by ? { by, desc: !s.desc } : { by, desc: by !== "student" }));
   const arrow = (by: string) => (sort.by === by ? (sort.desc ? " ▼" : " ▲") : "");
   const th = (by: string, text: string, title?: string) => (
-    <th className="sortable" onClick={() => sortBy(by)} title={title ?? "눌러서 정렬"} aria-sort={sort.by === by ? (sort.desc ? "descending" : "ascending") : undefined}>
+    <th className="sortable" onClick={() => sortBy(by)} title={title ?? t("눌러서 정렬")} aria-sort={sort.by === by ? (sort.desc ? "descending" : "ascending") : undefined}>
       {text}
       {arrow(by)}
     </th>
@@ -89,12 +97,12 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
   const tampered = files.filter((f) => f.integrity === "tampered" && f.file);
 
   return (
-    <div className="overlay" role="dialog" aria-label="선생님용 결과 모아보기">
+    <div className="overlay" role="dialog" aria-label={t("선생님용 결과 모아보기")}>
       <div className="overlay-box teacher">
         <header>
-          <b>👩‍🏫 선생님용 결과 모아보기</b>
-          <span className="dim">파일은 이 브라우저 안에서만 읽습니다. 어디에도 올라가지 않습니다.</span>
-          <button className="close" onClick={onClose} aria-label="결과 모아보기 닫기">
+          <b>{t("👩‍🏫 선생님용 결과 모아보기")}</b>
+          <span className="dim">{t("파일은 이 브라우저 안에서만 읽습니다. 어디에도 올라가지 않습니다.")}</span>
+          <button className="close" onClick={onClose} aria-label={t("결과 모아보기 닫기")}>
             ×
           </button>
         </header>
@@ -105,9 +113,11 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
           onDrop={drop}
           data-testid="teacher-drop"
         >
-          학생들이 낸 결과 파일(<code>lesson-results_*.json</code>, CSV도 됨)을 여기에 끌어다 놓거나{" "}
+          {t("학생들이 낸 결과 파일(")}
+          <code>lesson-results_*.json</code>
+          {t(", CSV도 됨)을 여기에 끌어다 놓거나")}{" "}
           <label className="file-btn">
-            파일 고르기
+            {t("파일 고르기")}
             <input
               type="file"
               multiple
@@ -123,7 +133,7 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
           {files.length > 0 && (
             <>
               {" "}
-              <button onClick={() => onFiles([])}>모두 지우기</button>
+              <button onClick={() => onFiles([])}>{t("모두 지우기")}</button>
             </>
           )}
         </div>
@@ -131,31 +141,31 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
           <textarea
             value={links}
             onChange={(e) => setLinks(e.target.value)}
-            placeholder="학생이 '선생님께 보내기'로 보낸 링크를 붙여 넣으세요 (여러 개면 줄마다 하나씩)"
-            aria-label="공유 링크 붙여넣기"
+            placeholder={t("학생이 '선생님께 보내기'로 보낸 링크를 붙여 넣으세요 (여러 개면 줄마다 하나씩)")}
+            aria-label={t("공유 링크 붙여넣기")}
             rows={2}
           />
           <button onClick={() => void addLinks(links)} disabled={!links.trim()}>
-            링크 추가
+            {t("링크 추가")}
           </button>
         </div>
 
         {sources.length > 0 && (
           <details className="teacher-files" open={merged.errors.length > 0 || tampered.length > 0}>
             <summary>
-              파일 {sources.length}개 · 학생 {merged.students.length}명
-              {merged.duplicates.length > 0 && ` · 중복 ${merged.duplicates.length}건 (최신 것만 사용)`}
-              {tampered.length > 0 && ` · ⚠ 변조 의심 ${tampered.length}개`}
-              {merged.errors.length > 0 && ` · 읽지 못한 파일 ${merged.errors.length}개`}
+              {t("파일 {files}개 · 학생 {students}명", { files: sources.length, students: merged.students.length })}
+              {merged.duplicates.length > 0 && t(" · 중복 {n}건 (최신 것만 사용)", { n: merged.duplicates.length })}
+              {tampered.length > 0 && t(" · ⚠ 변조 의심 {n}개", { n: tampered.length })}
+              {merged.errors.length > 0 && t(" · 읽지 못한 파일 {n}개", { n: merged.errors.length })}
             </summary>
             <ul>
               {files.map((f, i) => (
                 <li key={i} data-testid="teacher-file" data-integrity={f.integrity}>
-                  <code>{f.source}</code> {f.file ? `${f.file.student || "(이름 없음)"} · ` : ""}
+                  <code>{f.source}</code> {f.file ? `${f.file.student || t("(이름 없음)")} · ` : ""}
                   {f.error ? <span className="error">{f.error}</span> : <span className={`badge ${f.integrity}`}>{BADGE[f.integrity]}</span>}
-                  {f.kind === "csv" && <span className="dim"> (CSV에는 해시가 없습니다)</span>}{" "}
-                  <button className="small" onClick={() => onFiles(files.filter((_, j) => j !== i))} aria-label={`${f.source} 빼기`}>
-                    빼기
+                  {f.kind === "csv" && <span className="dim">{t(" (CSV에는 해시가 없습니다)")}</span>}{" "}
+                  <button className="small" onClick={() => onFiles(files.filter((_, j) => j !== i))} aria-label={t("{name} 빼기", { name: f.source })}>
+                    {t("빼기")}
                   </button>
                 </li>
               ))}
@@ -164,7 +174,12 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
               <ul className="dim" data-testid="teacher-duplicates">
                 {merged.duplicates.map((d, i) => (
                   <li key={i}>
-                    중복: {d.student} · {d.lessonId} — {d.kept} 사용, {d.dropped} 무시
+                    {t("중복: {student} · {lesson} — {kept} 사용, {dropped} 무시", {
+                      student: d.student,
+                      lesson: d.lessonId,
+                      kept: d.kept,
+                      dropped: d.dropped,
+                    })}
                   </li>
                 ))}
               </ul>
@@ -175,9 +190,9 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
         {merged.students.length > 0 && (
           <>
             <div className="teacher-tools">
-              <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="학생 이름 검색" aria-label="학생 검색" />
-              <select value={lesson} onChange={(e) => setLesson(e.target.value)} aria-label="실습 고르기">
-                <option value="">모든 실습</option>
+              <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t("학생 이름 검색")} aria-label={t("학생 검색")} />
+              <select value={lesson} onChange={(e) => setLesson(e.target.value)} aria-label={t("실습 고르기")}>
+                <option value="">{t("모든 실습")}</option>
                 {merged.lessons.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.title}
@@ -185,24 +200,24 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
                 ))}
               </select>
               <label>
-                <input type="checkbox" checked={incompleteOnly} onChange={(e) => setIncompleteOnly(e.target.checked)} /> 미완료만
+                <input type="checkbox" checked={incompleteOnly} onChange={(e) => setIncompleteOnly(e.target.checked)} /> {t("미완료만")}
               </label>
               <label>
-                <input type="checkbox" checked={tamperedOnly} onChange={(e) => setTamperedOnly(e.target.checked)} /> 변조 의심만
+                <input type="checkbox" checked={tamperedOnly} onChange={(e) => setTamperedOnly(e.target.checked)} /> {t("변조 의심만")}
               </label>
               <button
                 onClick={() => download("lesson-results-table.csv", new Blob([tableCsv(merged, rows, lesson || undefined)], { type: "text/csv" }))}
-                title="지금 보이는 표(검색·필터·정렬 적용)를 CSV로 저장"
+                title={t("지금 보이는 표(검색·필터·정렬 적용)를 CSV로 저장")}
               >
-                표 CSV로 내보내기
+                {t("표 CSV로 내보내기")}
               </button>
             </div>
             <div className="teacher-scroll">
               <table className="teacher-table" data-testid="teacher-table">
                 <thead>
                   <tr>
-                    <th rowSpan={2}>학생</th>
-                    <th rowSpan={2}>검증</th>
+                    <th rowSpan={2}>{t("학생")}</th>
+                    <th rowSpan={2}>{t("검증")}</th>
                     {cols.map((c) => (
                       <th key={c.id} colSpan={2 + c.steps.length} className="lesson-head">
                         {c.title}
@@ -211,8 +226,8 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
                   </tr>
                   <tr>
                     {cols.map((c) => [
-                      th(`score:${c.id}`, "점수", "통과한 검사 비율"),
-                      th(`time:${c.id}`, "걸린 시간", "시작부터 완료까지"),
+                      th(`score:${c.id}`, t("점수"), t("통과한 검사 비율")),
+                      th(`time:${c.id}`, t("걸린 시간"), t("시작부터 완료까지")),
                       ...c.steps.map((s) => (
                         <th key={`${c.id}:${s.index}`} className="sortable step-head" onClick={() => sortBy(`step:${c.id}:${s.index}`)} title={s.title}>
                           {s.index + 1}. {s.title}
@@ -259,15 +274,19 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
                             {(cell.pending > 0 || cell.unknownTotal) && (
                               <span
                                 className="dim pending-note"
-                                title={cell.unknownTotal ? "이 파일에는 채점하지 않은 검사가 빠져 있어 전체 검사 수를 알 수 없습니다" : `채점하지 않은 검사 ${cell.pending}개`}
+                                title={
+                                  cell.unknownTotal
+                                    ? t("이 파일에는 채점하지 않은 검사가 빠져 있어 전체 검사 수를 알 수 없습니다")
+                                    : t("채점하지 않은 검사 {n}개", { n: cell.pending })
+                                }
                               >
                                 {" "}
-                                · 미채점 검사 있음
+                                {t("· 미채점 검사 있음")}
                               </span>
                             )}
                           </td>,
                           <td key={`${c.id}:t`} data-cell={`${c.id}:time`}>
-                            {cell.completed ? fmtDuration(cell.timeMs) : <span className="dim">미완료</span>}
+                            {cell.completed ? fmtDuration(cell.timeMs) : <span className="dim">{t("미완료")}</span>}
                           </td>,
                           ...c.steps.map((s) => {
                             const sc = cell.steps[s.index];
@@ -277,7 +296,12 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
                                 data-cell={`${c.id}:${s.index}`}
                                 data-status={sc?.status}
                                 className={sc?.status}
-                                title={sc ? `${sc.passed}/${sc.total} 통과${sc.pending ? ` (미채점 ${sc.pending})` : ""}` : undefined}
+                                title={
+                                  sc
+                                    ? t("{passed}/{total} 통과", { passed: sc.passed, total: sc.total }) +
+                                      (sc.pending ? t(" (미채점 {n})", { n: sc.pending }) : "")
+                                    : undefined
+                                }
                               >
                                 {!sc ? "" : sc.status === "pass" ? "✅" : sc.status === "partial" ? `◐ ${sc.passed}/${sc.total}` : "❌"}
                                 {sc?.timeMs !== undefined && <span className="dim"> {fmtDuration(sc.timeMs)}</span>}
@@ -291,12 +315,12 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
                 </tbody>
                 <tfoot>
                   <tr data-testid="pass-rates">
-                    <th scope="row">통과율</th>
-                    <td className="dim">제출한 학생 중</td>
+                    <th scope="row">{t("통과율")}</th>
+                    <td className="dim">{t("제출한 학생 중")}</td>
                     {cols.map((c) => [
                       <RateCell key={`${c.id}:c`} r={rates[c.id]?.completed} />,
                       <td key={`${c.id}:t`} className="dim">
-                        완료
+                        {t("완료")}
                       </td>,
                       ...c.steps.map((s) => (
                         <td key={`${c.id}:${s.index}`} data-rate={`${c.id}:${s.index}`} className={undefined}>
@@ -309,8 +333,9 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
               </table>
             </div>
             <p className="hint">
-              ⚠ 변조됨: 파일 안의 해시(SHA-256)가 내용과 맞지 않습니다. 결과를 손으로 고쳤을 수 있습니다. 검증 안 됨: 해시가 없는 파일(이전
-              버전에서 내보냈거나 CSV). 해시는 메모장으로 고치는 정도만 잡아내며, 마음먹고 고치면 막을 수 없습니다.
+              {t(
+                "⚠ 변조됨: 파일 안의 해시(SHA-256)가 내용과 맞지 않습니다. 결과를 손으로 고쳤을 수 있습니다. 검증 안 됨: 해시가 없는 파일(이전 버전에서 내보냈거나 CSV). 해시는 메모장으로 고치는 정도만 잡아내며, 마음먹고 고치면 막을 수 없습니다.",
+              )}
             </p>
           </>
         )}

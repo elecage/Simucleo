@@ -783,7 +783,9 @@ const within = (x: number, lo: number, hi: number) => x >= lo && x <= hi;
  * once the 32 bits are in, with an error when a check byte is not the
  * inverse; a 9 ms mark with a 2.25 ms space and a mark is a repeat code
  * (the key is held). A mark or space of the wrong width, or a new leader
- * before the 32nd bit, is an error.
+ * before the 32nd bit, is an error. A frame is good (and matches a content
+ * condition) only once its final mark has ended within 0.3–0.9 ms; one
+ * that is too long, or not over when the span ends, is an error.
  */
 export function decodeNec(line: Line): Annotation[] {
   const out: Annotation[] = [];
@@ -794,7 +796,8 @@ export function decodeNec(line: Line): Annotation[] {
     | { s: "idle" }
     | { s: "leader"; start: number }
     | { s: "bits"; lead: Annotation; n: number; cur: number; bytes: number[]; byteStart: number }
-    | { s: "repeat"; start: number };
+    | { s: "repeat"; start: number }
+    | { s: "stop"; lead: Annotation };
   let st: St = { s: "idle" };
   const us = (ns: number) => (ns / 1000).toFixed(0);
   for (const [t, l] of line.edges) {
@@ -834,7 +837,8 @@ export function decodeNec(line: Line): Annotation[] {
             st.lead.value = c;
             if ((a ^ na) !== 0xff) st.lead.error = `주소 검사 실패 (0x${a.toString(16)} / 0x${na.toString(16)})`;
             else if ((c ^ nc) !== 0xff) st.lead.error = `명령 검사 실패 (0x${c.toString(16)} / 0x${nc.toString(16)})`;
-            st = { s: "idle" };
+            // This edge starts the final mark: the frame counts once it ends within tolerance.
+            st = { s: "stop", lead: st.lead };
           }
         }
       }
@@ -842,6 +846,14 @@ export function decodeNec(line: Line): Annotation[] {
     } else {
       // A mark ends.
       const w = t - lastFall;
+      if (st.s === "stop") {
+        // The final mark: a leader-long one cuts the frame short.
+        if (!within(w, NEC.markMin, NEC.markMax))
+          st.lead.error ??= within(w, NEC.leaderMarkMin, NEC.leaderMarkMax)
+            ? `프레임이 끝나지 않음 (마지막 마크 ${us(w)} µs)`
+            : `마지막 마크 폭 ${us(w)} µs (0.56 ms가 아님)`;
+        st = { s: "idle" };
+      }
       if (within(w, NEC.leaderMarkMin, NEC.leaderMarkMax)) {
         if (st.s === "bits") st.lead.error = `프레임이 끝나지 않음 (${st.n}비트)`;
         st = { s: "leader", start: lastFall };
@@ -857,6 +869,8 @@ export function decodeNec(line: Line): Annotation[] {
       lastRise = t;
     }
   }
+  // The span ends before the frame (or its final mark) does.
+  if (st.s === "bits" || st.s === "stop") st.lead.error ??= st.s === "stop" ? "프레임이 끝나지 않음 (마지막 마크)" : `프레임이 끝나지 않음 (${st.n}비트)`;
   return out;
 }
 

@@ -24,14 +24,14 @@ class Ir {
     return this;
   }
   /** A whole frame: leader, 32 bits LSB first, final mark. */
-  frame(bytes: number[], o: { bitMark?: number } = {}) {
+  frame(bytes: number[], o: { bitMark?: number; finalMark?: number } = {}) {
     this.mark(9e6).space(4.5e6);
     for (const b of bytes)
       for (let k = 0; k < 8; k++) {
         this.mark(o.bitMark ?? M);
         this.space((b >> k) & 1 ? 3 * M : M);
       }
-    return this.mark(M);
+    return this.mark(o.finalMark ?? M);
   }
   repeat() {
     return this.mark(9e6).space(2.25e6).mark(M);
@@ -116,6 +116,28 @@ test("NEC errors: a check byte that is not the inverse, a bad space, a cut frame
   assert.match(decodeNec(new Ir().frame(nec(0, 1), { bitMark: 1.2e6 }).line())[0].error!, /마크 폭 1200 µs/);
   // A short burst alone is no frame.
   assert.deepEqual(decodeNec(new Ir().mark(M).space(M).mark(M).line()), []);
+});
+
+test("NEC: the frame counts only once its final mark has ended within tolerance", () => {
+  const good = (o: { finalMark?: number }) => decodeNec(new Ir().frame(nec(0, 0x1c), o).space(40e6).line());
+  const ok = good({});
+  assert.equal(ok[0].error, undefined);
+  assert.deepEqual(findMatches(ok, { kind: "nec", cmd: 0x1c }), [1e6]);
+  // A 4 ms final mark: the bytes are shown, the frame is in error and does not match.
+  const long = good({ finalMark: 4e6 });
+  assert.equal(long[0].value, 0x1c);
+  assert.equal(long[0].error, "마지막 마크 폭 4000 µs (0.56 ms가 아님)");
+  assert.deepEqual(findMatches(long, { kind: "nec", cmd: 0x1c }), []);
+  // A leader-long one cuts it short (and is the next leader).
+  const cut = good({ finalMark: 9e6 });
+  assert.equal(cut[0].error, "프레임이 끝나지 않음 (마지막 마크 9000 µs)");
+  assert.deepEqual(findMatches(cut, { kind: "nec", cmd: 0x1c }), []);
+  // A final mark not over when the span ends.
+  const open = new Ir().frame(nec(0, 0x1c));
+  open.edges.pop();
+  const o = decodeNec(open.line());
+  assert.equal(o[0].error, "프레임이 끝나지 않음 (마지막 마크)");
+  assert.deepEqual(findMatches(o, { kind: "nec", cmd: 0x1c }), []);
 });
 
 test("NEC content condition: a command (and address), check bytes right", () => {

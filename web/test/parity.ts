@@ -396,7 +396,7 @@ function necStream(seed: number) {
     l.at(t + ns, true);
     t += ns;
   };
-  const frame = (addr: number, cmd: number, o: { badCheck?: boolean; cut?: number; badSpace?: boolean } = {}) => {
+  const frame = (addr: number, cmd: number, o: { badCheck?: boolean; cut?: number; badSpace?: boolean; finalMark?: number } = {}) => {
     const bytes = [addr, ~addr & 0xff, cmd, (~cmd & 0xff) ^ (o.badCheck ? 4 : 0)];
     mark(9e6);
     t += 4.5e6;
@@ -409,7 +409,7 @@ function necStream(seed: number) {
         if (o.badSpace && n === 13) t += 2e6;
         n++;
       }
-    mark(M);
+    mark(o.finalMark ?? M);
   };
   const repeat = () => {
     mark(9e6);
@@ -444,6 +444,13 @@ function necStream(seed: number) {
       t += 30e6;
     }
   }
+  // Final marks out of tolerance: too long, and leader-long (cut short).
+  frame(0x00, 0x1c, { finalMark: 4e6 });
+  t += 40e6;
+  frame(0x00, 0x1c, { finalMark: 0.2e6 });
+  t += 40e6;
+  frame(0x00, 0x1c, { finalMark: 9e6 });
+  t += 40e6;
   frame(0x00, 0x1c);
   t += 50e6;
   l.at(t, true);

@@ -1011,6 +1011,13 @@ enum NecSt {
     Repeat {
         start: f64,
     },
+    /// The 32 bits are in; the final mark (begun) must end within
+    /// tolerance before the frame counts.
+    Stop {
+        start: f64,
+        lead_end: f64,
+        bits: u32,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -1085,14 +1092,12 @@ impl Nec {
                             byte_start = t;
                         }
                         if n == 32 {
-                            let b = |k: u32| (bits >> (8 * k)) & 0xff;
-                            let ok = b(0) ^ b(1) == 0xff && b(2) ^ b(3) == 0xff;
-                            let mut it = Item::new(Kind::Leader, start, lead_end)
-                                .value(b(2))
-                                .fault((!ok).then_some(Fault::Other));
-                            it.addr = Some(b(0));
-                            out.push(it);
-                            self.st = NecSt::Idle;
+                            // This edge starts the final mark.
+                            self.st = NecSt::Stop {
+                                start,
+                                lead_end,
+                                bits,
+                            };
                         } else {
                             self.st = NecSt::Bits {
                                 start,
@@ -1104,12 +1109,38 @@ impl Nec {
                         }
                     }
                 }
-                NecSt::Idle | NecSt::Repeat { .. } => {}
+                NecSt::Idle | NecSt::Repeat { .. } | NecSt::Stop { .. } => {}
             }
             self.last_fall = t;
         } else {
             // A mark ends.
             let w = t - self.last_fall;
+            if let NecSt::Stop {
+                start,
+                lead_end,
+                bits,
+            } = self.st
+            {
+                // The final mark ends: the frame counts only if it is a
+                // mark (a leader-long one cuts the frame short).
+                let b = |k: u32| (bits >> (8 * k)) & 0xff;
+                let ok = b(0) ^ b(1) == 0xff && b(2) ^ b(3) == 0xff;
+                let fault = if !ok {
+                    Some(Fault::Other)
+                } else if within(w, MARK_MIN, MARK_MAX) {
+                    None
+                } else if within(w, LEADER_MARK_MIN, LEADER_MARK_MAX) {
+                    Some(Fault::Partial)
+                } else {
+                    Some(Fault::Other)
+                };
+                let mut it = Item::new(Kind::Leader, start, lead_end)
+                    .value(b(2))
+                    .fault(fault);
+                it.addr = Some(b(0));
+                out.push(it);
+                self.st = NecSt::Idle;
+            }
             if within(w, LEADER_MARK_MIN, LEADER_MARK_MAX) {
                 if let NecSt::Bits {
                     start, lead_end, ..
@@ -1695,6 +1726,71 @@ mod tests {
         }
         s.push((M, after));
         s
+    }
+
+    #[test]
+    fn nec_frame_counts_only_once_its_final_mark_ends_within_tolerance() {
+        let decode = |final_mark: f64, end: bool| {
+            let mut s = nec_frame([0x00, 0xff, 0x1c, 0xe3], 40e6);
+            s.last_mut().unwrap().0 = final_mark;
+            let mut e = ir(&s);
+            if !end {
+                // The final mark never ends.
+                e.pop();
+            }
+            let mut d = Decoder::new(&spec("nec"), &[true], &[true], 0.0).unwrap();
+            let items = run1(&mut d, &e);
+            let m = matches(
+                Match::Nec {
+                    cmd: 0x1c,
+                    addr: None,
+                },
+                &items,
+            );
+            let lead: Vec<_> = items
+                .iter()
+                .filter(|i| i.kind == Kind::Leader)
+                .map(|i| (i.value, i.fault))
+                .collect();
+            (lead, m)
+        };
+        assert_eq!(decode(M, true), (vec![(Some(0x1c), None)], vec![1e6]));
+        // 4 ms: an error, no match.
+        assert_eq!(
+            decode(4e6, true),
+            (vec![(Some(0x1c), Some(Fault::Other))], vec![])
+        );
+        // Leader-long: cut short.
+        assert_eq!(
+            decode(9e6, true),
+            (vec![(Some(0x1c), Some(Fault::Partial))], vec![])
+        );
+        // Never ends: no frame (yet), no match.
+        assert_eq!(decode(M, false), (vec![], vec![]));
+    }
+
+    #[test]
+    fn nec_match_waits_for_the_final_mark_and_triggers_at_the_leader() {
+        let s = nec_frame([0x00, 0xff, 0x1c, 0xe3], 40e6);
+        let e = ir(&s);
+        let mut d = Decoder::new(&spec("nec"), &[true], &[true], 0.0).unwrap();
+        let mut m = Matcher::new(Match::Nec {
+            cmd: 0x1c,
+            addr: None,
+        });
+        let mut out = Vec::new();
+        let n = e.len();
+        for &(t, l) in &e[..n - 1] {
+            d.edge(0, t, l, &mut out);
+        }
+        // The final mark has begun: not yet.
+        assert!(out.iter().all(|i| m.item(i).is_none()));
+        out.clear();
+        d.edge(0, e[n - 1].0, e[n - 1].1, &mut out);
+        assert_eq!(
+            out.iter().filter_map(|i| m.item(i)).collect::<Vec<_>>(),
+            [1e6]
+        );
     }
 
     #[test]

@@ -13,7 +13,7 @@
     "e2e": "playwright test",
     "examples": "node scripts/examples.mjs",
     "editor": "node scripts/editor-sdk.mjs",
-    "test:toolchain": "SIMUCLEO_TOOLCHAIN_TEST=1 node --test test/m33-toolchain.test.ts"
+    "test:toolchain": "SIMUCLEO_TOOLCHAIN_TEST=1 node --test test/m33-toolchain.test.ts test/m36-toolchain.test.ts"
   },
   "dependencies": {
     "@codemirror/autocomplete": "6.20.4",

@@ -216,3 +216,66 @@ test("share links carry no sources: the receiver gets the ELF and the usual no-s
     await context.close();
   }
 });
+
+// Loads still on their way give way to an upload (M39 review): the last
+// session's restore, answering late, must not replace the uploaded ELF;
+// sources read while another firmware came must not attach to it.
+
+test("an upload made while the last session is still being restored stays", async ({ page }) => {
+  page.on("dialog", (d) => void d.accept());
+  await page.addInitScript(() => {
+    const get = IDBObjectStore.prototype.get;
+    IDBObjectStore.prototype.get = function (this: IDBObjectStore, key: IDBValidKey | IDBKeyRange) {
+      const req = get.call(this, key);
+      if (key === "autosave" && localStorage.getItem("slow-autosave")) {
+        let handler: ((e: Event) => void) | null = null;
+        Object.defineProperty(req, "onsuccess", {
+          configurable: true,
+          get: () => handler,
+          set(f: (e: Event) => void) {
+            handler = f;
+            req.addEventListener("success", (e) => setTimeout(() => handler?.(e), 2500));
+          },
+        });
+      }
+      return req;
+    };
+  });
+  await ready(page);
+  await page.getByLabel("예제 펌웨어").selectOption("hal-imu-matrix.elf");
+  await expect(status(page)).toContainText("hal-imu-matrix");
+  await page.waitForTimeout(1500); // autosaved
+  await page.evaluate(() => localStorage.setItem("slow-autosave", "1"));
+  await page.reload();
+  await expect(status(page)).toContainText("예제를");
+  await openUploadMenu(page);
+  await page.getByTestId("bundle-input").setInputFiles(ZIP);
+  await expect(status(page)).toContainText("blinky.elf");
+  await page.waitForTimeout(4000);
+  await expect(status(page)).toContainText("blinky.elf");
+  await expect(uploadStatus(page)).toContainText(/소스 \d+개 연결/);
+});
+
+test("sources read while another firmware is loaded are not attached to it", async ({ page }) => {
+  // With the flag set, reading an uploaded file takes 2 s.
+  await page.addInitScript(() => {
+    const read = Blob.prototype.arrayBuffer;
+    Blob.prototype.arrayBuffer = async function (this: Blob) {
+      if ((window as unknown as { slowFiles?: boolean }).slowFiles) await new Promise((r) => setTimeout(r, 2000));
+      return read.call(this);
+    };
+  });
+  await ready(page);
+  await page.getByTestId("elf-input").setInputFiles(`${FIXTURE}/Debug/blinky.elf`);
+  await expect(status(page)).toContainText("blinky.elf");
+  const zip = writeZip([{ name: "blinky/Core/Src/main.c", data: readFileSync(`${FIXTURE}/Core/Src/main.c`) }]);
+  await openUploadMenu(page);
+  await page.evaluate(() => ((window as unknown as { slowFiles: boolean }).slowFiles = true));
+  await page.getByTestId("bundle-input").setInputFiles({ name: "core.zip", mimeType: "application/zip", buffer: Buffer.from(zip) });
+  // Meanwhile: another firmware (an example, fetched, not read from a file).
+  page.on("dialog", (d) => void d.accept());
+  await page.getByLabel("예제 펌웨어").selectOption("hal-blinky.elf");
+  await expect(status(page)).toContainText("hal-blinky");
+  await expect(uploadStatus(page)).toContainText("펌웨어가 바뀌어 소스를 붙이지 않았습니다");
+  await expect(uploadStatus(page)).not.toContainText("붙임");
+});

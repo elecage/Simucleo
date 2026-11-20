@@ -352,7 +352,8 @@ export function App() {
   };
 
   // ------------------------------------- project folder / zip (M39)
-  const sourceUpload = useSourceUpload(runner);
+  const userLoad = useCallback(() => void ++loadGen.current, []);
+  const sourceUpload = useSourceUpload(runner, userLoad);
   // Files dragged over the window: a fixed overlay (it moves nothing), and a
   // drop anywhere that nobody else took (the teacher view takes its own).
   const [dropping, setDropping] = useState(false);
@@ -703,7 +704,7 @@ export function App() {
           </button>
         </span>
         <ProjectMenu project={project} name={projectName} runner={runner} onNew={onNew} onOpenText={openText} />
-        <RunControls runner={runner} examples={examples} onExampleProject={onExampleProject} onUserLoad={() => ++loadGen.current} />
+        <RunControls runner={runner} examples={examples} onExampleProject={onExampleProject} onUserLoad={userLoad} />
         <button
           className={lessonOpen ? "lesson-toggle on" : "lesson-toggle"}
           onClick={() => {

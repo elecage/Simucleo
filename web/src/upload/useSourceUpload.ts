@@ -29,7 +29,11 @@ export interface SourceUpload {
 
 const baseName = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 
-export function useSourceUpload(runner: Runner): SourceUpload {
+/**
+ * `onLoad` is called as an upload loads its ELF: the app's other loads still
+ * on their way (a restore, an example) then give way to it.
+ */
+export function useSourceUpload(runner: Runner, onLoad?: () => void): SourceUpload {
   const [attached, setAttached] = useState<Attached | null>(null);
   const [message, setMessage] = useState<UploadMessage | null>(null);
   const [choice, setChoice] = useState<SourceUpload["choice"]>(null);
@@ -38,6 +42,9 @@ export function useSourceUpload(runner: Runner): SourceUpload {
   // Sources waiting for the DWARF paths of the ELF just loaded.
   const pending = useRef<{ sources: SourceFile[]; before: Runner["debugFiles"]; name: string } | null>(null);
   const { load, firmwareBytes, debugFiles, firmware, loadError } = runner;
+  // The firmware as it is now (an upload awaits; the closure's may be stale).
+  const now = useRef({ firmwareBytes, debugFiles, firmware });
+  now.current = { firmwareBytes, debugFiles, firmware };
 
   const keep = useCallback((a: Attached) => {
     setAttached(a);
@@ -58,9 +65,10 @@ export function useSourceUpload(runner: Runner): SourceUpload {
     (elf: ElfCandidate, sources: SourceFile[]) => {
       const name = baseName(elf.path);
       pending.current = { sources, before: debugFiles, name };
+      onLoad?.();
       load(name, elf.bytes.slice().buffer as ArrayBuffer);
     },
-    [load, debugFiles],
+    [load, debugFiles, onLoad],
   );
 
   const upload = useCallback(
@@ -69,7 +77,9 @@ export function useSourceUpload(runner: Runner): SourceUpload {
       setSeq((s) => s + 1);
       try {
         if (!files.length) return;
+        const started = now.current.firmwareBytes;
         const got = await collect(files);
+        const cur = now.current;
         if (got.elfs.length > 1) {
           setChoice({ elfs: got.elfs, sources: got.sources });
           setMessage({ kind: "info", text: `ELF가 ${got.elfs.length}개 있습니다. 불러올 것을 고르세요.` });
@@ -79,13 +89,16 @@ export function useSourceUpload(runner: Runner): SourceUpload {
           loadElf(got.elfs[0], got.sources);
         } else if (!got.sources.length) {
           setMessage({ kind: "error", text: "ELF도 소스 파일(.c, .h, .s)도 없습니다. CubeIDE 프로젝트 폴더(Debug 폴더 포함)나 그 zip을 올리세요." });
-        } else if (!firmwareBytes || !firmware) {
+        } else if (!cur.firmwareBytes || !cur.firmware) {
           setMessage({ kind: "error", text: "ELF가 없습니다. Debug 폴더의 .elf를 함께 올리거나 먼저 펌웨어를 불러오세요." });
+        } else if (cur.firmwareBytes !== started) {
+          // Another firmware came while the files were read: these sources were for the one before.
+          setMessage({ kind: "error", text: "파일을 읽는 사이에 펌웨어가 바뀌어 소스를 붙이지 않았습니다. 다시 올리세요." });
         } else {
           // Sources only: attach them to the firmware already loaded.
-          const a = attachSources(elfKey(firmwareBytes), debugFiles.map((f) => f.path), got.sources);
+          const a = attachSources(elfKey(cur.firmwareBytes), cur.debugFiles.map((f) => f.path), got.sources);
           if (Object.keys(a.files).length) keep(a);
-          report(a, ` (지금 펌웨어 ${firmware}에 붙임)`);
+          report(a, ` (지금 펌웨어 ${cur.firmware}에 붙임)`);
         }
       } catch (e) {
         setMessage({ kind: "error", text: `올리지 못했습니다: ${(e as Error).message}` });
@@ -93,7 +106,7 @@ export function useSourceUpload(runner: Runner): SourceUpload {
         setBusy(false);
       }
     },
-    [loadElf, firmwareBytes, firmware, debugFiles, keep, report],
+    [loadElf, keep, report],
   );
 
   const choose = useCallback(

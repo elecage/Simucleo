@@ -97,7 +97,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case "pause":
       stop();
-      post({ type: "paused", reason: "pause" });
+      post({ type: "paused", reason: m.reason ?? "pause" });
       break;
     case "reset": {
       const was = running;

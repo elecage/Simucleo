@@ -8,6 +8,7 @@ import { defaultProject, newId, pinKey, pinPosition, toCircuit, type PinRef, typ
 import { PARTS, PART_BY_KIND } from "./parts";
 import { nucleoSignal } from "./parts/nucleo";
 import { BottomPanel } from "./run/BottomPanel";
+import type { ScopeSettings } from "./run/scopeSettings";
 import { RunControls, useExamples, type Example } from "./run/RunControls";
 import { ProjectMenu } from "./run/ProjectMenu";
 import { fromBase64, idbGet, idbSet, parse, serialize, toBase64, type Loaded } from "./editor/project";
@@ -124,10 +125,17 @@ export function App() {
 
   // ------------------------------------------------ project files
   const { load } = runner;
+  // The waveform view takes the project's settings again when this changes.
+  const [scopeSeq, setScopeSeq] = useState(0);
+  const onScope = useCallback(
+    (scope: ScopeSettings) => setProject((p) => (p.scope === scope ? p : { ...p, scope })),
+    [],
+  );
   const applyLoaded = useCallback(
     async (l: Loaded) => {
       schOrder.current = [];
       setProject(l.project);
+      setScopeSeq((k) => k + 1);
       setFitKey((k) => k + 1);
       setSelected(null);
       setProjectName(l.name ?? "프로젝트");
@@ -159,6 +167,7 @@ export function App() {
     if (!confirmReplace()) return;
     schOrder.current = [];
     setProject(defaultProject());
+    setScopeSeq((k) => k + 1);
     setProjectName("새 프로젝트");
     setSelected(null);
   };
@@ -709,7 +718,7 @@ export function App() {
         </div>
       </main>
 
-      <BottomPanel runner={runner} parts={project.parts} />
+      <BottomPanel runner={runner} parts={project.parts} scope={project.scope} scopeSeq={scopeSeq} onScope={onScope} />
 
       {lessonOpen && (
         <LessonPanel

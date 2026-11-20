@@ -4,9 +4,11 @@
 // so pulses of a few cycles are shown and measured exactly.
 // M22: analog channels (net voltages) with a level trigger, protocol
 // decoders (UART, I2C, SPI) over the digital channels, CSV/VCD export.
+// M25: 1-Wire, TM1637 and WS2812 decoders, a trigger on decoded content
+// (decoded here, from the live stream), the settings kept in the project.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Runner } from "../sim/useRunner";
-import type { CaptureChannel, ScopeCapture, ScopeState, TriggerConfig } from "../sim/protocol";
+import type { CaptureAnalog, CaptureChannel, ScopeCapture, ScopeState, TriggerConfig } from "../sim/protocol";
 import { PART_BY_KIND } from "../parts";
 import {
   DIVISIONS,
@@ -19,6 +21,7 @@ import {
   fmtTime,
   fmtVolts,
   levelAt,
+  lowerBound,
   measureAnalog,
   measurePulses,
   tracePoints,
@@ -31,14 +34,38 @@ import {
 import {
   annotationLabel,
   decodeI2c,
+  decodeOneWire,
   decodeSpi,
+  decodeTm1637,
   decodeUart,
+  decodeWs2812,
+  fmtColor,
+  scanStep,
+  tm1637Display,
   uartText,
+  ws2812Frame,
   type Annotation,
+  type AnnotationKind,
   type Format,
   type Line,
   type Parity,
+  type ContentMatch,
+  type ScanState,
 } from "./decode";
+import {
+  DECODER_NAMES,
+  DECODER_TYPES,
+  PIN_ROLES,
+  contentKinds,
+  contentMatch,
+  defaultScope,
+  newDecoder,
+  type ContentCfg,
+  type DecoderCfg,
+  type DecoderType,
+  type ScopeSettings,
+  type TriggerSettings,
+} from "./scopeSettings";
 import { captureCsv, captureVcd } from "./export";
 
 const PIN_NAMES = [
@@ -64,6 +91,8 @@ interface Trace {
   /** [time in ms, level] */
   edges: [number, boolean][];
   dense: boolean;
+  /** Known from here on (ms). */
+  since: number;
 }
 
 /** Live samples of an analog channel (ms). */
@@ -72,45 +101,26 @@ interface ATrace {
   samples: [number, number][];
 }
 
-interface AnalogCfg {
-  /** "PA1" or "part.pin". */
-  spec: string;
-  vdiv: number;
-  /** Volts at the row's middle. */
-  offset: number;
-}
-
-type DecoderType = "uart" | "i2c" | "spi";
-
-interface DecoderCfg {
-  id: number;
-  type: DecoderType;
-  /** UART: [line]; I2C: [SCL, SDA]; SPI: [SCK, MOSI, MISO, CS] ("" = none). */
-  pins: string[];
-  baud: number;
-  parity: Parity;
-  /** SPI mode 0–3 (CPOL·2 + CPHA) and bit order. */
-  mode: number;
-  lsbFirst: boolean;
-}
-
-const DECODER_PINS: Record<DecoderType, string[]> = {
-  uart: ["PA2"],
-  i2c: ["PB8", "PB9"],
-  spi: ["PA5", "PA7", "PA6", ""],
-};
-const PIN_ROLES: Record<DecoderType, string[]> = {
-  uart: ["TX/RX"],
-  i2c: ["SCL", "SDA"],
-  spi: ["SCK", "MOSI", "MISO", "CS"],
-};
-const KIND_TEXT: Record<Annotation["kind"], string> = {
+const KIND_TEXT: Record<AnnotationKind, string> = {
   data: "데이터",
   address: "주소",
   start: "START",
   restart: "재START",
   stop: "STOP",
+  reset: "리셋",
+  triplet: "탐색",
+  pixel: "픽셀",
 };
+const CONTENT_KIND_TEXT: Record<ContentCfg["kind"], string> = {
+  byte: "바이트",
+  text: "텍스트",
+  address: "주소",
+  pixel: "픽셀",
+};
+/** A content trigger decodes at most this far back (ns) for the context it needs. */
+const CONTENT_SPAN = 200e6;
+/** … and builds its capture once the stream is this far past the window (synthesized edges come late). */
+const CONTENT_MARGIN = 1e6;
 /** Rows a decoded table shows. */
 const TABLE_ROWS = 400;
 
@@ -149,26 +159,63 @@ export function Waveform({
   runner,
   active = true,
   parts = [],
+  settings,
+  settingsSeq = 0,
+  onSettings,
 }: {
   runner: Runner;
   active?: boolean;
   parts?: { id: string; kind: string }[];
+  /** Settings to start from (the project's), taken again when `settingsSeq` changes. */
+  settings?: ScopeSettings;
+  settingsSeq?: number;
+  /** Called with the settings as they change (to keep them in the project). */
+  onSettings?: (s: ScopeSettings) => void;
 }) {
-  const [pins, setPins] = useState<string[]>(["PA5"]);
-  const [analog, setAnalog] = useState<AnalogCfg[]>([]);
-  const [decoders, setDecoders] = useState<DecoderCfg[]>([]);
-  const [fmt, setFmt] = useState<Format>("hex");
-  const [level, setLevel] = useState(1.65);
-  const [hysteresis, setHysteresis] = useState(0.1);
+  const [cfg, setCfg] = useState<ScopeSettings>(() => settings ?? defaultScope());
+  const cfgRef = useRef(cfg);
+  cfgRef.current = cfg;
+  const onSettingsRef = useRef(onSettings);
+  onSettingsRef.current = onSettings;
+  // Another project opened: its settings. One without (older, an example,
+  // a new one) keeps the view as it is, as before M25, and takes it along.
+  const seenSeq = useRef(settingsSeq);
+  useEffect(() => {
+    if (seenSeq.current === settingsSeq) return;
+    seenSeq.current = settingsSeq;
+    if (settings) setCfg(settings);
+    else onSettingsRef.current?.(cfgRef.current);
+  }, [settings, settingsSeq]);
+  useEffect(() => onSettingsRef.current?.(cfg), [cfg]);
+  const field =
+    <K extends keyof ScopeSettings>(k: K) =>
+    (v: ScopeSettings[K] | ((old: ScopeSettings[K]) => ScopeSettings[K])) =>
+      setCfg((c) => ({ ...c, [k]: typeof v === "function" ? (v as (old: ScopeSettings[K]) => ScopeSettings[K])(c[k]) : v }));
+  const trig =
+    <K extends keyof TriggerSettings>(k: K) =>
+    (v: TriggerSettings[K]) =>
+      setCfg((c) => ({ ...c, trigger: { ...c.trigger, [k]: v } }));
+  const { pins, analog, decoders, fmt } = cfg;
+  const { source, edge, mode, widthCmp, widthUs, pre, pause, level, hysteresis, content } = cfg.trigger;
+  const setPins = field("pins");
+  const setAnalog = field("analog");
+  const setDecoders = field("decoders");
+  const setFmt = field("fmt");
+  const [setSource, setEdge, setMode, setWidthCmp, setWidthUs, setPre, setPause, setLevel, setHysteresis, setContent] = [
+    trig("source"),
+    trig("edge"),
+    trig("mode"),
+    trig("widthCmp"),
+    trig("widthUs"),
+    trig("pre"),
+    trig("pause"),
+    trig("level"),
+    trig("hysteresis"),
+    trig("content"),
+  ];
+  const divIdx = Math.max(0, TIMEBASE_NS.indexOf(cfg.divNs));
+  const setDivIdx = (i: number) => field("divNs")(TIMEBASE_NS[i]);
   const [synthPins, setSynthPins] = useState<string>("");
-  const [divIdx, setDivIdx] = useState(TIMEBASE_NS.indexOf(2e6));
-  const [mode, setMode] = useState<Mode>("auto");
-  const [source, setSource] = useState("PA5");
-  const [edge, setEdge] = useState<EdgeKind>("rising");
-  const [widthCmp, setWidthCmp] = useState<"off" | "lt" | "gt">("off");
-  const [widthUs, setWidthUs] = useState(10);
-  const [pre, setPre] = useState(0.5);
-  const [pause, setPause] = useState(false);
   const [cursors, setCursors] = useState<{ a: number; b: number } | null>(null);
   const [capture, setCapture] = useState<ScopeCapture | null>(null);
   const [view, setView] = useState<View | null>(null);
@@ -177,17 +224,20 @@ export function Waveform({
   const [plotWidth, setPlotWidth] = useState(800);
   const traces = useRef(new Map<string, Trace>());
   const atraces = useRef(new Map<string, ATrace>());
-  const nextDecoder = useRef(1);
   /** The live (rolling) view is shown, not a capture. */
   const liveRef = useRef(false);
   const lastTime = useRef(0);
   const plot = useRef<SVGSVGElement>(null);
-  const { setProbes, setAnalogProbes, setTrigger, armTrigger, onFrame, ready } = runner;
+  const { setProbes, setAnalogProbes, setTrigger, armTrigger, onFrame, ready, pause: pauseRun } = runner;
   const divNs = TIMEBASE_NS[divIdx];
   const windowNs = divNs * DIVISIONS;
   const analogNames = analog.map((a) => `V(${a.spec})`);
   const analogSource = source.startsWith("V(");
-  const sourceProbed = pins.includes(source) || analogNames.includes(source);
+  // A content trigger: the decoder it looks at and what it looks for.
+  const contentDecoder = source.startsWith("dec:") ? decoders.find((d) => `dec:${d.id}` === source) : undefined;
+  const contentSource = source.startsWith("dec:");
+  const match = contentDecoder ? contentMatch(content, contentDecoder.type) : null;
+  const sourceProbed = pins.includes(source) || analogNames.includes(source) || contentDecoder !== undefined;
 
   useEffect(() => {
     if (ready) setProbes(pins);
@@ -199,18 +249,22 @@ export function Waveform({
   }, [analogKey, ready, setAnalogProbes]);
   useEffect(() => () => setAnalogProbes([]), [setAnalogProbes]);
 
-  const config = useMemo<TriggerConfig>(
-    () => ({
-      source,
-      edge,
-      mode,
-      windowNs,
-      pre,
-      width: widthCmp === "off" || analogSource ? undefined : { cmp: widthCmp, ns: widthUs * 1000 },
-      pause,
-      ...(analogSource ? { level, hysteresis } : {}),
-    }),
-    [source, edge, mode, windowNs, pre, widthCmp, widthUs, pause, analogSource, level, hysteresis],
+  // The simulator's trigger (none for a content trigger, which is done here).
+  const config = useMemo<TriggerConfig | null>(
+    () =>
+      contentSource
+        ? null
+        : {
+            source,
+            edge,
+            mode,
+            windowNs,
+            pre,
+            width: widthCmp === "off" || analogSource ? undefined : { cmp: widthCmp, ns: widthUs * 1000 },
+            pause,
+            ...(analogSource ? { level, hysteresis } : {}),
+          },
+    [contentSource, source, edge, mode, windowNs, pre, widthCmp, widthUs, pause, analogSource, level, hysteresis],
   );
   const configRef = useRef(config);
   configRef.current = config;
@@ -220,6 +274,27 @@ export function Waveform({
     setCapture(null);
   }, [config, ready, setTrigger]);
   useEffect(() => () => setTrigger(null), [setTrigger]);
+
+  // The content trigger, run on every frame (see `onFrame` below).
+  const contentRef = useRef<ContentRun | null>(null);
+  contentRef.current =
+    contentDecoder && match ? { dec: contentDecoder, match, mode, pre, windowNs, pause, pins, analog: analogNames } : null;
+  // (Probes added or removed do not re-arm.)
+  const contentKey = contentRef.current ? JSON.stringify({ ...contentRef.current, pins: 0, analog: 0 }) : "";
+  /** Where the content trigger stands (see `contentStep`), and the state shown. */
+  const scan = useRef<ContentScan>({ st: null, pending: null, done: false, seq: 0 });
+  const [contentState, setContentState] = useState<ScopeState>("armed");
+  const rearm = () => {
+    scan.current = { st: null, pending: null, done: false, seq: scan.current.seq };
+    setContentState("armed");
+  };
+  useEffect(() => {
+    rearm();
+    if (contentKey) setCapture(null);
+  }, [contentKey]);
+  const pauseRef = useRef(pauseRun);
+  pauseRef.current = pauseRun;
+
   // A new timebase or trigger position: back to the whole window, cursors
   // at a quarter and three quarters of it.
   useEffect(() => {
@@ -238,6 +313,7 @@ export function Waveform({
           traces.current.clear();
           atraces.current.clear();
           setCapture(null);
+          if (scan.current.st) scan.current = { st: null, pending: null, done: false, seq: scan.current.seq };
         }
         lastTime.current = f.timeMs;
         const keepFrom = f.timeMs - KEEP_MS;
@@ -263,7 +339,7 @@ export function Waveform({
         for (const p of f.probes) {
           let t = traces.current.get(p.name);
           if (!t) {
-            t = { level0: p.level0, edges: [], dense: false };
+            t = { level0: p.level0, edges: [], dense: false, since: f.timeMs };
             traces.current.set(p.name, t);
           }
           for (const e of p.edges) t.edges.push(e);
@@ -274,11 +350,23 @@ export function Waveform({
             t.level0 = t.edges[drop - 1][1];
             t.edges.splice(0, drop);
           }
+          t.since = Math.max(t.since, keepFrom);
+        }
+        const k = contentRef.current;
+        if (k) {
+          const c = contentStep(k, scan.current, f.timeMs, traces.current, atraces.current);
+          if (c) {
+            setCapture(c);
+            if (k.pause) pauseRef.current("trigger");
+          }
+          const st: ScopeState = scan.current.done ? "stopped" : scan.current.pending !== null ? "collecting" : "armed";
+          setContentState((old) => (old === st ? old : st));
+          return;
         }
         const c = f.scope?.capture;
         // (One still on its way from before a change of settings is dropped.)
-        const k = configRef.current;
-        if (c && c.source === k.source && near(c.endNs - c.startNs, k.windowNs) && near(c.startNs, -k.pre * k.windowNs))
+        const kc = configRef.current;
+        if (c && kc && c.source === kc.source && near(c.endNs - c.startNs, kc.windowNs) && near(c.startNs, -kc.pre * kc.windowNs))
           setCapture(c);
       }),
     [onFrame],
@@ -295,7 +383,7 @@ export function Waveform({
 
   const f = runner.frame;
   const now = f?.timeMs ?? 0;
-  const state: ScopeState = f?.scope?.state ?? "armed";
+  const state: ScopeState = contentSource ? contentState : (f?.scope?.state ?? "armed");
   const windowMs = windowNs / 1e6;
   // Auto free-runs when the triggers stop coming.
   const stale = capture !== null && now - (capture.triggerMs + capture.endNs / 1e6) > Math.max(2 * windowMs, 100);
@@ -364,18 +452,20 @@ export function Waveform({
     return { cfg, name, ch: undefined, live: atraces.current.get(name) };
   });
 
+  // What is measured: the trigger source, or a content trigger's decoder's first pin (its clock).
+  const measured = showCapture && !capture.source.startsWith("dec:") ? capture.source : (contentDecoder?.pins[0] ?? source);
   const sourceStats: PulseStats | undefined = useMemo(() => {
     if (showCapture) {
-      const ch = capture.channels.find((c) => c.name === capture.source);
+      const ch = capture.channels.find((c) => c.name === measured);
       if (!ch) return undefined;
       const [a, b] = validSpan(ch, capture.startNs, capture.endNs);
       return measurePulses(ch, a, b);
     }
-    const t = traces.current.get(source);
+    const t = traces.current.get(measured);
     if (!t) return undefined;
     return measurePulses(liveNs(t, now), -windowNs, 0);
     // The live traces change in place with each frame (`now`).
-  }, [showCapture, capture, source, now, windowNs]);
+  }, [showCapture, capture, measured, now, windowNs]);
 
   // Analog measurements over the capture (or the live window).
   const astats: (AnalogStats | undefined)[] = arows.map(({ ch, live: t }) => {
@@ -400,17 +490,8 @@ export function Waveform({
     const level0 = levelAt(ns, -windowNs);
     return { line: { level0, edges: ns.edges.filter((e) => e[0] >= -windowNs) }, to: 0 };
   };
-  const decoded: Annotation[][] = decoders.map((d) => {
-    const ls = d.pins.map(lineOf);
-    if (d.type === "uart") return ls[0] ? decodeUart(ls[0].line, { baud: d.baud, parity: d.parity }, ls[0].to) : [];
-    if (d.type === "i2c") return ls[0] && ls[1] ? decodeI2c(ls[0].line, ls[1].line) : [];
-    if (!ls[0] || !ls[1]) return [];
-    return decodeSpi(ls[0].line, ls[1].line, ls[2]?.line ?? null, ls[3]?.line ?? null, {
-      cpol: (d.mode & 2) !== 0,
-      cpha: (d.mode & 1) !== 0,
-      msbFirst: !d.lsbFirst,
-    });
-  });
+  const from = showCapture ? capture.startNs : -windowNs;
+  const decoded: Annotation[][] = decoders.map((d) => runDecoder(d, lineOf, from));
 
   const truncated =
     showCapture && capture.channels.some((c) => c.fromNs > capture.startNs || c.toNs < capture.endNs);
@@ -506,16 +587,23 @@ export function Waveform({
             {analogNames.map((n) => (
               <option key={n}>{n}</option>
             ))}
+            {decoders.map((d, di) => (
+              <option key={d.id} value={`dec:${d.id}`}>
+                해독 {di + 1}: {DECODER_NAMES[d.type]} {d.pins.filter(Boolean).join("/")}
+              </option>
+            ))}
           </select>
         </label>
-        <label>
-          에지{" "}
-          <select value={edge} onChange={(e) => setEdge(e.target.value as EdgeKind)} aria-label="트리거 에지">
-            <option value="rising">상승 ↑</option>
-            <option value="falling">하강 ↓</option>
-            <option value="either">양쪽 ↕</option>
-          </select>
-        </label>
+        {!contentSource && (
+          <label>
+            에지{" "}
+            <select value={edge} onChange={(e) => setEdge(e.target.value as EdgeKind)} aria-label="트리거 에지">
+              <option value="rising">상승 ↑</option>
+              <option value="falling">하강 ↓</option>
+              <option value="either">양쪽 ↕</option>
+            </select>
+          </label>
+        )}
         <label>
           모드{" "}
           <select value={mode} onChange={(e) => setMode(e.target.value as Mode)} aria-label="트리거 모드">
@@ -524,7 +612,9 @@ export function Waveform({
             <option value="single">단일 (Single)</option>
           </select>
         </label>
-        {analogSource ? (
+        {contentDecoder ? (
+          <ContentControls cfg={content} type={contentDecoder.type} valid={match !== null} onChange={setContent} />
+        ) : contentSource ? null : analogSource ? (
           <>
             <label>
               레벨{" "}
@@ -593,7 +683,7 @@ export function Waveform({
         <label>
           <input type="checkbox" checked={pause} onChange={(e) => setPause(e.target.checked)} /> 트리거 시 일시정지
         </label>
-        {mode === "single" && <button onClick={armTrigger}>다시 대기 (Arm)</button>}
+        {mode === "single" && <button onClick={contentSource ? rearm : armTrigger}>다시 대기 (Arm)</button>}
         <label>
           <input
             type="checkbox"
@@ -621,15 +711,17 @@ export function Waveform({
             onChange={(e) => {
               const type = e.target.value as DecoderType;
               if (!type) return;
-              const d: DecoderCfg = { id: nextDecoder.current++, type, pins: [...DECODER_PINS[type]], baud: 115200, parity: "none", mode: 0, lsbFirst: false };
+              const d = newDecoder(Math.max(0, ...decoders.map((q) => q.id)) + 1, type);
               setDecoders((ds) => [...ds, d]);
               addPins(d.pins);
             }}
           >
             <option value="">…</option>
-            <option value="uart">UART</option>
-            <option value="i2c">I2C</option>
-            <option value="spi">SPI</option>
+            {DECODER_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {DECODER_NAMES[t]}
+              </option>
+            ))}
           </select>
         </label>
         <label>
@@ -639,17 +731,17 @@ export function Waveform({
             <option value="ascii">ASCII</option>
           </select>
         </label>
-        {decoders.length === 0 && <span className="hint">UART·I2C·SPI 바이트를 파형 위에 풀어 보여 줍니다.</span>}
+        {decoders.length === 0 && <span className="hint">UART·I2C·SPI·1-Wire·TM1637·WS2812를 파형 위에 풀어 보여 줍니다.</span>}
       </div>
       {decoders.map((d, di) => (
         <div key={d.id} className="wave-controls scope-controls decoder-cfg" data-testid={`decoder-${di}`}>
-          <b>{d.type.toUpperCase()}</b>
+          <b>{DECODER_NAMES[d.type]}</b>
           {PIN_ROLES[d.type].map((role, k) => (
             <label key={role}>
               {role}{" "}
               <select
                 value={d.pins[k]}
-                aria-label={`${d.type.toUpperCase()} ${role}`}
+                aria-label={`${DECODER_NAMES[d.type]} ${role}`}
                 onChange={(e) => {
                   const pinsNext = d.pins.map((p, j) => (j === k ? e.target.value : p));
                   updateDecoder(d.id, { pins: pinsNext });
@@ -731,7 +823,7 @@ export function Waveform({
               ))}
               {decoders.map((d) => (
                 <div key={d.id} className="wave-label lane-label" style={{ height: LANE }}>
-                  {d.type.toUpperCase()} {d.pins.filter(Boolean).join("/")}
+                  {DECODER_NAMES[d.type]} {d.pins.filter(Boolean).join("/")}
                 </div>
               ))}
               {arows.map(({ cfg, name }, i) => (
@@ -865,7 +957,7 @@ export function Waveform({
               에지가 너무 많아 버퍼(핀당 {CAPTURE_EDGES.toLocaleString()}개)를 넘었습니다 — 빗금 구간은 기록되지 않았습니다. 시간/눈금을 줄이세요.
             </div>
           )}
-          <Measurements stats={sourceStats} source={showCapture ? capture.source : source} cursors={cursors} live={!showCapture} />
+          <Measurements stats={sourceStats} source={measured} cursors={cursors} live={!showCapture} />
           {arows.length > 0 && <AnalogTable rows={arows.map((r, i) => ({ spec: r.cfg.spec, name: r.name, stats: astats[i] }))} live={!showCapture} />}
           {decoders.map((d, di) => (
             <DecodedTable key={d.id} index={di} cfg={d} anns={decoded[di]} fmt={fmt} />
@@ -922,8 +1014,15 @@ function Lane({
         const label = annotationLabel(a, fmt);
         const w = x1 - x0;
         return (
-          <g key={i} className={`dec-box${a.error ? " err" : ""}`}>
-            <rect x={x0} y={y + 3} width={Math.max(1, w)} height={LANE - 6} rx={3} />
+          <g key={i} className={`dec-box${a.error ? " err" : ""}${a.kind === "pixel" ? " pixel" : ""}`}>
+            <rect
+              x={x0}
+              y={y + 3}
+              width={Math.max(1, w)}
+              height={LANE - 6}
+              rx={3}
+              style={a.kind === "pixel" && !a.error ? { fill: fmtColor(a.value!) } : undefined}
+            />
             {w > 6 * Math.min(label.length, 4) && (
               <text x={(x0 + x1) / 2} y={y + LANE / 2 + 4} textAnchor="middle">
                 {w > 6.5 * label.length ? label : label.slice(0, Math.max(1, Math.floor(w / 6.5) - 1)) + "…"}
@@ -942,15 +1041,32 @@ function Lane({
 
 function DecodedTable({ index, cfg, anns, fmt }: { index: number; cfg: DecoderCfg; anns: Annotation[]; fmt: Format }) {
   const errors = anns.filter((a) => a.error).length;
+  const shown = cfg.type === "tm1637" ? tm1637Display(anns) : null;
+  const frame = cfg.type === "ws2812" ? ws2812Frame(anns) : null;
   return (
     <div className="decode-table">
       <table data-testid={`decode-table-${index}`}>
         <caption>
-          {cfg.type.toUpperCase()} {cfg.pins.filter(Boolean).join("/")} — {anns.length}개{errors > 0 && <span className="err"> · 오류 {errors}</span>}
+          {DECODER_NAMES[cfg.type]} {cfg.pins.filter(Boolean).join("/")} — {anns.length}개{errors > 0 && <span className="err"> · 오류 {errors}</span>}
           {cfg.type === "uart" && anns.length > 0 && (
             <span className="decode-text" data-testid={`decode-text-${index}`}>
               {" "}
               “{uartText(anns)}”
+            </span>
+          )}
+          {shown && (
+            <span className="decode-text" data-testid={`decode-display-${index}`} data-text={shown.text}>
+              {" "}
+              표시 “{shown.text}”
+            </span>
+          )}
+          {frame && frame.length > 0 && (
+            <span className="decode-text" data-testid={`decode-frame-${index}`} data-colors={frame.map(fmtColor).join(" ")}>
+              {" "}
+              마지막 프레임 {frame.length}픽셀{" "}
+              {frame.slice(0, 64).map((c, k) => (
+                <span key={k} className="swatch" style={{ background: fmtColor(c) }} title={`#${k} ${fmtColor(c)}`} />
+              ))}
             </span>
           )}
         </caption>
@@ -964,10 +1080,21 @@ function DecodedTable({ index, cfg, anns, fmt }: { index: number; cfg: DecoderCf
         </thead>
         <tbody>
           {anns.slice(0, TABLE_ROWS).map((a, i) => (
-            <tr key={i} className={a.error ? "err" : undefined}>
+            <tr
+              key={i}
+              className={a.error ? "err" : undefined}
+              data-kind={a.kind}
+              data-t={a.start}
+              data-value={a.value}
+              data-note={a.note}
+              data-index={a.index}
+            >
               <td>{fmtTime(a.start)}</td>
               <td>{KIND_TEXT[a.kind]}</td>
-              <td>{a.kind === "data" || a.kind === "address" ? annotationLabel(a, fmt) : ""}</td>
+              <td>
+                {a.kind === "pixel" && !a.error && <span className="swatch" style={{ background: fmtColor(a.value!) }} />}
+                {a.kind === "start" || a.kind === "restart" || a.kind === "stop" ? "" : annotationLabel(a, fmt)}
+              </td>
               <td>{a.error ?? ""}</td>
             </tr>
           ))}
@@ -975,6 +1102,76 @@ function DecodedTable({ index, cfg, anns, fmt }: { index: number; cfg: DecoderCf
       </table>
       {anns.length > TABLE_ROWS && <div className="dim">처음 {TABLE_ROWS}개만 표시합니다.</div>}
     </div>
+  );
+}
+
+/** What a content trigger looks for: the kind (if the decoder has several) and its value. */
+function ContentControls({ cfg, type, valid, onChange }: { cfg: ContentCfg; type: DecoderType; valid: boolean; onChange: (c: ContentCfg) => void }) {
+  const kinds = contentKinds(type);
+  const kind = kinds.includes(cfg.kind) ? cfg.kind : kinds[0];
+  const set = (patch: Partial<ContentCfg>) => onChange({ ...cfg, kind, ...patch });
+  return (
+    <>
+      <label>
+        조건{" "}
+        <select value={kind} onChange={(e) => set({ kind: e.target.value as ContentCfg["kind"] })} aria-label="해독 트리거 조건">
+          {kinds.map((k) => (
+            <option key={k} value={k}>
+              {CONTENT_KIND_TEXT[k]}
+            </option>
+          ))}
+        </select>
+      </label>
+      {kind === "pixel" ? (
+        <>
+          <label>
+            번호{" "}
+            <input
+              type="number"
+              min={0}
+              step={1}
+              className="num"
+              value={cfg.index}
+              aria-label="해독 트리거 픽셀 번호"
+              onChange={(e) => Number.isInteger(Number(e.target.value)) && Number(e.target.value) >= 0 && set({ index: Number(e.target.value) })}
+            />
+          </label>
+          <label>
+            색{" "}
+            <input
+              className="num wide"
+              value={cfg.color}
+              placeholder="아무 색"
+              aria-label="해독 트리거 픽셀 색"
+              onChange={(e) => set({ color: e.target.value })}
+            />
+          </label>
+        </>
+      ) : (
+        <label>
+          {kind === "text" ? "글자" : kind === "address" ? "주소" : "값"}{" "}
+          <input
+            className="num wide"
+            value={cfg.text}
+            placeholder={kind === "text" ? "OK\\r\\n" : "0x41"}
+            aria-label="해독 트리거 값"
+            onChange={(e) => set({ text: e.target.value })}
+          />
+        </label>
+      )}
+      {kind === "address" && (
+        <select value={cfg.rw} onChange={(e) => set({ rw: e.target.value as ContentCfg["rw"] })} aria-label="해독 트리거 R/W">
+          <option value="any">R/W</option>
+          <option value="W">W (쓰기)</option>
+          <option value="R">R (읽기)</option>
+        </select>
+      )}
+      {!valid && (
+        <span className="err" data-testid="content-invalid">
+          값을 읽을 수 없습니다 (예: 0x41, 'A', 65{kind === "pixel" ? ", #FF8000" : ""})
+        </span>
+      )}
+    </>
   );
 }
 
@@ -1016,6 +1213,131 @@ function AnalogTable({ rows, live }: { rows: { spec: string; name: string; stats
       </table>
     </div>
   );
+}
+
+/** Lines of a decoder's pins: the line and how far it is known (ns). */
+type LineOf = (pin: string) => { line: Line; to: number } | null;
+
+/** Decoder `d` over its pins' lines, from `from` (ns). */
+function runDecoder(d: DecoderCfg, lineOf: LineOf, from: number): Annotation[] {
+  const ls = d.pins.map(lineOf);
+  switch (d.type) {
+    case "uart":
+      return ls[0] ? decodeUart(ls[0].line, { baud: d.baud, parity: d.parity }, ls[0].to) : [];
+    case "i2c":
+      return ls[0] && ls[1] ? decodeI2c(ls[0].line, ls[1].line) : [];
+    case "spi":
+      return ls[0] && ls[1]
+        ? decodeSpi(ls[0].line, ls[1].line, ls[2]?.line ?? null, ls[3]?.line ?? null, {
+            cpol: (d.mode & 2) !== 0,
+            cpha: (d.mode & 1) !== 0,
+            msbFirst: !d.lsbFirst,
+          })
+        : [];
+    case "onewire":
+      return ls[0] ? decodeOneWire(ls[0].line, ls[0].to) : [];
+    case "tm1637":
+      return ls[0] && ls[1] ? decodeTm1637(ls[0].line, ls[1].line) : [];
+    case "ws2812":
+      return ls[0] ? decodeWs2812(ls[0].line, from, ls[0].to) : [];
+  }
+}
+
+/** A live trace (ms) from `from` on, in ns of the simulated clock. */
+function liveLine(t: Trace, from: number): Line {
+  const ms = from / 1e6;
+  const i = lowerBound(t.edges, ms);
+  return {
+    level0: i === 0 ? t.level0 : t.edges[i - 1][1],
+    edges: t.edges.slice(i).map(([m, l]) => [m * 1e6, l] as [number, boolean]),
+  };
+}
+
+interface ContentRun {
+  dec: DecoderCfg;
+  match: ContentMatch;
+  mode: Mode;
+  pre: number;
+  windowNs: number;
+  pause: boolean;
+  /** The probed pins and analog channels (`V(…)`) a capture holds. */
+  pins: string[];
+  analog: string[];
+}
+interface ContentScan {
+  st: ScanState | null;
+  /** A match (ns) whose window is not complete yet. */
+  pending: number | null;
+  /** Single: captured, until armed again. */
+  done: boolean;
+  seq: number;
+}
+
+/**
+ * One frame of the content trigger: arm (from now), or decode what came
+ * since the last frame and look for the condition, or — when the window
+ * around a match is complete — return the capture, cut from the live
+ * traces like the simulator's own (times relative to the match's start).
+ * Normal and Auto look again after the window; Single waits to be armed.
+ */
+function contentStep(k: ContentRun, sc: ContentScan, nowMs: number, traces: Map<string, Trace>, atraces: Map<string, ATrace>): ScopeCapture | null {
+  const now = nowMs * 1e6;
+  if (!sc.st) {
+    sc.st = { checked: now, anchor: now - CONTENT_SPAN };
+    return null;
+  }
+  if (sc.pending === null && !sc.done) {
+    const r = scanStep(
+      (from) => runDecoder(k.dec, (pin) => (traces.get(pin) ? { line: liveLine(traces.get(pin)!, from), to: now } : null), from),
+      k.dec.type,
+      k.match,
+      sc.st,
+      now,
+      CONTENT_SPAN,
+    );
+    sc.st = r.state;
+    if (r.hits.length) sc.pending = r.hits[0];
+  }
+  if (sc.pending === null) return null;
+  const t0 = sc.pending;
+  const startNs = -k.pre * k.windowNs;
+  const endNs = (1 - k.pre) * k.windowNs;
+  if (now < t0 + endNs + CONTENT_MARGIN) return null;
+  sc.pending = null;
+  sc.st = { ...sc.st, checked: t0 + endNs };
+  if (k.mode === "single") sc.done = true;
+  const [a, b] = [(t0 + startNs) / 1e6, (t0 + endNs) / 1e6];
+  const channels: CaptureChannel[] = k.pins.flatMap((name) => {
+    const t = traces.get(name);
+    if (!t) return [];
+    const i = lowerBound(t.edges, a);
+    const j = lowerBound(t.edges, b);
+    return [
+      {
+        name,
+        level0: i === 0 ? t.level0 : t.edges[i - 1][1],
+        edges: t.edges.slice(i, j).map(([m, l]) => [m * 1e6 - t0, l] as [number, boolean]),
+        fromNs: Math.min(endNs, Math.max(startNs, t.since * 1e6 - t0)),
+        toNs: endNs,
+      },
+    ];
+  });
+  const analog: CaptureAnalog[] = k.analog.flatMap((name) => {
+    const t = atraces.get(name);
+    if (!t) return [];
+    const i = lowerBound(t.samples, a);
+    const j = lowerBound(t.samples, b);
+    return [
+      {
+        name,
+        v0: i === 0 ? t.v0 : t.samples[i - 1][1],
+        samples: t.samples.slice(i, j).map(([m, v]) => [m * 1e6 - t0, v] as [number, number]),
+        fromNs: startNs,
+        toNs: endNs,
+      },
+    ];
+  });
+  return { seq: ++sc.seq, source: `dec:${k.dec.id}`, triggerMs: t0 / 1e6, startNs, endNs, channels, analog };
 }
 
 const near = (a: number, b: number) => Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b));

@@ -1101,12 +1101,18 @@ impl Stm32f401Bus {
                     let i = idx as usize;
                     if self.spi[i].gen == gen {
                         let (pins, cycles) = (self.spi_pins(i), self.spi_frame_cycles(i));
-                        let logging = pins.is_some_and(|(sck, mosi, miso)| {
+                        let (rx_only, clock) = (self.spi_rx_pins(i), self.spi_clock(i));
+                        // The wires a probe sees: SCK, MOSI unless receive-only, MISO.
+                        let wires = match (rx_only, pins) {
+                            (Some((sck, miso)), _) => Some((sck, None, miso)),
+                            (None, Some((sck, mosi, miso))) => Some((sck, Some(mosi), miso)),
+                            _ => None,
+                        };
+                        let logging = wires.is_some_and(|(sck, mosi, miso)| {
                             self.probed(sck)
-                                || self.probed(mosi)
+                                || mosi.is_some_and(|m| self.probed(m))
                                 || miso.is_some_and(|m| self.probed(m))
                         });
-                        let (rx_only, clock) = (self.spi_rx_pins(i), self.spi_clock(i));
                         let mut bus = CircuitSpi {
                             circuit: self.circuit.as_mut(),
                             pins,
@@ -1116,7 +1122,7 @@ impl Stm32f401Bus {
                             log: logging.then(Vec::new),
                         };
                         self.spi[i].event(at, cycles, &mut self.sched, idx, &mut bus);
-                        if let (Some(bytes), Some((sck, mosi, miso))) = (bus.log, pins) {
+                        if let (Some(bytes), Some((sck, mosi, miso))) = (bus.log, wires) {
                             if !bytes.is_empty() {
                                 let cr1 = self.spi[i].cr1;
                                 self.wire_events.push(WireEvent::Spi {
@@ -1877,6 +1883,43 @@ impl Bus for Stm32f401Bus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn receive_only_spi_is_logged_for_probes_without_mosi() {
+        // A MAX6675-style read: SPI1 RXONLY master, SCK on PA5 and MISO on
+        // PA6, MOSI (PA7) left as a plain GPIO; probes on PA5 and PA6.
+        let mut bus = Stm32f401Bus::new();
+        bus.write(map::RCC_BASE + 0x30, AccessSize::Word, 1)
+            .unwrap(); // GPIOAEN
+        bus.write(map::RCC_BASE + 0x44, AccessSize::Word, 1 << 12)
+            .unwrap(); // SPI1EN
+        bus.write(
+            map::GPIOA_BASE,
+            AccessSize::Word,
+            0xA800_0000 | 0b1010 << 10,
+        )
+        .unwrap(); // PA5, PA6 alternate
+        bus.write(map::GPIOA_BASE + 0x20, AccessSize::Word, 0x55 << 20)
+            .unwrap(); // AF5
+        bus.probe_mask[0] = 1 << 5 | 1 << 6;
+        let cr1 = 1 << 2 | 1 << 9 | 1 << 8 | 1 << 10 | 7 << 3; // MSTR SSM SSI RXONLY, /256
+        bus.write(0x4001_3000, AccessSize::Word, cr1).unwrap();
+        bus.write(0x4001_3000, AccessSize::Word, cr1 | 1 << 6)
+            .unwrap(); // SPE
+        bus.run_events(200_000);
+        let spi: Vec<_> = bus
+            .take_wire_events()
+            .into_iter()
+            .filter_map(|e| match e {
+                WireEvent::Spi {
+                    sck, mosi, miso, ..
+                } => Some((sck, mosi, miso)),
+                _ => None,
+            })
+            .collect();
+        assert!(!spi.is_empty(), "receive-only frames reach the probes");
+        assert_eq!(spi[0], ((0, 5), None, Some((0, 6))));
+    }
 
     #[test]
     fn boot_alias_maps_to_flash() {

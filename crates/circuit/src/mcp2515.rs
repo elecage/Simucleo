@@ -990,6 +990,9 @@ struct Flight {
     /// A loser that sent different bits after the arbitration field:
     /// both get a bit error.
     collided: Vec<(String, u32, usize)>,
+    /// Other nodes that sent the very same frame at the same time: they
+    /// transmit with `tx` (no ACK from them) and share its outcome.
+    co_tx: Vec<(String, u32, usize)>,
 }
 
 #[derive(Debug, Clone)]
@@ -1281,14 +1284,16 @@ impl CanNet {
                 alive = keep;
             }
         }
+        // Every survivor sent the same bits; the first stands for them all.
         let w = alive[0];
         let (tx_id, buf, frame, bits, bit) = cands[w].clone();
+        let transmitting: Vec<String> = alive.iter().map(|&j| cands[j].0.clone()).collect();
         // Who listens, and at what bit time.
         let mut receivers = Vec::new();
         let mut mismatched_active = false;
         let mut rx_errors = Vec::new();
         for m in &members {
-            if *m == tx_id {
+            if transmitting.contains(m) {
                 continue;
             }
             let Some(c) = chips.get_mut(m.as_str()) else {
@@ -1320,7 +1325,10 @@ impl CanNet {
                 .get(m.as_str())
                 .is_some_and(|c| c.mode == Mode::Normal)
         });
-        let tx_passive = chips[tx_id.as_str()].error_passive();
+        // The flag is recessive only if every transmitter is error-passive.
+        let tx_passive = transmitting
+            .iter()
+            .all(|m| chips[m.as_str()].error_passive());
         // The bits on the bus: up to an error, then the error flag (6
         // dominant; recessive if only an error-passive transmitter flags),
         // its delimiter (8 recessive).
@@ -1389,6 +1397,10 @@ impl CanNet {
                 .iter()
                 .map(|&j| (cands[j].0.clone(), gen_of(&cands[j].0), cands[j].1))
                 .collect(),
+            co_tx: alive[1..]
+                .iter()
+                .map(|&j| (cands[j].0.clone(), gen_of(&cands[j].0), cands[j].1))
+                .collect(),
         });
     }
 
@@ -1400,13 +1412,17 @@ impl CanNet {
         bus.free_at = f.free_at;
         let live =
             |chips: &Chips, id: &str, gen: u32| chips.get(id).is_some_and(|c| c.generation == gen);
-        if live(chips, &f.tx, f.gen) {
-            let c = chips.get_mut(f.tx.as_str()).unwrap();
+        let senders = std::iter::once((f.tx.clone(), f.gen, f.buf)).chain(f.co_tx.iter().cloned());
+        for (id, gen, buf) in senders {
+            if !live(chips, &id, gen) {
+                continue;
+            }
+            let c = chips.get_mut(id.as_str()).unwrap();
             let passive = c.error_passive();
             match &f.outcome {
-                Outcome::Ok { .. } => c.tx_ok(f.buf),
-                Outcome::NoAck => c.tx_failed(f.buf, true, t),
-                Outcome::Error { .. } => c.tx_failed(f.buf, false, t),
+                Outcome::Ok { .. } => c.tx_ok(buf),
+                Outcome::NoAck => c.tx_failed(buf, true, t),
+                Outcome::Error { .. } => c.tx_failed(buf, false, t),
             }
             if passive || c.error_passive() {
                 // Suspend transmission: 8 more bits before sending again.
@@ -1729,6 +1745,27 @@ mod tests {
         assert!(b.last_rx.is_none());
         run(&mut net, &mut [("a", &mut a), ("b", &mut b)], 2e-3);
         assert_eq!(b.last_rx.unwrap().id, 0x200);
+    }
+
+    #[test]
+    fn identical_frames_sent_together_are_not_acknowledged_by_their_senders() {
+        // a and b start the same frame at the same moment, nobody else on
+        // the bus: neither wins arbitration, neither may ACK the other.
+        let (mut net, mut a, mut b) = two(CNF_125K);
+        load(&mut a, 0, 0x123, false, &[42], 0.0);
+        load(&mut b, 0, 0x123, false, &[42], 0.0);
+        run(&mut net, &mut [("a", &mut a), ("b", &mut b)], 2e-3);
+        assert!(a.last_rx.is_none() && b.last_rx.is_none(), "no copies");
+        assert_eq!((a.sent, b.sent), (0, 0));
+        assert!(
+            a.tec() > 0 && b.tec() > 0,
+            "ACK errors: TEC {} {}",
+            a.tec(),
+            b.tec()
+        );
+        // Both still want to send.
+        assert_ne!(spi(&mut a, &[0x03, 0x30, 0], 1.0)[2] & TXREQ, 0);
+        assert_ne!(spi(&mut b, &[0x03, 0x30, 0], 1.0)[2] & TXREQ, 0);
     }
 
     #[test]

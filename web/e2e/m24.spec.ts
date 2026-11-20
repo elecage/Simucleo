@@ -224,7 +224,9 @@ test("lesson editor: checks from the current wiring, saved to 내 레슨, starte
   // A reload: the lesson is in 내 레슨; starting it loads its circuit and firmware.
   await page.waitForTimeout(600);
   await page.reload();
-  await expect(status(page)).toContainText("예제를");
+  // Ready: the start-up prompt, or already the lesson's firmware when the
+  // reopened lesson restored it first (both orders happen).
+  await expect(status(page)).toContainText(/예제를|hal-blinky/);
   if (!(await panel(page).count())) await page.getByRole("button", { name: "📝 실습" }).click();
   await expect(panel(page).getByText("불러오는 중…")).toHaveCount(0);
   if (await panel(page).getByRole("button", { name: "← 목록" }).count()) await panel(page).getByRole("button", { name: "← 목록" }).click();
@@ -422,7 +424,9 @@ test("editing a saved lesson's checks clears its old results: a changed period c
   // And after a reload too (the reset progress was stored).
   await page.waitForTimeout(600);
   await page.reload();
-  await expect(status(page)).toContainText("예제를");
+  // Ready: the start-up prompt, or already the lesson's firmware when the
+  // reopened lesson restored it first (both orders happen).
+  await expect(status(page)).toContainText(/예제를|hal-blinky/);
   if (!(await panel(page).count())) await page.getByRole("button", { name: "📝 실습" }).click();
   // The panel reopens the lesson that was open once it has read the saved progress.
   await expect(panel(page).getByText("불러오는 중…")).toHaveCount(0);

@@ -6,7 +6,7 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { evaluateWiring, type WiringContext, type PinRef } from "../src/lessons/wiring.ts";
-import { evaluateBehaviour, gradeMs, litPixels, Recording, type FrameLike } from "../src/lessons/behaviour.ts";
+import { evaluateBehaviour, dutyWindows, gradeMs, litPixels, Recording, type FrameLike } from "../src/lessons/behaviour.ts";
 import { josa } from "../src/lessons/korean.ts";
 import { validateLesson } from "../src/lessons/validate.ts";
 import { record, resultsCsv, resultsJson, type LessonProgress } from "../src/lessons/progress.ts";
@@ -179,6 +179,23 @@ test("PWM duty: at some moment, or all the time", () => {
   assert.equal(judge({ type: "duty", pin: "PB3", min: 0.1, max: 1, mode: "always" }, rec).pass, true);
   assert.equal(judge({ type: "duty", pin: "PB3", min: 0.3, max: 1, mode: "always" }, rec).pass, false);
   assert.match(judge({ type: "duty", pin: "PB4", min: 0, max: 1 }, rec).hint!, /PB4가 출력으로 쓰이지 않았습니다/);
+});
+
+test("PWM duty on a slow machine: short frames are judged over 16 ms windows", () => {
+  // A steady 25 % at 2 kHz in frames of 1.5 ms (three periods): each frame
+  // cuts a period, so one reads 1/3 and the next 1/6 — 25 % on average.
+  const rec = new Recording();
+  for (let i = 0; i <= 64; i++) {
+    rec.add(frame(i * 1.5, { pins: [{ port: "B", pin: 4, level: true, duty: i % 2 ? 1 / 3 : 1 / 6 }] }), "");
+  }
+  const r = judge({ type: "duty", pin: "PB4", min: 0.2, max: 0.3, mode: "always" }, rec);
+  assert.equal(r.pass, true, r.hint);
+  // A frame as long as the window is judged on its own, the last one too.
+  assert.deepEqual(dutyWindows([{ t: 0, duty: 0 }, { t: 16, duty: 0.2 }, { t: 32, duty: 0.95 }]), [0.2, 0.95]);
+  // Short frames add up by their length; a short tail after them is left out.
+  assert.deepEqual(dutyWindows([{ t: 0, duty: 0 }, { t: 4, duty: 0.1 }, { t: 16, duty: 0.5 }, { t: 18, duty: 1 }]), [0.4]);
+  // Frames that took no time count only when there is nothing else.
+  assert.deepEqual(dutyWindows([{ t: 5, duty: 0 }, { t: 5, duty: 0.7 }]), [0.7]);
 });
 
 test("a stopped firmware fails the running check; displays count lit pixels", () => {

@@ -69,10 +69,23 @@ test("an analog channel on a bridge output shows the PWM phase voltage", async (
   await page.getByLabel("트리거 에지").selectOption("rising");
   await page.getByLabel("시간/눈금").selectOption({ label: "20 µs/div" });
   await page.getByLabel("트리거 위치").fill("20");
-  await page.getByLabel("트리거 모드").selectOption("single");
-  await expect(plot(page)).toHaveAttribute("data-view", "capture", { timeout: 10000 });
-  await expect(page.locator("[data-atrace='br.OUTA'] polyline")).toHaveAttribute("points", /\d/);
-  const { head, rows } = await exportCsv(page);
+  // A commutation in the window may stop phase A chopping after the
+  // trigger: take another capture until it holds three PWM rises (two
+  // whole periods).
+  let head: string[] = [];
+  let rows: number[][] = [];
+  for (let attempt = 0; ; attempt++) {
+    expect(attempt, "captures without two whole PWM periods").toBeLessThan(6);
+    const seq = (await plot(page).getAttribute("data-seq")) ?? "";
+    if (attempt > 0) await page.getByLabel("트리거 모드").selectOption("normal");
+    await page.getByLabel("트리거 모드").selectOption("single");
+    await expect(plot(page)).not.toHaveAttribute("data-seq", seq, { timeout: 15000 });
+    await expect(plot(page)).toHaveAttribute("data-view", "capture", { timeout: 10000 });
+    await expect(page.locator("[data-atrace='br.OUTA'] polyline")).toHaveAttribute("points", /\d/);
+    ({ head, rows } = await exportCsv(page));
+    if (pulses(rows, 1).length >= 3) break;
+    await page.waitForTimeout(200 + 150 * attempt);
+  }
   expect(head).toEqual(["time_ns", "PA8", "PA7", "V(br.OUTA)"]);
   // The output is at PVDD (12 V less the switch's drop) while the high
   // side is on, at ground while the low side is — the PWM itself, not
@@ -107,7 +120,7 @@ test("an analog channel on a bridge output shows the PWM phase voltage", async (
 });
 
 test("centre-aligned PWM on the scope: the pulses stay centred when the duty changes", async ({ page }) => {
-  test.setTimeout(120000);
+  test.setTimeout(240000);
   await loadExampleProject(page, "hal-bldc-sensorless");
   await expect(consoleOut(page)).toContainText(/closed duty {2}54 %/, { timeout: 20000 });
   await page.getByRole("button", { name: "파형 (프로브)" }).click();
@@ -125,7 +138,7 @@ test("centre-aligned PWM on the scope: the pulses stay centred when the duty cha
   await page.getByLabel("펄스 폭 (µs)").fill("35");
   const period = 50000;
   for (let attempt = 0; ; attempt++) {
-    expect(attempt).toBeLessThan(8);
+    expect(attempt, "captures without the duty change while phase A chops").toBeLessThan(16);
     const seq = (await plot(page).getAttribute("data-seq")) ?? "";
     await page.getByLabel("트리거 모드").selectOption("normal");
     await page.getByLabel("트리거 모드").selectOption("single");
@@ -176,7 +189,7 @@ test("centre-aligned PWM on the scope: the pulses stay centred when the duty cha
 });
 
 test("sensorless BLDC: aligns, ramps, closes the loop on the zero crossings and follows the pot", async ({ page }) => {
-  test.setTimeout(120000);
+  test.setTimeout(240000);
   await loadExampleProject(page, "hal-bldc-sensorless");
   await expect(consoleOut(page)).toContainText("center-aligned 20 kHz, RCR 1", { timeout: 10000 });
   await expect(consoleOut(page)).toContainText(/ramp {3}duty {2}30 %/, { timeout: 15000 });

@@ -194,12 +194,49 @@ function consoleValues(c: Extract<BehaviourCheck, { type: "consoleValues" }>, re
   return { pass: false, detail, hint: `값이 거의 변하지 않았습니다 (최소 ${lo}, 최대 ${hi}). ${c.minSpread} 이상 바뀌어야 합니다.` };
 }
 
+/** Duty windows are at least this long in simulated time (ms). */
+export const DUTY_WINDOW_MS = 16;
+
+/**
+ * Frame duties (each averaged over its frame, from the one before it)
+ * merged into windows of at least `DUTY_WINDOW_MS`, weighted by their
+ * length. A slow machine makes short frames — a millisecond or two, a few
+ * PWM periods — whose duty is off by the part of a period they cut, so a
+ * steady 25 % read as 33 % (M31); a window is what one frame at ×1
+ * speed covers. The first sample has no frame before it and is skipped.
+ */
+export function dutyWindows(samples: { t: number; duty: number | undefined }[]): number[] {
+  const out: number[] = [];
+  let area = 0;
+  let span = 0;
+  /** Duties of frames that took no time (e.g. sent while paused). */
+  const still: number[] = [];
+  for (let i = 1; i < samples.length; i++) {
+    const { duty } = samples[i];
+    const dt = samples[i].t - samples[i - 1].t;
+    if (duty === undefined) continue;
+    if (dt <= 0) {
+      still.push(duty);
+      continue;
+    }
+    area += duty * dt;
+    span += dt;
+    if (span >= DUTY_WINDOW_MS) {
+      out.push(area / span);
+      area = span = 0;
+    }
+  }
+  // What is left: a window of its own only when there is no other (a
+  // short tail is the noisy kind).
+  if (span > 0 && !out.length) out.push(area / span);
+  return out.length ? out : still;
+}
+
 function duty(c: Extract<BehaviourCheck, { type: "duty" }>, rec: Recording): CheckResult {
   const pin = pinOf(c.pin);
-  const values = rec.samples
-    .slice(1)
-    .map((s) => s.frame.pins.find((p) => pin && p.port === pin.port && p.pin === pin.pin)?.duty)
-    .filter((v): v is number => v !== undefined);
+  const values = dutyWindows(
+    rec.samples.map((s) => ({ t: s.t, duty: s.frame.pins.find((p) => pin && p.port === pin.port && p.pin === pin.pin)?.duty })),
+  );
   if (!values.length) return { pass: false, hint: `${josa(c.pin, "이/가")} 출력으로 쓰이지 않았습니다.` };
   const lo = Math.min(...values);
   const hi = Math.max(...values);

@@ -6,11 +6,14 @@ import assert from "node:assert/strict";
 import { canonicalJson, seal, sha256Hex, verify } from "../src/lessons/integrity.ts";
 import {
   checkKey,
+  lessonFingerprint,
   record,
   resultsCsv,
   resultsJson,
+  syncDefinitions,
   type ExpectedCheck,
   type LessonProgress,
+  type Progress,
   type ResultsFile,
 } from "../src/lessons/progress.ts";
 import {
@@ -582,3 +585,37 @@ test("older result files without pending checks: completed from a known lesson, 
   assert.equal(withKnownChecks(full, known["led-blink"]), full);
 });
 
+test("a lesson whose checks changed loses its saved results and completion; label edits and old progress keep them", () => {
+  const v1 = good();
+  v1.steps[0].checks.push({ type: "period", pin: "PA5", ms: 1000 });
+  const fp1 = lessonFingerprint(v1);
+  assert.equal(lessonFingerprint({ steps: v1.steps.map((s) => ({ ...s, title: "다른 제목", checks: s.checks.map((c) => ({ ...c, label: "새 이름", hint: "새 안내" })) })) }), fp1);
+  const v2 = structuredClone(v1);
+  const period = v2.steps.flatMap((s) => s.checks).find((c) => c.type === "period") as { ms: number };
+  period.ms = 500;
+  assert.notEqual(lessonFingerprint(v2), fp1);
+  const reordered = structuredClone(v1);
+  reordered.steps[0].checks.reverse();
+  assert.notEqual(lessonFingerprint(reordered), fp1);
+
+  const p: LessonProgress = {
+    id: v1.id,
+    title: v1.title,
+    startedAt: "s",
+    completedAt: "c",
+    gradedAt: "g",
+    attempts: 2,
+    def: fp1,
+    checks: { "0.0": { step: 0, label: "x", pass: true, at: "a" } },
+  };
+  const progress: Progress = { [v1.id]: p, other: { id: "other", title: "o", startedAt: "s", attempts: 1, checks: {} } };
+  // Unchanged: the very same object.
+  assert.equal(syncDefinitions(progress, [{ id: v1.id, def: fp1 }]), progress);
+  const after = syncDefinitions(progress, [{ id: v1.id, def: lessonFingerprint(v2) }]);
+  assert.deepEqual(after[v1.id], { id: v1.id, title: v1.title, startedAt: "s", attempts: 0, def: lessonFingerprint(v2), checks: {} });
+  assert.equal(after.other, progress.other);
+  assert.equal(progress[v1.id].completedAt, "c"); // not mutated
+  // Progress saved before fingerprints existed takes the current one and keeps its results.
+  const legacy = syncDefinitions({ [v1.id]: { ...p, def: undefined } }, [{ id: v1.id, def: fp1 }]);
+  assert.deepEqual(legacy[v1.id], p);
+});

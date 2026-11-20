@@ -18,11 +18,13 @@ import { parseLesson, validateLesson } from "./validate";
 import {
   ACTIVE_KEY,
   checkKey,
+  lessonFingerprint,
   PROGRESS_KEY,
   record,
   resultsCsv,
   resultsJson,
   STUDENT_KEY,
+  syncDefinitions,
   type ExpectedCheck,
   type LessonProgress,
   type Progress,
@@ -88,7 +90,8 @@ export function LessonPanel({
   onMarks,
 }: Props) {
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [progress, setProgress] = useState<Progress>({});
+  // Progress as stored; `progress` below is it matched to the lessons' current checks.
+  const [rawProgress, setRawProgress] = useState<Progress>({});
   const [student, setStudent] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [grading, setGrading] = useState<{ elapsed: number; total: number } | null>(null);
@@ -97,16 +100,13 @@ export function LessonPanel({
 
   useEffect(() => {
     void Promise.all([idbGet<Progress>(PROGRESS_KEY), idbGet<string>(STUDENT_KEY), idbGet<string>(ACTIVE_KEY)]).then(([p, s, a]) => {
-      setProgress(p ?? {});
+      setProgress(() => p ?? {});
       setStudent(s ?? "");
       // "내 레슨" may still be loading: an id not found just shows the list.
       if (a && a !== PREVIEW_ID) setActiveId(a);
       setLoaded(true);
     });
   }, []);
-  useEffect(() => {
-    if (loaded) void idbSet(PROGRESS_KEY, progress);
-  }, [progress, loaded]);
   useEffect(() => {
     if (loaded) void idbSet(STUDENT_KEY, student);
   }, [student, loaded]);
@@ -136,6 +136,20 @@ export function LessonPanel({
     () => [...LESSONS, ...mineEntries, ...(previewLesson ? [{ lesson: previewLesson, errors: [] }] : [])],
     [mineEntries, previewLesson],
   );
+  // Saved results are kept by check position: a lesson whose checks were
+  // changed (a 내 레슨 edited and saved under the same id) starts afresh,
+  // so no old result stands for a check that was never run.
+  const defs = useMemo(() => all.map((e) => ({ id: e.lesson.id, def: lessonFingerprint(e.lesson) })), [all]);
+  const defsRef = useRef(defs);
+  defsRef.current = defs;
+  const progress = useMemo(() => syncDefinitions(rawProgress, defs), [rawProgress, defs]);
+  const setProgress = useCallback((f: (p: Progress) => Progress) => setRawProgress((all) => f(syncDefinitions(all, defsRef.current))), []);
+  useEffect(() => {
+    if (progress !== rawProgress) setProgress((p) => p);
+  }, [progress, rawProgress, setProgress]);
+  useEffect(() => {
+    if (loaded) void idbSet(PROGRESS_KEY, progress);
+  }, [progress, loaded]);
   const lesson = all.find((e) => e.lesson.id === activeId)?.lesson ?? null;
   const mine = lesson ? progress[lesson.id] : undefined;
 
@@ -170,7 +184,7 @@ export function LessonPanel({
         const next = f(p);
         return next === p ? all : { ...all, [id]: next };
       }),
-    [],
+    [setProgress],
   );
   useEffect(() => {
     if (lesson && mine) update(lesson.id, (p) => record(p, live, now()));
@@ -206,7 +220,9 @@ export function LessonPanel({
     // Starting over clears the last results (attempts and the first completion stay).
     setProgress((all) => ({
       ...all,
-      [l.id]: all[l.id] ? { ...all[l.id], checks: {} } : { id: l.id, title: l.title, startedAt: now(), attempts: 0, checks: {} },
+      [l.id]: all[l.id]
+        ? { ...all[l.id], checks: {}, def: lessonFingerprint(l) }
+        : { id: l.id, title: l.title, startedAt: now(), attempts: 0, checks: {}, def: lessonFingerprint(l) },
     }));
   };
 
@@ -217,9 +233,9 @@ export function LessonPanel({
     setMessage(null);
     setProgress((all) => ({
       ...all,
-      [PREVIEW_ID]: { id: PREVIEW_ID, title: preview.lesson.title, startedAt: now(), attempts: 0, checks: {} },
+      [PREVIEW_ID]: { id: PREVIEW_ID, title: preview.lesson.title, startedAt: now(), attempts: 0, checks: {}, def: lessonFingerprint(preview.lesson) },
     }));
-  }, [preview, loaded]);
+  }, [preview, loaded, setProgress]);
 
   // ------------------------------------------- grading marks (M24)
   // After "채점", the wiring checks that fail mark their pins and nets on

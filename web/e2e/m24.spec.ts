@@ -383,3 +383,49 @@ test("results exported before 채점 count the ungraded checks: the teacher sees
   await expect(row(page, "lee old").locator('[data-cell="led-blink:2"]')).toHaveAttribute("data-status", "partial");
 });
 
+test("editing a saved lesson's checks clears its old results: a changed period check is not left passed", async ({ page }) => {
+  test.setTimeout(60_000);
+  await ready(page);
+  const v1 = {
+    id: "my-period",
+    order: 120,
+    title: "주기 실습",
+    level: "입문",
+    goal: "PA5가 1초 주기로 토글합니다.",
+    start: "empty",
+    firmware: { example: "hal-blinky.elf" },
+    steps: [{ title: "채점", text: "채점을 누르세요.", checks: [{ type: "period", pin: "PA5", ms: 1000 }] }],
+  };
+  await page.getByRole("button", { name: "📝 실습" }).click();
+  await panel(page).getByTestId("lesson-import").setInputFiles(asFile("my-period.json", JSON.stringify(v1)));
+  const mine = panel(page).getByRole("region", { name: "내 레슨" }).locator('[data-lesson="my-period"]');
+  await mine.getByRole("button", { name: "시작" }).click();
+  await expect(status(page)).toContainText("hal-blinky");
+  await grade(page);
+  await expect(check(page, "0.0")).toHaveAttribute("data-status", "pass");
+  await expect(panel(page).getByTestId("lesson-complete")).toBeVisible();
+
+  // The teacher changes the period to 500 ms and saves under the same id.
+  await panel(page).getByRole("button", { name: "← 목록" }).click();
+  await expect(mine).toContainText("✅");
+  await mine.getByRole("button", { name: "편집" }).click();
+  await editor(page).getByLabel("주기 (ms)").fill("500");
+  await editor(page).getByRole("button", { name: "내 레슨에 저장" }).click();
+  await editor(page).getByRole("button", { name: "레슨 편집기 닫기" }).click();
+  await expect(mine).not.toContainText("✅");
+  await mine.getByRole("button", { name: "이어서 하기" }).click();
+  await expect(check(page, "0.0")).toHaveAttribute("data-status", "pending");
+  await expect(check(page, "0.0")).toContainText("500 ms");
+  await expect(panel(page).getByTestId("lesson-complete")).toHaveCount(0);
+  // And after a reload too (the reset progress was stored).
+  await page.waitForTimeout(600);
+  await page.reload();
+  await expect(status(page)).toContainText("예제를");
+  if (!(await panel(page).count())) await page.getByRole("button", { name: "📝 실습" }).click();
+  if (await panel(page).getByRole("button", { name: "← 목록" }).count()) await panel(page).getByRole("button", { name: "← 목록" }).click();
+  await mine.getByRole("button", { name: "이어서 하기" }).click();
+  await expect(check(page, "0.0")).toHaveAttribute("data-status", "pending");
+  // Graded again, the new check fails on the 1 s blinky.
+  await grade(page);
+  await expect(check(page, "0.0")).toHaveAttribute("data-status", "fail");
+});

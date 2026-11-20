@@ -1,7 +1,7 @@
 // Per-lesson progress (kept in IndexedDB) and the results file students
 // hand in. Pure apart from the storage helpers, which callers pass in.
-import type { IntegrityField } from "./integrity.ts";
-import type { CheckResult } from "./types.ts";
+import { canonicalJson, type IntegrityField } from "./integrity.ts";
+import type { CheckResult, Lesson } from "./types.ts";
 
 export interface CheckRecord {
   step: number;
@@ -25,6 +25,9 @@ export interface LessonProgress {
   attempts: number;
   /** By check key (`step.check`, from 0). */
   checks: Record<string, CheckRecord>;
+  /** `lessonFingerprint` of the lesson these results are for. Progress
+   * saved before it existed has none and takes the current one. */
+  def?: string;
 }
 
 export type Progress = Record<string, LessonProgress>;
@@ -35,6 +38,59 @@ export const ACTIVE_KEY = "lessons:active";
 export const BACKUP_KEY = "lessons:backup";
 
 export const checkKey = (step: number, check: number) => `${step}.${check}`;
+
+/** 32-bit FNV-1a, hex: a short, synchronous fingerprint (not security). */
+function fnv1a(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+/**
+ * What the saved results of a lesson depend on: its checks, step by step,
+ * without their labels and hints (and without the lesson's text). Results
+ * are kept by position (`step.check`), so when this changes (a check
+ * edited, added, removed or moved) they no longer belong to the lesson.
+ */
+export function lessonFingerprint(l: Pick<Lesson, "steps">): string {
+  const steps = Array.isArray(l.steps) ? l.steps : [];
+  const checks = steps.map((s) =>
+    (Array.isArray(s?.checks) ? s.checks : []).map((c) => {
+      const x = { ...(c as unknown as Record<string, unknown>) };
+      delete x.label;
+      delete x.hint;
+      return x;
+    }),
+  );
+  return fnv1a(canonicalJson(checks));
+}
+
+/**
+ * Progress matched to the lessons' current definitions: a lesson whose
+ * checks changed since its results were saved starts afresh (no results,
+ * not completed, no grading runs; `startedAt` stays). Lessons not listed
+ * are left alone. Returns `progress` itself when nothing changes.
+ */
+export function syncDefinitions(progress: Progress, defs: { id: string; def: string }[]): Progress {
+  let out = progress;
+  for (const { id, def } of defs) {
+    const p = out[id];
+    if (!p || p.def === def) continue;
+    let next: LessonProgress;
+    if (p.def === undefined) next = { ...p, def };
+    else {
+      next = { ...p, def, attempts: 0, checks: {} };
+      delete next.completedAt;
+      delete next.gradedAt;
+    }
+    if (out === progress) out = { ...progress };
+    out[id] = next;
+  }
+  return out;
+}
 
 /** Record results; only changes in pass/fail move a check's time stamp. */
 export function record(

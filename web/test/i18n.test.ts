@@ -143,7 +143,7 @@ test("i18n: t() fills placeholders, particles and plurals", () => {
 });
 
 test("i18n: every example project's name has English", () => {
-  const dir = join(web, "public/examples");
+  const dir = join(web, "examples");
   const missing = readdirSync(dir)
     .filter((f) => f.endsWith(".simucleo.json"))
     .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")).name as string)

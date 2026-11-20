@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
   AutoSwitch,
   batchDue,
+  batchHz,
   ENTER_MS,
   EXIT_MS,
   formatRatio,
@@ -300,4 +301,23 @@ test("a capture made under an older trigger setting is dropped, the rest of its 
   assert.match(worker, /case "trigger":\s*triggerGen = m\.gen;/);
   assert.match(worker, /case "armTrigger":\s*triggerGen = m\.gen;/);
   assert.match(worker, /const m: FrameMsg = \{[^}]*triggerGen \}/);
+});
+
+test("frames are batched at the performance rate, but not while a speed cap (grading) is set", () => {
+  assert.equal(batchHz(5, Infinity), 5);
+  assert.equal(batchHz(null, Infinity), null);
+  assert.equal(batchHz(5, 1), null);
+  assert.equal(batchHz(15, 4), null);
+});
+
+test("the worker takes its frame rate and speed cap before the simulator is ready", () => {
+  // The page sends its rate as it connects, while the WASM still loads;
+  // dropped there, it was sent again only when the rate next changed.
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../src/sim/worker.ts"), "utf8");
+  assert.match(src, /if \(setting\(m\) \|\| !sim\) return;/);
+  const setting = src.slice(src.indexOf("function setting("), src.indexOf("self.onmessage"));
+  for (const t of ["uiRate", "ack", "speedCap"]) assert.match(setting, new RegExp(`case "${t}":`));
+  // ... and nowhere after the guard.
+  const after = src.slice(src.indexOf("self.onmessage"));
+  for (const t of ["uiRate", "ack", "speedCap"]) assert.doesNotMatch(after, new RegExp(`case "${t}":`));
 });

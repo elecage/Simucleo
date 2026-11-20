@@ -2,7 +2,7 @@
 // Runs the simulator off the UI thread and keeps it in step with wall time.
 import init, { Simulator, version } from "../wasm/pkg/simucleo_wasm.js";
 import type { FrameMsg, FromWorker, SimFrame, ToWorker } from "./protocol";
-import { batchDue, RatioMeter } from "./perf";
+import { batchDue, batchHz, RatioMeter } from "./perf";
 
 const FRAME_MS = 16; // ~60 Hz display updates
 const WORK_BUDGET_MS = 12; // wall time we allow ourselves per frame
@@ -45,12 +45,13 @@ function sendFrame(now = true) {
   if (!sim) return;
   const frame = JSON.parse(sim.frame()) as SimFrame;
   const m: FrameMsg = { frame, console: sim.takeConsole(), running, epoch, triggerGen };
-  if (uiHz === null) {
+  const hz = batchHz(uiHz, speedCap);
+  if (hz === null) {
     post({ type: "frame", ...m, speed: achieved });
     return;
   }
   batch.push(m);
-  if (now || batchDue(performance.now(), lastBatch, uiHz, inFlight)) flush();
+  if (now || batchDue(performance.now(), lastBatch, hz, inFlight)) flush();
 }
 
 function tick() {
@@ -110,9 +111,38 @@ function stop() {
   sendFrame();
 }
 
+/** Messages that need no simulator: taken even before it is ready. */
+function setting(m: ToWorker): boolean {
+  switch (m.type) {
+    case "uiRate":
+      // (The page sends its rate as soon as it connects, before the WASM
+      // is loaded: kept, not dropped with the messages below.)
+      uiHz = m.hz;
+      if (uiHz === null) {
+        // Back to single frames: hand over what is waiting first.
+        flush();
+        inFlight = false;
+      }
+      return true;
+    case "ack":
+      inFlight = false;
+      return true;
+    case "speedCap":
+      speedCap = m.value;
+      // Grading (a finite cap) takes single frames: hand over what waits.
+      if (batchHz(uiHz, speedCap) === null) {
+        flush();
+        inFlight = false;
+      }
+      return true;
+    default:
+      return false;
+  }
+}
+
 self.onmessage = (e: MessageEvent<ToWorker>) => {
   const m = e.data;
-  if (!sim) return;
+  if (setting(m) || !sim) return;
   switch (m.type) {
     case "load":
       stop();
@@ -144,20 +174,6 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     }
     case "speed":
       speed = m.value;
-      break;
-    case "speedCap":
-      speedCap = m.value;
-      break;
-    case "uiRate":
-      uiHz = m.hz;
-      if (uiHz === null) {
-        // Back to single frames: hand over what is waiting first.
-        flush();
-        inFlight = false;
-      }
-      break;
-    case "ack":
-      inFlight = false;
       break;
     case "press":
       sim.press(m.part, m.pressed);

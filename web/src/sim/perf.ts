@@ -238,6 +238,16 @@ export class RateScheduler {
  * never pile up in its message queue, but not longer than `maxWaitMs`
  * (a page that stopped answering still gets its frames).
  */
+/**
+ * The rate frames go to the page at: `uiHz` (null: each frame at once),
+ * except while a speed cap is set — grading (M16), whose stimuli are
+ * timed on frames as they arrive: a press and its release in one batch
+ * would both reach the simulation after it had passed them.
+ */
+export function batchHz(uiHz: number | null, speedCap: number): number | null {
+  return Number.isFinite(speedCap) ? null : uiHz;
+}
+
 export function batchDue(now: number, lastSent: number, hz: number | null, inFlight: boolean, maxWaitMs = 1000): boolean {
   if (hz === null) return true;
   if (now - lastSent >= maxWaitMs) return true;

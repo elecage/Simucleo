@@ -236,6 +236,32 @@ test("lesson grading gives the same result with performance mode off and forced 
   expect(on.checks).toEqual(off.checks);
 });
 
+test("grading in performance mode: keypad presses timed on frames still reach the firmware", async ({ page }) => {
+  // Frames batched at a few hertz would bring a 150 ms press and its
+  // release to the page together, after the simulation passed both:
+  // grading takes single frames instead.
+  test.setTimeout(120_000);
+  const panel = page.getByRole("complementary", { name: "실습" });
+  await page.goto("/");
+  await expect(status(page)).toContainText("예제를");
+  await setMode(page, "on");
+  await page.getByRole("button", { name: "📝 실습" }).click();
+  await panel.locator('[data-lesson="seven-segment"]').getByRole("button", { name: "시작" }).click();
+  await page.getByTestId("project-input").setInputFiles("public/examples/hal-7seg-keypad.simucleo.json");
+  await expect(panel.locator(".lesson-check").first()).toBeVisible();
+  const cdp = await throttle(page, 4);
+  await panel.getByRole("button", { name: "채점", exact: true }).click();
+  await expect(panel.getByTestId("grade-progress")).toBeVisible();
+  await expect(panel.getByTestId("grade-progress")).toHaveCount(0, { timeout: 90_000 });
+  expect((await perf(page)).lite).toBe(true);
+  await cdp.detach();
+  const checks = await panel
+    .getByTestId("lesson-check")
+    .evaluateAll((l) => l.map((e) => `${e.getAttribute("data-status")} ${e.textContent}`));
+  expect(checks.length).toBeGreaterThan(2);
+  expect(checks.filter((c) => !c.startsWith("pass"))).toEqual([]);
+});
+
 test("hidden tabs do not redraw while the simulation runs", async ({ page }) => {
   await open(page, "hal-shift-register.elf");
   await setMode(page, "off");

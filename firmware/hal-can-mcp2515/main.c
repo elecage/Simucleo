@@ -297,6 +297,10 @@ int main(void)
       printf("B1: node B now at %d kbit/s\r\n", kbps_b);
     }
     b1_last = b1;
+    /* Sleep until the next interrupt (SysTick, every millisecond): the INT
+     * pins and the button are looked at once a millisecond instead of in
+     * a loop that keeps the CPU busy all the time. */
+    __WFI();
   }
 }
 

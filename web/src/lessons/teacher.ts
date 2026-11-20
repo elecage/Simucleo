@@ -112,6 +112,7 @@ function fromCsv(source: string, text: string): LoadedResult[] {
       step: step - 1,
       label: get(r, "check"),
       pass,
+      ...(get(r, "result") === "pending" ? { pending: true as const } : {}),
       at,
       ...(get(r, "detail") ? { detail: get(r, "detail") } : {}),
       ...(get(r, "hint") ? { hint: get(r, "hint") } : {}),
@@ -147,6 +148,8 @@ export interface Entry {
   integrity: Integrity;
   exportedAt: string;
   lesson: ResultLesson;
+  /** The teacher's site knows this lesson's checks (so its total is known). */
+  known?: boolean;
 }
 
 export interface Duplicate {
@@ -177,8 +180,31 @@ export const entryKey = (student: string, lessonId: string) => `${student}\n${le
 /** Same student whatever the spacing: "kim  01 " is "kim 01". */
 export const normStudent = (s: string) => s.trim().replace(/\s+/g, " ") || "(이름 없음)";
 
+/** Checks per step of the lessons the teacher's site knows (the bundled ones), by id. */
+export type KnownLessons = Record<string, number[]>;
+
+/**
+ * The lesson with a pending entry for every check its definition has but
+ * the file does not (files exported before pending checks were listed:
+ * behaviour checks that were never graded are simply missing there).
+ */
+export function withKnownChecks(l: ResultLesson, perStep: number[] | undefined): ResultLesson {
+  if (!perStep) return l;
+  const have = new Set(l.checks.map((c) => c.key));
+  const missing: ResultLesson["checks"] = [];
+  perStep.forEach((n, step) => {
+    for (let j = 0; j < n; j++) {
+      const key = `${step}.${j}`;
+      if (!have.has(key)) missing.push({ key, step, label: `단계 ${step + 1} 검사 ${j + 1}`, pass: false, pending: true, at: "" });
+    }
+  });
+  if (!missing.length) return l;
+  const checks = [...l.checks, ...missing].sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
+  return { ...l, checks, total: checks.length };
+}
+
 /** All files in one table: for each student and lesson the latest export only. */
-export function mergeResults(loaded: LoadedResult[]): Merged {
+export function mergeResults(loaded: LoadedResult[], known: KnownLessons = {}): Merged {
   const entries: Record<string, Entry> = {};
   const duplicates: Duplicate[] = [];
   const errors: Merged["errors"] = [];
@@ -191,9 +217,10 @@ export function mergeResults(loaded: LoadedResult[]): Merged {
     }
     const student = normStudent(r.file.student);
     if (!students.includes(student)) students.push(student);
-    for (const lesson of r.file.lessons) {
+    for (const raw of r.file.lessons) {
+      const lesson = withKnownChecks(raw, known[raw.id]);
       const key = entryKey(student, lesson.id);
-      const entry: Entry = { student, source: r.source, integrity: r.integrity, exportedAt: r.file.exportedAt ?? "", lesson };
+      const entry: Entry = { student, source: r.source, integrity: r.integrity, exportedAt: r.file.exportedAt ?? "", lesson, known: !!known[raw.id] };
       const old = entries[key];
       if (old) {
         // Ties go to the file loaded later.
@@ -226,6 +253,8 @@ export interface StepCell {
   status: "pass" | "partial" | "fail";
   passed: number;
   total: number;
+  /** Checks never run (not graded yet); counted in `total`, not passed. */
+  pending: number;
   /** From the start of the lesson to the step's last check passing. */
   timeMs?: number;
 }
@@ -235,6 +264,14 @@ export interface LessonCell {
   total: number;
   /** 0–100. */
   score: number;
+  /** Checks never run (not graded yet); counted in `total`, not passed. */
+  pending: number;
+  /**
+   * Some checks are missing and how many is unknown: a file of a lesson the
+   * site does not know (no definition to count from), every check in it passed, yet not
+   * completed (so checks were never run). `score` is then an upper bound.
+   */
+  unknownTotal: boolean;
   completed: boolean;
   attempts: number;
   /** Start to completion. */
@@ -254,19 +291,23 @@ export function lessonCell(e: Entry): LessonCell {
   const steps: Record<number, StepCell> = {};
   for (const index of [...new Set(l.checks.map((c) => c.step))]) {
     const checks = l.checks.filter((c) => c.step === index);
-    const passed = checks.filter((c) => c.pass).length;
+    const passed = checks.filter((c) => c.pass && !c.pending).length;
     const status = passed === checks.length ? "pass" : passed ? "partial" : "fail";
     const last = checks.map((c) => c.at).sort().at(-1);
-    steps[index] = { status, passed, total: checks.length, ...(status === "pass" && ms(l.startedAt, last) !== undefined ? { timeMs: ms(l.startedAt, last) } : {}) };
+    const pending = checks.filter((c) => c.pending).length;
+    steps[index] = { status, passed, total: checks.length, pending, ...(status === "pass" && ms(l.startedAt, last) !== undefined ? { timeMs: ms(l.startedAt, last) } : {}) };
   }
   // Counted from the checks, not the file's own totals.
   const total = l.checks.length;
-  const passed = l.checks.filter((c) => c.pass).length;
+  const passed = l.checks.filter((c) => c.pass && !c.pending).length;
   const time = l.completedAt ? ms(l.startedAt, l.completedAt) : undefined;
+  const pending = l.checks.filter((c) => c.pending).length;
   return {
     passed,
     total,
     score: total ? Math.round((100 * passed) / total) : 0,
+    pending,
+    unknownTotal: !e.known && !l.completedAt && passed === total,
     completed: !!l.completedAt,
     attempts: l.attempts ?? 0,
     ...(time !== undefined ? { timeMs: time } : {}),
@@ -343,7 +384,7 @@ function sortValue(r: Row, by: string): number | string | undefined {
   const [what, id, index] = by.split(":");
   const c = r.cells[id];
   if (!c) return undefined;
-  if (what === "score") return c.score;
+  if (what === "score") return c.unknownTotal ? undefined : c.score;
   if (what === "time") return c.timeMs;
   if (what === "step") {
     const s = c.steps[Number(index)];
@@ -424,15 +465,15 @@ export function tableCsv(m: Merged, rows: Row[], lesson?: string): string {
         continue;
       }
       line.push(
-        cell.score,
-        `${cell.passed}/${cell.total}`,
+        cell.unknownTotal ? "" : cell.score,
+        cell.unknownTotal ? `${cell.passed}/${cell.total}+ (미채점 검사 있음)` : `${cell.passed}/${cell.total}`,
         cell.completed ? "yes" : "no",
         cell.timeMs !== undefined ? Math.round(cell.timeMs / 1000) : "",
         cell.attempts,
       );
       for (const s of c.steps) {
         const sc = cell.steps[s.index];
-        line.push(!sc ? "" : sc.status === "partial" ? `partial ${sc.passed}/${sc.total}` : sc.status);
+        line.push(!sc ? "" : (sc.status === "partial" ? `partial ${sc.passed}/${sc.total}` : sc.status) + (sc.pending ? ` (미채점 ${sc.pending})` : ""));
       }
     }
     out.push(line);

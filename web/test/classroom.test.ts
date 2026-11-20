@@ -4,7 +4,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { canonicalJson, seal, sha256Hex, verify } from "../src/lessons/integrity.ts";
-import { resultsCsv, resultsJson, type LessonProgress, type ResultsFile } from "../src/lessons/progress.ts";
+import {
+  checkKey,
+  record,
+  resultsCsv,
+  resultsJson,
+  type ExpectedCheck,
+  type LessonProgress,
+  type ResultsFile,
+} from "../src/lessons/progress.ts";
 import {
   entryKey,
   fmtDuration,
@@ -21,7 +29,10 @@ import { parseLesson, validateLesson } from "../src/lessons/validate.ts";
 import { checksFromWiring, involved } from "../src/lessons/fromWiring.ts";
 import { evaluateWiring, type PinRef, type WiringContext } from "../src/lessons/wiring.ts";
 import { blankLesson, normalizeLesson, removeLesson, upsertLesson } from "../src/lessons/mine.ts";
+import { readFileSync } from "node:fs";
+import { isWiring } from "../src/lessons/types.ts";
 import type { Lesson, WiringCheck } from "../src/lessons/types.ts";
+import { withKnownChecks } from "../src/lessons/teacher.ts";
 
 // ------------------------------------------------------------- fixtures
 
@@ -167,7 +178,7 @@ test("cells: step status, score and the time taken", async () => {
   assert.equal(kim.completed, false);
   assert.equal(kim.score, 80);
   assert.equal(kim.timeMs, undefined);
-  assert.deepEqual(kim.steps[0], { status: "pass", passed: 2, total: 2, timeMs: 2 * 60_000 });
+  assert.deepEqual(kim.steps[0], { status: "pass", passed: 2, total: 2, pending: 0, timeMs: 2 * 60_000 });
   assert.equal(kim.steps[2].status, "partial");
   assert.equal(kim.steps[2].timeMs, undefined);
   const park = lessonCell(m.entries[entryKey("park 02", "led-blink")]);
@@ -208,8 +219,9 @@ test("table rows: sorting, filters and the worst integrity of a student's files"
   const names = (opts: Parameters<typeof tableRows>[1]) => tableRows(m, opts).map((r) => r.student);
   assert.deepEqual(names({}), ["choi 04", "kim 01", "park 02"]);
   assert.deepEqual(names({ sort: { by: "student", desc: true } }), ["park 02", "kim 01", "choi 04"]);
-  // The edited file claims 100 % (but no completion): ties keep the load order.
-  assert.deepEqual(names({ sort: { by: "score:led-blink", desc: true } }), ["park 02", "choi 04", "kim 01"]);
+  // The edited file claims 100 % but no completion: some checks never ran and
+  // how many is unknown, so it has no score to sort by (last, either way).
+  assert.deepEqual(names({ sort: { by: "score:led-blink", desc: true } }), ["park 02", "kim 01", "choi 04"]);
   assert.deepEqual(names({ sort: { by: "score:led-blink" } }), ["kim 01", "park 02", "choi 04"]);
   // Only park completed: the others have no time and sort last.
   assert.deepEqual(names({ sort: { by: "time:led-blink" } }), ["park 02", "kim 01", "choi 04"]);
@@ -490,3 +502,83 @@ test("a malformed lesson draft is normalized to something the editor can show, w
     assert.ok(validateLesson(x, KINDS).length > 0);
   }
 });
+
+/** The bundled lesson 1 and its expected checks, as the panel exports them. */
+const LED_BLINK = JSON.parse(readFileSync(new URL("../lessons/01-led-blink.json", import.meta.url), "utf8")) as Lesson;
+const expectedOf = (l: Lesson): ExpectedCheck[] =>
+  l.steps.flatMap((s, i) => s.checks.map((c, j) => ({ key: checkKey(i, j), step: i, label: c.label ?? c.type })));
+/** Lesson 1 with the four wiring checks passed and "채점" never pressed. */
+function wiredNotGraded(): LessonProgress {
+  const results = LED_BLINK.steps.flatMap((s, i) =>
+    s.checks.flatMap((c, j) => (isWiring(c) ? [{ key: checkKey(i, j), step: i, label: c.type, result: { pass: true } }] : [])),
+  );
+  const p: LessonProgress = { id: "led-blink", title: LED_BLINK.title, startedAt: "2026-03-02T09:00:00.000Z", attempts: 0, checks: {} };
+  return record(p, results, "2026-03-02T09:05:00.000Z");
+}
+
+test("results exported before grading list the behaviour checks as pending, and the teacher does not see 100 %", async () => {
+  assert.equal(Object.keys(wiredNotGraded().checks).length, 4);
+  const f = resultsJson({ "led-blink": wiredNotGraded() }, "kim", "t", [], {}, { "led-blink": expectedOf(LED_BLINK) });
+  const l = f.lessons[0];
+  assert.equal(l.total, 7);
+  assert.equal(l.passed, 4);
+  assert.deepEqual(
+    l.checks.filter((c) => c.pending).map((c) => c.key),
+    ["2.0", "2.1", "2.2"],
+  );
+  // A sealed file with pending entries still verifies.
+  const sealed = await seal(f);
+  assert.equal(await verify(JSON.parse(json(sealed))), "verified");
+  for (const [name, text] of [
+    ["kim.json", json(sealed)],
+    ["kim.csv", resultsCsv(f)],
+  ]) {
+    const m = mergeResults(await parseResults(name, text));
+    const cell = lessonCell(m.entries[entryKey("kim", "led-blink")]);
+    assert.equal(cell.score, 57, name);
+    assert.equal(`${cell.passed}/${cell.total}`, "4/7", name);
+    assert.equal(cell.pending, 3, name);
+    assert.equal(cell.unknownTotal, false, name);
+    assert.equal(cell.steps[2].status, "partial", name);
+    assert.equal(cell.steps[2].pending, 3, name);
+  }
+  assert.match(resultsCsv(f), /,3,running,pending,,,\r\n/);
+  // Stale records of checks the lesson no longer has are left out.
+  const stale = { ...wiredNotGraded(), checks: { ...wiredNotGraded().checks, "5.0": { step: 5, label: "old", pass: true, at: "t" } } };
+  const g = resultsJson({ "led-blink": stale }, "kim", "t", [], {}, { "led-blink": expectedOf(LED_BLINK) });
+  assert.equal(g.lessons[0].checks.some((c) => c.key === "5.0"), false);
+});
+
+test("older result files without pending checks: completed from a known lesson, or flagged as incomplete", async () => {
+  // As exported before this fix: only the four recorded wiring checks.
+  const old = resultsJson({ "led-blink": wiredNotGraded() }, "kim", "t");
+  assert.equal(old.lessons[0].total, 4);
+  const known = { "led-blink": LED_BLINK.steps.map((s) => s.checks.length) };
+  for (const [name, text] of [
+    ["old.json", json(old)],
+    ["old.csv", resultsCsv(old)],
+  ]) {
+    const withDef = lessonCell(mergeResults(await parseResults(name, text), known).entries[entryKey("kim", "led-blink")]);
+    assert.equal(withDef.score, 57, name);
+    assert.equal(withDef.total, 7, name);
+    assert.equal(withDef.steps[2].status, "partial", name);
+    // A lesson the teacher's site does not know: every recorded check passed
+    // but the lesson is not completed, so its total is unknown, not 100 %.
+    const unknown = lessonCell(mergeResults(await parseResults(name, text)).entries[entryKey("kim", "led-blink")]);
+    assert.equal(unknown.unknownTotal, true, name);
+    const m = mergeResults(await parseResults(name, text));
+    assert.match(tableCsv(m, tableRows(m)), /\r\nkim,검증 안 됨,old\.(json|csv),,4\/4\+ \(미채점 검사 있음\),no,/);
+  }
+  // A completed lesson is complete whatever the definition.
+  const done = { ...wiredNotGraded(), completedAt: "2026-03-02T09:10:00.000Z" };
+  assert.equal(lessonCell(mergeResults(await parseResults("d.json", json(resultsJson({ "led-blink": done }, "kim", "t")))).entries[entryKey("kim", "led-blink")]).unknownTotal, false);
+  // With the definition known, a full set of passes is a known total (100 %), even if not completed.
+  const allPass = resultsJson({ "led-blink": wiredNotGraded() }, "kim", "t", [], {}, { "led-blink": expectedOf(LED_BLINK) });
+  for (const c of allPass.lessons[0].checks) (c.pass = true), delete c.pending;
+  const edited = lessonCell(mergeResults(await parseResults("e.json", json(allPass)), known).entries[entryKey("kim", "led-blink")]);
+  assert.deepEqual([edited.score, edited.unknownTotal], [100, false]);
+  // Known checks are only added where missing.
+  const full = resultsJson({ "led-blink": wiredNotGraded() }, "kim", "t", [], {}, { "led-blink": expectedOf(LED_BLINK) }).lessons[0];
+  assert.equal(withKnownChecks(full, known["led-blink"]), full);
+});
+

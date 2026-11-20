@@ -23,6 +23,7 @@ import {
   resultsCsv,
   resultsJson,
   STUDENT_KEY,
+  type ExpectedCheck,
   type LessonProgress,
   type Progress,
 } from "./progress";
@@ -336,7 +337,21 @@ export function LessonPanel({
     // Not the editor's preview runs.
     const handedIn = Object.fromEntries(Object.entries(progress).filter(([id]) => id !== PREVIEW_ID));
     const titles = Object.fromEntries(all.map((e) => [e.lesson.id, e.lesson.steps.map((s) => s.title)]));
-    const file = resultsJson(handedIn, student.trim(), now(), order, titles);
+    // Every check of each lesson: those not run yet (behaviour checks before
+    // "채점") go in as pending, so the teacher does not see unfinished work as done.
+    const expected: Record<string, ExpectedCheck[]> = Object.fromEntries(
+      all.map((e) => [
+        e.lesson.id,
+        e.lesson.steps.flatMap((s, i) =>
+          s.checks.map((c, j) => ({
+            key: checkKey(i, j),
+            step: i,
+            label: c.label ?? (isWiring(c) ? wiringLabel(c, { nameOf }) : behaviourLabel(c, short)),
+          })),
+        ),
+      ]),
+    );
+    const file = resultsJson(handedIn, student.trim(), now(), order, titles, expected);
     const base = `lesson-results_${student.trim().replace(/[^\p{L}\p{N}.-]+/gu, "_") || "noname"}`;
     if (kind === "json") {
       // With a SHA-256 of its content: the teacher view flags casual edits (M24).

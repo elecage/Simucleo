@@ -3,6 +3,7 @@
 // Files are read in the browser; nothing is uploaded anywhere.
 import { useMemo, useState, type DragEvent } from "react";
 import { download } from "../editor/project";
+import { LESSONS } from "./index";
 import {
   fmtDuration,
   mergeResults,
@@ -11,6 +12,7 @@ import {
   ratePercent,
   tableCsv,
   tableRows,
+  type KnownLessons,
   type LoadedResult,
   type Rate,
   type TableOptions,
@@ -23,6 +25,9 @@ interface Props {
 }
 
 const BADGE: Record<string, string> = { verified: "✅ 검증됨", tampered: "⚠ 변조됨", unverified: "검증 안 됨" };
+
+/** Checks per step of the bundled lessons: older files that lack ungraded checks are completed from these. */
+const KNOWN: KnownLessons = Object.fromEntries(LESSONS.map((e) => [e.lesson.id, e.lesson.steps.map((s) => s.checks.length)]));
 
 function RateCell({ r }: { r: Rate | undefined }) {
   const p = ratePercent(r);
@@ -37,7 +42,7 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
   const [sort, setSort] = useState<NonNullable<TableOptions["sort"]>>({ by: "student" });
   const [over, setOver] = useState(false);
 
-  const merged = useMemo(() => mergeResults(files), [files]);
+  const merged = useMemo(() => mergeResults(files, KNOWN), [files]);
   const rates = useMemo(() => passRates(merged), [merged]);
   const opts: TableOptions = { filter, lesson: lesson || undefined, incompleteOnly, tamperedOnly, sort };
   const rows = tableRows(merged, opts);
@@ -204,9 +209,31 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
                             ...c.steps.map((s) => <td key={`${c.id}:${s.index}`} />),
                           ];
                         return [
-                          <td key={`${c.id}:s`} data-cell={`${c.id}:score`} className={cell.completed ? "pass" : undefined}>
+                          <td
+                            key={`${c.id}:s`}
+                            data-cell={`${c.id}:score`}
+                            data-pending={cell.pending || undefined}
+                            className={cell.completed ? "pass" : undefined}
+                          >
                             {cell.completed ? "✅ " : ""}
-                            {cell.score}% <span className="dim">({cell.passed}/{cell.total})</span>
+                            {cell.unknownTotal ? (
+                              <>
+                                ? <span className="dim">({cell.passed}/{cell.total}+)</span>
+                              </>
+                            ) : (
+                              <>
+                                {cell.score}% <span className="dim">({cell.passed}/{cell.total})</span>
+                              </>
+                            )}
+                            {(cell.pending > 0 || cell.unknownTotal) && (
+                              <span
+                                className="dim pending-note"
+                                title={cell.unknownTotal ? "이 파일에는 채점하지 않은 검사가 빠져 있어 전체 검사 수를 알 수 없습니다" : `채점하지 않은 검사 ${cell.pending}개`}
+                              >
+                                {" "}
+                                · 미채점 검사 있음
+                              </span>
+                            )}
                           </td>,
                           <td key={`${c.id}:t`} data-cell={`${c.id}:time`}>
                             {cell.completed ? fmtDuration(cell.timeMs) : <span className="dim">미완료</span>}
@@ -219,7 +246,7 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
                                 data-cell={`${c.id}:${s.index}`}
                                 data-status={sc?.status}
                                 className={sc?.status}
-                                title={sc ? `${sc.passed}/${sc.total} 통과` : undefined}
+                                title={sc ? `${sc.passed}/${sc.total} 통과${sc.pending ? ` (미채점 ${sc.pending})` : ""}` : undefined}
                               >
                                 {!sc ? "" : sc.status === "pass" ? "✅" : sc.status === "partial" ? `◐ ${sc.passed}/${sc.total}` : "❌"}
                                 {sc?.timeMs !== undefined && <span className="dim"> {fmtDuration(sc.timeMs)}</span>}

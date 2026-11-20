@@ -60,6 +60,16 @@ export function record(
   return changed ? { ...p, checks } : p;
 }
 
+/** A check the lesson has, as the results file lists it. */
+export interface ExpectedCheck {
+  key: string;
+  step: number;
+  label: string;
+}
+
+/** A check in a results file: a result, or `pending` (never run, e.g. not graded yet). */
+export type ResultCheck = CheckRecord & { key: string; pending?: true };
+
 export interface ResultsFile {
   format: "simucleo-lesson-results";
   version: 1;
@@ -77,7 +87,9 @@ export interface ResultsFile {
     attempts: number;
     passed: number;
     total: number;
-    checks: (CheckRecord & { key: string })[];
+    /** Every check of the lesson, `pending` ones too (older files: the
+     * recorded ones only). */
+    checks: ResultCheck[];
   }[];
 }
 
@@ -87,6 +99,9 @@ export function resultsJson(
   now: string,
   order: string[] = [],
   stepTitles: Record<string, string[]> = {},
+  /** Every check of each lesson: those without a result are listed as
+   * pending, results of checks the lesson no longer has are left out. */
+  expected: Record<string, ExpectedCheck[]> = {},
 ): ResultsFile {
   const ids = Object.keys(progress).sort((a, b) => (order.indexOf(a) - order.indexOf(b)) || a.localeCompare(b));
   return {
@@ -96,9 +111,12 @@ export function resultsJson(
     exportedAt: now,
     lessons: ids.map((id) => {
       const p = progress[id];
-      const checks = Object.entries(p.checks)
-        .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
-        .map(([key, c]) => ({ key, ...c }));
+      const want = expected[id];
+      const checks: ResultCheck[] = want
+        ? want.map((e) => (p.checks[e.key] ? { key: e.key, ...p.checks[e.key] } : { ...e, pass: false, pending: true, at: "" }))
+        : Object.entries(p.checks)
+            .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+            .map(([key, c]) => ({ key, ...c }));
       return {
         id,
         title: p.title,
@@ -135,7 +153,7 @@ export function resultsCsv(file: ResultsFile): string {
         l.attempts,
         c.step + 1,
         c.label,
-        c.pass ? "pass" : "fail",
+        c.pending ? "pending" : c.pass ? "pass" : "fail",
         c.at,
         c.detail ?? "",
         c.pass ? "" : (c.hint ?? ""),

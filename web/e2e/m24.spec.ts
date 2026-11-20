@@ -133,7 +133,10 @@ test("teacher view: two students' exports in one table, pass rates, duplicates, 
   // park "fixes" the file by hand (same export time: it replaces the original),
   // and an old copy of kim's file without the hash turns up.
   const edited = JSON.parse(park.text);
-  for (const c of edited.lessons[0].checks) c.pass = true;
+  for (const c of edited.lessons[0].checks) {
+    c.pass = true;
+    delete c.pending;
+  }
   const old = JSON.parse(kim.text);
   delete old.integrity;
   old.exportedAt = "2020-01-01T00:00:00.000Z";
@@ -342,3 +345,41 @@ test("a malformed lesson JSON shows its errors in the editor instead of crashing
   await expect(editor(page).getByTestId("editor-errors")).toContainText("'steps'가 비어 있습니다");
   expect(errors).toEqual([]);
 });
+
+test("results exported before 채점 count the ungraded checks: the teacher sees 57 %, not 100 %", async ({ page, browser }) => {
+  test.setTimeout(60_000);
+  const context = await browser.newContext({ baseURL: test.info().project.use.baseURL, viewport: { width: 1400, height: 820 } });
+  const sp = await context.newPage();
+  await ready(sp);
+  await startLesson(sp, "led-blink");
+  await openProject(sp, RIGHT);
+  for (const k of ["0.0", "0.1", "1.0", "2.3"]) await expect(check(sp, k)).toHaveAttribute("data-status", "pass");
+  await expect(check(sp, "2.1")).toHaveAttribute("data-status", "pending");
+  const f = await exportJson(sp, "lee 03");
+  await context.close();
+  const lesson = JSON.parse(f.text).lessons[0];
+  expect(lesson).toMatchObject({ passed: 4, total: 7 });
+  expect(lesson.checks.filter((c: { pending?: boolean }) => c.pending).map((c: { key: string }) => c.key)).toEqual(["2.0", "2.1", "2.2"]);
+
+  await ready(page);
+  await page.getByRole("button", { name: "📝 실습" }).click();
+  await panel(page).getByRole("button", { name: "👩‍🏫 선생님용 결과 모아보기" }).click();
+  await teacher(page).getByTestId("teacher-input").setInputFiles([asFile(f.name, f.text)]);
+  const score = row(page, "lee 03").locator('[data-cell="led-blink:score"]');
+  await expect(score).toContainText("57% (4/7)");
+  await expect(score).toContainText("미채점 검사 있음");
+  await expect(row(page, "lee 03").getByTestId("row-integrity")).toHaveAttribute("data-integrity", "verified");
+  await expect(row(page, "lee 03").locator('[data-cell="led-blink:2"]')).toHaveAttribute("data-status", "partial");
+  await expect(row(page, "lee 03").locator('[data-cell="led-blink:1"]')).toHaveAttribute("data-status", "pass");
+
+  // The same file as an older version wrote it (no pending entries, no hash):
+  // the bundled lesson's definition fills in the missing checks.
+  const old = JSON.parse(f.text);
+  delete old.integrity;
+  old.student = "lee old";
+  old.lessons[0].checks = old.lessons[0].checks.filter((c: { pending?: boolean }) => !c.pending);
+  await teacher(page).getByTestId("teacher-input").setInputFiles([asFile("old.json", JSON.stringify(old))]);
+  await expect(row(page, "lee old").locator('[data-cell="led-blink:score"]')).toContainText("57% (4/7)");
+  await expect(row(page, "lee old").locator('[data-cell="led-blink:2"]')).toHaveAttribute("data-status", "partial");
+});
+

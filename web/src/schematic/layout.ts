@@ -8,6 +8,7 @@ import { nucleoSignal } from "../parts/nucleo";
 import type { Netlist } from "../sim/simulator";
 import { formatOhms, parseOhms } from "../parts/ohms";
 import { mcuSides, POWER_SIGNALS, signalOrder, stableOrder } from "./wiring";
+import { t } from "../i18n";
 
 /** Drawing grid (SVG units). */
 export const G = 10;
@@ -106,43 +107,43 @@ const BOX_LAYOUT: Record<
   max7219: {
     left: ["VCC", "GND"],
     right: ["DIN", "CLK", "CS", "DOUT"],
-    subtitle: (p) => `LED 매트릭스 ×${Math.min(4, Math.max(1, Number(p.count) || 1))} (MAX7219)`,
+    subtitle: (p) => t("LED 매트릭스 ×{n} (MAX7219)", { n: Math.min(4, Math.max(1, Number(p.count) || 1)) }),
   },
   hc05: {
     left: ["VCC", "GND", "EN"],
     right: ["TXD", "RXD", "STATE"],
-    subtitle: (p) => `블루투스 (HC-05) · ${p.baud ?? 9600} baud`,
+    subtitle: (p) => t("블루투스 (HC-05) · {baud} baud", { baud: p.baud ?? 9600 }),
   },
   // Coil side (driven through the module's transistor) and the contacts.
   relay: {
     left: ["VCC", "GND", "IN"],
     right: ["NO", "COM", "NC"],
-    subtitle: (p) => `릴레이 5V · ${p.trigger === "high" ? "High" : "Low"} 트리거`,
+    subtitle: (p) => t("릴레이 5V · {level} 트리거", { level: p.trigger === "high" ? "High" : "Low" }),
   },
   hc595: {
     left: ["VCC", "GND", "DS", "SHCP", "STCP", "OE", "MR"],
     right: ["Q0", "Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q7S"],
-    subtitle: () => "시프트 레지스터 (74HC595)",
+    subtitle: () => t("시프트 레지스터 (74HC595)"),
   },
   tm1637: {
     left: ["VCC", "GND"],
     right: ["CLK", "DIO"],
-    subtitle: () => "4자리 7세그먼트 (TM1637)",
+    subtitle: () => t("4자리 7세그먼트 (TM1637)"),
   },
   joystick: {
     left: ["+5V", "GND"],
     right: ["VRx", "VRy", "SW"],
-    subtitle: () => "조이스틱 (KY-023)",
+    subtitle: () => t("조이스틱 (KY-023)"),
   },
   pir: {
     left: ["VCC", "GND"],
     right: ["OUT"],
-    subtitle: (p) => `PIR (HC-SR501) · ${p.mode === "L" ? "단발 L" : "재트리거 H"} · ${p.delay ?? 3} s`,
+    subtitle: (p) => `PIR (HC-SR501) · ${p.mode === "L" ? t("단발 L") : t("재트리거 H")} · ${p.delay ?? 3} s`,
   },
   bmp280: {
     left: ["VCC", "GND"],
     right: ["SCL", "SDA"],
-    subtitle: (p) => `기압 (BMP280) · I2C ${p.address ?? "0x76"}`,
+    subtitle: (p) => t("기압 (BMP280) · I2C {address}", { address: p.address ?? "0x76" }),
   },
   ...Object.fromEntries(
     ["neopixel-ring", "neopixel-strip", "neopixel-matrix"].map((k) => [
@@ -158,22 +159,22 @@ const BOX_LAYOUT: Record<
   battery: {
     left: ["-"],
     right: ["+"],
-    subtitle: (p) => `DC 전원 ${p.voltage ?? 12} V`,
+    subtitle: (p) => t("DC 전원 {v} V", { v: p.voltage ?? 12 }),
   },
   "stepper-nema17": {
     left: [],
     right: ["A+", "A-", "B+", "B-"],
-    subtitle: () => "스테퍼 NEMA17 (바이폴라, 200스텝)",
+    subtitle: () => t("스테퍼 NEMA17 (바이폴라, 200스텝)"),
   },
   a4988: {
     left: ["VMOT", "GND", "VDD", "STEP", "DIR", "EN", "MS1", "MS2", "MS3", "RST", "SLP"],
     right: ["1A", "1B", "2A", "2B"],
-    subtitle: (p) => `스텝 드라이버 (${p.model ?? "A4988"})`,
+    subtitle: (p) => t("스텝 드라이버 ({model})", { model: p.model ?? "A4988" }),
   },
   l298n: {
     left: ["12V", "GND", "5V", "ENA", "IN1", "IN2", "IN3", "IN4", "ENB"],
     right: ["OUT1", "OUT2", "OUT3", "OUT4"],
-    subtitle: (p) => `H-브리지 (L298N) · EN 점퍼 ${p.jumpers === "off" ? "없음" : "있음"}`,
+    subtitle: (p) => (p.jumpers === "off" ? t("H-브리지 (L298N) · EN 점퍼 없음") : t("H-브리지 (L298N) · EN 점퍼 있음")),
   },
   "esc-bldc": {
     left: ["BAT+", "GND"],
@@ -183,23 +184,23 @@ const BOX_LAYOUT: Record<
   "bldc-hall": {
     left: ["VCC", "GND"],
     right: ["U", "V", "W", "HA", "HB", "HC"],
-    subtitle: () => "BLDC (홀 센서 A/B/C)",
+    subtitle: () => t("BLDC (홀 센서 A/B/C)"),
   },
   bldc: {
     left: [],
     right: ["U", "V", "W"],
-    subtitle: () => "BLDC (센서리스)",
+    subtitle: () => t("BLDC (센서리스)"),
   },
   "bridge-3ph": {
     left: ["PVDD", "GND", "INHA", "INLA", "INHB", "INLB", "INHC", "INLC"],
     right: ["OUTA", "OUTB", "OUTC"],
-    subtitle: () => "3상 브리지 (DRV8302 형)",
+    subtitle: () => t("3상 브리지 (DRV8302 형)"),
   },
   // Only the receiver is wired: the remote's buttons are not pins.
   "ir-receiver": {
     left: ["VCC", "GND"],
     right: ["OUT"],
-    subtitle: () => "IR 수신기 (VS1838B, NEC)",
+    subtitle: () => t("IR 수신기 (VS1838B, NEC)"),
   },
 };
 

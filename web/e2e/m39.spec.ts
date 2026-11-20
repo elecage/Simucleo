@@ -202,7 +202,7 @@ test("share links carry no sources: the receiver gets the ELF and the usual no-s
   const link = await dlg.getByTestId("share-link").inputValue();
   expect(link).not.toContain("HAL_GPIO_TogglePin");
   await dlg.getByRole("button", { name: "공유 닫기" }).click();
-  const context = await browser.newContext({ baseURL: test.info().project.use.baseURL, viewport: { width: 1400, height: 820 } });
+  const context = await browser.newContext({ locale: "ko-KR", baseURL: test.info().project.use.baseURL, viewport: { width: 1400, height: 820 } });
   try {
     const other = await context.newPage();
     await other.goto(link);

@@ -1,5 +1,6 @@
 import { PITCH, type PartDef, type PinDef } from "./types";
 import { ARDUINO_BOTTOM, ARDUINO_TOP, CN10, CN7 } from "./nucleo-pins";
+import { t } from "../i18n";
 
 /*
  * Nucleo-64 (MB1136) with STM32F401RE, pin assignment from UM1724.
@@ -181,7 +182,7 @@ export const nucleoF401re: PartDef = {
       <rect x={px(4)} y={px(6)} width={px(3)} height={px(3)} className="chip" />
       {/* Label colour legend */}
       <g transform={`translate(${px(1)} ${px(23.5)})`} className="legend">
-        {[["io", "GPIO"], ["onboard", "보드 내장 (LD2/B1)"], ["busy", "ST-LINK·크리스털 사용"], ["pwr", "전원"], ["gnd", "GND"], ["nc", "NC"]].map(
+        {[["io", "GPIO"], ["onboard", t("보드 내장 (LD2/B1)")], ["busy", t("ST-LINK·크리스털 사용")], ["pwr", t("전원")], ["gnd", "GND"], ["nc", "NC"]].map(
           ([cls, text], i) => (
             <g key={cls} transform={`translate(0 ${i * 7})`}>
               <rect width={5} height={5} y={-4} className={`swatch-${cls}`} />

@@ -11,6 +11,7 @@ import { useEffect, useRef, useState, type JSX, type PointerEvent as RPointerEve
 import type { PinFrame } from "../sim/protocol";
 import type { VisualState } from "../parts/types";
 import { G, STUB, type SchNet, type SchPin, type SchSymbol, type Schematic } from "./layout";
+import { t } from "../i18n";
 
 const LED_HEX: Record<string, string> = {
   red: "#ef4444",
@@ -169,7 +170,7 @@ function PinEnd({
   if (!net)
     return (
       <path className="sym-nc" d={`M${p.x - 3},${p.y - 3} l6,6 m0,-6 l-6,6`}>
-        <title>연결 안 됨</title>
+        <title>{t("연결 안 됨")}</title>
       </path>
     );
   const cls = `net-end${level}${lit ? " lit" : ""}`;
@@ -177,7 +178,7 @@ function PinEnd({
     onMouseEnter: () => onNet(net.name),
     onMouseLeave: () => onNet(null),
   };
-  const tip = <title>{`${net.name}: ${net.members.join(", ") || "보드"}`}</title>;
+  const tip = <title>{`${net.name}: ${net.members.join(", ") || t("보드")}`}</title>;
   if (net.power === "gnd")
     return (
       <g className={cls} data-net={net.name} {...hover}>
@@ -411,36 +412,36 @@ export function SchematicView({
       }}
     >
       <div className="schematic-bar" onClick={(e) => e.stopPropagation()}>
-        <button onClick={() => setZoom((z) => Math.max(0.4, z / 1.25))} aria-label="회로도 축소">
+        <button onClick={() => setZoom((z) => Math.max(0.4, z / 1.25))} aria-label={t("회로도 축소")}>
           −
         </button>
         <span>{Math.round(zoom * 100)}%</span>
-        <button onClick={() => setZoom((z) => Math.min(3, z * 1.25))} aria-label="회로도 확대">
+        <button onClick={() => setZoom((z) => Math.min(3, z * 1.25))} aria-label={t("회로도 확대")}>
           +
         </button>
-        <label className="all-pins" title="쓰지 않는 MCU 핀과 전원 핀(3V3, 5V, GND, …)도 보여, 그 핀에 배선할 수 있습니다">
-          <input type="checkbox" checked={allPins} onChange={(e) => onAllPins?.(e.target.checked)} /> 모든 MCU 핀
+        <label className="all-pins" title={t("쓰지 않는 MCU 핀과 전원 핀(3V3, 5V, GND, …)도 보여, 그 핀에 배선할 수 있습니다")}>
+          <input type="checkbox" checked={allPins} onChange={(e) => onAllPins?.(e.target.checked)} /> {t("모든 MCU 핀")}
         </label>
         {!!marks?.size && (
           <span className="sch-marks" data-testid="sch-marks">
-            🔴 채점: 틀린 배선 검사의 핀·넷
+            {t("🔴 채점: 틀린 배선 검사의 핀·넷")}
           </span>
         )}
         {selEnd && (
           <span className="pin-selection" data-testid="pin-selection">
-            선택: <b>{selEnd.label}</b>
-            {selEnd.net ? ` (${selEnd.net})` : " (연결 안 됨)"}{" "}
-            <button onClick={() => onDisconnect?.({ part: selEnd.part, ids: selEnd.ids })}>연결 끊기</button>
+            {t("선택:")} <b>{selEnd.label}</b>
+            {selEnd.net ? ` (${selEnd.net})` : ` (${t("연결 안 됨")})`}{" "}
+            <button onClick={() => onDisconnect?.({ part: selEnd.part, ids: selEnd.ids })}>{t("연결 끊기")}</button>
           </span>
         )}
         <span className="hint" data-testid="net-info">
           {drag?.moved
             ? target
-              ? `${drag.from.label} → ${target.label}: 놓으면 와이어가 생깁니다`
-              : `${drag.from.label}에서 배선 중: 다른 핀 끝에 놓으세요 (Esc 또는 빈 곳에 놓으면 취소)`
+              ? t("{from} → {to}: 놓으면 와이어가 생깁니다", { from: drag.from.label, to: target.label })
+              : t("{from}에서 배선 중: 다른 핀 끝에 놓으세요 (Esc 또는 빈 곳에 놓으면 취소)", { from: drag.from.label })
             : net
-              ? `${net.name}: ${net.members.join(", ") || "보드"}`
-              : "넷 이름에 마우스를 올리면 같은 넷이 강조됩니다. 핀 끝을 클릭하면 넷 고정 + 핀 선택(연결 끊기·Delete), 핀 끝에서 다른 핀 끝으로 끌면 배선."}
+              ? `${net.name}: ${net.members.join(", ") || t("보드")}`
+              : t("넷 이름에 마우스를 올리면 같은 넷이 강조됩니다. 핀 끝을 클릭하면 넷 고정 + 핀 선택(연결 끊기·Delete), 핀 끝에서 다른 핀 끝으로 끌면 배선.")}
         </span>
       </div>
       <div className="schematic-scroll">

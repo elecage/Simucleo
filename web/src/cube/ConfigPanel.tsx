@@ -36,6 +36,7 @@ import { applyRegeneration, newCubeProject, planRegeneration, projectConfig, typ
 import { diffLines, diffStats, foldDiff } from "./diff.ts";
 import { wiringCheck, type WiredPins } from "./wiring.ts";
 import { download } from "../editor/project.ts";
+import { t } from "../i18n/index.ts";
 import "./cube.css";
 
 export interface ConfigPanelProps {
@@ -83,7 +84,7 @@ export default function ConfigPanel({ code, start, onApply, onClose, wired, note
     });
 
   const close = () => {
-    if (isCube && JSON.stringify(cfg) !== saved && !window.confirm("코드를 생성하지 않은 설정 변경이 있습니다. 버리고 닫을까요?")) return;
+    if (isCube && JSON.stringify(cfg) !== saved && !window.confirm(t("코드를 생성하지 않은 설정 변경이 있습니다. 버리고 닫을까요?"))) return;
     onClose();
   };
   useEffect(() => {
@@ -99,32 +100,32 @@ export default function ConfigPanel({ code, start, onApply, onClose, wired, note
     let next: CodeProject;
     if (isCube) next = applyRegeneration(code!, cfg);
     else {
-      if (code && !window.confirm("지금 코드 탭의 코드를 설정 도구 프로젝트로 바꿉니다(회로는 그대로). 계속할까요?")) return;
+      if (code && !window.confirm(t("지금 코드 탭의 코드를 설정 도구 프로젝트로 바꿉니다(회로는 그대로). 계속할까요?"))) return;
       next = newCubeProject(cfg);
     }
     onApply(next);
     setSaved(JSON.stringify(cfg));
-    setDone(`코드를 생성했습니다 (${new Date().toLocaleTimeString()}). 코드 탭에서 ▶ 빌드하세요.`);
+    setDone(t("코드를 생성했습니다 ({time}). 코드 탭에서 ▶ 빌드하세요.", { time: new Date().toLocaleTimeString() }));
   };
 
   const loadIoc = async (f: File) => {
     const r = parseIoc(await f.text());
     setCfg({ ...r.config, drivers: r.config.drivers || DEFAULT_PACK.id });
-    setNotes([`${f.name}을(를) 불러왔습니다.`, ...r.warnings]);
+    setNotes([t("{name}을(를) 불러왔습니다.", { name: f.name }), ...r.warnings]);
     setTab("pins");
   };
 
   return (
-    <div className="cube-panel" data-testid="config-panel" role="dialog" aria-label="설정 도구">
+    <div className="cube-panel" data-testid="config-panel" role="dialog" aria-label={t("설정 도구")}>
       <div className="cube-bar">
-        <b>⚙ 설정 (.ioc)</b>
+        <b>{t("⚙ 설정 (.ioc)")}</b>
         <label className="cube-name">
-          프로젝트{" "}
-          <input aria-label="CubeIDE 프로젝트 이름" value={cfg.projectName} onChange={(e) => update((c) => void (c.projectName = e.target.value))} size={14} />
+          {t("프로젝트")}{" "}
+          <input aria-label={t("CubeIDE 프로젝트 이름")} value={cfg.projectName} onChange={(e) => update((c) => void (c.projectName = e.target.value))} size={14} />
         </label>
         <label>
-          드라이버{" "}
-          <select aria-label="STM32CubeF4 버전" value={cfg.drivers} onChange={(e) => update((c) => void (c.drivers = e.target.value))}>
+          {t("드라이버")}{" "}
+          <select aria-label={t("STM32CubeF4 버전")} value={cfg.drivers} onChange={(e) => update((c) => void (c.drivers = e.target.value))}>
             {PACKS.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.label}
@@ -133,34 +134,34 @@ export default function ConfigPanel({ code, start, onApply, onClose, wired, note
           </select>
         </label>
         <span className={errors ? "cube-count bad" : warns ? "cube-count warn" : "cube-count ok"} data-testid="config-status">
-          {errors ? `오류 ${errors}` : "오류 없음"}
-          {warns ? ` · 경고 ${warns}` : ""}
+          {errors ? t("오류 {n}", { n: errors }) : t("오류 없음")}
+          {warns ? t(" · 경고 {n}", { n: warns }) : ""}
         </span>
         <span className="cube-spacer" />
-        <button onClick={() => iocInput.current?.click()} title="CubeMX .ioc 파일을 읽어 이 설정으로">
-          .ioc 불러오기
+        <button onClick={() => iocInput.current?.click()} title={t("CubeMX .ioc 파일을 읽어 이 설정으로")}>
+          {t(".ioc 불러오기")}
         </button>
         <input ref={iocInput} type="file" accept=".ioc" hidden data-testid="ioc-input" onChange={(e) => e.target.files?.[0] && void loadIoc(e.target.files[0])} />
-        <button onClick={() => download(`${cfg.projectName || "simucleo"}.ioc`, new Blob([exportIoc(cfg)], { type: "text/plain" }))}>.ioc 내보내기</button>
-        <button className="primary" onClick={() => setTab("code")} title="바뀔 코드를 보고 생성합니다">
-          코드 생성…
+        <button onClick={() => download(`${cfg.projectName || "simucleo"}.ioc`, new Blob([exportIoc(cfg)], { type: "text/plain" }))}>{t(".ioc 내보내기")}</button>
+        <button className="primary" onClick={() => setTab("code")} title={t("바뀔 코드를 보고 생성합니다")}>
+          {t("코드 생성…")}
         </button>
-        <button onClick={close} aria-label="설정 도구 닫기">
+        <button onClick={close} aria-label={t("설정 도구 닫기")}>
           ✕
         </button>
       </div>
       <nav className="cube-tabs" role="tablist">
         {(
           [
-            ["pins", "핀 배치"],
-            ["clock", "클럭"],
-            ["peripherals", "주변장치"],
-            ["code", "코드 생성"],
+            ["pins", t("핀 배치")],
+            ["clock", t("클럭")],
+            ["peripherals", t("주변장치")],
+            ["code", t("코드 생성")],
           ] as [Tab, string][]
-        ).map(([t, name]) => (
-          <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
+        ).map(([id, name]) => (
+          <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>
             {name}
-            {t === "clock" && tree.issues.some((i) => i.severity === "error") ? " ⚠" : ""}
+            {id === "clock" && tree.issues.some((i) => i.severity === "error") ? " ⚠" : ""}
           </button>
         ))}
       </nav>
@@ -176,29 +177,29 @@ export default function ConfigPanel({ code, start, onApply, onClose, wired, note
 }
 
 function Problems({ issues, wiring, notes, onNotes }: { issues: Issue[]; wiring: { pin: string; message: string }[]; notes: string[]; onNotes: () => void }) {
-  if (!issues.length && !wiring.length && !notes.length) return <div className="cube-problems empty">문제 없음</div>;
+  if (!issues.length && !wiring.length && !notes.length) return <div className="cube-problems empty">{t("문제 없음")}</div>;
   return (
     <div className="cube-problems" data-testid="config-problems">
       <ul>
         {issues.map((i, k) => (
           <li key={`i${k}`} className={i.severity === "error" ? "p-error" : "p-warning"} data-where={i.where}>
-            <b>{i.severity === "error" ? "오류" : "경고"}</b> {i.message}
+            <b>{i.severity === "error" ? t("오류") : t("경고")}</b> {i.message}
           </li>
         ))}
         {wiring.map((w, k) => (
           <li key={`w${k}`} className="p-wiring" data-pin={w.pin}>
-            <b>배선 대조</b> {w.message}
+            <b>{t("배선 대조")}</b> {w.message}
           </li>
         ))}
         {notes.map((n, k) => (
           <li key={`n${k}`} className="p-note">
-            <b>알림</b> {n}
+            <b>{t("알림")}</b> {n}
           </li>
         ))}
       </ul>
       {notes.length > 0 && (
         <button className="cube-dismiss" onClick={onNotes}>
-          알림 지우기
+          {t("알림 지우기")}
         </button>
       )}
     </div>
@@ -207,7 +208,7 @@ function Problems({ issues, wiring, notes, onNotes }: { issues: Issue[]; wiring:
 
 // ------------------------------------------------------------------ pins
 
-const SIGNAL_LABEL: Record<string, string> = { GPIO_Input: "GPIO 입력", GPIO_Output: "GPIO 출력", GPIO_Analog: "아날로그" };
+const SIGNAL_LABEL: Record<string, string> = { GPIO_Input: t("GPIO 입력"), GPIO_Output: t("GPIO 출력"), GPIO_Analog: t("아날로그") };
 const signalText = (s: string) => SIGNAL_LABEL[s] ?? (/^GPXTI(\d+)$/.test(s) ? `EXTI${s.slice(5)}` : s);
 
 function pinClass(pin: PackagePin, cfg: CubeConfig, issues: Issue[]): string {
@@ -236,7 +237,7 @@ function leadAt(n: number): { x: number; y: number; side: "l" | "b" | "r" | "t" 
 function PackageView({ cfg, issues, selected, onPick }: { cfg: CubeConfig; issues: Issue[]; selected: string | null; onPick: (pin: string, at: { x: number; y: number }) => void }) {
   const L = 16;
   return (
-    <svg className="pkg" viewBox="0 0 480 480" role="img" aria-label="STM32F401RETx LQFP64 핀 배치">
+    <svg className="pkg" viewBox="0 0 480 480" role="img" aria-label={t("STM32F401RETx LQFP64 핀 배치")}>
       <rect x={120} y={120} width={240} height={240} rx={6} className="pkg-body" />
       <circle cx={136} cy={136} r={5} className="pkg-dot" />
       <text x={240} y={232} className="pkg-name">
@@ -301,10 +302,10 @@ function PinTab({ cfg, setCfg, issues, wired }: { cfg: CubeConfig; setCfg: (c: C
       <div className="cube-pins-left">
         <div className="cube-seg">
           <button aria-pressed={view === "package"} onClick={() => setView("package")}>
-            패키지
+            {t("패키지")}
           </button>
           <button aria-pressed={view === "list"} onClick={() => setView("list")}>
-            목록
+            {t("목록")}
           </button>
         </div>
         {view === "package" ? (
@@ -319,12 +320,12 @@ function PinTab({ cfg, setCfg, issues, wired }: { cfg: CubeConfig; setCfg: (c: C
               }}
             />
             {menu && (
-              <div className="pin-menu" style={{ left: Math.min(menu.x, 330), top: Math.min(menu.y, 300) }} data-testid="pin-menu" role="menu" aria-label={`${menu.pin} 신호`}>
+              <div className="pin-menu" style={{ left: Math.min(menu.x, 330), top: Math.min(menu.y, 300) }} data-testid="pin-menu" role="menu" aria-label={t("{pin} 신호", { pin: menu.pin })}>
                 <div className="pin-menu-title">
                   {menu.pin} {boardNames(menu.pin).join(" · ")}
                 </div>
                 <button role="menuitem" onClick={() => assign(menu.pin, null)} data-signal="">
-                  Reset_State (해제)
+                  {t("Reset_State (해제)")}
                 </button>
                 {signalChoices(menu.pin).map((s) => (
                   <button
@@ -334,13 +335,13 @@ function PinTab({ cfg, setCfg, issues, wired }: { cfg: CubeConfig; setCfg: (c: C
                     className={cfg.pins[menu.pin]?.signal === s.signal ? "on" : ""}
                     disabled={s.kind === "rcc" && !/^RCC_OSC_/.test(s.signal)}
                     onClick={() => assign(menu.pin, s.signal)}
-                    title={s.unsupported ? "코드 생성은 아직 지원하지 않습니다(설정만 저장)" : undefined}
+                    title={s.unsupported ? t("코드 생성은 아직 지원하지 않습니다(설정만 저장)") : undefined}
                   >
                     {s.signal}
-                    {s.unsupported ? " (미지원)" : ""}
+                    {s.unsupported ? t(" (미지원)") : ""}
                   </button>
                 ))}
-                <button className="pin-menu-x" onClick={() => setMenu(null)} aria-label="닫기">
+                <button className="pin-menu-x" onClick={() => setMenu(null)} aria-label={t("닫기")}>
                   ✕
                 </button>
               </div>
@@ -349,16 +350,16 @@ function PinTab({ cfg, setCfg, issues, wired }: { cfg: CubeConfig; setCfg: (c: C
         ) : (
           <div className="pin-list">
             <label>
-              <input type="checkbox" checked={filter === "used"} onChange={(e) => setFilter(e.target.checked ? "used" : "all")} /> 쓰는 핀만
+              <input type="checkbox" checked={filter === "used"} onChange={(e) => setFilter(e.target.checked ? "used" : "all")} /> {t("쓰는 핀만")}
             </label>
             <table>
               <thead>
                 <tr>
                   <th>#</th>
-                  <th>핀</th>
-                  <th>보드</th>
-                  <th>신호</th>
-                  <th>라벨</th>
+                  <th>{t("핀")}</th>
+                  <th>{t("보드")}</th>
+                  <th>{t("신호")}</th>
+                  <th>{t("라벨")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -368,12 +369,12 @@ function PinTab({ cfg, setCfg, issues, wired }: { cfg: CubeConfig; setCfg: (c: C
                     <td>{p.name}</td>
                     <td className="dim">{boardNames(p.name).join(" ")}</td>
                     <td>
-                      <select aria-label={`${p.name} 신호`} value={cfg.pins[p.name]?.signal ?? ""} onChange={(e) => assign(p.name, e.target.value || null)}>
+                      <select aria-label={t("{pin} 신호", { pin: p.name })} value={cfg.pins[p.name]?.signal ?? ""} onChange={(e) => assign(p.name, e.target.value || null)}>
                         <option value="">—</option>
                         {signalChoices(p.name).map((s) => (
                           <option key={s.signal} value={s.signal}>
                             {s.signal}
-                            {s.unsupported ? " (미지원)" : ""}
+                            {s.unsupported ? t(" (미지원)") : ""}
                           </option>
                         ))}
                       </select>
@@ -386,7 +387,7 @@ function PinTab({ cfg, setCfg, issues, wired }: { cfg: CubeConfig; setCfg: (c: C
           </div>
         )}
       </div>
-      <div className="cube-pins-right">{sel ? <PinEditor pin={sel} cfg={cfg} setCfg={setCfg} wired={wired} /> : <p className="dim">핀을 누르면 신호를 고르고 설정합니다. 초록은 쓰는 핀, 빨강은 오류.</p>}</div>
+      <div className="cube-pins-right">{sel ? <PinEditor pin={sel} cfg={cfg} setCfg={setCfg} wired={wired} /> : <p className="dim">{t("핀을 누르면 신호를 고르고 설정합니다. 초록은 쓰는 핀, 빨강은 오류.")}</p>}</div>
     </div>
   );
 }
@@ -404,20 +405,20 @@ function PinEditor({ pin, cfg, setCfg, wired }: { pin: string; cfg: CubeConfig; 
   return (
     <div className="pin-editor" data-testid="pin-editor" data-editing={pin}>
       <h4>
-        {pin} <span className="dim">(핀 {n})</span>
+        {pin} <span className="dim">{t("(핀 {n})", { n })}</span>
       </h4>
       <p className="dim">
-        {[...boardNames(pin), ONBOARD[pin]].filter(Boolean).join(" · ") || "보드 헤더에 없음"}
-        {parts.length ? ` · 회로: ${parts.map((p) => `${p.name}(${p.part}.${p.pin})`).join(", ")}` : ""}
+        {[...boardNames(pin), ONBOARD[pin]].filter(Boolean).join(" · ") || t("보드 헤더에 없음")}
+        {parts.length ? t(" · 회로: {parts}", { parts: parts.map((p) => `${p.name}(${p.part}.${p.pin})`).join(", ") }) : ""}
       </p>
       <label>
-        신호{" "}
-        <select aria-label={`${pin} 신호 고르기`} value={v?.signal ?? ""} onChange={(e) => setCfg(assignPin(cfg, pin, e.target.value || null))}>
-          <option value="">Reset_State (해제)</option>
+        {t("신호")}{" "}
+        <select aria-label={t("{pin} 신호 고르기", { pin })} value={v?.signal ?? ""} onChange={(e) => setCfg(assignPin(cfg, pin, e.target.value || null))}>
+          <option value="">{t("Reset_State (해제)")}</option>
           {signalChoices(pin).map((s) => (
             <option key={s.signal} value={s.signal}>
               {s.signal}
-              {s.unsupported ? " (미지원)" : ""}
+              {s.unsupported ? t(" (미지원)") : ""}
             </option>
           ))}
         </select>
@@ -425,42 +426,42 @@ function PinEditor({ pin, cfg, setCfg, wired }: { pin: string; cfg: CubeConfig; 
       {v && (
         <>
           <label>
-            라벨{" "}
-            <input aria-label={`${pin} 라벨`} value={v.label ?? ""} placeholder="예: LD2" onChange={(e) => set({ label: e.target.value })} />
+            {t("라벨")}{" "}
+            <input aria-label={t("{pin} 라벨", { pin })} value={v.label ?? ""} placeholder={t("예: LD2")} onChange={(e) => set({ label: e.target.value })} />
             {v.label && <span className="dim"> → {labelMacro(v.label)}_Pin</span>}
           </label>
           {/^GPIO_(Input|Output)$|^GPXTI/.test(v.signal) && (
             <label>
-              풀업/풀다운{" "}
-              <select aria-label={`${pin} 풀업`} value={v.pull ?? "none"} onChange={(e) => set({ pull: e.target.value as PinConfig["pull"] })}>
-                <option value="none">없음</option>
-                <option value="up">풀업</option>
-                <option value="down">풀다운</option>
+              {t("풀업/풀다운")}{" "}
+              <select aria-label={t("{pin} 풀업", { pin })} value={v.pull ?? "none"} onChange={(e) => set({ pull: e.target.value as PinConfig["pull"] })}>
+                <option value="none">{t("없음")}</option>
+                <option value="up">{t("풀업")}</option>
+                <option value="down">{t("풀다운")}</option>
               </select>
             </label>
           )}
           {v.signal === "GPIO_Output" && (
             <>
               <label>
-                처음 출력{" "}
-                <select aria-label={`${pin} 처음 출력`} value={v.high ? "1" : "0"} onChange={(e) => set({ high: e.target.value === "1" })}>
+                {t("처음 출력")}{" "}
+                <select aria-label={t("{pin} 처음 출력", { pin })} value={v.high ? "1" : "0"} onChange={(e) => set({ high: e.target.value === "1" })}>
                   <option value="0">Low</option>
                   <option value="1">High</option>
                 </select>
               </label>
               <label>
-                출력 방식{" "}
-                <select aria-label={`${pin} 출력 방식`} value={v.openDrain ? "od" : "pp"} onChange={(e) => set({ openDrain: e.target.value === "od" })}>
-                  <option value="pp">푸시풀</option>
-                  <option value="od">오픈 드레인</option>
+                {t("출력 방식")}{" "}
+                <select aria-label={t("{pin} 출력 방식", { pin })} value={v.openDrain ? "od" : "pp"} onChange={(e) => set({ openDrain: e.target.value === "od" })}>
+                  <option value="pp">{t("푸시풀")}</option>
+                  <option value="od">{t("오픈 드레인")}</option>
                 </select>
               </label>
             </>
           )}
           {(v.signal === "GPIO_Output" || /^(USART|SPI|I2C|TIM)/.test(v.signal)) && (
             <label>
-              속도{" "}
-              <select aria-label={`${pin} 속도`} value={v.speed ?? (/^TIM|^GPIO/.test(v.signal) ? "low" : "very_high")} onChange={(e) => set({ speed: e.target.value as PinConfig["speed"] })}>
+              {t("속도")}{" "}
+              <select aria-label={t("{pin} 속도", { pin })} value={v.speed ?? (/^TIM|^GPIO/.test(v.signal) ? "low" : "very_high")} onChange={(e) => set({ speed: e.target.value as PinConfig["speed"] })}>
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
                 <option value="high">High</option>
@@ -470,15 +471,15 @@ function PinEditor({ pin, cfg, setCfg, wired }: { pin: string; cfg: CubeConfig; 
           )}
           {/^GPXTI/.test(v.signal) && (
             <label>
-              인터럽트{" "}
-              <select aria-label={`${pin} 에지`} value={v.edge ?? "rising"} onChange={(e) => set({ edge: e.target.value as PinConfig["edge"] })}>
-                <option value="rising">상승 에지</option>
-                <option value="falling">하강 에지</option>
-                <option value="both">양쪽 에지</option>
+              {t("인터럽트")}{" "}
+              <select aria-label={t("{pin} 에지", { pin })} value={v.edge ?? "rising"} onChange={(e) => set({ edge: e.target.value as PinConfig["edge"] })}>
+                <option value="rising">{t("상승 에지")}</option>
+                <option value="falling">{t("하강 에지")}</option>
+                <option value="both">{t("양쪽 에지")}</option>
               </select>
             </label>
           )}
-          {peripheralOf(v.signal) && <p className="dim">{peripheralOf(v.signal)}의 설정은 주변장치 탭에서.</p>}
+          {peripheralOf(v.signal) && <p className="dim">{t("{p}의 설정은 주변장치 탭에서.", { p: peripheralOf(v.signal)! })}</p>}
         </>
       )}
     </div>
@@ -489,7 +490,7 @@ function PinEditor({ pin, cfg, setCfg, wired }: { pin: string; cfg: CubeConfig; 
 
 function ClockTab({ cfg, update, issues }: { cfg: CubeConfig; update: (f: (c: CubeConfig) => void) => void; issues: ClockIssue[] }) {
   const k = cfg.clock;
-  const t = computeClock(k);
+  const ck = computeClock(k);
   const bad = (n: ClockIssue["node"]) =>
     issues.find((i) => i.node === n && i.severity === "error") ?? issues.find((i) => i.node === n) ?? (n === "pllP" && k.sysclk === "PLL" ? issues.find((i) => i.node === "sysclk") : undefined);
   const box = (node: ClockIssue["node"] | null, title: string, value: ReactNode, children?: ReactNode) => {
@@ -510,20 +511,20 @@ function ClockTab({ cfg, update, issues }: { cfg: CubeConfig; update: (f: (c: Cu
     <div className="ck">
       <div className="ck-row">
         <div className="ck-col">
-          {box(null, "HSI", mhz(HSI_HZ), <span className="dim">내부 RC</span>)}
+          {box(null, "HSI", mhz(HSI_HZ), <span className="dim">{t("내부 RC")}</span>)}
           {box(
             "hse",
             "HSE",
-            k.hse === "off" ? "꺼짐" : mhz(HSE_HZ),
+            k.hse === "off" ? t("꺼짐") : mhz(HSE_HZ),
             <select aria-label="HSE" value={k.hse} onChange={(e) => update((c) => {
               c.clock.hse = e.target.value as ClockConfig["hse"];
               // HSE takes PH0/PH1 (OSC_IN/OSC_OUT), as in CubeMX's RCC mode.
               if (c.clock.hse === "off") for (const q of ["PH0", "PH1"]) { if (/^RCC_OSC_/.test(c.pins[q]?.signal ?? "")) delete c.pins[q]; }
               else { c.pins.PH0 = { signal: "RCC_OSC_IN" }; c.pins.PH1 = { signal: "RCC_OSC_OUT" }; }
             })}>
-              <option value="off">끄기</option>
-              <option value="bypass">바이패스 (ST-LINK 8 MHz)</option>
-              <option value="crystal">크리스털</option>
+              <option value="off">{t("끄기")}</option>
+              <option value="bypass">{t("바이패스 (ST-LINK 8 MHz)")}</option>
+              <option value="crystal">{t("크리스털")}</option>
             </select>,
           )}
         </div>
@@ -531,31 +532,31 @@ function ClockTab({ cfg, update, issues }: { cfg: CubeConfig; update: (f: (c: Cu
         <div className="ck-col">
           {box(
             null,
-            "PLL 소스",
+            t("PLL 소스"),
             k.pllSource,
-            <select aria-label="PLL 소스" value={k.pllSource} onChange={(e) => set((c) => void (c.pllSource = e.target.value as ClockConfig["pllSource"]))}>
+            <select aria-label={t("PLL 소스")} value={k.pllSource} onChange={(e) => set((c) => void (c.pllSource = e.target.value as ClockConfig["pllSource"]))}>
               <option value="HSI">HSI</option>
               <option value="HSE">HSE</option>
             </select>,
           )}
           <label className="ck-check">
-            <input type="checkbox" checked={k.pllOn} onChange={(e) => set((c) => void (c.pllOn = e.target.checked))} /> PLL 켜기
+            <input type="checkbox" checked={k.pllOn} onChange={(e) => set((c) => void (c.pllOn = e.target.checked))} /> {t("PLL 켜기")}
           </label>
         </div>
         <span className="ck-arrow">→</span>
         {box("pllM", "÷ M", <>{num("PLLM", k.pllM, 2, 63, (n) => set((c) => void (c.pllM = n)))}</>)}
         <span className="ck-arrow">→</span>
-        {box("vcoIn", "VCO 입력", mhz(t.vcoIn), <span className="dim">0.95–2.1 MHz</span>)}
+        {box("vcoIn", t("VCO 입력"), mhz(ck.vcoIn), <span className="dim">0.95–2.1 MHz</span>)}
         <span className="ck-arrow">→</span>
         {box("pllN", "× N", <>{num("PLLN", k.pllN, 50, 432, (n) => set((c) => void (c.pllN = n)))}</>)}
         <span className="ck-arrow">→</span>
-        {box("vcoOut", "VCO 출력", mhz(t.vcoOut), <span className="dim">192–432 MHz</span>)}
+        {box("vcoOut", t("VCO 출력"), mhz(ck.vcoOut), <span className="dim">192–432 MHz</span>)}
         <span className="ck-arrow">→</span>
         <div className="ck-col">
           {box(
             "pllP",
             "÷ P → PLLCLK",
-            mhz(t.pllP),
+            mhz(ck.pllP),
             <select aria-label="PLLP" value={k.pllP} onChange={(e) => set((c) => void (c.pllP = Number(e.target.value)))}>
               {PLLP_VALUES.map((p) => (
                 <option key={p} value={p}>
@@ -567,11 +568,11 @@ function ClockTab({ cfg, update, issues }: { cfg: CubeConfig; update: (f: (c: Cu
           {box(
             k.usb48 ? "usb" : "pllQ",
             "÷ Q → 48 MHz",
-            mhz(t.pllQ),
+            mhz(ck.pllQ),
             <>
               {num("PLLQ", k.pllQ, 2, 15, (n) => set((c) => void (c.pllQ = n)))}
               <label className="ck-check">
-                <input type="checkbox" checked={k.usb48} onChange={(e) => set((c) => void (c.usb48 = e.target.checked))} /> USB 48 MHz 확인
+                <input type="checkbox" checked={k.usb48} onChange={(e) => set((c) => void (c.usb48 = e.target.checked))} /> {t("USB 48 MHz 확인")}
               </label>
             </>,
           )}
@@ -580,9 +581,9 @@ function ClockTab({ cfg, update, issues }: { cfg: CubeConfig; update: (f: (c: Cu
       <div className="ck-row">
         {box(
           "sysclk",
-          "SYSCLK 선택",
-          mhz(t.sysclk),
-          <div className="ck-radio" role="radiogroup" aria-label="SYSCLK 소스">
+          t("SYSCLK 선택"),
+          mhz(ck.sysclk),
+          <div className="ck-radio" role="radiogroup" aria-label={t("SYSCLK 소스")}>
             {(["HSI", "HSE", "PLL"] as const).map((s) => (
               <label key={s}>
                 <input type="radio" name="sysclk" checked={k.sysclk === s} onChange={() => set((c) => void (c.sysclk = s))} /> {s === "PLL" ? "PLLCLK" : s}
@@ -594,8 +595,8 @@ function ClockTab({ cfg, update, issues }: { cfg: CubeConfig; update: (f: (c: Cu
         {box(
           "hclk",
           "AHB ÷ → HCLK",
-          mhz(t.hclk),
-          <select aria-label="AHB 분주" value={k.ahbDiv} onChange={(e) => set((c) => void (c.ahbDiv = Number(e.target.value)))}>
+          mhz(ck.hclk),
+          <select aria-label={t("AHB 분주")} value={k.ahbDiv} onChange={(e) => set((c) => void (c.ahbDiv = Number(e.target.value)))}>
             {AHB_DIVS.map((d) => (
               <option key={d} value={d}>
                 /{d}
@@ -607,32 +608,32 @@ function ClockTab({ cfg, update, issues }: { cfg: CubeConfig; update: (f: (c: Cu
         <div className="ck-col">
           {box(
             "apb1",
-            "APB1 ÷ → PCLK1 (최대 42)",
-            mhz(t.pclk1),
+            t("APB1 ÷ → PCLK1 (최대 42)"),
+            mhz(ck.pclk1),
             <>
-              <select aria-label="APB1 분주" value={k.apb1Div} onChange={(e) => set((c) => void (c.apb1Div = Number(e.target.value)))}>
+              <select aria-label={t("APB1 분주")} value={k.apb1Div} onChange={(e) => set((c) => void (c.apb1Div = Number(e.target.value)))}>
                 {APB_DIVS.map((d) => (
                   <option key={d} value={d}>
                     /{d}
                   </option>
                 ))}
               </select>
-              <span className="dim"> 타이머 {mhz(t.tim1)}</span>
+              <span className="dim"> {t("타이머 {f}", { f: mhz(ck.tim1) })}</span>
             </>,
           )}
           {box(
             "apb2",
-            "APB2 ÷ → PCLK2 (최대 84)",
-            mhz(t.pclk2),
+            t("APB2 ÷ → PCLK2 (최대 84)"),
+            mhz(ck.pclk2),
             <>
-              <select aria-label="APB2 분주" value={k.apb2Div} onChange={(e) => set((c) => void (c.apb2Div = Number(e.target.value)))}>
+              <select aria-label={t("APB2 분주")} value={k.apb2Div} onChange={(e) => set((c) => void (c.apb2Div = Number(e.target.value)))}>
                 {APB_DIVS.map((d) => (
                   <option key={d} value={d}>
                     /{d}
                   </option>
                 ))}
               </select>
-              <span className="dim"> 타이머 {mhz(t.tim2)}</span>
+              <span className="dim"> {t("타이머 {f}", { f: mhz(ck.tim2) })}</span>
             </>,
           )}
         </div>
@@ -640,10 +641,10 @@ function ClockTab({ cfg, update, issues }: { cfg: CubeConfig; update: (f: (c: Cu
         <div className="ck-col">
           {box(
             "latency",
-            "플래시 대기",
-            `${t.latency} WS`,
-            <select aria-label="플래시 대기" value={k.latency ?? "auto"} onChange={(e) => set((c) => void (c.latency = e.target.value === "auto" ? null : Number(e.target.value)))}>
-              <option value="auto">자동 ({t.minLatency})</option>
+            t("플래시 대기"),
+            `${ck.latency} WS`,
+            <select aria-label={t("플래시 대기")} value={k.latency ?? "auto"} onChange={(e) => set((c) => void (c.latency = e.target.value === "auto" ? null : Number(e.target.value)))}>
+              <option value="auto">{t("자동 ({n})", { n: ck.minLatency })}</option>
               {[0, 1, 2, 3, 4, 5, 6, 7].map((n) => (
                 <option key={n} value={n}>
                   {n}
@@ -653,16 +654,16 @@ function ClockTab({ cfg, update, issues }: { cfg: CubeConfig; update: (f: (c: Cu
           )}
           {box(
             null,
-            "전압 스케일",
+            t("전압 스케일"),
             `Scale ${k.vos}`,
-            <select aria-label="전압 스케일" value={k.vos} onChange={(e) => set((c) => void (c.vos = Number(e.target.value) as 2 | 3))}>
+            <select aria-label={t("전압 스케일")} value={k.vos} onChange={(e) => set((c) => void (c.vos = Number(e.target.value) as 2 | 3))}>
               <option value={2}>Scale 2 (≤ 84 MHz)</option>
               <option value={3}>Scale 3 (≤ 60 MHz)</option>
             </select>,
           )}
         </div>
       </div>
-      <p className="dim">SysTick·Cortex 클럭 = HCLK ({mhz(t.hclk)}). 숫자는 고치는 대로 다시 계산하고, 넘는 값은 빨간 상자와 아래 목록으로 알려 준다.</p>
+      <p className="dim">{t("SysTick·Cortex 클럭 = HCLK ({f}). 숫자는 고치는 대로 다시 계산하고, 넘는 값은 빨간 상자와 아래 목록으로 알려 준다.", { f: mhz(ck.hclk) })}</p>
     </div>
   );
 }
@@ -670,10 +671,10 @@ function ClockTab({ cfg, update, issues }: { cfg: CubeConfig; update: (f: (c: Cu
 // ------------------------------------------------------------------ peripherals
 
 const PERI_GROUPS: [string, string[]][] = [
-  ["연결", [...USARTS, ...I2CS, ...SPIS]],
-  ["타이머", [...TIMS]],
-  ["아날로그", ["ADC1"]],
-  ["시스템", ["GPIO", "NVIC", "SYS"]],
+  [t("연결", undefined, "category"), [...USARTS, ...I2CS, ...SPIS]],
+  [t("타이머"), [...TIMS]],
+  [t("아날로그"), ["ADC1"]],
+  [t("시스템"), ["GPIO", "NVIC", "SYS"]],
 ];
 
 function PeripheralTab({ cfg, setCfg, update }: { cfg: CubeConfig; setCfg: (c: CubeConfig) => void; update: (f: (c: CubeConfig) => void) => void }) {
@@ -681,7 +682,7 @@ function PeripheralTab({ cfg, setCfg, update }: { cfg: CubeConfig; setCfg: (c: C
   const on = new Set([...peripherals(cfg), "GPIO", "NVIC", "SYS"]);
   return (
     <div className="cube-peri">
-      <nav className="peri-list" aria-label="주변장치">
+      <nav className="peri-list" aria-label={t("주변장치")}>
         {PERI_GROUPS.map(([g, list]) => (
           <div key={g}>
             <div className="peri-group">{g}</div>
@@ -705,7 +706,7 @@ function Enable({ p, cfg, setCfg, hint }: { p: string; cfg: CubeConfig; setCfg: 
   const on = peripherals(cfg).includes(p);
   return (
     <label className="peri-enable">
-      <input type="checkbox" aria-label={`${p} 사용`} checked={on} onChange={(e) => setCfg(e.target.checked ? enablePeripheralWithPins(cfg, p) : disablePeripheralWithPins(cfg, p))} /> {p} 사용
+      <input type="checkbox" aria-label={t("{p} 사용", { p })} checked={on} onChange={(e) => setCfg(e.target.checked ? enablePeripheralWithPins(cfg, p) : disablePeripheralWithPins(cfg, p))} /> {t("{p} 사용", { p })}
       {hint && <span className="dim"> {hint}</span>}
     </label>
   );
@@ -714,7 +715,7 @@ function Enable({ p, cfg, setCfg, hint }: { p: string; cfg: CubeConfig; setCfg: 
 function PinsOf({ p, cfg }: { p: string; cfg: CubeConfig }) {
   const pins = Object.entries(cfg.pins).filter(([, v]) => peripheralOf(v.signal) === p);
   if (!pins.length) return null;
-  return <p className="dim">핀: {pins.map(([pin, v]) => `${v.signal} → ${pin}${boardNames(pin).length ? ` (${boardNames(pin)[0]})` : ""}`).join(", ")}</p>;
+  return <p className="dim">{t("핀: {list}", { list: pins.map(([pin, v]) => `${v.signal} → ${pin}${boardNames(pin).length ? ` (${boardNames(pin)[0]})` : ""}`).join(", ") })}</p>;
 }
 
 function Nvic({ irq, cfg, update, label }: { irq: string; cfg: CubeConfig; update: (f: (c: CubeConfig) => void) => void; label?: string }) {
@@ -724,17 +725,17 @@ function Nvic({ irq, cfg, update, label }: { irq: string; cfg: CubeConfig; updat
       <label>
         <input
           type="checkbox"
-          aria-label={`${irq}_IRQn 인터럽트`}
+          aria-label={t("{irq}_IRQn 인터럽트", { irq })}
           checked={!!n?.enabled}
           onChange={(e) => update((c) => void (c.nvic[irq] = { enabled: e.target.checked, preempt: c.nvic[irq]?.preempt ?? 0, sub: 0 }))}
         />{" "}
-        {label ?? `${irq}_IRQn`} 인터럽트
+        {t("{name} 인터럽트", { name: label ?? `${irq}_IRQn` })}
       </label>
       {n?.enabled && (
         <label>
           {" "}
-          우선순위{" "}
-          <select aria-label={`${irq} 우선순위`} value={n.preempt} onChange={(e) => update((c) => void (c.nvic[irq].preempt = Number(e.target.value)))}>
+          {t("우선순위")}{" "}
+          <select aria-label={t("{irq} 우선순위", { irq })} value={n.preempt} onChange={(e) => update((c) => void (c.nvic[irq].preempt = Number(e.target.value)))}>
             {Array.from({ length: 16 }, (_, i) => (
               <option key={i} value={i}>
                 {i}
@@ -754,42 +755,42 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
     const name = p as (typeof USARTS)[number];
     return (
       <>
-        <h4>{p} (UART 비동기)</h4>
-        <Enable p={p} cfg={cfg} setCfg={setCfg} hint={p === "USART2" ? "PA2/PA3 = ST-LINK 가상 COM(콘솔)" : undefined} />
+        <h4>{t("{p} (UART 비동기)", { p })}</h4>
+        <Enable p={p} cfg={cfg} setCfg={setCfg} hint={p === "USART2" ? t("PA2/PA3 = ST-LINK 가상 COM(콘솔)") : undefined} />
         <PinsOf p={p} cfg={cfg} />
         {u && (
           <div className="peri-grid">
             <label>
-              보레이트 <input aria-label={`${p} 보레이트`} type="number" value={u.baud} onChange={(e) => update((c) => void (c.usart[name]!.baud = Number(e.target.value)))} /> bps
+              {t("보레이트")} <input aria-label={t("{p} 보레이트", { p })} type="number" value={u.baud} onChange={(e) => update((c) => void (c.usart[name]!.baud = Number(e.target.value)))} /> bps
             </label>
             <label>
-              워드 길이{" "}
-              <select aria-label={`${p} 워드 길이`} value={u.wordLength} onChange={(e) => update((c) => void (c.usart[name]!.wordLength = Number(e.target.value) as 8 | 9))}>
-                <option value={8}>8비트 (패리티 포함)</option>
-                <option value={9}>9비트 (패리티 포함)</option>
+              {t("워드 길이")}{" "}
+              <select aria-label={t("{p} 워드 길이", { p })} value={u.wordLength} onChange={(e) => update((c) => void (c.usart[name]!.wordLength = Number(e.target.value) as 8 | 9))}>
+                <option value={8}>{t("8비트 (패리티 포함)")}</option>
+                <option value={9}>{t("9비트 (패리티 포함)")}</option>
               </select>
             </label>
             <label>
-              패리티{" "}
-              <select aria-label={`${p} 패리티`} value={u.parity} onChange={(e) => update((c) => void (c.usart[name]!.parity = e.target.value as "none"))}>
-                <option value="none">없음</option>
-                <option value="even">짝수</option>
-                <option value="odd">홀수</option>
+              {t("패리티")}{" "}
+              <select aria-label={t("{p} 패리티", { p })} value={u.parity} onChange={(e) => update((c) => void (c.usart[name]!.parity = e.target.value as "none"))}>
+                <option value="none">{t("없음")}</option>
+                <option value="even">{t("짝수")}</option>
+                <option value="odd">{t("홀수")}</option>
               </select>
             </label>
             <label>
-              정지 비트{" "}
-              <select aria-label={`${p} 정지 비트`} value={u.stopBits} onChange={(e) => update((c) => void (c.usart[name]!.stopBits = Number(e.target.value) as 1 | 2))}>
+              {t("정지 비트")}{" "}
+              <select aria-label={t("{p} 정지 비트", { p })} value={u.stopBits} onChange={(e) => update((c) => void (c.usart[name]!.stopBits = Number(e.target.value) as 1 | 2))}>
                 <option value={1}>1</option>
                 <option value={2}>2</option>
               </select>
             </label>
             <label>
-              방향{" "}
-              <select aria-label={`${p} 방향`} value={u.direction} onChange={(e) => update((c) => void (c.usart[name]!.direction = e.target.value as "tx_rx"))}>
-                <option value="tx_rx">송수신</option>
-                <option value="tx">송신만</option>
-                <option value="rx">수신만</option>
+              {t("방향")}{" "}
+              <select aria-label={t("{p} 방향", { p })} value={u.direction} onChange={(e) => update((c) => void (c.usart[name]!.direction = e.target.value as "tx_rx"))}>
+                <option value="tx_rx">{t("송수신")}</option>
+                <option value="tx">{t("송신만")}</option>
+                <option value="rx">{t("수신만")}</option>
               </select>
             </label>
             <Nvic irq={p} cfg={cfg} update={update} />
@@ -809,26 +810,26 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
         {v && (
           <div className="peri-grid">
             <label>
-              속도{" "}
-              <select aria-label={`${p} 속도`} value={v.speed} onChange={(e) => update((c) => void (c.i2c[name]!.speed = Number(e.target.value)))}>
-                <option value={100000}>표준 100 kHz</option>
-                <option value={400000}>빠른 400 kHz</option>
+              {t("속도")}{" "}
+              <select aria-label={t("{p} 속도", { p })} value={v.speed} onChange={(e) => update((c) => void (c.i2c[name]!.speed = Number(e.target.value)))}>
+                <option value={100000}>{t("표준 100 kHz")}</option>
+                <option value={400000}>{t("빠른 400 kHz")}</option>
               </select>
             </label>
             {v.speed > 100000 && (
               <label>
-                듀티{" "}
-                <select aria-label={`${p} 듀티`} value={v.duty} onChange={(e) => update((c) => void (c.i2c[name]!.duty = e.target.value as "2"))}>
+                {t("듀티")}{" "}
+                <select aria-label={t("{p} 듀티", { p })} value={v.duty} onChange={(e) => update((c) => void (c.i2c[name]!.duty = e.target.value as "2"))}>
                   <option value="2">Tlow/Thigh = 2</option>
                   <option value="16_9">16/9</option>
                 </select>
               </label>
             )}
             <label>
-              자기 주소(7비트) <input aria-label={`${p} 주소`} type="number" min={0} max={127} value={v.ownAddress} onChange={(e) => update((c) => void (c.i2c[name]!.ownAddress = Number(e.target.value)))} />
+              {t("자기 주소(7비트)")} <input aria-label={t("{p} 주소", { p })} type="number" min={0} max={127} value={v.ownAddress} onChange={(e) => update((c) => void (c.i2c[name]!.ownAddress = Number(e.target.value)))} />
             </label>
-            <Nvic irq={`${p}_EV`} cfg={cfg} update={update} label={`${p} 이벤트`} />
-            <Nvic irq={`${p}_ER`} cfg={cfg} update={update} label={`${p} 오류`} />
+            <Nvic irq={`${p}_EV`} cfg={cfg} update={update} label={t("{p} 이벤트", { p })} />
+            <Nvic irq={`${p}_ER`} cfg={cfg} update={update} label={t("{p} 오류", { p })} />
           </div>
         )}
       </>
@@ -841,13 +842,13 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
     return (
       <>
         <h4>{p}</h4>
-        <Enable p={p} cfg={cfg} setCfg={setCfg} hint={p === "SPI1" ? "PA5/PA6/PA7 = D13/D12/D11 (PA5는 LD2와 같은 핀)" : undefined} />
+        <Enable p={p} cfg={cfg} setCfg={setCfg} hint={p === "SPI1" ? t("PA5/PA6/PA7 = D13/D12/D11 (PA5는 LD2와 같은 핀)") : undefined} />
         <PinsOf p={p} cfg={cfg} />
         {v && (
           <div className="peri-grid">
             <label>
-              모드{" "}
-              <select aria-label={`${p} 모드`} value={`${v.mode}:${v.direction}`} onChange={(e) => {
+              {t("모드")}{" "}
+              <select aria-label={t("{p} 모드", { p })} value={`${v.mode}:${v.direction}`} onChange={(e) => {
                 const [mode, direction] = e.target.value.split(":") as ["master" | "slave", "2lines" | "tx_only"];
                 let c = clone(cfg);
                 c.spi[name] = { ...c.spi[name]!, mode, direction };
@@ -855,21 +856,21 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
                 if (direction === "2lines" && !Object.values(c.pins).some((pv) => pv.signal === `${p}_MISO`)) c = enablePeripheralWithPins(c, p);
                 setCfg(c);
               }}>
-                <option value="master:2lines">전이중 마스터</option>
-                <option value="master:tx_only">송신 전용 마스터</option>
-                <option value="slave:2lines">전이중 슬레이브</option>
+                <option value="master:2lines">{t("전이중 마스터")}</option>
+                <option value="master:tx_only">{t("송신 전용 마스터")}</option>
+                <option value="slave:2lines">{t("전이중 슬레이브")}</option>
               </select>
             </label>
             <label>
-              데이터{" "}
-              <select aria-label={`${p} 데이터 크기`} value={v.dataSize} onChange={(e) => update((c) => void (c.spi[name]!.dataSize = Number(e.target.value) as 8))}>
-                <option value={8}>8비트</option>
-                <option value={16}>16비트</option>
+              {t("데이터")}{" "}
+              <select aria-label={t("{p} 데이터 크기", { p })} value={v.dataSize} onChange={(e) => update((c) => void (c.spi[name]!.dataSize = Number(e.target.value) as 8))}>
+                <option value={8}>{t("8비트")}</option>
+                <option value={16}>{t("16비트")}</option>
               </select>
             </label>
             <label>
-              분주{" "}
-              <select aria-label={`${p} 분주`} value={v.prescaler} onChange={(e) => update((c) => void (c.spi[name]!.prescaler = Number(e.target.value)))}>
+              {t("분주")}{" "}
+              <select aria-label={t("{p} 분주", { p })} value={v.prescaler} onChange={(e) => update((c) => void (c.spi[name]!.prescaler = Number(e.target.value)))}>
                 {[2, 4, 8, 16, 32, 64, 128, 256].map((d) => (
                   <option key={d} value={d}>
                     /{d} = {mhz(bus / d)}
@@ -887,15 +888,15 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
             <label>
               CPHA{" "}
               <select aria-label={`${p} CPHA`} value={v.cpha} onChange={(e) => update((c) => void (c.spi[name]!.cpha = Number(e.target.value) as 0))}>
-                <option value={0}>0 (첫 에지)</option>
-                <option value={1}>1 (둘째 에지)</option>
+                <option value={0}>{t("0 (첫 에지)")}</option>
+                <option value={1}>{t("1 (둘째 에지)")}</option>
               </select>
             </label>
             <label>
-              비트 순서{" "}
-              <select aria-label={`${p} 비트 순서`} value={v.firstBit} onChange={(e) => update((c) => void (c.spi[name]!.firstBit = e.target.value as "msb"))}>
-                <option value="msb">MSB 먼저</option>
-                <option value="lsb">LSB 먼저</option>
+              {t("비트 순서")}{" "}
+              <select aria-label={t("{p} 비트 순서", { p })} value={v.firstBit} onChange={(e) => update((c) => void (c.spi[name]!.firstBit = e.target.value as "msb"))}>
+                <option value="msb">{t("MSB 먼저")}</option>
+                <option value="lsb">{t("LSB 먼저")}</option>
               </select>
             </label>
             <Nvic irq={p} cfg={cfg} update={update} />
@@ -912,35 +913,35 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
     return (
       <>
         <h4>{p}</h4>
-        <Enable p={p} cfg={cfg} setCfg={setCfg} hint={`내부 클럭 ${mhz(clk)}`} />
+        <Enable p={p} cfg={cfg} setCfg={setCfg} hint={t("내부 클럭 {f}", { f: mhz(clk) })} />
         {v && (
           <>
             <div className="peri-grid">
               <label>
-                분주(PSC) <input aria-label={`${p} 분주`} type="number" min={0} max={65535} value={v.prescaler} onChange={(e) => update((c) => void (c.tim[name]!.prescaler = Number(e.target.value)))} />
+                {t("분주(PSC)")} <input aria-label={t("{p} 분주", { p })} type="number" min={0} max={65535} value={v.prescaler} onChange={(e) => update((c) => void (c.tim[name]!.prescaler = Number(e.target.value)))} />
               </label>
               <label>
-                주기(ARR) <input aria-label={`${p} 주기`} type="number" min={0} value={v.period} onChange={(e) => update((c) => void (c.tim[name]!.period = Number(e.target.value)))} />
+                {t("주기(ARR)")} <input aria-label={t("{p} 주기", { p })} type="number" min={0} value={v.period} onChange={(e) => update((c) => void (c.tim[name]!.period = Number(e.target.value)))} />
               </label>
               <label>
-                세기{" "}
-                <select aria-label={`${p} 세기`} value={v.counterMode} onChange={(e) => update((c) => void (c.tim[name]!.counterMode = e.target.value as "up"))}>
-                  <option value="up">위로</option>
-                  <option value="down">아래로</option>
-                  <option value="center1">가운데 정렬 1</option>
-                  <option value="center2">가운데 정렬 2</option>
-                  <option value="center3">가운데 정렬 3</option>
+                {t("세기")}{" "}
+                <select aria-label={t("{p} 세기", { p })} value={v.counterMode} onChange={(e) => update((c) => void (c.tim[name]!.counterMode = e.target.value as "up"))}>
+                  <option value="up">{t("위로")}</option>
+                  <option value="down">{t("아래로")}</option>
+                  <option value="center1">{t("가운데 정렬 {n}", { n: 1 })}</option>
+                  <option value="center2">{t("가운데 정렬 {n}", { n: 2 })}</option>
+                  <option value="center3">{t("가운데 정렬 {n}", { n: 3 })}</option>
                 </select>
               </label>
               <label>
-                <input type="checkbox" checked={v.autoReloadPreload} onChange={(e) => update((c) => void (c.tim[name]!.autoReloadPreload = e.target.checked))} /> ARR 프리로드
+                <input type="checkbox" checked={v.autoReloadPreload} onChange={(e) => update((c) => void (c.tim[name]!.autoReloadPreload = e.target.checked))} /> {t("ARR 프리로드")}
               </label>
               <span className="dim">
-                업데이트 {(clk / (v.prescaler + 1) / (v.period + 1) / (v.counterMode.startsWith("center") ? 2 : 1)).toFixed(3)} Hz
+                {t("업데이트 {hz} Hz", { hz: (clk / (v.prescaler + 1) / (v.period + 1) / (v.counterMode.startsWith("center") ? 2 : 1)).toFixed(3) })}
               </span>
-              <Nvic irq={irq} cfg={cfg} update={update} label={`${irq}_IRQn (업데이트)`} />
+              <Nvic irq={irq} cfg={cfg} update={update} label={t("{irq}_IRQn (업데이트)", { irq })} />
             </div>
-            <h5>PWM 출력 채널</h5>
+            <h5>{t("PWM 출력 채널")}</h5>
             <table className="peri-ch">
               <tbody>
                 {Array.from({ length: timChannels(p) }, (_, i) => {
@@ -952,13 +953,13 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
                     <tr key={i} data-channel={i + 1}>
                       <td>CH{i + 1}</td>
                       <td>
-                        <select aria-label={`${sig} 핀`} value={pin} onChange={(e) => {
+                        <select aria-label={t("{sig} 핀", { sig })} value={pin} onChange={(e) => {
                           let c = cfg;
                           if (pin) c = assignPin(c, pin, null);
                           if (e.target.value) c = assignPin(c, e.target.value, sig, c.pins[e.target.value]?.label);
                           setCfg(c);
                         }}>
-                          <option value="">끄기</option>
+                          <option value="">{t("끄기")}</option>
                           {pinsFor(sig).map((q) => (
                             <option key={q} value={q}>
                               {q} {boardNames(q)[0] ?? ""}
@@ -970,16 +971,16 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
                       {ch && (
                         <>
                           <td>
-                            펄스 <input aria-label={`${sig} 펄스`} type="number" min={0} value={ch.pulse} onChange={(e) => update((c) => void (c.tim[name]!.channels[i]!.pulse = Number(e.target.value)))} />
+                            {t("펄스")} <input aria-label={t("{sig} 펄스", { sig })} type="number" min={0} value={ch.pulse} onChange={(e) => update((c) => void (c.tim[name]!.channels[i]!.pulse = Number(e.target.value)))} />
                           </td>
                           <td>
-                            <select aria-label={`${sig} 모드`} value={ch.pwmMode} onChange={(e) => update((c) => void (c.tim[name]!.channels[i]!.pwmMode = Number(e.target.value) as 1))}>
+                            <select aria-label={t("{sig} 모드", { sig })} value={ch.pwmMode} onChange={(e) => update((c) => void (c.tim[name]!.channels[i]!.pwmMode = Number(e.target.value) as 1))}>
                               <option value={1}>PWM1</option>
                               <option value={2}>PWM2</option>
                             </select>
                           </td>
                           <td>
-                            <select aria-label={`${sig} 극성`} value={ch.polarity} onChange={(e) => update((c) => void (c.tim[name]!.channels[i]!.polarity = e.target.value as "high"))}>
+                            <select aria-label={t("{sig} 극성", { sig })} value={ch.polarity} onChange={(e) => update((c) => void (c.tim[name]!.channels[i]!.polarity = e.target.value as "high"))}>
                               <option value="high">High</option>
                               <option value="low">Low</option>
                             </select>
@@ -992,7 +993,7 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
                 })}
               </tbody>
             </table>
-            <p className="dim">PWM은 USER CODE에서 HAL_TIM_PWM_Start(&amp;htim{p.slice(3)}, TIM_CHANNEL_x)로 시작합니다.</p>
+            <p className="dim">{t("PWM은 USER CODE에서 HAL_TIM_PWM_Start(&htim{n}, TIM_CHANNEL_x)로 시작합니다.", { n: p.slice(3) })}</p>
           </>
         )}
       </>
@@ -1003,7 +1004,7 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
     return (
       <>
         <h4>ADC1</h4>
-        <p className="dim">채널을 고르면 그 핀이 ADC1_INx가 됩니다. 순서(랭크)대로 변환합니다.</p>
+        <p className="dim">{t("채널을 고르면 그 핀이 ADC1_INx가 됩니다. 순서(랭크)대로 변환합니다.")}</p>
         <div className="adc-ch">
           {Array.from({ length: 16 }, (_, ch) => {
             const pin = adcPin(ch)!;
@@ -1020,43 +1021,43 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
           <>
             <div className="peri-grid">
               <label>
-                분해능{" "}
-                <select aria-label="ADC1 분해능" value={v.resolution} onChange={(e) => update((c) => void (c.adc.ADC1!.resolution = Number(e.target.value) as 12))}>
+                {t("분해능")}{" "}
+                <select aria-label={t("ADC1 분해능")} value={v.resolution} onChange={(e) => update((c) => void (c.adc.ADC1!.resolution = Number(e.target.value) as 12))}>
                   {[12, 10, 8, 6].map((r) => (
                     <option key={r} value={r}>
-                      {r}비트
+                      {t("{n}비트", { n: r })}
                     </option>
                   ))}
                 </select>
               </label>
               <label>
-                <input type="checkbox" checked={v.scan} onChange={(e) => update((c) => void (c.adc.ADC1!.scan = e.target.checked))} /> 스캔
+                <input type="checkbox" checked={v.scan} onChange={(e) => update((c) => void (c.adc.ADC1!.scan = e.target.checked))} /> {t("스캔")}
               </label>
               <label>
-                <input type="checkbox" checked={v.continuous} onChange={(e) => update((c) => void (c.adc.ADC1!.continuous = e.target.checked))} /> 연속 변환
+                <input type="checkbox" checked={v.continuous} onChange={(e) => update((c) => void (c.adc.ADC1!.continuous = e.target.checked))} /> {t("연속 변환")}
               </label>
               <label>
                 EOC{" "}
                 <select aria-label="ADC1 EOC" value={v.eocEachConversion ? "each" : "seq"} onChange={(e) => update((c) => void (c.adc.ADC1!.eocEachConversion = e.target.value === "each"))}>
-                  <option value="each">변환마다</option>
-                  <option value="seq">순서 끝에</option>
+                  <option value="each">{t("변환마다")}</option>
+                  <option value="seq">{t("순서 끝에")}</option>
                 </select>
               </label>
               <Nvic irq="ADC" cfg={cfg} update={update} />
             </div>
-            <h5>랭크</h5>
+            <h5>{t("랭크")}</h5>
             <ol className="adc-ranks">
               {v.ranks.map((r, i) => (
                 <li key={r.channel}>
                   IN{r.channel} ({adcPin(r.channel)}){" "}
-                  <select aria-label={`IN${r.channel} 샘플링`} value={r.sampling} onChange={(e) => update((c) => void (c.adc.ADC1!.ranks[i].sampling = Number(e.target.value)))}>
+                  <select aria-label={t("IN{ch} 샘플링", { ch: r.channel })} value={r.sampling} onChange={(e) => update((c) => void (c.adc.ADC1!.ranks[i].sampling = Number(e.target.value)))}>
                     {[3, 15, 28, 56, 84, 112, 144, 480].map((s) => (
                       <option key={s} value={s}>
-                        {s} 사이클
+                        {t("{n} 사이클", { n: s })}
                       </option>
                     ))}
                   </select>{" "}
-                  <button disabled={i === 0} onClick={() => update((c) => void c.adc.ADC1!.ranks.splice(i - 1, 0, ...c.adc.ADC1!.ranks.splice(i, 1)))} aria-label="위로">
+                  <button disabled={i === 0} onClick={() => update((c) => void c.adc.ADC1!.ranks.splice(i - 1, 0, ...c.adc.ADC1!.ranks.splice(i, 1)))} aria-label={t("위로")}>
                     ↑
                   </button>
                 </li>
@@ -1072,7 +1073,7 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
     return (
       <>
         <h4>GPIO</h4>
-        {!gpio.length && <p className="dim">GPIO로 설정한 핀이 없습니다. 핀 배치 탭에서 핀을 누르세요.</p>}
+        {!gpio.length && <p className="dim">{t("GPIO로 설정한 핀이 없습니다. 핀 배치 탭에서 핀을 누르세요.")}</p>}
         {gpio.map((q) => (
           <div key={q} className="gpio-row">
             <PinEditor pin={q} cfg={cfg} setCfg={setCfg} />
@@ -1085,13 +1086,13 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
     const irqs = usedIrqs(cfg);
     return (
       <>
-        <h4>NVIC (우선순위 그룹 4: 선점 0–15)</h4>
+        <h4>{t("NVIC (우선순위 그룹 4: 선점 0–15)")}</h4>
         {irqs.map((i) => (
           <Nvic key={i} irq={i} cfg={cfg} update={update} />
         ))}
         <div className="peri-nvic">
-          SysTick (HAL 시간){" "}
-          <select aria-label="SysTick 우선순위" value={cfg.nvic.SysTick?.preempt ?? 15} onChange={(e) => update((c) => void (Number(e.target.value) === 15 ? delete c.nvic.SysTick : (c.nvic.SysTick = { enabled: true, preempt: Number(e.target.value), sub: 0 })))}>
+          {t("SysTick (HAL 시간)")}{" "}
+          <select aria-label={t("SysTick 우선순위")} value={cfg.nvic.SysTick?.preempt ?? 15} onChange={(e) => update((c) => void (Number(e.target.value) === 15 ? delete c.nvic.SysTick : (c.nvic.SysTick = { enabled: true, preempt: Number(e.target.value), sub: 0 })))}>
             {Array.from({ length: 16 }, (_, i) => (
               <option key={i} value={i}>
                 {i}
@@ -1107,9 +1108,9 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
     <>
       <h4>SYS</h4>
       <label>
-        디버그{" "}
+        {t("디버그")}{" "}
         <select
-          aria-label="디버그"
+          aria-label={t("디버그")}
           value={cfg.sys.debug}
           onChange={(e) => {
             let c = clone(cfg);
@@ -1124,10 +1125,10 @@ function PeripheralForm({ p, cfg, setCfg, update }: { p: string; cfg: CubeConfig
           }}
         >
           <option value="serial_wire">Serial Wire (SWD, ST-LINK)</option>
-          <option value="none">없음</option>
+          <option value="none">{t("없음")}</option>
         </select>
       </label>
-      <p className="dim">시간 기준: SysTick. PA13/PA14를 다른 용도로 쓰면 ST-LINK 디버깅이 끊긴다.</p>
+      <p className="dim">{t("시간 기준: SysTick. PA13/PA14를 다른 용도로 쓰면 ST-LINK 디버깅이 끊긴다.")}</p>
     </>
   );
 }
@@ -1145,9 +1146,9 @@ function CodeTab({ code, cfg, canGenerate, generate, done, dirty }: { code: Code
     <div className="cube-code">
       <div className="cube-code-left">
         <p>
-          {isCube ? "설정대로 다시 생성합니다. USER CODE BEGIN/END 사이의 코드는 그대로 남깁니다." : "이 설정으로 새 프로젝트(Core/, Drivers/는 고른 STM32CubeF4 버전)를 만들어 코드 탭에 엽니다."}
+          {isCube ? t("설정대로 다시 생성합니다. USER CODE BEGIN/END 사이의 코드는 그대로 남깁니다.") : t("이 설정으로 새 프로젝트(Core/, Drivers/는 고른 STM32CubeF4 버전)를 만들어 코드 탭에 엽니다.")}
         </p>
-        <ul className="cube-files" aria-label="바뀌는 파일">
+        <ul className="cube-files" aria-label={t("바뀌는 파일")}>
           {plan.map((p) => {
             const st = diffStats(diffLines(p.before ?? "", p.after));
             const same = p.before === p.after;
@@ -1155,21 +1156,21 @@ function CodeTab({ code, cfg, canGenerate, generate, done, dirty }: { code: Code
               <li key={p.path}>
                 <button className={p.path === ch?.path ? "on" : ""} onClick={() => setSel(p.path)} data-file={p.path}>
                   {p.path.replace(/^Core\//, "")}{" "}
-                  <span className={same ? "dim" : "chg"}>{p.before === null ? "새 파일" : same ? "같음" : `+${st.added} −${st.removed}`}</span>
-                  {p.kept.length > 0 && <span className="keep"> USER CODE {p.kept.length}곳 유지</span>}
-                  {p.orphaned.length > 0 && <span className="orphan"> 없어진 영역 {p.orphaned.length}</span>}
-                  {p.lostEdits > 0 && <span className="lost"> 영역 밖 수정 {p.lostEdits}줄 사라짐</span>}
+                  <span className={same ? "dim" : "chg"}>{p.before === null ? t("새 파일") : same ? t("같음") : `+${st.added} −${st.removed}`}</span>
+                  {p.kept.length > 0 && <span className="keep"> {t("USER CODE {n}곳 유지", { n: p.kept.length })}</span>}
+                  {p.orphaned.length > 0 && <span className="orphan"> {t("없어진 영역 {n}", { n: p.orphaned.length })}</span>}
+                  {p.lostEdits > 0 && <span className="lost"> {t("영역 밖 수정 {n}줄 사라짐", { n: p.lostEdits })}</span>}
                 </button>
               </li>
             );
           })}
         </ul>
-        {lost > 0 && <p className="error">USER CODE 영역 밖에서 고친 {lost}줄은 다시 생성하면 사라집니다(CubeMX와 같음). 남기려면 영역 안으로 옮기세요.</p>}
-        {plan.some((p) => p.orphaned.length) && <p className="warn">설정에서 없어진 영역의 코드는 파일 끝 "USER CODE BEGIN Orphaned"에 #if 0으로 옮겨 둡니다.</p>}
+        {lost > 0 && <p className="error">{t("USER CODE 영역 밖에서 고친 {n}줄은 다시 생성하면 사라집니다(CubeMX와 같음). 남기려면 영역 안으로 옮기세요.", { n: lost })}</p>}
+        {plan.some((p) => p.orphaned.length) && <p className="warn">{t('설정에서 없어진 영역의 코드는 파일 끝 "USER CODE BEGIN Orphaned"에 #if 0으로 옮겨 둡니다.')}</p>}
         <button className="primary" onClick={generate} disabled={!canGenerate || (!dirty && plan.every((p) => p.before === p.after))} data-testid="generate">
-          {isCube ? "코드 생성" : "프로젝트 만들기"}
+          {isCube ? t("코드 생성") : t("프로젝트 만들기")}
         </button>
-        {!canGenerate && <p className="error">오류를 먼저 고치세요(아래 목록).</p>}
+        {!canGenerate && <p className="error">{t("오류를 먼저 고치세요(아래 목록).")}</p>}
         {done && <p className="ok" data-testid="generated">{done}</p>}
       </div>
       <div className="cube-diff" data-testid="diff">
@@ -1178,7 +1179,7 @@ function CodeTab({ code, cfg, canGenerate, generate, done, dirty }: { code: Code
             {lines.map((l, i) =>
               l.kind === "skip" ? (
                 <div key={i} className="d-skip">
-                  ⋯ 같은 줄 {l.count}개
+                  {t("⋯ 같은 줄 {n}개", { n: l.count })}
                 </div>
               ) : (
                 <div key={i} className={`d-${l.kind}`}>

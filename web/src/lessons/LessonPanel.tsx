@@ -3,6 +3,7 @@
 // judges the behaviour checks on what the frames showed.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Project } from "../editor/model";
+import { lang, t } from "../i18n";
 import { download, idbGet, idbSet } from "../editor/project";
 import { PART_BY_KIND } from "../parts";
 import { nucleoSignal } from "../parts/nucleo";
@@ -81,10 +82,10 @@ const TRACKS: [string | undefined, LessonEntry[]][] = (() => {
   for (const e of LESSONS) m.set(e.lesson.track, [...(m.get(e.lesson.track) ?? []), e]);
   return [...m];
 })();
-const items = (list: string[]) => list.map((t) => `- ${t}`);
+const items = (list: string[]) => list.map((s) => `- ${s}`);
 
 const now = () => new Date().toISOString();
-const fmtTime = (iso: string) => new Date(iso).toLocaleString("ko-KR");
+const fmtTime = (iso: string) => new Date(iso).toLocaleString(lang() === "ko" ? "ko-KR" : "en-US");
 const KINDS = new Set(Object.keys(PART_BY_KIND));
 
 export function LessonPanel({
@@ -141,13 +142,13 @@ export function LessonPanel({
         lesson: l,
         errors: [
           ...validateLesson(l, KINDS),
-          ...(LESSONS.some((e) => e.lesson.id === l.id) ? [`id '${l.id}'가 기본 실습과 같습니다`] : []),
+          ...(LESSONS.some((e) => e.lesson.id === l.id) ? [t("id '{id}'가 기본 실습과 같습니다", { id: l.id })] : []),
         ],
       })),
     [myLessons],
   );
   const previewLesson = useMemo(
-    () => (preview ? { ...preview.lesson, id: PREVIEW_ID, title: `(미리 보기) ${preview.lesson.title}` } : null),
+    () => (preview ? { ...preview.lesson, id: PREVIEW_ID, title: t("(미리 보기) {title}", { title: preview.lesson.title }) } : null),
     [preview],
   );
   const all = useMemo(
@@ -292,9 +293,9 @@ export function LessonPanel({
       setMessage(
         lesson.firmware === "upload"
           ? lesson.code
-            ? "먼저 아래 '코드' 탭에서 코드를 고치고 '빌드'하세요 (또는 직접 만든 펌웨어를 'ELF 업로드'로 올리세요)."
-            : "먼저 직접 만든 펌웨어를 'ELF 업로드'로 올리세요."
-          : "펌웨어가 없습니다. 실습을 다시 시작하거나 예제를 불러오세요.",
+            ? t("먼저 아래 '코드' 탭에서 코드를 고치고 '빌드'하세요 (또는 직접 만든 펌웨어를 'ELF 업로드'로 올리세요).")
+            : t("먼저 직접 만든 펌웨어를 'ELF 업로드'로 올리세요.")
+          : t("펌웨어가 없습니다. 실습을 다시 시작하거나 예제를 불러오세요."),
       );
       return;
     }
@@ -349,18 +350,18 @@ export function LessonPanel({
           });
         }),
       );
-      const t = now();
-      update(lesson.id, (p) => ({ ...record(p, results, t), gradedAt: t, attempts: p.attempts + 1 }));
+      const at = now();
+      update(lesson.id, (p) => ({ ...record(p, results, at), gradedAt: at, attempts: p.attempts + 1 }));
       setGrading(null);
       setMarksOn(true);
     };
     const unsubscribe = runner.onFrame((e) => {
       if (e.epoch !== epoch || finished) return;
       rec.add(e.frame, e.console);
-      const t = rec.elapsed;
+      const ms = rec.elapsed;
       for (const st of stimuli) {
         const s = st.s;
-        if (!st.done && t >= s.at) {
+        if (!st.done && ms >= s.at) {
           st.done = true;
           if ("press" in s) runner.press(target(s.press), true);
           else if ("set" in s) onSetProp(s.set.kind, s.set.prop, s.set.value);
@@ -373,13 +374,13 @@ export function LessonPanel({
             if (id) runner.bluetoothSend(id, s.send);
           }
         }
-        if ("press" in s && st.done && !st.released && t >= s.at + (s.ms ?? 100)) {
+        if ("press" in s && st.done && !st.released && ms >= s.at + (s.ms ?? 100)) {
           st.released = true;
           runner.press(target(s.press), false);
         }
       }
-      setGrading({ elapsed: t, total });
-      if (t >= total || rec.stopped) finish();
+      setGrading({ elapsed: ms, total });
+      if (ms >= total || rec.stopped) finish();
     });
     cancelGrade.current = () => {
       stop();
@@ -435,7 +436,7 @@ export function LessonPanel({
     const errors: string[] = [];
     for (const f of files) {
       const r = parseLesson(await f.text(), KINDS);
-      if (r.lesson && LESSONS.some((e) => e.lesson.id === r.lesson!.id)) errors.push(`${f.name}: id '${r.lesson.id}'가 기본 실습과 같습니다`);
+      if (r.lesson && LESSONS.some((e) => e.lesson.id === r.lesson!.id)) errors.push(t("{file}: id '{id}'가 기본 실습과 같습니다", { file: f.name, id: r.lesson.id }));
       else if (r.lesson) ok.push(r.lesson);
       else errors.push(`${f.name}: ${r.errors.join("; ")}`);
     }
@@ -449,42 +450,42 @@ export function LessonPanel({
       <li key={l.id} data-lesson={l.id}>
         <div>
           <b>{l.title}</b> <span className="lesson-level">{l.level}</span>
-          {l.minutes !== undefined && <span className="dim"> · 약 {l.minutes}분</span>}
-          {p?.completedAt && <span title={`완료 ${fmtTime(p.completedAt)}`}> ✅</span>}
+          {l.minutes !== undefined && <span className="dim">{t(" · 약 {n}분", { n: l.minutes })}</span>}
+          {p?.completedAt && <span title={t("완료 {time}", { time: fmtTime(p.completedAt) })}> ✅</span>}
         </div>
         <div className="hint">{l.goal}</div>
         {errors.length ? (
-          <div className="error">레슨 파일 오류: {errors.join("; ")}</div>
+          <div className="error">{t("레슨 파일 오류: {errors}", { errors: errors.join("; ") })}</div>
         ) : (
           <div className="lesson-actions">
             {p ? (
               <>
-                <button onClick={() => (setActiveId(l.id), setMessage(null))} title="지금 회로 그대로 이어서 합니다">
-                  이어서 하기
+                <button onClick={() => (setActiveId(l.id), setMessage(null))} title={t("지금 회로 그대로 이어서 합니다")}>
+                  {t("이어서 하기")}
                 </button>{" "}
-                <button onClick={() => void start(l)} title="시작 회로와 펌웨어를 다시 불러옵니다">
-                  처음부터
+                <button onClick={() => void start(l)} title={t("시작 회로와 펌웨어를 다시 불러옵니다")}>
+                  {t("처음부터")}
                 </button>
               </>
             ) : (
-              <button onClick={() => void start(l)}>시작</button>
+              <button onClick={() => void start(l)}>{t("시작")}</button>
             )}
           </div>
         )}
         {(onEdit || (mineList && onRemoveMine)) && (
           <div className="lesson-actions">
             {onEdit && (
-              <button className="small" onClick={() => onEdit(mineList ? l : { ...l, id: `${l.id}-copy`, title: `${l.title} (복사본)` })}>
-                {mineList ? "편집" : "복사해서 편집"}
+              <button className="small" onClick={() => onEdit(mineList ? l : { ...l, id: `${l.id}-copy`, title: t("{title} (복사본)", { title: l.title }) })}>
+                {mineList ? t("편집") : t("복사해서 편집")}
               </button>
             )}{" "}
             {mineList && onRemoveMine && (
               <button
                 className="small"
-                onClick={() => window.confirm(`'${l.title}'을(를) 내 레슨에서 지울까요?`) && onRemoveMine(l.id)}
-                aria-label={`${l.title} 삭제`}
+                onClick={() => window.confirm(t("'{title}'을(를) 내 레슨에서 지울까요?", { title: l.title })) && onRemoveMine(l.id)}
+                aria-label={t("{title} 삭제", { title: l.title })}
               >
-                삭제
+                {t("삭제")}
               </button>
             )}
           </div>
@@ -496,14 +497,14 @@ export function LessonPanel({
   const studentRow = (
     <div className="lesson-student">
       <label>
-        이름{" "}
-        <input value={student} onChange={(e) => setStudent(e.target.value)} placeholder="학번 이름" aria-label="학생 이름" />
+        {t("이름")}{" "}
+        <input value={student} onChange={(e) => setStudent(e.target.value)} placeholder={t("학번 이름")} aria-label={t("학생 이름")} />
       </label>
       <div>
-        <button onClick={() => void exportResults("csv")} title="실습별 검사 결과를 CSV로 저장 (선생님께 제출)">
-          결과 내보내기 (CSV)
+        <button onClick={() => void exportResults("csv")} title={t("실습별 검사 결과를 CSV로 저장 (선생님께 제출)")}>
+          {t("결과 내보내기 (CSV)")}
         </button>{" "}
-        <button onClick={() => void exportResults("json")} title="같은 내용을 JSON으로 저장 (변조 확인용 해시 포함, 선생님용 모아보기에 권장)">
+        <button onClick={() => void exportResults("json")} title={t("같은 내용을 JSON으로 저장 (변조 확인용 해시 포함, 선생님용 모아보기에 권장)")}>
           JSON
         </button>
         {onSendToTeacher && (
@@ -511,9 +512,9 @@ export function LessonPanel({
             {" "}
             <button
               onClick={() => void sendToTeacher()}
-              title="지금 회로와 실습 결과(변조 확인용 해시 포함)를 링크·QR로 만들어 선생님께 보냅니다. 서버로는 아무것도 가지 않습니다"
+              title={t("지금 회로와 실습 결과(변조 확인용 해시 포함)를 링크·QR로 만들어 선생님께 보냅니다. 서버로는 아무것도 가지 않습니다")}
             >
-              📤 선생님께 보내기
+              {t("📤 선생님께 보내기")}
             </button>
           </>
         )}
@@ -522,15 +523,15 @@ export function LessonPanel({
   );
 
   return (
-    <aside className="lesson-panel" aria-label="실습">
+    <aside className="lesson-panel" aria-label={t("실습")}>
       <header>
-        <b>실습</b>
+        <b>{t("실습")}</b>
         {lesson && (
-          <button onClick={() => (cancelGrade.current?.(), setActiveId(null))} title="실습 목록으로">
-            ← 목록
+          <button onClick={() => (cancelGrade.current?.(), setActiveId(null))} title={t("실습 목록으로")}>
+            {t("← 목록")}
           </button>
         )}
-        <button className="close" onClick={onClose} aria-label="실습 닫기">
+        <button className="close" onClick={onClose} aria-label={t("실습 닫기")}>
           ×
         </button>
       </header>
@@ -538,18 +539,21 @@ export function LessonPanel({
       {!loaded || !mineLoaded ? (
         // Until the saved progress is read: the list would otherwise flip to the
         // lesson that was open before a reload.
-        <p className="hint">불러오는 중…</p>
+        <p className="hint">{t("불러오는 중…")}</p>
       ) : !lesson ? (
         <>
-          <p className="hint">실습을 고르면 시작 회로와 펌웨어를 불러옵니다. 배선 검사는 바로바로, 동작 검사는 '채점'으로 확인합니다.</p>
+          <p className="hint">{t("실습을 고르면 시작 회로와 펌웨어를 불러옵니다. 배선 검사는 바로바로, 동작 검사는 '채점'으로 확인합니다.")}</p>
           {TRACKS.length > 1 || TRACKS[0]?.[0] ? (
             <div className="lesson-tracks">
               {TRACKS.map(([track, entries]) => (
                 <details key={track ?? ""} className="lesson-track" data-track={track ?? ""} open>
                   <summary>
-                    <b>{track ?? "기타"}</b>{" "}
+                    <b>{track ?? t("기타")}</b>{" "}
                     <span className="dim">
-                      {entries.filter((e) => progress[e.lesson.id]?.completedAt).length}/{entries.length} 완료
+                      {t("{done}/{total} 완료", {
+                        done: entries.filter((e) => progress[e.lesson.id]?.completedAt).length,
+                        total: entries.length,
+                      })}
                     </span>
                   </summary>
                   <ol className="lesson-list">{entries.map((e) => lessonItem(e, false))}</ol>
@@ -559,17 +563,17 @@ export function LessonPanel({
           ) : (
             <ol className="lesson-list">{LESSONS.map((e) => lessonItem(e, false))}</ol>
           )}
-          <section className="lesson-mine" aria-label="내 레슨">
-            <h3>내 레슨</h3>
+          <section className="lesson-mine" aria-label={t("내 레슨")}>
+            <h3>{t("내 레슨")}</h3>
             {mineEntries.length ? (
               <ol className="lesson-list">{mineEntries.map((e) => lessonItem(e, true))}</ol>
             ) : (
-              <p className="hint">레슨 편집기로 만들거나 레슨 파일(JSON)을 불러오면 여기에 나옵니다. 이 브라우저에만 저장됩니다.</p>
+              <p className="hint">{t("레슨 편집기로 만들거나 레슨 파일(JSON)을 불러오면 여기에 나옵니다. 이 브라우저에만 저장됩니다.")}</p>
             )}
             <div className="lesson-actions">
-              {onEdit && <button onClick={() => onEdit(null)}>✏️ 레슨 편집기</button>}{" "}
-              <label className="file-btn small" title="레슨 JSON 파일을 내 레슨에 추가합니다">
-                레슨 파일 불러오기
+              {onEdit && <button onClick={() => onEdit(null)}>{t("✏️ 레슨 편집기")}</button>}{" "}
+              <label className="file-btn small" title={t("레슨 JSON 파일을 내 레슨에 추가합니다")}>
+                {t("레슨 파일 불러오기")}
                 <input
                   type="file"
                   accept=".json,application/json"
@@ -591,15 +595,15 @@ export function LessonPanel({
           </section>
           {onTeacher && (
             <p>
-              <button onClick={onTeacher} title="여러 학생의 결과 파일을 한 표로 모아 봅니다 (파일은 이 브라우저 밖으로 나가지 않습니다)">
-                👩‍🏫 선생님용 결과 모아보기
+              <button onClick={onTeacher} title={t("여러 학생의 결과 파일을 한 표로 모아 봅니다 (파일은 이 브라우저 밖으로 나가지 않습니다)")}>
+                {t("👩‍🏫 선생님용 결과 모아보기")}
               </button>
             </p>
           )}
           {hasBackup && onRestoreBackup && (
             <p>
-              <button onClick={onRestoreBackup} title="실습을 시작하기 전에 열려 있던 프로젝트">
-                실습 전 프로젝트 되돌리기
+              <button onClick={onRestoreBackup} title={t("실습을 시작하기 전에 열려 있던 프로젝트")}>
+                {t("실습 전 프로젝트 되돌리기")}
               </button>
             </p>
           )}
@@ -610,33 +614,38 @@ export function LessonPanel({
           <h2 className="lesson-title">{lesson.title}</h2>
           {lesson.id === PREVIEW_ID && (
             <div className="lesson-preview" data-testid="lesson-preview">
-              편집 중인 레슨을 <b>지금 회로와 펌웨어</b>로 실행합니다 (시작 회로는 불러오지 않음).{" "}
-              {onEdit && <button onClick={() => onEdit(null)}>편집기로 돌아가기</button>}
+              {t("편집 중인 레슨을 ")}
+              <b>{t("지금 회로와 펌웨어")}</b>
+              {t("로 실행합니다 (시작 회로는 불러오지 않음).")}{" "}
+              {onEdit && <button onClick={() => onEdit(null)}>{t("편집기로 돌아가기")}</button>}
             </div>
           )}
           <p className="hint">
             {lesson.track && <span className="lesson-level">{lesson.track}</span>} <span className="lesson-level">{lesson.level}</span>
-            {lesson.minutes !== undefined && <span className="lesson-level">약 {lesson.minutes}분</span>} {lesson.goal}
+            {lesson.minutes !== undefined && <span className="lesson-level">{t("약 {n}분", { n: lesson.minutes })}</span>} {lesson.goal}
           </p>
           {(lesson.objectives?.length || lesson.prereq) && (
             <details className="lesson-intro" open={!mine?.gradedAt}>
-              <summary>학습 목표{lesson.prereq ? " · 선수 학습" : ""}</summary>
+              <summary>
+                {t("학습 목표")}
+                {lesson.prereq ? t(" · 선수 학습") : ""}
+              </summary>
               {lesson.objectives?.length ? <Markdown text={items(lesson.objectives)} /> : null}
               {lesson.prereq && (
                 <div className="lesson-prereq">
-                  <b>선수 학습</b> <Markdown text={lesson.prereq} />
+                  <b>{t("선수 학습")}</b> <Markdown text={lesson.prereq} />
                 </div>
               )}
             </details>
           )}
           <p className="hint" data-testid="lesson-firmware">
-            펌웨어: {runner.firmware ?? "없음"}
+            {t("펌웨어: {name}", { name: runner.firmware ?? t("없음") })}
             {lesson.firmware === "upload" &&
-              (lesson.code ? " — 아래 '코드' 탭에서 고치고 '빌드'하면 그 펌웨어로 채점합니다." : " — 직접 빌드한 ELF를 'ELF 업로드'로 올리세요.")}
+              (lesson.code ? t(" — 아래 '코드' 탭에서 고치고 '빌드'하면 그 펌웨어로 채점합니다.") : t(" — 직접 빌드한 ELF를 'ELF 업로드'로 올리세요."))}
           </p>
           {complete && mine?.completedAt && (
             <div className="lesson-complete" data-testid="lesson-complete" role="status">
-              🎉 실습 완료! <span className="dim">({fmtTime(mine.completedAt)})</span>
+              {t("🎉 실습 완료!")} <span className="dim">({fmtTime(mine.completedAt)})</span>
             </div>
           )}
           <ol className="lesson-steps" ref={stepsRef}>
@@ -645,7 +654,7 @@ export function LessonPanel({
               const stepDone = s.checks.length > 0 && s.checks.every((c, j) => passed({ c, key: checkKey(i, j) }));
               const theory = s.theory && (
                 <div className="lesson-theory">
-                  <b>📘 개념</b>
+                  <b>{t("📘 개념")}</b>
                   <Markdown text={s.theory} />
                 </div>
               );
@@ -657,7 +666,7 @@ export function LessonPanel({
                   </h3>
                   {stepDone && i !== currentStep ? (
                     <details>
-                      <summary className="dim">설명 보기</summary>
+                      <summary className="dim">{t("설명 보기")}</summary>
                       <Markdown text={s.text} />
                       {theory}
                     </details>
@@ -669,7 +678,7 @@ export function LessonPanel({
                   )}
                   {s.hint && (
                     <details className="lesson-hint">
-                      <summary>💡 힌트</summary>
+                      <summary>{t("💡 힌트")}</summary>
                       <Markdown text={s.hint} />
                     </details>
                   )}
@@ -685,7 +694,7 @@ export function LessonPanel({
                           <span className="mark">{status === "pass" ? "✅" : status === "fail" ? "❌" : "⬜"}</span>
                           <span>
                             {label}
-                            {!wiring && <span className="dim"> · 채점</span>}
+                            {!wiring && <span className="dim">{t(" · 채점")}</span>}
                             {r?.detail && <span className="dim"> · {r.detail}</span>}
                             {r && !r.pass && <span className="check-hint">{c.hint ?? r.hint}</span>}
                           </span>
@@ -699,13 +708,13 @@ export function LessonPanel({
           </ol>
           {lesson.mistakes?.length ? (
             <details className="lesson-mistakes">
-              <summary>⚠ 흔한 실수</summary>
+              <summary>{t("⚠ 흔한 실수")}</summary>
               <Markdown text={items(lesson.mistakes)} />
             </details>
           ) : null}
           {lesson.challenges?.length ? (
             <details className="lesson-challenges" open={complete}>
-              <summary>🚀 도전 과제 (빨리 끝낸 사람)</summary>
+              <summary>{t("🚀 도전 과제 (빨리 끝낸 사람)")}</summary>
               <Markdown text={items(lesson.challenges)} />
             </details>
           ) : null}
@@ -714,18 +723,18 @@ export function LessonPanel({
               <>
                 <progress value={grading.elapsed} max={grading.total} data-testid="grade-progress" />{" "}
                 <span className="dim">
-                  채점 중… {(grading.elapsed / 1000).toFixed(1)} / {(grading.total / 1000).toFixed(1)} s
+                  {t("채점 중… {elapsed} / {total} s", { elapsed: (grading.elapsed / 1000).toFixed(1), total: (grading.total / 1000).toFixed(1) })}
                 </span>{" "}
-                <button onClick={() => cancelGrade.current?.()}>중지</button>
+                <button onClick={() => cancelGrade.current?.()}>{t("중지")}</button>
               </>
             ) : (
               <>
-                <button className="primary" onClick={grade} title="펌웨어를 리셋하고 정해진 시간 동안 실행해 동작을 검사합니다">
-                  채점
+                <button className="primary" onClick={grade} title={t("펌웨어를 리셋하고 정해진 시간 동안 실행해 동작을 검사합니다")}>
+                  {t("채점")}
                 </button>{" "}
                 <span className="dim">
-                  {(gradeMs(lesson) / 1000).toFixed(1)} s 동안 실행합니다
-                  {mine?.gradedAt ? ` · 마지막 채점 ${fmtTime(mine.gradedAt)}` : ""}
+                  {t("{s} s 동안 실행합니다", { s: (gradeMs(lesson) / 1000).toFixed(1) })}
+                  {mine?.gradedAt ? t(" · 마지막 채점 {time}", { time: fmtTime(mine.gradedAt) }) : ""}
                 </span>
               </>
             )}
@@ -736,7 +745,7 @@ export function LessonPanel({
             )}
             {marks && !grading && (
               <div className="hint lesson-marks" data-testid="lesson-marks">
-                🔴 틀린 배선 검사 {marks.length}개와 관련된 핀·넷을 회로도와 브레드보드에 빨갛게 표시했습니다.
+                {t("🔴 틀린 배선 검사 {n}개와 관련된 핀·넷을 회로도와 브레드보드에 빨갛게 표시했습니다.", { n: marks.length })}
               </div>
             )}
           </div>

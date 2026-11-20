@@ -5,13 +5,14 @@
 import { FINGER_C, fingerTouch, holdValues, rotaryKnob, slideHandle, type Slide } from "./controls";
 import { Fingertip } from "./feedback";
 import { PITCH, type PartDef } from "./types";
+import { t } from "../i18n";
 
 const P = PITCH;
 
 /** Grey label shown on a part whose supply is too low. */
 const NoPower = ({ x, y }: { x: number; y: number }) => (
   <text x={x} y={y} textAnchor="middle" className="silk small unpowered" data-unpowered="1">
-    전원 부족
+    {t("전원 부족")}
   </text>
 );
 
@@ -38,20 +39,20 @@ const POT_CX = P,
 
 export const potentiometer: PartDef = {
   kind: "potentiometer",
-  name: "가변저항",
+  name: t("가변저항"),
   category: "input",
   description:
-    "양 끝(1, 2)을 3V3와 GND에, 가운데(W, 와이퍼)를 아날로그 핀(A0 등)에 연결. 노브를 잡고 돌리거나(270°) 노브 위에서 마우스 휠을 굴려 돌립니다. 몸체 아래쪽을 끌면 옮겨집니다.",
+    t("양 끝(1, 2)을 3V3와 GND에, 가운데(W, 와이퍼)를 아날로그 핀(A0 등)에 연결. 노브를 잡고 돌리거나(270°) 노브 위에서 마우스 휠을 굴려 돌립니다. 몸체 아래쪽을 끌면 옮겨집니다."),
   w: 2,
   h: 3,
   pins: [
-    { id: "1", x: 0, y: 3, label: "1 (한쪽 끝)" },
-    { id: "W", x: 1, y: 3, label: "W (와이퍼, 가운데)" },
-    { id: "2", x: 2, y: 3, label: "2 (다른 쪽 끝)" },
+    { id: "1", x: 0, y: 3, label: t("1 (한쪽 끝)") },
+    { id: "W", x: 1, y: 3, label: t("W (와이퍼, 가운데)") },
+    { id: "2", x: 2, y: 3, label: t("2 (다른 쪽 끝)") },
   ],
   props: { ohms: "10k", position: 0.5 },
   propOptions: { ohms: ["1k", "10k", "100k"] },
-  ranges: { position: { min: 0, max: 1, step: 0.01, label: "노브 위치", unit: "" } },
+  ranges: { position: { min: 0, max: 1, step: 0.01, label: t("노브 위치"), unit: "" } },
   controls: { knob: rotaryKnob("position", POT_CX, POT_CY) },
   render: (props, visual) => {
     const pos = Math.min(1, Math.max(0, Number(props.position)));
@@ -98,10 +99,10 @@ const LAMP: Slide = {
 
 export const ldr: PartDef = {
   kind: "ldr",
-  name: "조도센서 (LDR)",
+  name: t("조도센서 (LDR)"),
   category: "sensor",
   description:
-    "빛이 밝을수록 저항이 작아집니다 (10 lux에서 약 10 kΩ). 고정 저항과 분압기로 묶어 아날로그 핀에 연결하세요. 위의 손전등을 끌어 가까이 대면 밝아지고(거리의 제곱에 반비례, 약 100–10000 lux) ✋를 누르고 있으면 손으로 가려 어두워집니다(약 5 lux).",
+    t("빛이 밝을수록 저항이 작아집니다 (10 lux에서 약 10 kΩ). 고정 저항과 분압기로 묶어 아날로그 핀에 연결하세요. 위의 손전등을 끌어 가까이 대면 밝아지고(거리의 제곱에 반비례, 약 100–10000 lux) ✋를 누르고 있으면 손으로 가려 어두워집니다(약 5 lux)."),
   w: 1,
   h: 3,
   pins: [
@@ -109,10 +110,10 @@ export const ldr: PartDef = {
     { id: "2", x: 1, y: 3, label: "2" },
   ],
   props: { lux: 300 },
-  ranges: { lux: { min: 1, max: 10000, step: 1, label: "밝기", unit: "lux", log: true } },
+  ranges: { lux: { min: 1, max: 10000, step: 1, label: t("밝기"), unit: "lux", log: true } },
   controls: {
-    lamp: slideHandle("lux", LDR_FACE, LAMP, "손전등을 위아래로 끌어 보세요 — 센서에 가까울수록 밝아집니다 (거리의 제곱에 반비례)."),
-    cover: holdValues({ lux: 5 }, "누르고 있는 동안 손으로 센서를 가립니다 (약 5 lux)."),
+    lamp: slideHandle("lux", LDR_FACE, LAMP, t("손전등을 위아래로 끌어 보세요 — 센서에 가까울수록 밝아집니다 (거리의 제곱에 반비례).")),
+    cover: holdValues({ lux: 5 }, t("누르고 있는 동안 손으로 센서를 가립니다 (약 5 lux).")),
   },
   render: (props, visual) => {
     const lux = Number(props.lux) || 0;
@@ -163,20 +164,20 @@ export const ldr: PartDef = {
 
 export const tempSensor: PartDef = {
   kind: "temp-sensor",
-  name: "아날로그 온도센서",
+  name: t("아날로그 온도센서"),
   category: "sensor",
   description:
-    `TMP36: 출력 0.5 V + 10 mV/°C, 2.7 V 이상에서 동작 (3V3 가능). LM35: 10 mV/°C, 4 V 이상 필요 (5V에 연결). 평평한 면을 보고 왼쪽부터 VS, OUT, GND. 센서를 누르고 있으면 손가락 체온(약 ${FINGER_C} °C)으로 몇 초에 걸쳐 데워지고, 떼면 원래 온도로 식습니다.`,
+    t("TMP36: 출력 0.5 V + 10 mV/°C, 2.7 V 이상에서 동작 (3V3 가능). LM35: 10 mV/°C, 4 V 이상 필요 (5V에 연결). 평평한 면을 보고 왼쪽부터 VS, OUT, GND. 센서를 누르고 있으면 손가락 체온(약 {finger} °C)으로 몇 초에 걸쳐 데워지고, 떼면 원래 온도로 식습니다.", { finger: FINGER_C }),
   w: 2,
   h: 3,
   pins: [
-    { id: "VS", x: 0, y: 3, label: "VS (+전원)" },
-    { id: "OUT", x: 1, y: 3, label: "OUT (전압 출력)" },
+    { id: "VS", x: 0, y: 3, label: t("VS (+전원)") },
+    { id: "OUT", x: 1, y: 3, label: t("OUT (전압 출력)") },
     { id: "GND", x: 2, y: 3, label: "GND" },
   ],
   props: { model: "TMP36", temp: 25 },
   propOptions: { model: ["TMP36", "LM35"] },
-  ranges: { temp: { min: -40, max: 125, step: 0.5, label: "온도", unit: "°C" } },
+  ranges: { temp: { min: -40, max: 125, step: 0.5, label: t("온도"), unit: "°C" } },
   controls: { touch: fingerTouch("temp") },
   render: (props, visual) => (
     <g data-drag="touch" data-temp={Number(props.temp)}>
@@ -199,16 +200,16 @@ export const tempSensor: PartDef = {
 
 export const servo: PartDef = {
   kind: "servo",
-  name: "서보 모터",
+  name: t("서보 모터"),
   category: "actuator",
   description:
-    "SG90 계열. 갈색 GND, 빨강 V+(5V), 주황 SIG(PWM). 50 Hz에서 펄스 폭 0.5 ms = 0°, 1.5 ms = 90°, 2.5 ms = 180°.",
+    t("SG90 계열. 갈색 GND, 빨강 V+(5V), 주황 SIG(PWM). 50 Hz에서 펄스 폭 0.5 ms = 0°, 1.5 ms = 90°, 2.5 ms = 180°."),
   w: 4,
   h: 5,
   pins: [
-    { id: "GND", x: 1, y: 5, label: "GND (갈색)" },
-    { id: "V+", x: 2, y: 5, label: "V+ (빨강, 5V)" },
-    { id: "SIG", x: 3, y: 5, label: "SIG (주황, PWM)" },
+    { id: "GND", x: 1, y: 5, label: t("GND (갈색)") },
+    { id: "V+", x: 2, y: 5, label: t("V+ (빨강, 5V)") },
+    { id: "SIG", x: 3, y: 5, label: t("SIG (주황, PWM)") },
   ],
   render: (_props, visual) => {
     const angle = visual.angle ?? 90;
@@ -255,15 +256,15 @@ export const servo: PartDef = {
 
 export const dcMotor: PartDef = {
   kind: "dc-motor",
-  name: "DC 모터 (드라이버 포함)",
+  name: t("DC 모터 (드라이버 포함)"),
   category: "actuator",
   description:
-    "H-브리지 드라이버 모듈(L9110S 계열)이 달린 기어드 DC 모터. IA에 PWM, IB를 LOW로 두면 정방향, 반대면 역방향. VCC는 5V.",
+    t("H-브리지 드라이버 모듈(L9110S 계열)이 달린 기어드 DC 모터. IA에 PWM, IB를 LOW로 두면 정방향, 반대면 역방향. VCC는 5V."),
   w: 4,
   h: 5,
   pins: [
-    { id: "IA", x: 0, y: 5, label: "IA (정방향 입력)" },
-    { id: "IB", x: 1, y: 5, label: "IB (역방향 입력)" },
+    { id: "IA", x: 0, y: 5, label: t("IA (정방향 입력)") },
+    { id: "IB", x: 1, y: 5, label: t("IB (역방향 입력)") },
     { id: "VCC", x: 2, y: 5, label: "VCC (5V)" },
     { id: "GND", x: 3, y: 5, label: "GND" },
   ],

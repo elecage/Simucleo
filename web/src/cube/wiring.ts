@@ -6,6 +6,7 @@
 // is not analog. Pure; unit tested.
 import type { CubeConfig } from "./config.ts";
 import { adcChannel, isIoPin } from "./mcu.ts";
+import { t } from "../i18n/index.ts";
 
 export interface WiredPart {
   /** Part id on the canvas (`led1`). */
@@ -57,7 +58,7 @@ export function wiringCheck(c: CubeConfig, wired: WiredPins): WiringIssue[] {
     if (!parts.length) continue;
     const s = c.pins[pin]?.signal;
     if (!s) {
-      out.push({ pin, message: `${pin}에 ${what(parts)}이(가) 이어져 있는데 ${pin}은(는) 설정되지 않았습니다(리셋 상태: 아날로그 입력).` });
+      out.push({ pin, message: t("{pin}에 {parts}이(가) 이어져 있는데 {pin}은(는) 설정되지 않았습니다(리셋 상태: 아날로그 입력).", { pin, parts: what(parts) }) });
       continue;
     }
     for (const p of parts) {
@@ -66,18 +67,18 @@ export function wiringCheck(c: CubeConfig, wired: WiredPins): WiringIssue[] {
       const output = s === "GPIO_Output" || /^TIM\d+_CH\d$/.test(s);
       const input = s === "GPIO_Input" || /^GPXTI\d+$/.test(s);
       const analog = /^ADC1_IN\d+$/.test(s) || s === "GPIO_Analog";
-      if (role === "output" && !output) out.push({ pin, message: `${pin}의 ${what([p])}을(를) 켜려면 GPIO_Output(또는 TIM PWM)이어야 하는데 ${s}입니다.` });
-      else if (role === "pwm" && !/^TIM\d+_CH\d$/.test(s) && s !== "GPIO_Output") out.push({ pin, message: `${pin}의 ${what([p])}에는 PWM 펄스가 필요한데 ${s}입니다(TIMx_CHy로).` });
-      else if (role === "input" && !input) out.push({ pin, message: `${pin}의 ${what([p])}을(를) 읽으려면 GPIO_Input 또는 GPXTI${pin.slice(2)}(인터럽트)여야 하는데 ${s}입니다.` });
+      if (role === "output" && !output) out.push({ pin, message: t("{pin}의 {part}을(를) 켜려면 GPIO_Output(또는 TIM PWM)이어야 하는데 {signal}입니다.", { pin, part: what([p]), signal: s }) });
+      else if (role === "pwm" && !/^TIM\d+_CH\d$/.test(s) && s !== "GPIO_Output") out.push({ pin, message: t("{pin}의 {part}에는 PWM 펄스가 필요한데 {signal}입니다(TIMx_CHy로).", { pin, part: what([p]), signal: s }) });
+      else if (role === "input" && !input) out.push({ pin, message: t("{pin}의 {part}을(를) 읽으려면 GPIO_Input 또는 GPXTI{n}(인터럽트)여야 하는데 {signal}입니다.", { pin, part: what([p]), n: pin.slice(2), signal: s }) });
       else if (role === "analog" && !/^ADC1_IN\d+$/.test(s))
         out.push({
           pin,
           message:
             adcChannel(pin) === null
-              ? `${pin}의 ${what([p])}은(는) 아날로그 값인데 ${pin}에는 ADC 입력이 없습니다. A0–A5 같은 ADC 핀으로 옮기세요.`
-              : `${pin}의 ${what([p])}을(를) 읽으려면 ADC1_IN${adcChannel(pin)}이어야 하는데 ${s}입니다.`,
+              ? t("{pin}의 {part}은(는) 아날로그 값인데 {pin}에는 ADC 입력이 없습니다. A0–A5 같은 ADC 핀으로 옮기세요.", { pin, part: what([p]) })
+              : t("{pin}의 {part}을(를) 읽으려면 ADC1_IN{ch}이어야 하는데 {signal}입니다.", { pin, part: what([p]), ch: String(adcChannel(pin)), signal: s }),
         });
-      else if (analog && role !== "analog") out.push({ pin, message: `${pin}은(는) 아날로그인데 ${what([p])}이(가) 이어져 있습니다.` });
+      else if (analog && role !== "analog") out.push({ pin, message: t("{pin}은(는) 아날로그인데 {part}이(가) 이어져 있습니다.", { pin, part: what([p]) }) });
     }
   }
   return out;

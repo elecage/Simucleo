@@ -25,6 +25,7 @@ import {
 } from "./config.ts";
 import { adcChannel, iocPinName, MCU, pinFromIoc, PACKAGE_PINS } from "./mcu.ts";
 import { DEFAULT_PACK, PACKS } from "./packs.ts";
+import { t } from "../i18n/index.ts";
 
 // ------------------------------------------------------------------ properties
 
@@ -86,13 +87,13 @@ export function parseIoc(text: string): IocResult {
   const c = emptyConfig(get("ProjectManager.ProjectName") || "simucleo");
   c.pins = {};
   const user = get("Mcu.UserName") ?? get("ProjectManager.DeviceId");
-  if (!user) warnings.push(".ioc에 MCU 이름(Mcu.UserName)이 없습니다. STM32F401RETx로 읽습니다.");
-  else if (user !== MCU.userName) warnings.push(`이 .ioc는 ${user}용입니다. 이 도구는 ${MCU.userName}(Nucleo-F401RE)만 지원해서 같은 이름의 핀만 옮깁니다.`);
+  if (!user) warnings.push(t(".ioc에 MCU 이름(Mcu.UserName)이 없습니다. STM32F401RETx로 읽습니다."));
+  else if (user !== MCU.userName) warnings.push(t("이 .ioc는 {mcu}용입니다. 이 도구는 {ours}(Nucleo-F401RE)만 지원해서 같은 이름의 핀만 옮깁니다.", { mcu: user, ours: MCU.userName }));
 
   const fw = get("ProjectManager.FirmwarePackage");
   const pack = PACKS.find((x) => fw && x.firmwarePackage === fw);
   c.drivers = pack?.id ?? DEFAULT_PACK.id;
-  if (fw && !pack) warnings.push(`펌웨어 패키지 '${fw}'은(는) 들어 있지 않아 ${DEFAULT_PACK.label}을(를) 씁니다.`);
+  if (fw && !pack) warnings.push(t("펌웨어 패키지 '{fw}'은(는) 들어 있지 않아 {pack}을(를) 씁니다.", { fw, pack: DEFAULT_PACK.label }));
 
   // Shared signals (SH.S_TIM2_CH1_ETR.0=TIM2_CH1,PWM Generation1 CH1).
   const shared = new Map<string, string>();
@@ -109,12 +110,12 @@ export function parseIoc(text: string): IocResult {
       const sig = get(`${name}.Signal`) ?? "";
       const vt = /^(TIM\d+)_VS_ClockSourceINT$/.exec(sig);
       if (vt && (TIMS as readonly string[]).includes(vt[1])) c.tim[vt[1] as TimName] ??= defaultTim(vt[1]);
-      else if (sig !== "SYS_VS_Systick") warnings.push(`가상 핀 ${name}(${sig || "?"})은(는) 지원하지 않아 건너뜁니다.`);
+      else if (sig !== "SYS_VS_Systick") warnings.push(t("가상 핀 {name}({signal})은(는) 지원하지 않아 건너뜁니다.", { name, signal: sig || "?" }));
       continue;
     }
     const pin = pinFromIoc(name);
     if (!pin) {
-      warnings.push(`핀 '${name}'은(는) STM32F401RETx(LQFP64)에 없어 건너뜁니다.`);
+      warnings.push(t("핀 '{name}'은(는) STM32F401RETx(LQFP64)에 없어 건너뜁니다.", { name }));
       continue;
     }
     let signal = get(`${name}.Signal`) ?? "";
@@ -127,24 +128,24 @@ export function parseIoc(text: string): IocResult {
       const mode = shared.get(get(`${name}.Signal`)!) ?? "";
       const timName = st[1] as TimName;
       if (!(TIMS as readonly string[]).includes(timName)) {
-        warnings.push(`${pin}: ${st[1]}은(는) 지원하지 않는 타이머입니다.`);
+        warnings.push(t("{pin}: {tim}은(는) 지원하지 않는 타이머입니다.", { pin, tim: st[1] }));
         continue;
       }
       if (!/PWM Generation/.test(mode)) {
-        warnings.push(`${pin}: ${signal}의 모드 '${mode.split(",")[1] ?? "?"}'은(는) 아직 지원하지 않습니다(PWM 출력만). 핀만 남기지 않습니다.`);
+        warnings.push(t("{pin}: {signal}의 모드 '{mode}'은(는) 아직 지원하지 않습니다(PWM 출력만). 핀만 남기지 않습니다.", { pin, signal, mode: mode.split(",")[1] ?? "?" }));
         continue;
       }
     }
     const adc = /^ADCx?(\d?)_IN(\d+)$/.exec(signal);
     if (adc) {
       if (adc[1] && adc[1] !== "1") {
-        warnings.push(`${pin}: ${signal}: ADC1만 있습니다.`);
+        warnings.push(t("{pin}: {signal}: ADC1만 있습니다.", { pin, signal }));
         continue;
       }
       signal = `ADC1_IN${adc[2]}`;
     }
     if (/^(SYS_JTMS-SWDIO|SYS_JTCK-SWCLK)$/.test(signal) && get(`${name}.Mode`) && !/Serial_Wire|Trace/.test(get(`${name}.Mode`)!)) {
-      warnings.push(`${pin}: 디버그 모드 '${get(`${name}.Mode`)}'은(는) SWD로 읽습니다.`);
+      warnings.push(t("{pin}: 디버그 모드 '{mode}'은(는) SWD로 읽습니다.", { pin, mode: String(get(`${name}.Mode`)) }));
     }
     const pc: PinConfig = { signal };
     if (label) pc.label = label;
@@ -162,18 +163,18 @@ export function parseIoc(text: string): IocResult {
     if (/^GPXTI/.test(signal)) {
       const e = get(`${name}.GPIO_ModeDefaultEXTI`) ?? "GPIO_MODE_IT_RISING";
       pc.edge = /RISING_FALLING/.test(e) ? "both" : /FALLING/.test(e) ? "falling" : "rising";
-      if (/_EVT_/.test(e)) warnings.push(`${pin}: 이벤트 모드(${e})는 인터럽트로 읽습니다.`);
+      if (/_EVT_/.test(e)) warnings.push(t("{pin}: 이벤트 모드({mode})는 인터럽트로 읽습니다.", { pin, mode: e }));
     }
     // Pins whose peripheral the tool does not have (OTG, RTC, I2S, …).
     const peri = /^([A-Z]+\d*)_/.exec(signal)?.[1];
     const known = /^(GPIO_|GPXTI|ADC1_IN|USART[126]_|I2C[123]_|SPI[123]_|TIM(1|2|3|4|5|9|10|11)_CH|SYS_|RCC_OSC)/.test(signal);
     if (!known) {
-      warnings.push(`${pin}: 신호 ${signal}은(는) 지원하지 않아 건너뜁니다.`);
+      warnings.push(t("{pin}: 신호 {signal}은(는) 지원하지 않아 건너뜁니다.", { pin, signal }));
       if (peri) ipSeen.add(peri);
       continue;
     }
     if (/^(USART|I2C|SPI)\d_/.test(signal) && !/_(TX|RX|SCL|SDA|SCK|MISO|MOSI)$/.test(signal)) {
-      warnings.push(`${pin}: ${signal}(흐름 제어·NSS·SMBA 등)은 아직 지원하지 않아 건너뜁니다.`);
+      warnings.push(t("{pin}: {signal}(흐름 제어·NSS·SMBA 등)은 아직 지원하지 않아 건너뜁니다.", { pin, signal }));
       continue;
     }
     c.pins[pin] = pc;
@@ -189,7 +190,7 @@ export function parseIoc(text: string): IocResult {
   for (const ip of ips) {
     if ((USARTS as readonly string[]).includes(ip)) {
       const mode = get(`${ip}.VirtualMode`) ?? "VM_ASYNC";
-      if (mode !== "VM_ASYNC") warnings.push(`${ip}: ${mode} 모드는 지원하지 않아 비동기(UART)로 읽습니다.`);
+      if (mode !== "VM_ASYNC") warnings.push(t("{periph}: {mode} 모드는 지원하지 않아 비동기(UART)로 읽습니다.", { periph: ip, mode }));
       const u = defaultUart();
       u.baud = num(`${ip}.BaudRate`, 115200);
       u.wordLength = /9B/.test(get(`${ip}.WordLength`) ?? "") ? 9 : 8;
@@ -249,7 +250,7 @@ export function parseIoc(text: string): IocResult {
         if (!m) continue;
         const ch = /ADC_CHANNEL_(\d+)$/.exec(v);
         if (!ch) {
-          warnings.push(`ADC1: 채널 ${v}(내부 온도·VREFINT 등)은 아직 지원하지 않아 건너뜁니다.`);
+          warnings.push(t("ADC1: 채널 {ch}(내부 온도·VREFINT 등)은 아직 지원하지 않아 건너뜁니다.", { ch: v }));
           continue;
         }
         ranks.push({
@@ -270,7 +271,7 @@ export function parseIoc(text: string): IocResult {
       ipSeen.add(ip);
     }
   }
-  for (const ip of ipSeen) warnings.push(`${ip}: 이 주변장치는 아직 지원하지 않아 설정을 건너뜁니다.`);
+  for (const ip of ipSeen) warnings.push(t("{periph}: 이 주변장치는 아직 지원하지 않아 설정을 건너뜁니다.", { periph: ip }));
 
   // A peripheral with pins but not in the IP list (hand-written .ioc): enable it.
   for (const v of Object.values(c.pins)) {
@@ -316,7 +317,7 @@ export function parseIoc(text: string): IocResult {
   k.latency = lat ? Number(lat[1]) : null;
   k.usb48 = false;
   const hse = num("RCC.HSE_VALUE", 8000000);
-  if (hse !== 8000000) warnings.push(`HSE ${hse / 1e6} MHz: Nucleo-F401RE의 HSE는 ST-LINK의 8 MHz라 8 MHz로 읽습니다.`);
+  if (hse !== 8000000) warnings.push(t("HSE {mhz} MHz: Nucleo-F401RE의 HSE는 ST-LINK의 8 MHz라 8 MHz로 읽습니다.", { mhz: hse / 1e6 }));
 
   // NVIC: enabled:preempt:sub:…
   for (const [key, v] of p) {
@@ -330,12 +331,12 @@ export function parseIoc(text: string): IocResult {
     }
     if (/^(NonMaskableInt|HardFault|MemoryManagement|BusFault|UsageFault|SVCall|DebugMonitor|PendSV)$/.test(irq)) continue;
     if (!usedIrqs(c).includes(irq)) {
-      if (en === "true") warnings.push(`NVIC ${irq}_IRQn: 이 도구가 쓰지 않는 인터럽트라 건너뜁니다.`);
+      if (en === "true") warnings.push(t("NVIC {irq}_IRQn: 이 도구가 쓰지 않는 인터럽트라 건너뜁니다.", { irq }));
       continue;
     }
     c.nvic[irq] = { enabled: en === "true", preempt: Number(pre) || 0, sub: Number(sub) || 0 };
   }
-  if (get("NVIC.PriorityGroup") && get("NVIC.PriorityGroup") !== "NVIC_PRIORITYGROUP_4") warnings.push(`NVIC 우선순위 그룹 ${get("NVIC.PriorityGroup")}은(는) 그룹 4로 읽습니다.`);
+  if (get("NVIC.PriorityGroup") && get("NVIC.PriorityGroup") !== "NVIC_PRIORITYGROUP_4") warnings.push(t("NVIC 우선순위 그룹 {group}은(는) 그룹 4로 읽습니다.", { group: String(get("NVIC.PriorityGroup")) }));
   if (c.nvic.SysTick && c.nvic.SysTick.preempt === 15 && c.nvic.SysTick.sub === 0) delete c.nvic.SysTick;
 
   // Keys of peripherals the tool does not know (DMA, RTC, FREERTOS, …).
@@ -347,7 +348,7 @@ export function parseIoc(text: string): IocResult {
     if (pinFromIoc(prefix) || /^VP_/.test(prefix) || /^P[A-H]\d+/.test(prefix)) continue;
     unknown.set(prefix, (unknown.get(prefix) ?? 0) + 1);
   }
-  for (const [prefix, n] of unknown) if (![...ipSeen].some((ip) => ip.toUpperCase() === prefix.toUpperCase())) warnings.push(`${prefix}: 지원하지 않는 설정 ${n}개를 건너뜁니다.`);
+  for (const [prefix, n] of unknown) if (![...ipSeen].some((ip) => ip.toUpperCase() === prefix.toUpperCase())) warnings.push(t("{periph}: 지원하지 않는 설정 {n}개를 건너뜁니다.", { periph: prefix, n }));
   return { config: c, warnings };
 }
 

@@ -73,7 +73,7 @@ async function exportJson(page: Page, student: string): Promise<{ name: string; 
 
 /** A student in a browser of their own. */
 async function student(browser: Browser, name: string, project: object, graded: boolean) {
-  const context = await browser.newContext({ baseURL: test.info().project.use.baseURL, viewport: { width: 1400, height: 820 } });
+  const context = await browser.newContext({ locale: "ko-KR", baseURL: test.info().project.use.baseURL, viewport: { width: 1400, height: 820 } });
   const page = await context.newPage();
   await ready(page);
   await startLesson(page, "led-blink");
@@ -350,7 +350,7 @@ test("a malformed lesson JSON shows its errors in the editor instead of crashing
 
 test("results exported before 채점 count the ungraded checks: the teacher sees 57 %, not 100 %", async ({ page, browser }) => {
   test.setTimeout(60_000);
-  const context = await browser.newContext({ baseURL: test.info().project.use.baseURL, viewport: { width: 1400, height: 820 } });
+  const context = await browser.newContext({ locale: "ko-KR", baseURL: test.info().project.use.baseURL, viewport: { width: 1400, height: 820 } });
   const sp = await context.newPage();
   await ready(sp);
   await startLesson(sp, "led-blink");

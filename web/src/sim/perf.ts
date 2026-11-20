@@ -275,9 +275,9 @@ export function saveMode(storage: Pick<Storage, "setItem"> | undefined, mode: Pe
 }
 
 /** Device check (이 기기에서 잘 돌아갈까?): verdict from the slowest example's ratio without UI. */
-export type Verdict = "충분" | "성능 모드 권장" | "느림";
+export type Verdict = "충분" | "성능 모드 권장" | "느림"; // i18n-ok
 export const ENOUGH = 2;
 export const SLOW = 1.1;
 export function verdict(worstRatio: number): Verdict {
-  return worstRatio >= ENOUGH ? "충분" : worstRatio >= SLOW ? "성능 모드 권장" : "느림";
+  return worstRatio >= ENOUGH ? "충분" : worstRatio >= SLOW ? "성능 모드 권장" : "느림"; // i18n-ok
 }

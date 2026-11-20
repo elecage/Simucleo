@@ -117,8 +117,13 @@ main { grid-area: main; min-width: 0; min-height: 0; }
 
 /* Run controls and panels (M2) */
 .run-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; flex: 1; }
+.run-toggle { display: inline-grid; }
+.run-status { flex: 1 1 12em; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.run-toggle > span { grid-area: 1 / 1; }
+.run-toggle > .ghost { visibility: hidden; }
 .run-controls select { font: inherit; font-size: 13px; padding: 4px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); }
 .version { color: var(--muted); font-size: 12px; }
+.lang-select { font-size: 12px; padding: 2px 4px; }
 .pwa-slot { margin-left: auto; flex: 0 1 auto; min-width: 0; height: 24px; align-self: center; display: inline-flex; justify-content: flex-end; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; font-size: 12px; }
 /* M31: performance mode button and popover (same slot rules: no taller than the tabs, fixed popover) */
 .pwa-slot .perf-btn { padding: 0 8px; height: 22px; font-size: 12px; line-height: 20px; }

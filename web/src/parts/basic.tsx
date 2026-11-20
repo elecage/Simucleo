@@ -1,5 +1,6 @@
 import { colorCode, formatOhms, parseOhms, TEMPCOS, TOLERANCES, type BandCount } from "./ohms";
 import { PITCH, type PartDef } from "./types";
+import { t } from "../i18n";
 
 const LED_COLORS: Record<string, string> = {
   red: "#ff2a2a", green: "#2aff5a", yellow: "#ffe02a", blue: "#3a7bff", white: "#ffffff",
@@ -8,7 +9,7 @@ const LED_COLORS: Record<string, string> = {
 /** Red ring that blinks while a part carries too much current. */
 const Overcurrent = ({ cx, cy, r }: { cx: number; cy: number; r: number }) => (
   <circle cx={cx} cy={cy} r={r} className="overcurrent" data-overcurrent="1">
-    <title>전류가 너무 큽니다 — 저항을 직렬로 넣으세요</title>
+    <title>{t("전류가 너무 큽니다 — 저항을 직렬로 넣으세요")}</title>
   </circle>
 );
 
@@ -16,12 +17,12 @@ export const led5mm: PartDef = {
   kind: "led-5mm",
   name: "LED 5mm",
   category: "output",
-  description: "긴 다리(A, +)가 애노드. 저항과 직렬로 연결하세요.",
+  description: t("긴 다리(A, +)가 애노드. 저항과 직렬로 연결하세요."),
   w: 1,
   h: 3,
   pins: [
-    { id: "A", x: 1, y: 3, label: "Anode (+, 긴 다리)" },
-    { id: "K", x: 0, y: 3, label: "Cathode (−, 짧은 다리)" },
+    { id: "A", x: 1, y: 3, label: t("Anode (+, 긴 다리)") },
+    { id: "K", x: 0, y: 3, label: t("Cathode (−, 짧은 다리)") },
   ],
   props: { color: "red" },
   propOptions: { color: ["red", "green", "yellow", "blue", "white"] },
@@ -68,7 +69,7 @@ const BAND_HEX: Record<string, string> = {
 
 export const resistor: PartDef = {
   kind: "resistor",
-  name: "저항",
+  name: t("저항"),
   category: "basic",
   w: 4,
   h: 0,
@@ -77,7 +78,7 @@ export const resistor: PartDef = {
     { id: "2", x: 4, y: 0 },
   ],
   description:
-    "색띠는 IEC 60062 규격: 3띠(유효숫자 2 + 승수, ±20%), 4띠(+ 오차), 5띠(유효숫자 3 + 승수 + 오차), 6띠(+ 온도계수). 왼쪽부터 읽고, 떨어져 있는 띠가 오차입니다.",
+    t("색띠는 IEC 60062 규격: 3띠(유효숫자 2 + 승수, ±20%), 4띠(+ 오차), 5띠(유효숫자 3 + 승수 + 오차), 6띠(+ 온도계수). 왼쪽부터 읽고, 떨어져 있는 띠가 오차입니다."),
   props: { ohms: "220", bands: "4", tolerance: "5%", tempco: "100" },
   propOptions: {
     ohms: ["100", "220", "330", "470", "1k", "2.2k", "4.7k", "10k", "100k", "1M"],
@@ -121,9 +122,9 @@ export const resistor: PartDef = {
 
 export const tactSwitch: PartDef = {
   kind: "tact-switch",
-  name: "택트 스위치",
+  name: t("택트 스위치"),
   category: "input",
-  description: "누르는 동안 위(1a·1b)와 아래(2a·2b)가 연결됩니다. 실행 중 클릭해서 누르세요.",
+  description: t("누르는 동안 위(1a·1b)와 아래(2a·2b)가 연결됩니다. 실행 중 클릭해서 누르세요."),
   // A 6 × 6 mm switch: legs 0.3" apart both ways, so it straddles the
   // breadboard's centre channel (1a·1b in row e, 2a·2b in row f) like a
   // real one (M38).
@@ -148,12 +149,12 @@ export const rgbLed: PartDef = {
   kind: "rgb-led",
   name: "RGB LED",
   category: "output",
-  description: "R·G·B 각각 저항을 거쳐 연결. 공통 단자(COM)는 캐소드형이면 GND, 애노드형이면 3V3.",
+  description: t("R·G·B 각각 저항을 거쳐 연결. 공통 단자(COM)는 캐소드형이면 GND, 애노드형이면 3V3."),
   w: 3,
   h: 3,
   pins: [
     { id: "R", x: 0, y: 3, label: "R" },
-    { id: "COM", x: 1, y: 3, label: "COM (공통, 가장 긴 다리)" },
+    { id: "COM", x: 1, y: 3, label: t("COM (공통, 가장 긴 다리)") },
     { id: "G", x: 2, y: 3, label: "G" },
     { id: "B", x: 3, y: 3, label: "B" },
   ],
@@ -205,7 +206,7 @@ function buzzer(kind: string, name: string, description: string): PartDef {
     w: 2,
     h: 3,
     pins: [
-      { id: "+", x: 0, y: 3, label: "+ (긴 다리)" },
+      { id: "+", x: 0, y: 3, label: t("+ (긴 다리)") },
       { id: "-", x: 2, y: 3, label: "−" },
     ],
     render: (_props, visual) => {
@@ -230,11 +231,11 @@ function buzzer(kind: string, name: string, description: string): PartDef {
 
 export const buzzerActive = buzzer(
   "buzzer-active",
-  "능동 부저",
-  "전원이 들어오면 스스로 일정한 음을 냅니다 (HIGH = 소리).",
+  t("능동 부저"),
+  t("전원이 들어오면 스스로 일정한 음을 냅니다 (HIGH = 소리)."),
 );
 export const buzzerPassive = buzzer(
   "buzzer-passive",
-  "수동 부저",
-  "주파수를 직접 만들어야 소리가 납니다 (PWM/토글). 음높이 = 신호 주파수.",
+  t("수동 부저"),
+  t("주파수를 직접 만들어야 소리가 납니다 (PWM/토글). 음높이 = 신호 주파수."),
 );

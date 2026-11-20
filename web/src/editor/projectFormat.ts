@@ -3,6 +3,7 @@
 // part drawings (test/m25.test.ts). `project.ts` binds it to the real one.
 import type { PlacedPart, Project, WireModel } from "./model";
 import { sanitizeScope, type ScopeSettings } from "../run/scopeSettings.ts";
+import { t } from "../i18n/index.ts";
 import { sanitizeCode, type CodeProject } from "../code/project.ts";
 
 export const FORMAT = "simucleo-project";
@@ -65,7 +66,7 @@ function migrate(file: Record<string, unknown>, notes: string[]): Record<string,
     // Version 0: a bare `{ parts, wires }` as kept by early builds.
     v = 1;
   }
-  if (v > VERSION) notes.push(`파일 버전 ${String(file.version)}은 이 시뮬레이터보다 새것입니다. 일부 내용이 빠질 수 있습니다.`);
+  if (v > VERSION) notes.push(t("파일 버전 {version}은 이 시뮬레이터보다 새것입니다. 일부 내용이 빠질 수 있습니다.", { version: String(file.version) }));
   return { ...file, version: VERSION };
 }
 
@@ -75,14 +76,14 @@ export function parseWith(text: string, catalog: Record<string, CatalogEntry | u
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new Error("JSON 형식이 아닙니다.");
+    throw new Error(t("JSON 형식이 아닙니다."));
   }
   if (!raw || typeof raw !== "object" || !Array.isArray((raw as Project).parts)) {
-    throw new Error("Simucleo 프로젝트 파일이 아닙니다 (parts가 없음).");
+    throw new Error(t("Simucleo 프로젝트 파일이 아닙니다 (parts가 없음)."));
   }
   const notes: string[] = [];
   const f = migrate(raw as Record<string, unknown>, notes);
-  if (f.format !== undefined && f.format !== FORMAT) throw new Error(`알 수 없는 형식: ${String(f.format)}`);
+  if (f.format !== undefined && f.format !== FORMAT) throw new Error(t("알 수 없는 형식: {format}", { format: String(f.format) }));
 
   const parts: PlacedPart[] = [];
   const ids = new Set<string>();
@@ -90,7 +91,7 @@ export function parseWith(text: string, catalog: Record<string, CatalogEntry | u
     if (typeof p?.id !== "string" || typeof p.kind !== "string" || ids.has(p.id)) continue;
     const def = catalog[p.kind];
     if (!def) {
-      notes.push(`알 수 없는 부품 '${p.kind}' (${p.id})은 건너뜁니다.`);
+      notes.push(t("알 수 없는 부품 '{kind}' ({id})은 건너뜁니다.", { kind: p.kind, id: p.id }));
       continue;
     }
     ids.add(p.id);
@@ -107,13 +108,13 @@ export function parseWith(text: string, catalog: Record<string, CatalogEntry | u
   const wireIds = new Set<string>();
   for (const w of (Array.isArray(f.wires) ? f.wires : []) as Partial<WireModel>[]) {
     if (!w?.a || !w.b || !ids.has(w.a.part) || !ids.has(w.b.part)) {
-      notes.push("없는 부품에 연결된 와이어를 건너뜁니다.");
+      notes.push(t("없는 부품에 연결된 와이어를 건너뜁니다."));
       continue;
     }
     const pinOk = (r: { part: string; pin: string }) =>
       catalog[parts.find((p) => p.id === r.part)!.kind]!.pins.some((q) => q.id === r.pin);
     if (!pinOk(w.a) || !pinOk(w.b)) {
-      notes.push(`없는 핀에 연결된 와이어를 건너뜁니다 (${w.a.part}.${w.a.pin} — ${w.b.part}.${w.b.pin}).`);
+      notes.push(t("없는 핀에 연결된 와이어를 건너뜁니다 ({a} — {b}).", { a: `${w.a.part}.${w.a.pin}`, b: `${w.b.part}.${w.b.pin}` }));
       continue;
     }
     let id = typeof w.id === "string" ? w.id : `w${wires.length + 1}`;

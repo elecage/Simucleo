@@ -2,6 +2,7 @@
 // table. Pure (unit tested with Node): parsing (JSON, and the CSV the panel
 // also exports), merging with duplicates dropped, cells, pass rates and the
 // CSV of the table. Nothing leaves the teacher's browser.
+import { t } from "../i18n/index.ts";
 import { verify, type Integrity } from "./integrity.ts";
 import type { ResultsFile } from "./progress.ts";
 
@@ -56,16 +57,16 @@ export function parseCsv(text: string): string[][] {
 
 /** Structural problems of a results JSON (empty: fine). */
 function resultsErrors(f: Partial<ResultsFile>): string[] {
-  if (!f || typeof f !== "object") return ["JSON 객체가 아닙니다"];
-  if (f.format !== "simucleo-lesson-results") return ["Simucleo 실습 결과 파일이 아닙니다 (format)"];
+  if (!f || typeof f !== "object") return [t("JSON 객체가 아닙니다")];
+  if (f.format !== "simucleo-lesson-results") return [t("Simucleo 실습 결과 파일이 아닙니다 (format)")];
   const errors: string[] = [];
-  if (typeof f.student !== "string") errors.push("'student'가 없습니다");
-  if (!Array.isArray(f.lessons)) return [...errors, "'lessons'가 없습니다"];
+  if (typeof f.student !== "string") errors.push(t("'student'가 없습니다"));
+  if (!Array.isArray(f.lessons)) return [...errors, t("'lessons'가 없습니다")];
   f.lessons.forEach((l, i) => {
-    if (typeof l?.id !== "string") errors.push(`실습 ${i + 1}: 'id'가 없습니다`);
-    if (!Array.isArray(l?.checks)) errors.push(`실습 ${i + 1}: 'checks'가 없습니다`);
+    if (typeof l?.id !== "string") errors.push(t("실습 {n}: 'id'가 없습니다", { n: i + 1 }));
+    if (!Array.isArray(l?.checks)) errors.push(t("실습 {n}: 'checks'가 없습니다", { n: i + 1 }));
     else if (l.checks.some((c) => typeof c?.step !== "number" || typeof c?.pass !== "boolean")) {
-      errors.push(`실습 ${i + 1}: 검사 결과 형식이 맞지 않습니다`);
+      errors.push(t("실습 {n}: 검사 결과 형식이 맞지 않습니다", { n: i + 1 }));
     }
   });
   return errors;
@@ -76,7 +77,7 @@ function fromCsv(source: string, text: string): LoadedResult[] {
   const rows = parseCsv(text);
   const head = rows[0] ?? [];
   const col = (name: string) => head.indexOf(name);
-  if (col("student") < 0 || col("lesson_id") < 0) return [{ source, kind: "csv", integrity: "unverified", error: "실습 결과 CSV가 아닙니다 (머리글)" }];
+  if (col("student") < 0 || col("lesson_id") < 0) return [{ source, kind: "csv", integrity: "unverified", error: t("실습 결과 CSV가 아닙니다 (머리글)") }];
   const get = (r: string[], name: string) => (col(name) >= 0 ? (r[col(name)] ?? "") : "");
   const byStudent = new Map<string, ResultsFile>();
   for (const r of rows.slice(1)) {
@@ -127,13 +128,13 @@ function fromCsv(source: string, text: string): LoadedResult[] {
 
 /** Read one dropped file: a results JSON (checked against its hash) or CSV. */
 export async function parseResults(source: string, text: string): Promise<LoadedResult[]> {
-  const t = text.replace(/^﻿/, "").trim();
-  if (!t.startsWith("{")) return fromCsv(source, t);
+  const body = text.replace(/^﻿/, "").trim();
+  if (!body.startsWith("{")) return fromCsv(source, body);
   let raw: unknown;
   try {
-    raw = JSON.parse(t);
+    raw = JSON.parse(body);
   } catch (e) {
-    return [{ source, kind: "json", integrity: "unverified", error: `JSON 오류: ${(e as Error).message}` }];
+    return [{ source, kind: "json", integrity: "unverified", error: t("JSON 오류: {message}", { message: (e as Error).message }) }];
   }
   const errors = resultsErrors(raw as Partial<ResultsFile>);
   if (errors.length) return [{ source, kind: "json", integrity: "unverified", error: errors.join("; ") }];
@@ -178,7 +179,7 @@ export interface Merged {
 
 export const entryKey = (student: string, lessonId: string) => `${student}\n${lessonId}`;
 /** Same student whatever the spacing: "kim  01 " is "kim 01". */
-export const normStudent = (s: string) => s.trim().replace(/\s+/g, " ") || "(이름 없음)";
+export const normStudent = (s: string) => s.trim().replace(/\s+/g, " ") || t("(이름 없음)");
 
 /** Checks per step of the lessons the teacher's site knows (the bundled ones), by id. */
 export type KnownLessons = Record<string, number[]>;
@@ -195,7 +196,7 @@ export function withKnownChecks(l: ResultLesson, perStep: number[] | undefined):
   perStep.forEach((n, step) => {
     for (let j = 0; j < n; j++) {
       const key = `${step}.${j}`;
-      if (!have.has(key)) missing.push({ key, step, label: `단계 ${step + 1} 검사 ${j + 1}`, pass: false, pending: true, at: "" });
+      if (!have.has(key)) missing.push({ key, step, label: t("단계 {step} 검사 {n}", { step: step + 1, n: j + 1 }), pass: false, pending: true, at: "" });
     }
   });
   if (!missing.length) return l;
@@ -204,6 +205,9 @@ export function withKnownChecks(l: ResultLesson, perStep: number[] | undefined):
 }
 
 /** All files in one table: for each student and lesson the latest export only. */
+/** A step title made up from its number ("단계 3"), replaced when a file names it. */
+const DEFAULT_STEP = new RegExp(`^${t("단계 {n}", { n: "\\d+" })}$`);
+
 export function mergeResults(loaded: LoadedResult[], known: KnownLessons = {}): Merged {
   const entries: Record<string, Entry> = {};
   const duplicates: Duplicate[] = [];
@@ -212,7 +216,7 @@ export function mergeResults(loaded: LoadedResult[], known: KnownLessons = {}): 
   const lessons: LessonColumn[] = [];
   for (const r of loaded) {
     if (!r.file) {
-      errors.push({ source: r.source, error: r.error ?? "읽지 못했습니다" });
+      errors.push({ source: r.source, error: r.error ?? t("읽지 못했습니다") });
       continue;
     }
     const student = normStudent(r.file.student);
@@ -238,8 +242,8 @@ export function mergeResults(loaded: LoadedResult[], known: KnownLessons = {}): 
       for (const index of indices) {
         const title = lesson.steps?.[index];
         const have = column.steps.find((s) => s.index === index);
-        if (!have) column.steps.push({ index, title: title ?? `단계 ${index + 1}` });
-        else if (title && /^단계 \d+$/.test(have.title)) have.title = title;
+        if (!have) column.steps.push({ index, title: title ?? t("단계 {n}", { n: index + 1 }) });
+        else if (title && DEFAULT_STEP.test(have.title)) have.title = title;
       }
       column.steps.sort((a, b) => a.index - b.index);
     }
@@ -430,16 +434,17 @@ export function tableRows(m: Merged, opts: TableOptions = {}): Row[] {
 
 // -------------------------------------------------------------------- CSV
 
-export const INTEGRITY_KO: Record<Integrity, string> = { verified: "검증됨", tampered: "변조됨", unverified: "검증 안 됨" };
+export const INTEGRITY_KO: Record<Integrity, string> = { verified: t("검증됨"), tampered: t("변조됨"), unverified: t("검증 안 됨") };
 
 /** "3분 20초" */
 export function fmtDuration(ms: number | undefined): string {
   if (ms === undefined) return "";
   const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}초`;
+  if (s < 60) return t("{s}초", { s });
   const m = Math.floor(s / 60);
-  if (m < 60) return s % 60 ? `${m}분 ${s % 60}초` : `${m}분`;
-  return m % 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분` : `${Math.floor(m / 60)}시간`;
+  if (m < 60) return s % 60 ? t("{m}분 {s}초", { m, s: s % 60 }) : t("{m}분", { m });
+  const h = Math.floor(m / 60);
+  return m % 60 ? t("{h}시간 {m}분", { h, m: m % 60 }) : t("{h}시간", { h });
 }
 
 const csvCell = (v: string | number | null | undefined) => {
@@ -452,7 +457,8 @@ export function tableCsv(m: Merged, rows: Row[], lesson?: string): string {
   const cols = m.lessons.filter((c) => !lesson || c.id === lesson);
   const head = ["student", "integrity", "files"];
   for (const c of cols) {
-    head.push(`${c.title} 점수`, `${c.title} 통과`, `${c.title} 완료`, `${c.title} 시간(초)`, `${c.title} 채점 횟수`);
+    const v = { title: c.title };
+    head.push(t("{title} 점수", v), t("{title} 통과", v), t("{title} 완료", v), t("{title} 시간(초)", v), t("{title} 채점 횟수", v));
     for (const s of c.steps) head.push(`${c.title} ${s.index + 1}. ${s.title}`);
   }
   const out: (string | number | null)[][] = [head];
@@ -466,21 +472,21 @@ export function tableCsv(m: Merged, rows: Row[], lesson?: string): string {
       }
       line.push(
         cell.unknownTotal ? "" : cell.score,
-        cell.unknownTotal ? `${cell.passed}/${cell.total}+ (미채점 검사 있음)` : `${cell.passed}/${cell.total}`,
+        cell.unknownTotal ? t("{passed}/{total}+ (미채점 검사 있음)", { passed: cell.passed, total: cell.total }) : `${cell.passed}/${cell.total}`,
         cell.completed ? "yes" : "no",
         cell.timeMs !== undefined ? Math.round(cell.timeMs / 1000) : "",
         cell.attempts,
       );
       for (const s of c.steps) {
         const sc = cell.steps[s.index];
-        line.push(!sc ? "" : (sc.status === "partial" ? `partial ${sc.passed}/${sc.total}` : sc.status) + (sc.pending ? ` (미채점 ${sc.pending})` : ""));
+        line.push(!sc ? "" : (sc.status === "partial" ? `partial ${sc.passed}/${sc.total}` : sc.status) + (sc.pending ? t(" (미채점 {n})", { n: sc.pending }) : ""));
       }
     }
     out.push(line);
   }
   const rates = passRates(m);
   const pct = (r: Rate | undefined) => (ratePercent(r) === null ? "" : `${ratePercent(r)}% (${r!.passed}/${r!.n})`);
-  const footer: (string | number | null)[] = ["통과율", "", ""];
+  const footer: (string | number | null)[] = [t("통과율"), "", ""];
   for (const c of cols) {
     footer.push("", "", pct(rates[c.id]?.completed), "", "");
     for (const s of c.steps) footer.push(pct(rates[c.id]?.steps[s.index]));

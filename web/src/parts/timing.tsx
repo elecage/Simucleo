@@ -3,12 +3,13 @@
 import { BREATH_RH, FINGER_C, fingerTouch } from "./controls";
 import { Fingertip } from "./feedback";
 import { PITCH, type PartDef, type VisualState } from "./types";
+import { t } from "../i18n";
 
 const P = PITCH;
 
 const NoPower = ({ x, y }: { x: number; y: number }) => (
   <text x={x} y={y} textAnchor="middle" className="silk small unpowered" data-unpowered="1">
-    전원 부족
+    {t("전원 부족")}
   </text>
 );
 
@@ -39,15 +40,15 @@ function leds(visual: VisualState, n: number): number[] {
 const pixelPins = (pins: { id: string; x: number; y: number }[]) =>
   pins.map((p) => ({
     ...p,
-    label: { VCC: "5V (VCC)", DIN: "DIN (데이터 입력)", GND: "GND", DOUT: "DOUT (데이터 출력 → 다음 NeoPixel의 DIN)" }[p.id] ?? p.id,
+    label: { VCC: "5V (VCC)", DIN: t("DIN (데이터 입력)"), GND: "GND", DOUT: t("DOUT (데이터 출력 → 다음 NeoPixel의 DIN)") }[p.id] ?? p.id,
   }));
 
 const PIXEL_HINT =
-  "WS2812B: 800 kHz로 LED마다 24비트(G, R, B 순서, 상위 비트 먼저)를 보냅니다. 비트 0은 0.4 µs, 1은 0.8 µs High이고, 50 µs 이상 Low면 표시가 바뀝니다. LED는 처음 24비트씩 갖고 나머지는 DOUT으로 넘기므로, DOUT을 다른 NeoPixel의 DIN에 이으면 한 줄로 이어집니다(앞 부품의 LED 다음 번호부터). VCC는 5V(3.5 V 이상).";
+  t("WS2812B: 800 kHz로 LED마다 24비트(G, R, B 순서, 상위 비트 먼저)를 보냅니다. 비트 0은 0.4 µs, 1은 0.8 µs High이고, 50 µs 이상 Low면 표시가 바뀝니다. LED는 처음 24비트씩 갖고 나머지는 DOUT으로 넘기므로, DOUT을 다른 NeoPixel의 DIN에 이으면 한 줄로 이어집니다(앞 부품의 LED 다음 번호부터). VCC는 5V(3.5 V 이상).");
 
 export const neopixelRing: PartDef = {
   kind: "neopixel-ring",
-  name: "NeoPixel 링",
+  name: t("NeoPixel 링"),
   category: "output",
   description: PIXEL_HINT,
   w: 10,
@@ -84,7 +85,7 @@ export const neopixelRing: PartDef = {
 
 export const neopixelStrip: PartDef = {
   kind: "neopixel-strip",
-  name: "NeoPixel 스트립 (8)",
+  name: t("NeoPixel 스트립 (8)"),
   category: "output",
   description: PIXEL_HINT,
   w: 17,
@@ -109,9 +110,9 @@ export const neopixelStrip: PartDef = {
 
 export const neopixelMatrix: PartDef = {
   kind: "neopixel-matrix",
-  name: "NeoPixel 매트릭스 8×8",
+  name: t("NeoPixel 매트릭스 8×8"),
   category: "output",
-  description: `${PIXEL_HINT} LED 번호는 줄마다 왼쪽에서 오른쪽(0–7, 8–15, …)입니다.`,
+  description: t("{hint} LED 번호는 줄마다 왼쪽에서 오른쪽(0–7, 8–15, …)입니다.", { hint: PIXEL_HINT }),
   w: 16,
   h: 17,
   pins: pixelPins([
@@ -137,10 +138,10 @@ export const neopixelMatrix: PartDef = {
 
 export const dht: PartDef = {
   kind: "dht",
-  name: "온습도 센서 (DHT22/DHT11)",
+  name: t("온습도 센서 (DHT22/DHT11)"),
   category: "sensor",
   description:
-    `단선 통신. MCU가 DATA를 Low로 잡았다 놓으면(DHT22 1 ms 이상, DHT11 18 ms 이상) 센서가 80 µs Low, 80 µs High 후 40비트(습도 16, 온도 16, 체크섬 8)를 보냅니다. 비트마다 50 µs Low 뒤 High가 약 27 µs면 0, 70 µs면 1. 모듈에 10 kΩ 풀업이 있습니다. 센서를 누르고 있으면 손가락 체온(약 ${FINGER_C} °C)과 입김(습도 ${BREATH_RH} %)으로 값이 오르고, 떼면 원래대로 돌아옵니다.`,
+    t("단선 통신. MCU가 DATA를 Low로 잡았다 놓으면(DHT22 1 ms 이상, DHT11 18 ms 이상) 센서가 80 µs Low, 80 µs High 후 40비트(습도 16, 온도 16, 체크섬 8)를 보냅니다. 비트마다 50 µs Low 뒤 High가 약 27 µs면 0, 70 µs면 1. 모듈에 10 kΩ 풀업이 있습니다. 센서를 누르고 있으면 손가락 체온(약 {finger} °C)과 입김(습도 {breath} %)으로 값이 오르고, 떼면 원래대로 돌아옵니다.", { finger: FINGER_C, breath: BREATH_RH }),
   w: 4,
   h: 6,
   pins: [
@@ -151,8 +152,8 @@ export const dht: PartDef = {
   props: { model: "DHT22", temp: 25, humidity: 50 },
   propOptions: { model: ["DHT22", "DHT11"] },
   ranges: {
-    temp: { min: -40, max: 80, step: 0.1, label: "온도", unit: "°C" },
-    humidity: { min: 0, max: 100, step: 0.1, label: "습도", unit: "%" },
+    temp: { min: -40, max: 80, step: 0.1, label: t("온도"), unit: "°C" },
+    humidity: { min: 0, max: 100, step: 0.1, label: t("습도"), unit: "%" },
   },
   controls: { touch: fingerTouch("temp", "humidity") },
   render: (props, visual) => {

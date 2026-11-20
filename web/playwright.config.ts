@@ -6,6 +6,9 @@ export default defineConfig({
   use: {
     baseURL: "http://localhost:4173",
     viewport: { width: 1400, height: 820 },
+    // The interface follows the browser's language (M34): the specs read the
+    // Korean one; e2e/i18n.spec.ts opens the English one itself.
+    locale: "ko-KR",
     trace: "off",
     screenshot: "only-on-failure",
   },

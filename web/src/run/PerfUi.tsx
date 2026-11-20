@@ -5,16 +5,17 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { dismissPerfNotice, setPerfMode, usePerf } from "../sim/perfStore";
-import { formatRatio, ENOUGH, SLOW, type PerfMode } from "../sim/perf";
+import { formatRatio, ENOUGH, SLOW, type PerfMode, type Verdict } from "../sim/perf";
 import { CHECK_EXAMPLES, runDeviceCheck, type CheckResult } from "../sim/deviceCheck";
 import type { BenchReply } from "../sim/benchWorker";
 import type { Runner } from "../sim/useRunner";
+import { t } from "../i18n";
 
-const MODE_LABEL: Record<PerfMode, string> = { auto: "자동", off: "끄기", on: "켜기" };
+const MODE_LABEL: Record<PerfMode, string> = { auto: t("자동"), off: t("끄기"), on: t("켜기") };
 const MODE_HINT: Record<PerfMode, string> = {
-  auto: "화면 그리기 때문에 실시간을 못 따라가면 저절로 켠다",
-  off: "항상 모든 프레임을 그린다",
-  on: "항상 가볍게 그린다",
+  auto: t("화면 그리기 때문에 실시간을 못 따라가면 저절로 켠다"),
+  off: t("항상 모든 프레임을 그린다"),
+  on: t("항상 가볍게 그린다"),
 };
 
 /** The 성능 button (and the notice when auto mode switched on) for the status slot. */
@@ -22,7 +23,7 @@ export function PerfStatus({ runner }: { runner: Runner }) {
   const p = usePerf();
   const [open, setOpen] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
-  const label = p.notice ? "⚡ 성능 모드 켜짐" : p.lite ? "⚡ 성능 모드" : "⚡ 성능";
+  const label = p.notice ? t("⚡ 성능 모드 켜짐") : p.lite ? t("⚡ 성능 모드") : t("⚡ 성능");
   return (
     <>
       <button
@@ -37,8 +38,8 @@ export function PerfStatus({ runner }: { runner: Runner }) {
         aria-expanded={open}
         title={
           p.notice
-            ? "화면을 그리느라 시뮬레이션이 실시간을 못 따라가서 성능 모드를 켰습니다. 시뮬레이션 결과는 그대로이고 화면만 덜 자주 그립니다."
-            : "성능 모드와 기기 점검 (이 기기에서 잘 돌아갈까?)"
+            ? t("화면을 그리느라 시뮬레이션이 실시간을 못 따라가서 성능 모드를 켰습니다. 시뮬레이션 결과는 그대로이고 화면만 덜 자주 그립니다.")
+            : t("성능 모드와 기기 점검 (이 기기에서 잘 돌아갈까?)")
         }
       >
         {label}
@@ -70,14 +71,14 @@ function PerfPopover({ runner, anchor, onClose }: { runner: Runner; anchor: RefO
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="perf-pop" style={at} role="dialog" aria-label="성능 모드" data-testid="perf-popover">
+    <div className="perf-pop" style={at} role="dialog" aria-label={t("성능 모드")} data-testid="perf-popover">
       <div className="perf-head">
-        <b>성능 모드</b>
-        <button className="perf-close" onClick={onClose} aria-label="성능 모드 닫기">
+        <b>{t("성능 모드")}</b>
+        <button className="perf-close" onClick={onClose} aria-label={t("성능 모드 닫기")}>
           ✕
         </button>
       </div>
-      <div className="perf-modes" role="radiogroup" aria-label="성능 모드 설정">
+      <div className="perf-modes" role="radiogroup" aria-label={t("성능 모드 설정")}>
         {(["auto", "off", "on"] as PerfMode[]).map((m) => (
           <label key={m} title={MODE_HINT[m]}>
             <input type="radio" name="perf-mode" checked={p.mode === m} onChange={() => setPerfMode(m)} /> {MODE_LABEL[m]}
@@ -85,21 +86,24 @@ function PerfPopover({ runner, anchor, onClose }: { runner: Runner; anchor: RefO
         ))}
       </div>
       <p className="hint">
-        {MODE_HINT[p.mode]}. 켜면 화면을 덜 자주 그리고(초당 30 → 15 → 10 → 5번), 화면 밖 부품과 빛 번짐 효과는 그리지 않고, 파형은 초당 10번까지만 다시 그린다.
-        시뮬레이션 결과(펌웨어 동작, 채점, 파형 캡처)는 똑같다.
+        {t(
+          "{hint}. 켜면 화면을 덜 자주 그리고(초당 30 → 15 → 10 → 5번), 화면 밖 부품과 빛 번짐 효과는 그리지 않고, 파형은 초당 10번까지만 다시 그린다. 시뮬레이션 결과(펌웨어 동작, 채점, 파형 캡처)는 똑같다.",
+          { hint: MODE_HINT[p.mode] },
+        )}
       </p>
       <dl className="perf-stats" data-testid="perf-stats">
-        <dt>상태</dt>
-        <dd data-testid="perf-state">{p.lite ? (p.mode === "auto" ? "켜짐 (자동)" : "켜짐") : "꺼짐"}</dd>
-        <dt>실제 배속</dt>
+        <dt>{t("상태")}</dt>
+        <dd data-testid="perf-state">{p.lite ? (p.mode === "auto" ? t("켜짐 (자동)") : t("켜짐")) : t("꺼짐")}</dd>
+        <dt>{t("실제 배속")}</dt>
         <dd data-testid="perf-ratio">{p.ratio === null ? "—" : formatRatio(p.ratio)}</dd>
-        <dt>화면 갱신</dt>
+        <dt>{t("화면 갱신")}</dt>
         <dd>
-          초당 {p.updateHz.toFixed(0)}번{p.lite ? ` (최대 ${p.hz})` : ""}
+          {t("초당 {n}번", { n: p.updateHz.toFixed(0) })}
+          {p.lite ? t(" (최대 {hz})", { hz: p.hz }) : ""}
         </dd>
-        <dt>화면 그리기</dt>
+        <dt>{t("화면 그리기")}</dt>
         <dd data-testid="perf-ui">
-          {p.uiMs.toFixed(1)} ms/번 · 화면 스레드 {Math.round(p.busy * 100)}%
+          {t("{ms} ms/번 · 화면 스레드 {busy}%", { ms: p.uiMs.toFixed(1), busy: Math.round(p.busy * 100) })}
         </dd>
       </dl>
       <DeviceCheck runner={runner} />
@@ -107,11 +111,18 @@ function PerfPopover({ runner, anchor, onClose }: { runner: Runner; anchor: RefO
   );
 }
 
-const VERDICT_HINT: Record<string, string> = {
-  충분: "이 기기는 예제를 실시간으로 넉넉히 돌린다.",
-  "성능 모드 권장": "실시간은 되지만 여유가 적다. 성능 모드를 켜거나 자동으로 둔다.",
-  느림: "화면 없이도 실시간을 못 따라간다. 시간은 느리게 가지만 결과는 같다.",
+// Keyed by the verdict values of sim/perf (identifiers, not shown).
+const VERDICT_LABEL: Record<Verdict, string> = {
+  충분: t("충분"),
+  "성능 모드 권장": t("성능 모드 권장"), // i18n-ok
+  느림: t("느림"),
 };
+const VERDICT_HINT: Record<Verdict, string> = {
+  충분: t("이 기기는 예제를 실시간으로 넉넉히 돌린다."),
+  "성능 모드 권장": t("실시간은 되지만 여유가 적다. 성능 모드를 켜거나 자동으로 둔다."), // i18n-ok
+  느림: t("화면 없이도 실시간을 못 따라간다. 시간은 느리게 가지만 결과는 같다."),
+};
+const VERDICT_CLASS: Record<Verdict, string> = { 충분: "ok", "성능 모드 권장": "mid", 느림: "slow" }; // i18n-ok
 
 /** 이 기기에서 잘 돌아갈까? */
 function DeviceCheck({ runner }: { runner: Runner }) {
@@ -138,12 +149,14 @@ function DeviceCheck({ runner }: { runner: Runner }) {
   };
   return (
     <section className="device-check" data-testid="device-check">
-      <h4>이 기기에서 잘 돌아갈까?</h4>
+      <h4>{t("이 기기에서 잘 돌아갈까?")}</h4>
       <p className="hint">
-        예제 {CHECK_EXAMPLES.length}개를 화면 없이 몇 초씩 최대 속도로 돌려 본다(약 10초). 실행 중이던 시뮬레이션은 그동안 멈춘다.
+        {t("예제 {n}개를 화면 없이 몇 초씩 최대 속도로 돌려 본다(약 10초). 실행 중이던 시뮬레이션은 그동안 멈춘다.", {
+          n: CHECK_EXAMPLES.length,
+        })}
       </p>
       <button onClick={() => void start()} disabled={busy} data-testid="device-check-run">
-        {busy ? `점검 중… (${rows.length}/${CHECK_EXAMPLES.length})` : "기기 점검"}
+        {busy ? t("점검 중… ({done}/{total})", { done: rows.length, total: CHECK_EXAMPLES.length }) : t("기기 점검")}
       </button>
       {rows.length > 0 && (
         <table className="device-rows">
@@ -151,19 +164,21 @@ function DeviceCheck({ runner }: { runner: Runner }) {
             {rows.map((r) => (
               <tr key={r.name}>
                 <td>{r.name}</td>
-                <td data-testid="device-ratio">{r.error ? "오류" : formatRatio(r.ratio)}</td>
+                <td data-testid="device-ratio">{r.error ? t("오류") : formatRatio(r.ratio)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
       {result && (
-        <p className={`verdict v-${result.verdict === "충분" ? "ok" : result.verdict === "느림" ? "slow" : "mid"}`} data-testid="device-verdict">
-          <b>{result.verdict}</b> — 가장 느린 예제 {formatRatio(result.worst)}. {VERDICT_HINT[result.verdict]}
-          <span className="hint"> (×{ENOUGH} 이상 충분, ×{SLOW}–×{ENOUGH} 성능 모드 권장, 그 아래 느림)</span>
+        <p className={`verdict v-${VERDICT_CLASS[result.verdict]}`} data-testid="device-verdict">
+          <b>{VERDICT_LABEL[result.verdict]}</b>
+          {t(" — 가장 느린 예제 {ratio}. ", { ratio: formatRatio(result.worst) })}
+          {VERDICT_HINT[result.verdict]}
+          <span className="hint">{t(" (×{enough} 이상 충분, ×{slow}–×{enough} 성능 모드 권장, 그 아래 느림)", { enough: ENOUGH, slow: SLOW })}</span>
         </p>
       )}
-      {error && <p className="error">점검 실패: {error}</p>}
+      {error && <p className="error">{t("점검 실패: {error}", { error })}</p>}
     </section>
   );
 }

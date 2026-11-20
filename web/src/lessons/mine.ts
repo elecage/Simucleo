@@ -1,5 +1,6 @@
 // "내 레슨" (M24): lessons made in the editor or loaded from files, kept in
 // the browser's IndexedDB next to the progress. Pure list helpers.
+import { t } from "../i18n/index.ts";
 import type { Lesson } from "./types.ts";
 
 export const MINE_KEY = "lessons:mine";
@@ -23,11 +24,11 @@ export function blankLesson(taken: string[] = []): Lesson {
   return {
     id: `my-lesson-${n}`,
     order: 100 + n,
-    title: "새 실습",
-    level: "입문",
+    title: t("새 실습"),
+    level: t("입문"),
     goal: "",
     start: "empty",
-    steps: [{ title: "1단계", text: "", checks: [] }],
+    steps: [{ title: t("{n}단계", { n: 1 }), text: "", checks: [] }],
   };
 }
 

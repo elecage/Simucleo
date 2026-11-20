@@ -21,6 +21,7 @@ import type { Project } from "../editor/model";
 import { parseResults, type LoadedResult } from "../lessons/teacher.ts";
 import type { ResultsFile } from "../lessons/progress.ts";
 import { ElfError, readElf, stripElf, type Strip } from "./elf.ts";
+import { forShare } from "../code/project.ts";
 
 export const SHARE_FORMAT = "simucleo-share";
 export const SHARE_VERSION = 1;
@@ -166,6 +167,9 @@ export async function encodeShare(input: ShareInput, opts: { compress?: boolean 
       wires: input.project.wires,
       ...(firmware ? { firmware } : {}),
       ...(input.project.scope ? { scope: input.project.scope } : {}),
+      // M33: the student's sources, not the ELF built from them nor the
+      // snapshot (the receiver rebuilds; sources compress to a few hundred bytes).
+      ...(input.project.code ? { code: forShare(input.project.code) } : {}),
     },
     ...(elf && original ? { elf: { size: elf.length, originalSize: original.length, strip: input.strip ?? "none" } } : {}),
     ...(input.lesson ? { lesson: input.lesson } : {}),

@@ -18,17 +18,28 @@
  *   in IndexedDB/localStorage and never go through here.
  * - A new version waits until the page posts SKIP_WAITING (the update
  *   banner), so a running simulation is never reloaded unasked.
+ * - The in-browser compiler (M33, toolchain/, about 20 MB) is not in the
+ *   list above: OPTIONAL lists it apart, cached in its own cache
+ *   (simucleo-editor-<version of those files>) only when the page posts
+ *   CACHE_EDITOR ("편집기 오프라인으로 받기"); the same rules (integrity,
+ *   reuse of unchanged files) apply. Once cached, a new version of the app
+ *   brings the new compiler into its cache when it takes over.
  */
 const PRECACHE = /*__PRECACHE__*/[];
 const VERSION = "__VERSION__";
+const OPTIONAL = /*__OPTIONAL__*/[];
+const OPTIONAL_VERSION = "__OPTIONAL_VERSION__";
 const PREFIX = "simucleo-";
 const CACHE = PREFIX + VERSION;
+const EDITOR_PREFIX = PREFIX + "editor-";
+const EDITOR_CACHE = EDITOR_PREFIX + OPTIONAL_VERSION;
 const PARALLEL = 6;
 const SRI_HEADER = "x-simucleo-integrity";
 
 const scope = () => self.registration.scope;
 const abs = (url) => new URL(url, scope()).href;
 const PATHS = new Set(PRECACHE.map((e) => e.url));
+const OPTIONAL_PATHS = new Set(OPTIONAL.map((e) => e.url));
 
 async function broadcast(msg) {
   for (const c of await self.clients.matchAll({ type: "window", includeUncontrolled: true })) c.postMessage(msg);
@@ -47,9 +58,9 @@ async function status() {
 }
 
 /** The same bytes in an older version's cache (an update re-downloads only what changed). */
-async function reuse(e) {
+async function reuse(e, current = CACHE) {
   for (const key of await caches.keys()) {
-    if (!key.startsWith(PREFIX) || key === CACHE) continue;
+    if (!key.startsWith(PREFIX) || key === current) continue;
     const old = await (await caches.open(key)).match(abs(e.url));
     if (old && old.headers.get(SRI_HEADER) === e.integrity) return old;
   }
@@ -83,6 +94,38 @@ async function precache() {
   await Promise.all(Array.from({ length: PARALLEL }, worker));
 }
 
+// ------------------------------------------------ the compiler (M33)
+
+async function editorStatus() {
+  // (caches.open would create the cache: only asked, never made here.)
+  const keys = (await caches.has(EDITOR_CACHE)) ? new Set((await (await caches.open(EDITOR_CACHE)).keys()).map((r) => r.url)) : new Set();
+  const cached = OPTIONAL.filter((e) => keys.has(abs(e.url))).length;
+  return { type: "EDITOR_STATUS", version: OPTIONAL_VERSION, total: OPTIONAL.length, cached, ready: OPTIONAL.length > 0 && cached === OPTIONAL.length };
+}
+
+let editorJob = null;
+/** Cache every optional file (reusing unchanged ones), reporting bytes. */
+function cacheEditor(report) {
+  editorJob ??= (async () => {
+    const cache = await caches.open(EDITOR_CACHE);
+    const have = new Set((await cache.keys()).map((r) => r.url));
+    const total = OPTIONAL.reduce((s, e) => s + (e.size || 0), 0);
+    let done = OPTIONAL.filter((e) => have.has(abs(e.url))).reduce((s, e) => s + (e.size || 0), 0);
+    for (const e of OPTIONAL) {
+      if (have.has(abs(e.url))) continue;
+      await cache.put(abs(e.url), (await reuse(e, EDITOR_CACHE)) || (await download(e)));
+      done += e.size || 0;
+      report({ type: "EDITOR_PROGRESS", version: OPTIONAL_VERSION, done, total });
+    }
+    // Older compilers' caches are not needed any more.
+    for (const key of await caches.keys()) if (key.startsWith(EDITOR_PREFIX) && key !== EDITOR_CACHE) await caches.delete(key);
+    return editorStatus();
+  })().finally(() => {
+    editorJob = null;
+  });
+  return editorJob;
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(precache());
 });
@@ -90,11 +133,20 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
+      let hadEditor = false;
       for (const key of await caches.keys()) {
+        // The compiler's caches follow their own version (below).
+        if (key.startsWith(EDITOR_PREFIX)) {
+          if (key !== EDITOR_CACHE) hadEditor = true;
+          continue;
+        }
         if (key.startsWith(PREFIX) && key !== CACHE) await caches.delete(key);
       }
       await self.clients.claim();
       broadcast(await status());
+      // The student had the compiler offline: bring this version's in (the
+      // unchanged files come from the old cache, which then goes).
+      if (hadEditor && OPTIONAL.length) await cacheEditor(broadcast).then(broadcast, () => {});
     })(),
   );
 });
@@ -106,6 +158,12 @@ self.addEventListener("message", (event) => {
   else if (msg.type === "GET_STATUS") {
     const reply = event.ports && event.ports[0];
     event.waitUntil(status().then((s) => (reply ? reply.postMessage(s) : event.source && event.source.postMessage(s))));
+  } else if (msg.type === "EDITOR_STATUS" || msg.type === "CACHE_EDITOR") {
+    const reply = event.ports && event.ports[0];
+    const send = (m) => (reply ? reply.postMessage(m) : event.source && event.source.postMessage(m));
+    const job = msg.type === "CACHE_EDITOR" ? cacheEditor(send) : editorStatus();
+    const failed = (err) => ({ type: "EDITOR_STATUS", version: OPTIONAL_VERSION, total: OPTIONAL.length, cached: 0, ready: false, error: String((err && err.message) || err) });
+    event.waitUntil(job.then(send, (err) => send(failed(err))));
   }
 });
 
@@ -133,4 +191,7 @@ self.addEventListener("fetch", (event) => {
   }
   const path = request.url.slice(base.length).split(/[?#]/)[0];
   if (PATHS.has(path)) event.respondWith(cacheFirst(request, path));
+  // The compiler: from its cache once "편집기 오프라인으로 받기" put it there.
+  // (caches.match with a cacheName does not create the cache, unlike open.)
+  else if (OPTIONAL_PATHS.has(path)) event.respondWith(caches.match(abs(path), { cacheName: EDITOR_CACHE }).then((r) => r || fetch(request)));
 });

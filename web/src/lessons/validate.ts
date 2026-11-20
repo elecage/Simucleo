@@ -54,6 +54,13 @@ export function validateLesson(raw: unknown, kinds?: Set<string>): string[] {
   if (f !== undefined && f !== "upload" && !(f && typeof f === "object" && typeof f.example === "string")) {
     errors.push("'firmware'는 \"upload\" 또는 {\"example\": \"….elf\"}이어야 합니다");
   }
+  const c = (l as { code?: unknown }).code as { example?: unknown; main?: unknown } | undefined;
+  if (c !== undefined) {
+    const mainOk = c?.main === undefined || typeof c.main === "string" || (Array.isArray(c.main) && c.main.every((x) => typeof x === "string"));
+    if (!c || typeof c !== "object" || typeof c.example !== "string" || !mainOk) {
+      errors.push("'code'는 {\"example\": \"….elf\", \"main\": 시작 코드(선택)}이어야 합니다");
+    }
+  }
   const g = l.grade;
   if (g !== undefined) {
     if (!g || typeof g !== "object") errors.push("'grade'는 객체여야 합니다");

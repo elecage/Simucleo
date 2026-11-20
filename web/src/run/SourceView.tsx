@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Runner } from "../sim/useRunner";
 import type { BreakpointSpec, DebugValue, WatchpointSpec } from "../sim/protocol";
 import type { SourceUpload } from "../upload/useSourceUpload";
+import type { Attached } from "../upload/attach";
 import { UploadBar } from "../upload/UploadBar";
 import { countRender } from "../sim/renderCount";
 
@@ -128,10 +129,20 @@ function pauseText(reason: string): string {
   return reason;
 }
 
-export function SourceView({ runner, upload: bundle }: { runner: Runner; upload?: SourceUpload; active?: boolean }) {
+export function SourceView({
+  runner,
+  upload: bundle,
+  built = null,
+}: {
+  runner: Runner;
+  upload?: SourceUpload;
+  built?: Attached | null;
+  active?: boolean;
+}) {
   countRender("source");
   const files = runner.debugFiles;
-  const attached = bundle?.attached ?? null;
+  // M39's uploaded sources, or M33's: what the code tab built this ELF from.
+  const attached = bundle?.attached ?? built;
   const [texts, setTexts] = useState<Record<string, string>>({});
   const [uploaded, setUploaded] = useState<Record<string, string>>({});
   const [available, setAvailable] = useState<Set<string>>(new Set());

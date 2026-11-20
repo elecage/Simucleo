@@ -9,6 +9,8 @@ export interface Example {
   description: string;
   /** A project file with the wiring this firmware expects. */
   project?: string;
+  /** M33: the code tab can start from it (its main.c under examples/src/). */
+  code?: { template: "hal"; main: string };
 }
 
 const SPEEDS: [string, number][] = [

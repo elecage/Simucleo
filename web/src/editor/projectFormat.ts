@@ -3,6 +3,7 @@
 // part drawings (test/m25.test.ts). `project.ts` binds it to the real one.
 import type { PlacedPart, Project, WireModel } from "./model";
 import { sanitizeScope, type ScopeSettings } from "../run/scopeSettings.ts";
+import { sanitizeCode, type CodeProject } from "../code/project.ts";
 
 export const FORMAT = "simucleo-project";
 export const VERSION = 1;
@@ -25,6 +26,8 @@ export interface ProjectFile {
   firmware?: FirmwareRef;
   /** Waveform view settings (M25; absent from older files). */
   scope?: ScopeSettings;
+  /** The student's C sources (M33; absent from older files). */
+  code?: CodeProject;
 }
 
 export interface Loaded {
@@ -50,6 +53,7 @@ export function serialize(project: Project, name?: string, firmware?: FirmwareRe
     wires: project.wires,
     firmware,
     ...(project.scope ? { scope: project.scope } : {}),
+    ...(project.code ? { code: project.code } : {}),
   };
   return JSON.stringify(file, null, 2) + "\n";
 }
@@ -128,8 +132,9 @@ export function parseWith(text: string, catalog: Record<string, CatalogEntry | u
   }
   const fw = f.firmware as FirmwareRef | undefined;
   const scope = sanitizeScope(f.scope);
+  const code = f.code === undefined ? undefined : sanitizeCode(f.code, notes);
   return {
-    project: { parts, wires, ...(scope ? { scope } : {}) },
+    project: { parts, wires, ...(scope ? { scope } : {}), ...(code ? { code } : {}) },
     name: typeof f.name === "string" ? f.name : undefined,
     firmware: fw && typeof fw.name === "string" ? fw : undefined,
     notes: [...new Set(notes)],

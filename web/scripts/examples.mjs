@@ -6,7 +6,7 @@
 //               list for the workflows to build) and stop
 //   --strict    fail when an example is not built (the deployed site would
 //               be without it; without the flag it is only skipped)
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -72,6 +72,22 @@ if (args.includes("--projects")) {
 }
 const strict = args.includes("--strict");
 
+/**
+ * M33: an example the code editor can start from — a HAL project of the
+ * shared template (hal-common, no sources of its own but main.c and the
+ * font, which the prebuilt library has) built with its default settings.
+ * Its main.c becomes the editable copy.
+ */
+function editable(project, file) {
+  const mk = join(root, project, "Makefile");
+  if (file !== `${project}.elf` || !existsSync(mk)) return null;
+  const text = readFileSync(mk, "utf8");
+  if (!/^include \.\.\/hal-common\/hal\.mk$/m.test(text)) return null;
+  const srcs = /^SRCS\s*:=\s*(.*)$/m.exec(text)?.[1].trim().split(/\s+/) ?? [];
+  if (!srcs.every((s) => s === "main.c" || s === "../hal-common/Src/font5x7.c")) return null;
+  return { template: "hal", main: `${project}/main.c` };
+}
+
 mkdirSync(out, { recursive: true });
 const index = [];
 const missing = [];
@@ -84,6 +100,8 @@ for (const [project, file, description] of EXAMPLES) {
   }
   copyFileSync(src, join(out, file));
   const entry = { name: file.replace(/\.elf$/, ""), file, description };
+  const code = editable(project, file);
+  if (code) entry.code = code;
   // A project with the wiring the firmware expects (web/examples/<name>.simucleo.json).
   const projectFile = `${entry.name}.simucleo.json`;
   const projectSrc = join(dirname(fileURLToPath(import.meta.url)), "..", "examples", projectFile);
@@ -117,7 +135,7 @@ function copySources(rel) {
 for (const project of new Set([...EXAMPLES.map(([p]) => p), "hal-common", "freertos-common"])) copySources(project);
 writeFileSync(join(out, "sources.json"), JSON.stringify(sources.sort()) + "\n");
 console.log(`${sources.length} source files → public/examples/src`);
-console.log(`${index.length} examples → public/examples`);
+console.log(`${index.length} examples → public/examples (${index.filter((e) => e.code).length} editable in the code tab)`);
 if (strict && missing.length) {
   console.error(`--strict: ${missing.length} example(s) not built: ${missing.join(" ")}`);
   process.exit(1);

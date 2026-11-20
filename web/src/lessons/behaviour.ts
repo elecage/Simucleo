@@ -17,6 +17,10 @@ export interface FrameLike {
     rpm?: number;
     screen?: string;
     lcd?: { rows: number[][] };
+    /** TM1637: segment bytes per digit (M32). */
+    digits?: { segments: number[]; on: boolean };
+    /** NeoPixels: 0xRRGGBB per LED (M32). */
+    leds?: number[];
   }[];
   circuitWarnings: string[];
   probes: { name: string; level0: boolean; edges: [number, boolean][] }[];
@@ -131,7 +135,8 @@ function brightness(c: Extract<BehaviourCheck, { type: "brightness" }>, rec: Rec
     let max = 0;
     let min = 1;
     for (const s of rec.samples) {
-      const v = s.frame.parts.find((p) => p.id === id)?.brightness?.[ch] ?? 0;
+      const part = s.frame.parts.find((p) => p.id === id);
+      const v = part?.brightness?.[ch] ?? (part?.leds ? pixelLevel(part.leds, c.channel) : 0);
       max = Math.max(max, v);
       min = Math.min(min, v);
     }
@@ -152,6 +157,16 @@ function brightness(c: Extract<BehaviourCheck, { type: "brightness" }>, rec: Rec
     };
   }
   return { pass: false, detail, hint: `${josa(name, "이/가")} 꺼지지 않았습니다 (최소 ${pct(min)}). 계속 켜져 있으면 깜빡이지 않는 것입니다.` };
+}
+
+/** The brightest NeoPixel of a chain, 0–1: one colour (`channel` 0 R, 1 G, 2 B) or any. */
+export function pixelLevel(leds: number[], channel?: number): number {
+  let best = 0;
+  for (const rgb of leds) {
+    const c = [(rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff];
+    best = Math.max(best, channel === undefined ? Math.max(...c) : (c[channel] ?? 0));
+  }
+  return best / 255;
 }
 
 function consoleCheck(c: Extract<BehaviourCheck, { type: "console" }>, rec: Recording): CheckResult {
@@ -241,6 +256,19 @@ export function litPixels(screen: string | undefined): number {
 const lcdText = (lcd: { rows: number[][] } | undefined) =>
   lcd ? lcd.rows.map((r) => r.map((c) => (c >= 32 && c < 127 ? String.fromCharCode(c) : " ")).join("")).join("\n") : "";
 
+/** 7-segment patterns (bit 0 = a … bit 6 = g) and what they read as. */
+const SEGMENT_CHARS: Record<number, string> = {
+  0x3f: "0", 0x06: "1", 0x5b: "2", 0x4f: "3", 0x66: "4", 0x6d: "5", 0x7d: "6", 0x07: "7", 0x7f: "8", 0x6f: "9",
+  0x77: "A", 0x7c: "b", 0x39: "C", 0x5e: "d", 0x79: "E", 0x71: "F", 0x76: "H", 0x38: "L", 0x73: "P", 0x3e: "U",
+  0x5c: "o", 0x54: "n", 0x50: "r", 0x78: "t", 0x40: "-", 0x00: " ",
+};
+
+/** What a TM1637 shows as text ("12:34"; the colon is bit 7 of digit 1), "" when off. */
+export function digitsText(d: { segments: number[]; on: boolean } | undefined): string {
+  if (!d || !d.on) return "";
+  return d.segments.map((b, i) => (SEGMENT_CHARS[b & 0x7f] ?? "?") + (i === 1 && b & 0x80 ? ":" : "")).join("");
+}
+
 function display(c: Extract<BehaviourCheck, { type: "display" }>, rec: Recording, ids: string[], name: string): CheckResult {
   if (!ids.length) return { pass: false, hint: `${josa(name, "이/가")} 회로에 없습니다.` };
   let most = 0;
@@ -249,8 +277,8 @@ function display(c: Extract<BehaviourCheck, { type: "display" }>, rec: Recording
   for (const s of rec.samples) {
     for (const p of s.frame.parts) {
       if (!ids.includes(p.id)) continue;
-      if (p.lcd) {
-        const t = lcdText(p.lcd);
+      if (p.lcd || p.digits) {
+        const t = p.lcd ? lcdText(p.lcd) : digitsText(p.digits);
         if (t.trim()) lastText = t;
         if (re ? re.test(t) : t.trim().length > 0) return { pass: true, detail: `"${t.trim().replace(/\s+/g, " ")}"` };
       } else {
@@ -263,7 +291,7 @@ function display(c: Extract<BehaviourCheck, { type: "display" }>, rec: Recording
   return {
     pass: false,
     detail: most ? `켜진 픽셀 ${most}개` : undefined,
-    hint: `${josa(name, "이/가")} 아무것도 표시하지 않았습니다. 전원(VCC, GND)과 SDA·SCL 배선을 확인하세요.`,
+    hint: `${josa(name, "이/가")} 아무것도 표시하지 않았습니다. 전원(VCC, GND)과 ${c.kind === "tm1637" ? "CLK·DIO" : "SDA·SCL"} 배선을 확인하세요.`,
   };
 }
 

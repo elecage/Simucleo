@@ -1,0 +1,228 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "나이트라이더 (LED 4개, D2–D5)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "r0",
+      "kind": "resistor",
+      "x": 48,
+      "y": 16,
+      "props": {
+        "ohms": "220"
+      }
+    },
+    {
+      "id": "led0",
+      "kind": "led-5mm",
+      "x": 48,
+      "y": 10,
+      "props": {
+        "color": "red"
+      }
+    },
+    {
+      "id": "r1",
+      "kind": "resistor",
+      "x": 53,
+      "y": 16,
+      "props": {
+        "ohms": "220"
+      }
+    },
+    {
+      "id": "led1",
+      "kind": "led-5mm",
+      "x": 53,
+      "y": 10,
+      "props": {
+        "color": "red"
+      }
+    },
+    {
+      "id": "r2",
+      "kind": "resistor",
+      "x": 58,
+      "y": 16,
+      "props": {
+        "ohms": "220"
+      }
+    },
+    {
+      "id": "led2",
+      "kind": "led-5mm",
+      "x": 58,
+      "y": 10,
+      "props": {
+        "color": "red"
+      }
+    },
+    {
+      "id": "r3",
+      "kind": "resistor",
+      "x": 63,
+      "y": 16,
+      "props": {
+        "ohms": "220"
+      }
+    },
+    {
+      "id": "led3",
+      "kind": "led-5mm",
+      "x": 63,
+      "y": 10,
+      "props": {
+        "color": "red"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "D2"
+      },
+      "b": {
+        "part": "r0",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "r0",
+        "pin": "2"
+      },
+      "b": {
+        "part": "led0",
+        "pin": "A"
+      }
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "led0",
+        "pin": "K"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D3"
+      },
+      "b": {
+        "part": "r1",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "r1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "led1",
+        "pin": "A"
+      }
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "led1",
+        "pin": "K"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "nucleo",
+        "pin": "D4"
+      },
+      "b": {
+        "part": "r2",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "r2",
+        "pin": "2"
+      },
+      "b": {
+        "part": "led2",
+        "pin": "A"
+      }
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "led2",
+        "pin": "K"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "nucleo",
+        "pin": "D5"
+      },
+      "b": {
+        "part": "r3",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w11",
+      "a": {
+        "part": "r3",
+        "pin": "2"
+      },
+      "b": {
+        "part": "led3",
+        "pin": "A"
+      }
+    },
+    {
+      "id": "w12",
+      "a": {
+        "part": "led3",
+        "pin": "K"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    }
+  ]
+}

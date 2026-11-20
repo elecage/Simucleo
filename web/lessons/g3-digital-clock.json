@@ -1,0 +1,89 @@
+{
+  "id": "digital-clock",
+  "order": 703,
+  "track": "G. 프로젝트 (종합)",
+  "title": "프로젝트: 디지털 시계",
+  "level": "고급",
+  "minutes": 60,
+  "goal": "DS3231 RTC의 시각을 TM1637에 시:분으로 표시하고, 버튼으로 시와 분을 맞추는 탁상시계를 완성합니다.",
+  "objectives": [
+    "I2C 장치(RTC)와 비트뱅잉 장치(TM1637)를 한 펌웨어에서 함께 쓴다",
+    "버튼 에지 검출로 설정 기능을 만들고 RTC 레지스터에 쓴다",
+    "시간을 세는 일(RTC)과 보여 주는 일(MCU)을 나눈다"
+  ],
+  "prereq": "**I2C RTC 시계**, **TM1637 4자리 시계**, **버튼 폴링**.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "rtc", "kind": "rtc-ds3231", "x": 46, "y": 4, "props": { "temp": 25 } },
+        { "id": "disp", "kind": "tm1637", "x": 60, "y": 6, "props": {} },
+        { "id": "sw1", "kind": "tact-switch", "x": 48, "y": 22, "props": {} }
+      ],
+      "wires": [
+        { "id": "w1", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "rtc", "pin": "VCC" }, "color": "#e53935" },
+        { "id": "w2", "a": { "part": "rtc", "pin": "GND" }, "b": { "part": "nucleo", "pin": "GND_D" }, "color": "#212121" },
+        { "id": "w3", "a": { "part": "nucleo", "pin": "D15" }, "b": { "part": "rtc", "pin": "SCL" } },
+        { "id": "w4", "a": { "part": "nucleo", "pin": "D14" }, "b": { "part": "rtc", "pin": "SDA" } }
+      ]
+    }
+  },
+  "firmware": { "example": "lesson-digital-clock.elf" },
+  "grade": {
+    "ms": 3600,
+    "stimuli": [
+      { "at": 1200, "press": "tact-switch", "ms": 200 },
+      { "at": 2300, "press": "B1", "ms": 200 }
+    ]
+  },
+  "steps": [
+    {
+      "title": "표시기 연결",
+      "text": "RTC는 I2C(D15/D14)에 연결되어 있습니다. **TM1637**: VCC → 3V3, GND → GND, CLK → **D2** (PA10), DIO → **D3** (PB3).",
+      "checks": [
+        { "type": "connected", "kind": "tm1637", "pin": "VCC", "to": "3V3" },
+        { "type": "connected", "kind": "tm1637", "pin": "GND", "to": "GND" },
+        { "type": "connected", "kind": "tm1637", "pin": "CLK", "to": "PA10", "label": "CLK → D2(PA10)" },
+        { "type": "connected", "kind": "tm1637", "pin": "DIO", "to": "PB3", "label": "DIO → D3(PB3)" }
+      ]
+    },
+    {
+      "title": "설정 버튼",
+      "text": "버튼을 **D4** (PB5)와 **GND** 사이에 연결하세요(내부 풀업). 이 버튼은 **시 + 1**, 보드의 **B1**은 **분 + 1**(초는 00으로)입니다.",
+      "theory": [
+        "**에지 검출**: 매 루프 `pressed && !was_pressed`일 때만 한 번 처리합니다. 누르고 있는 동안 계속 시가 올라가지 않습니다.",
+        "```c",
+        "h = (h + 1) % 24;",
+        "rtc_write(0x02, bin2bcd(h));   // 시 레지스터에 BCD로 씀",
+        "```"
+      ],
+      "checks": [
+        { "type": "series", "from": "PB5", "to": "GND", "through": ["tact-switch"], "label": "D4(PB5) → 버튼 → GND" }
+      ]
+    },
+    {
+      "title": "맞춰 보고 채점",
+      "text": [
+        "**▶ 실행**하면 표시기에 `12:34`처럼 시:분이 나오고 콜론이 1초마다 깜빡입니다. 콘솔에는 매초 `12:34:56`.",
+        "버튼으로 시를, B1로 분을 바꿔 보세요.",
+        "",
+        "채점은 버튼과 B1을 한 번씩 누릅니다."
+      ],
+      "checks": [
+        { "type": "running" },
+        { "type": "display", "kind": "tm1637", "text": "\\d\\d:?\\d\\d", "label": "표시기에 시:분" },
+        { "type": "console", "pattern": "^\\d\\d:\\d\\d:\\d\\d", "flags": "m", "count": 2, "label": "콘솔에 매초 시각" },
+        { "type": "console", "pattern": "hour -> \\d\\d", "label": "버튼 → 시 + 1" },
+        { "type": "console", "pattern": "minute -> \\d\\d", "label": "B1 → 분 + 1" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "설정한 시각을 MCU 변수에만 저장 — 전원이 꺼지면 사라집니다. RTC 레지스터에 써야 합니다.",
+    "BCD 변환 없이 13을 그대로 씀 — RTC는 0x13을 기대합니다(13 = 0x0D는 잘못된 값)."
+  ],
+  "challenges": [
+    "알람 시각을 정해 그 시각에 부저를 울리는 알람 시계로 확장해 보세요.",
+    "12시간제(AM/PM) 표시 모드를 버튼 길게 누르기로 바꿔 보세요."
+  ]
+}

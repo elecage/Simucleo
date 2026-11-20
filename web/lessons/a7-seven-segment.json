@@ -1,0 +1,119 @@
+{
+  "id": "seven-segment",
+  "order": 107,
+  "track": "A. 기초 (GPIO·시간)",
+  "title": "7세그먼트 다중화와 키패드",
+  "level": "중급",
+  "minutes": 45,
+  "goal": "4자리 7세그먼트의 자리 공통(D1–D4) 핀을 PB12–PB15에 연결해 다중화 표시를 완성하고, 키패드로 숫자를 입력합니다.",
+  "objectives": [
+    "7세그먼트 a–g 세그먼트와 숫자 패턴(비트)을 연결한다",
+    "다중화(multiplexing): 한 번에 한 자리만 켜고 빠르게 돌리는 원리를 설명한다",
+    "4×4 키패드를 행·열 스캔으로 읽는 방법을 안다"
+  ],
+  "prereq": "**여러 LED 패턴**, **타이머 인터럽트로 정확한 주기**(타이머 인터럽트 개념)가 있으면 좋습니다.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "disp", "kind": "seven-segment-4", "x": 48, "y": 3, "props": { "common": "cathode", "color": "red" } },
+        { "id": "kp", "kind": "keypad-4x4", "x": 72, "y": 20, "props": {} },
+        { "id": "r0", "kind": "resistor", "x": 46, "y": 16, "props": { "ohms": "470" } },
+        { "id": "r1", "kind": "resistor", "x": 49, "y": 16, "props": { "ohms": "470" } },
+        { "id": "r2", "kind": "resistor", "x": 52, "y": 16, "props": { "ohms": "470" } },
+        { "id": "r3", "kind": "resistor", "x": 55, "y": 16, "props": { "ohms": "470" } },
+        { "id": "r4", "kind": "resistor", "x": 58, "y": 16, "props": { "ohms": "470" } },
+        { "id": "r5", "kind": "resistor", "x": 61, "y": 16, "props": { "ohms": "470" } },
+        { "id": "r6", "kind": "resistor", "x": 64, "y": 16, "props": { "ohms": "470" } },
+        { "id": "r7", "kind": "resistor", "x": 67, "y": 16, "props": { "ohms": "470" } }
+      ],
+      "wires": [
+        { "id": "w1", "a": { "part": "nucleo", "pin": "A5" }, "b": { "part": "r0", "pin": "1" }, "color": "#1e88e5" },
+        { "id": "w2", "a": { "part": "r0", "pin": "2" }, "b": { "part": "disp", "pin": "a" }, "color": "#43a047" },
+        { "id": "w3", "a": { "part": "nucleo", "pin": "A4" }, "b": { "part": "r1", "pin": "1" }, "color": "#fb8c00" },
+        { "id": "w4", "a": { "part": "r1", "pin": "2" }, "b": { "part": "disp", "pin": "b" }, "color": "#8e24aa" },
+        { "id": "w5", "a": { "part": "nucleo", "pin": "CN7_35" }, "b": { "part": "r2", "pin": "1" }, "color": "#00897b" },
+        { "id": "w6", "a": { "part": "r2", "pin": "2" }, "b": { "part": "disp", "pin": "c" }, "color": "#fbc02d" },
+        { "id": "w7", "a": { "part": "nucleo", "pin": "CN7_37" }, "b": { "part": "r3", "pin": "1" }, "color": "#1e88e5" },
+        { "id": "w8", "a": { "part": "r3", "pin": "2" }, "b": { "part": "disp", "pin": "d" }, "color": "#43a047" },
+        { "id": "w9", "a": { "part": "nucleo", "pin": "CN10_34" }, "b": { "part": "r4", "pin": "1" }, "color": "#fb8c00" },
+        { "id": "w10", "a": { "part": "r4", "pin": "2" }, "b": { "part": "disp", "pin": "e" }, "color": "#8e24aa" },
+        { "id": "w11", "a": { "part": "nucleo", "pin": "CN10_6" }, "b": { "part": "r5", "pin": "1" }, "color": "#00897b" },
+        { "id": "w12", "a": { "part": "r5", "pin": "2" }, "b": { "part": "disp", "pin": "f" }, "color": "#fbc02d" },
+        { "id": "w13", "a": { "part": "nucleo", "pin": "CN10_4" }, "b": { "part": "r6", "pin": "1" }, "color": "#1e88e5" },
+        { "id": "w14", "a": { "part": "r6", "pin": "2" }, "b": { "part": "disp", "pin": "g" }, "color": "#43a047" },
+        { "id": "w15", "a": { "part": "nucleo", "pin": "D9" }, "b": { "part": "r7", "pin": "1" }, "color": "#fb8c00" },
+        { "id": "w16", "a": { "part": "r7", "pin": "2" }, "b": { "part": "disp", "pin": "dp" }, "color": "#8e24aa" },
+        { "id": "w21", "a": { "part": "nucleo", "pin": "CN10_2" }, "b": { "part": "kp", "pin": "R1" }, "color": "#fb8c00" },
+        { "id": "w22", "a": { "part": "nucleo", "pin": "CN10_1" }, "b": { "part": "kp", "pin": "R2" }, "color": "#8e24aa" },
+        { "id": "w23", "a": { "part": "nucleo", "pin": "CN7_1" }, "b": { "part": "kp", "pin": "R3" }, "color": "#00897b" },
+        { "id": "w24", "a": { "part": "nucleo", "pin": "CN7_2" }, "b": { "part": "kp", "pin": "R4" }, "color": "#fbc02d" },
+        { "id": "w25", "a": { "part": "nucleo", "pin": "CN7_3" }, "b": { "part": "kp", "pin": "C1" }, "color": "#1e88e5" },
+        { "id": "w26", "a": { "part": "nucleo", "pin": "CN7_4" }, "b": { "part": "kp", "pin": "C2" }, "color": "#43a047" },
+        { "id": "w27", "a": { "part": "nucleo", "pin": "CN10_24" }, "b": { "part": "kp", "pin": "C3" }, "color": "#fb8c00" },
+        { "id": "w28", "a": { "part": "nucleo", "pin": "CN10_22" }, "b": { "part": "kp", "pin": "C4" }, "color": "#8e24aa" }
+      ]
+    }
+  },
+  "firmware": { "example": "hal-7seg-keypad.elf" },
+  "grade": {
+    "ms": 3000,
+    "stimuli": [
+      { "at": 500, "press": "keypad-4x4:4", "ms": 150 },
+      { "at": 900, "press": "keypad-4x4:2", "ms": 150 },
+      { "at": 1300, "press": "keypad-4x4:#", "ms": 150 }
+    ]
+  },
+  "steps": [
+    {
+      "title": "자리 공통 핀 연결",
+      "text": [
+        "세그먼트 a–g, dp(저항 8개 거쳐 PC0–PC7)와 키패드는 연결해 두었습니다. 남은 것은 **자리 선택** 핀 네 개입니다.",
+        "",
+        "- 표시기 **D1** → PB12 (CN10 16번 핀)",
+        "- 표시기 **D2** → PB13 (CN10 30번 핀)",
+        "- 표시기 **D3** → PB14 (CN10 28번 핀)",
+        "- 표시기 **D4** → PB15 (CN10 26번 핀)",
+        "",
+        "Morpho 헤더(CN10)의 핀에 마우스를 올리면 이름이 보입니다."
+      ],
+      "theory": [
+        "**공통 캐소드** 4자리 표시기는 세그먼트 a–g를 네 자리가 함께 씁니다. 자리 공통 핀을 **Low**로 만든 자리만 켜집니다.",
+        "**다중화**: TIM10 인터럽트가 1 ms마다 다음 자리로 넘어가며 그 자리의 숫자 패턴을 PC0–PC7에 씁니다.",
+        "한 자리는 4 ms 중 1 ms만 켜지지만, 사람 눈에는(약 50 Hz 이상) 네 자리가 동시에 켜진 것처럼 보입니다(잔상 효과)."
+      ],
+      "hint": "표시기의 D1–D4는 아래쪽 핀입니다. 핀 이름은 핀에 마우스를 올리면 보입니다.",
+      "checks": [
+        { "type": "connected", "kind": "seven-segment-4", "pin": "D1", "to": "PB12", "label": "D1 → PB12" },
+        { "type": "connected", "kind": "seven-segment-4", "pin": "D2", "to": "PB13", "label": "D2 → PB13" },
+        { "type": "connected", "kind": "seven-segment-4", "pin": "D3", "to": "PB14", "label": "D3 → PB14" },
+        { "type": "connected", "kind": "seven-segment-4", "pin": "D4", "to": "PB15", "label": "D4 → PB15" }
+      ]
+    },
+    {
+      "title": "키패드로 42 입력하고 채점",
+      "text": [
+        "**▶ 실행**한 뒤 키패드의 **4**, **2**를 누르면 오른쪽부터 숫자가 밀려 들어오고, **#** 을 누르면 콘솔에 `value 42`가 나옵니다.",
+        "`*`는 지웁니다. 채점은 4, 2, #을 자동으로 누릅니다."
+      ],
+      "theory": [
+        "**키패드 스캔**: 행(R1–R4)을 하나씩 Low로 만들고 열(C1–C4, 풀업 입력)을 읽습니다. 눌린 키는 그 행과 열을 이어",
+        "열 하나를 Low로 만듭니다. 행 × 열 = 16키를 핀 8개로 읽습니다."
+      ],
+      "checks": [
+        { "type": "running" },
+        { "type": "console", "pattern": "key 4", "label": "콘솔에 'key 4'" },
+        { "type": "console", "pattern": "value 42", "label": "콘솔에 'value 42'" },
+        { "type": "brightness", "kind": "seven-segment-4", "channel": 25, "above": 0.05, "label": "넷째 자리의 b 세그먼트가 켜짐" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "D1–D4 순서를 섞음 — 숫자의 자리가 뒤바뀌어 보입니다. 42가 24로 보이면 의심하세요.",
+    "세그먼트 저항을 빼고 직결 — 실제로는 세그먼트 LED와 핀이 과전류로 상합니다."
+  ],
+  "challenges": [
+    "오실로스코프로 PB12를 재 보세요. Low인 시간과 주기는? (1 ms / 4 ms)",
+    "다중화 주기를 4 ms에서 40 ms로 늘리면 화면이 어떻게 보일까요? 왜 그런가요?"
+  ]
+}

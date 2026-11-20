@@ -185,7 +185,15 @@ export type Stimulus =
   /** Press a switch (`B1`, or the first part of a kind such as `tact-switch`) for `ms` (default 100). */
   | { at: number; press: string; ms?: number }
   /** Set a property of the first part of `kind` (a knob's `position`, …). */
-  | { at: number; set: { kind: string; prop: string; value: number | string } };
+  | { at: number; set: { kind: string; prop: string; value: number | string } }
+  /**
+   * Type a line (M32): into the virtual COM port (`to` left out or
+   * `"console"`), or from the phone of the first part of kind `to` (`hc05`).
+   * A line end (CR LF) is added.
+   */
+  | { at: number; send: string; to?: string }
+  /** Connect the phone to the first part of kind `connect` (`hc05`) (M32). */
+  | { at: number; connect: string };
 
 export interface GradeSettings {
   /** Simulated time to run, in ms (default: long enough for every check). */
@@ -197,6 +205,10 @@ export interface LessonStep {
   title: string;
   /** Markdown: **bold**, `code`, lists, ``` code blocks. A list of lines is joined. */
   text: string | string[];
+  /** A short concept box ("개념"), Markdown (M32). */
+  theory?: string | string[];
+  /** Shown folded ("힌트"), Markdown (M32). */
+  hint?: string | string[];
   checks: Check[];
 }
 
@@ -208,6 +220,18 @@ export interface Lesson {
   /** 입문, 초급, 중급, … */
   level: string;
   goal: string;
+  /** The group the list shows the lesson in ("A. 기초 (GPIO·시간)") (M32). */
+  track?: string;
+  /** Estimated time in minutes (M32). */
+  minutes?: number;
+  /** Learning goals, one per item (M32). */
+  objectives?: string[];
+  /** What to know or have done first, Markdown (M32). */
+  prereq?: string | string[];
+  /** "흔한 실수": one Markdown item each (M32). */
+  mistakes?: string[];
+  /** "도전 과제" for fast students: one Markdown item each (M32). */
+  challenges?: string[];
   start: LessonStart;
   firmware?: LessonFirmware;
   grade?: GradeSettings;

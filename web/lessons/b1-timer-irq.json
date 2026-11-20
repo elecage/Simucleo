@@ -1,0 +1,86 @@
+{
+  "id": "timer-irq",
+  "order": 201,
+  "track": "B. 타이머·PWM",
+  "title": "타이머 인터럽트로 정확한 주기",
+  "level": "초급",
+  "minutes": 40,
+  "goal": "TIM2 업데이트 인터럽트(1 ms)로 D7을 정확히 100 ms 주기로 깜빡이고, HAL_Delay로 만든 D6의 주기와 비교합니다.",
+  "objectives": [
+    "프리스케일러(PSC)와 자동 재장전 값(ARR)으로 타이머 주기를 계산한다",
+    "업데이트 인터럽트 콜백 `HAL_TIM_PeriodElapsedCallback`의 흐름을 안다",
+    "메인 루프의 지연(HAL_Delay + 다른 일)이 주기를 늘리는 이유를 측정으로 확인한다"
+  ],
+  "prereq": "**LED 깜빡이 배선**, **버튼 인터럽트(EXTI)**(인터럽트 개념).",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "r1", "kind": "resistor", "x": 50, "y": 16, "props": { "ohms": "220" } },
+        { "id": "led1", "kind": "led-5mm", "x": 50, "y": 10, "props": { "color": "green" } },
+        { "id": "r2", "kind": "resistor", "x": 58, "y": 16, "props": { "ohms": "220" } },
+        { "id": "led2", "kind": "led-5mm", "x": 58, "y": 10, "props": { "color": "red" } }
+      ],
+      "wires": []
+    }
+  },
+  "firmware": { "example": "lesson-timer-irq.elf" },
+  "grade": { "ms": 4000 },
+  "steps": [
+    {
+      "title": "LED 두 개 배선",
+      "text": [
+        "- 초록 LED: **D7** (PA8) → 저항 → LED → GND — 타이머 인터럽트가 토글",
+        "- 빨강 LED: **D6** (PB10) → 저항 → LED → GND — 메인 루프가 `HAL_Delay(50)` 뒤에 토글"
+      ],
+      "checks": [
+        { "type": "series", "from": "PA8", "to": "GND", "through": ["resistor", "led-5mm"], "label": "D7(PA8) → 저항 → LED → GND" },
+        { "type": "series", "from": "PB10", "to": "GND", "through": ["resistor", "led-5mm"], "label": "D6(PB10) → 저항 → LED → GND" }
+      ]
+    },
+    {
+      "title": "타이머 주기 계산",
+      "text": [
+        "TIM2는 APB1 타이머 클럭 **84 MHz**로 셉니다.",
+        "",
+        "```c",
+        "htim2.Init.Prescaler = 84 - 1;   // 84 MHz / 84 = 1 MHz (1 µs마다 1씩)",
+        "htim2.Init.Period    = 1000 - 1; // 1000번 세면 넘침 → 1 ms마다 인터럽트",
+        "```",
+        "",
+        "콜백이 50번째마다 D7을 토글하므로 토글 간격 50 ms, **주기 100 ms**. 500번째마다 토글하는 LD2(PA5)는 주기 1 s입니다."
+      ],
+      "theory": [
+        "**타이머 주기 = (PSC + 1) × (ARR + 1) / 타이머 클럭**",
+        "= 84 × 1000 / 84 000 000 = 0.001 s.",
+        "타이머는 CPU와 따로 돌아가는 하드웨어 카운터라, 메인 루프가 `printf`로 바쁘든 `HAL_Delay`로 기다리든 정확히 1 ms마다 인터럽트를 겁니다."
+      ],
+      "checks": []
+    },
+    {
+      "title": "측정하고 채점하기",
+      "text": [
+        "**▶ 실행**해서 두 LED를 보세요. 비슷해 보이지만 D6이 조금씩 뒤처집니다.",
+        "오실로스코프 탭에서 **PA8**과 **PB10**을 함께 찍고 커서로 주기를 재 보세요. D6은 `HAL_Delay(50)`(실제 51 ms) + `printf` 시간만큼 길어집니다.",
+        "",
+        "채점은 PA8과 PA5의 주기를 **±1 %** 로 엄격하게 잽니다."
+      ],
+      "hint": "주기가 맞지 않으면 배선이 아니라 펌웨어 문제입니다. 다른 예제 펌웨어가 올라가 있지 않은지 상태 줄을 보세요.",
+      "checks": [
+        { "type": "running" },
+        { "type": "period", "pin": "PA8", "ms": 100, "tolerance": 0.01, "label": "D7(PA8) 주기 100 ms ±1%" },
+        { "type": "period", "pin": "PA5", "ms": 1000, "tolerance": 0.01, "label": "LD2(PA5) 주기 1000 ms ±1%" },
+        { "type": "console", "pattern": "loop \\d+: tick \\d+ ms", "count": 3, "label": "메인 루프가 콘솔에 tick 출력" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "PSC/ARR에 84, 1000을 그대로 씀 — 레지스터는 0부터 세므로 `84 - 1`, `1000 - 1`입니다.",
+    "콜백 안에서 `printf` — 인터럽트가 길어져 다른 인터럽트를 늦춥니다. 플래그만 세우고 메인에서 출력하세요.",
+    "`HAL_TIM_Base_Start_IT` 대신 `HAL_TIM_Base_Start` — 카운터는 돌지만 인터럽트가 걸리지 않습니다."
+  ],
+  "challenges": [
+    "D7을 정확히 10 Hz(주기 100 ms)가 아니라 7 Hz로 만들려면 PSC/ARR을 어떻게 고를까요? 오차는?",
+    "스코프로 잰 D6의 주기에서 `printf` 한 줄에 걸린 시간을 계산하세요 (115200 baud, 1문자 = 10비트)."
+  ]
+}

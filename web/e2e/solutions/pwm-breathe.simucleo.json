@@ -1,0 +1,15 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "모범 답안: PWM 숨쉬기 (D3 → 저항 → LED → GND)",
+  "parts": [
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "r1", "kind": "resistor", "x": 52, "y": 16, "props": { "ohms": "220" } },
+    { "id": "led1", "kind": "led-5mm", "x": 52, "y": 10, "props": { "color": "red" } }
+  ],
+  "wires": [
+    { "id": "w1", "a": { "part": "nucleo", "pin": "D3" }, "b": { "part": "r1", "pin": "1" } },
+    { "id": "w2", "a": { "part": "r1", "pin": "2" }, "b": { "part": "led1", "pin": "A" } },
+    { "id": "w3", "a": { "part": "led1", "pin": "K" }, "b": { "part": "nucleo", "pin": "GND_D" } }
+  ]
+}

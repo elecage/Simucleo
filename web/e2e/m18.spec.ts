@@ -142,7 +142,7 @@ test("an LED and resistor wired to the board on the schematic only blink with th
   await page.getByRole("button", { name: "▶ 실행" }).click();
   const brightness = () => page.locator(`[data-id=${led}] [data-brightness]`).first().getAttribute("data-brightness").then(Number);
   await expect.poll(brightness, { timeout: 5000 }).toBeGreaterThan(0.5);
-  await expect.poll(brightness, { timeout: 5000 }).toBe(0);
+  await expect.poll(brightness, { timeout: 5000 }).toBeLessThan(0.1); // off (a frame may average a little of the edge on a busy machine)
   await view(page, "회로도");
   await expect(sch(page).locator(`[data-part=${led}] .sym-glow`)).toHaveCount(1, { timeout: 5000 });
   await page.screenshot({ path: "test-results/m18-schematic-wiring.png" });

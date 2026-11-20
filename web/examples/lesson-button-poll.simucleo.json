@@ -1,0 +1,100 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "버튼 폴링 (D2 → D7 LED)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "sw1",
+      "kind": "tact-switch",
+      "x": 48,
+      "y": 24,
+      "props": {}
+    },
+    {
+      "id": "r1",
+      "kind": "resistor",
+      "x": 58,
+      "y": 16,
+      "props": {
+        "ohms": "220"
+      }
+    },
+    {
+      "id": "led1",
+      "kind": "led-5mm",
+      "x": 58,
+      "y": 10,
+      "props": {
+        "color": "red"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "D2"
+      },
+      "b": {
+        "part": "sw1",
+        "pin": "1a"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "sw1",
+        "pin": "2a"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "r1",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "r1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "led1",
+        "pin": "A"
+      }
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "led1",
+        "pin": "K"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    }
+  ]
+}

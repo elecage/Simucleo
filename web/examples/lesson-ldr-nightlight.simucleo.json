@@ -1,0 +1,134 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "조도센서 자동 조명 (LDR A1 → LED D6)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "rl",
+      "kind": "resistor",
+      "x": 48,
+      "y": 22,
+      "props": {
+        "ohms": "10k"
+      }
+    },
+    {
+      "id": "ldr",
+      "kind": "ldr",
+      "x": 54,
+      "y": 22,
+      "props": {
+        "lux": 300
+      }
+    },
+    {
+      "id": "r1",
+      "kind": "resistor",
+      "x": 62,
+      "y": 16,
+      "props": {
+        "ohms": "220"
+      }
+    },
+    {
+      "id": "led1",
+      "kind": "led-5mm",
+      "x": 62,
+      "y": 10,
+      "props": {
+        "color": "yellow"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "rl",
+        "pin": "1"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "rl",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "A1"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "ldr",
+        "pin": "1"
+      },
+      "b": {
+        "part": "rl",
+        "pin": "2"
+      }
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "ldr",
+        "pin": "2"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "D6"
+      },
+      "b": {
+        "part": "r1",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "r1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "led1",
+        "pin": "A"
+      }
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "led1",
+        "pin": "K"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    }
+  ]
+}

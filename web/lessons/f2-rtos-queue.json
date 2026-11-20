@@ -1,0 +1,72 @@
+{
+  "id": "rtos-queue",
+  "order": 602,
+  "track": "F. 고급 (DMA·RTOS·저전력·도구)",
+  "title": "FreeRTOS 태스크와 큐",
+  "level": "고급",
+  "minutes": 45,
+  "goal": "FreeRTOS에서 태스크 셋이 큐로 데이터를 주고받는 구조를 콘솔과 RTOS 탭으로 관찰하고, 입력한 줄이 ISR → 큐 → 태스크로 가는 길을 따라갑니다.",
+  "objectives": [
+    "태스크, 우선순위, 블록(대기) 상태를 설명한다",
+    "큐로 ISR과 태스크, 태스크와 태스크 사이에 데이터를 안전하게 넘긴다",
+    "스택 여유(high-water mark)와 힙 여유를 확인한다"
+  ],
+  "prereq": "**UART printf와 명령 파서**, **타이머 인터럽트로 정확한 주기**.",
+  "start": { "example": "lesson-uart-cmd.simucleo.json" },
+  "firmware": { "example": "freertos-queue-uart.elf" },
+  "grade": {
+    "ms": 3000,
+    "stimuli": [
+      { "at": 800, "send": "hello rtos" }
+    ]
+  },
+  "steps": [
+    {
+      "title": "구조 읽기",
+      "text": [
+        "펌웨어에는 태스크 셋과 큐 둘이 있습니다.",
+        "- **UART 수신 ISR** → `rxQueue`(바이트) → **Echo** 태스크: 한 줄을 대문자로 되돌려 줌",
+        "- **Sensor** 태스크(250 ms마다) → `dataQueue` → **Logger** 태스크: 4개마다 출력, 2초마다 힙·스택 통계",
+        "",
+        "**▶ 실행**하고 아래 **RTOS** 탭을 열어 태스크의 상태(Running, Blocked)와 스택 사용량을 보세요."
+      ],
+      "theory": [
+        "**RTOS**는 여러 태스크를 우선순위에 따라 번갈아 실행합니다. 큐에서 데이터를 기다리는 태스크는 **Blocked** 상태로 CPU를 쓰지 않고,",
+        "데이터가 들어오면 스케줄러가 깨웁니다. 전역 변수 대신 큐를 쓰면 \"반쯤 쓴 데이터\"를 읽는 경쟁 조건이 생기지 않습니다."
+      ],
+      "checks": []
+    },
+    {
+      "title": "큐 따라가 보고 채점",
+      "text": [
+        "콘솔에 `hello rtos`를 입력하면 `echo: HELLO RTOS`가 나옵니다. 그사이에도 `sample 4 at 1000 ms`가 1초마다 나옵니다.",
+        "",
+        "채점은 `hello rtos`를 자동으로 입력합니다."
+      ],
+      "theory": [
+        "```c",
+        "// ISR 안에서는 기다리지 않는 버전을 씁니다 (timeout 0)",
+        "osMessageQueuePut(rxQueue, &rx_byte, 0, 0);",
+        "// 태스크는 데이터가 올 때까지 잠듭니다",
+        "osMessageQueueGet(rxQueue, &c, NULL, osWaitForever);",
+        "```",
+        "ISR에서 FreeRTOS 함수를 부르려면 그 인터럽트의 우선순위가 `configMAX_SYSCALL_INTERRUPT_PRIORITY`(여기선 5)보다 낮아야(숫자가 커야) 합니다."
+      ],
+      "hint": "echo가 안 나오면 콘솔 입력 뒤에 Enter를 눌렀는지 보세요.",
+      "checks": [
+        { "type": "running" },
+        { "type": "console", "pattern": "echo: HELLO RTOS", "label": "ISR → 큐 → Echo 태스크" },
+        { "type": "console", "pattern": "sample \\d+ at \\d+ ms", "count": 3, "label": "Sensor → 큐 → Logger (세 번 이상)" },
+        { "type": "console", "pattern": "heap free \\d+ B, stack left", "label": "힙·스택 통계" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "ISR에서 `osWaitForever`로 큐에 넣음 — ISR은 기다릴 수 없습니다.",
+    "태스크 스택을 너무 작게 — `printf`는 스택을 많이 씁니다. stack left가 0에 가까우면 늘리세요.",
+    "`HAL_Delay`를 태스크에서 씀 — 다른 태스크에 CPU를 넘기지 않습니다. `osDelay`를 쓰세요."
+  ],
+  "challenges": [
+    "`freertos-two-tasks` 예제를 열어 세마포어(B1 → Button 태스크)와 비교해 보세요. 큐와 세마포어는 언제 각각 쓰나요?"
+  ]
+}

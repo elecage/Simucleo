@@ -1,0 +1,94 @@
+{
+  "id": "ldr-nightlight",
+  "order": 303,
+  "track": "C. 아날로그 (ADC)",
+  "title": "조도센서로 자동 조명",
+  "level": "중급",
+  "minutes": 40,
+  "goal": "LDR 전압 분배기를 A1(PA1)에 연결하고, 어두워질수록 D6(PB10)의 LED가 PWM으로 밝아지는 야간등을 만듭니다.",
+  "objectives": [
+    "LDR(빛에 따라 저항이 바뀌는 소자)과 고정 저항으로 전압 분배기를 만든다",
+    "밝을수록 A1 전압이 낮아지는 이유를 계산한다",
+    "문턱값(데드존)과 비례 제어로 PWM 듀티를 정한다"
+  ],
+  "prereq": "**가변저항 ADC → 시리얼 출력**, **PWM으로 LED 밝기·숨쉬기**.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "rl", "kind": "resistor", "x": 48, "y": 22, "props": { "ohms": "10k" } },
+        { "id": "ldr", "kind": "ldr", "x": 54, "y": 22, "props": { "lux": 300 } },
+        { "id": "r1", "kind": "resistor", "x": 62, "y": 16, "props": { "ohms": "220" } },
+        { "id": "led1", "kind": "led-5mm", "x": 62, "y": 10, "props": { "color": "yellow" } }
+      ],
+      "wires": []
+    }
+  },
+  "firmware": { "example": "lesson-ldr-nightlight.elf" },
+  "grade": {
+    "ms": 3000,
+    "stimuli": [
+      { "at": 300, "set": { "kind": "ldr", "prop": "lux", "value": 1000 } },
+      { "at": 1600, "set": { "kind": "ldr", "prop": "lux", "value": 2 } }
+    ]
+  },
+  "steps": [
+    {
+      "title": "LDR 전압 분배기",
+      "text": [
+        "- 10 kΩ 저항: **3V3** → 저항 → **A1** (PA1)",
+        "- LDR: **A1** → LDR의 1번 핀, LDR의 2번 핀 → **GND**"
+      ],
+      "theory": [
+        "**전압 분배기**: V(A1) = 3.3 V × R_LDR / (10 kΩ + R_LDR).",
+        "LDR은 밝으면 저항이 작고(수백 Ω–1 kΩ), 어두우면 커집니다(수십–수백 kΩ).",
+        "- 밝음(R_LDR ≈ 1 kΩ): V ≈ 0.3 V → ADC ≈ 370",
+        "- 어두움(R_LDR ≈ 30 kΩ 이상): V ≈ 2.5 V 이상 → ADC ≈ 3100 이상"
+      ],
+      "hint": "LDR은 방향이 없지만, 검사는 1번 핀이 A1 쪽이기를 기대합니다. 핀에 마우스를 올려 번호를 확인하세요.",
+      "checks": [
+        { "type": "series", "from": "3V3", "to": "PA1", "through": ["resistor"], "label": "3V3 → 10 kΩ → A1(PA1)" },
+        { "type": "connected", "kind": "ldr", "pin": "1", "to": "PA1", "label": "LDR 1번 핀 → A1" },
+        { "type": "connected", "kind": "ldr", "pin": "2", "to": "GND", "label": "LDR 2번 핀 → GND" }
+      ]
+    },
+    {
+      "title": "LED: D6 → 저항 → LED → GND",
+      "text": "LED를 **D6** (PB10, TIM2_CH3)에 연결하세요. 펌웨어가 1 kHz PWM으로 밝기를 정합니다.",
+      "checks": [
+        { "type": "series", "from": "PB10", "to": "GND", "through": ["resistor", "led-5mm"], "label": "D6(PB10) → 저항 → LED → GND" }
+      ]
+    },
+    {
+      "title": "빛을 바꿔 보고 채점",
+      "text": [
+        "**▶ 실행**하고 LDR의 **조도(lux)** 슬라이더(속성 창)나 LDR 위를 끌어 빛을 바꿔 보세요. 어두워지면 LED가 밝아지고 콘솔에 `light 3100 -> LED 100%`처럼 나옵니다.",
+        "",
+        "채점은 조도를 1000 lux(밝음) → 2 lux(어두움)로 바꿉니다."
+      ],
+      "theory": [
+        "```c",
+        "if (light <= 1200) duty = 0;              // 낮: 끔 (데드존)",
+        "else if (light >= 3000) duty = 1000;      // 밤: 100 %",
+        "else duty = (light - 1200) * 1000 / 1800; // 사이: 비례",
+        "```",
+        "문턱 근처에서 LED가 깜빡거린다면 **히스테리시스**(켤 때와 끌 때의 문턱을 다르게)가 필요합니다."
+      ],
+      "checks": [
+        { "type": "running" },
+        { "type": "consoleValues", "pattern": "light\\s+(\\d+)", "minSpread": 2000, "label": "light 값이 2000 이상 변함" },
+        { "type": "duty", "pin": "PB10", "min": 0, "max": 0.02, "label": "밝을 때 LED 듀티 2 % 이하" },
+        { "type": "duty", "pin": "PB10", "min": 0.9, "max": 1, "label": "어두울 때 LED 듀티 90 % 이상" },
+        { "type": "brightness", "kind": "led-5mm", "above": 0.6, "below": 0.05, "label": "LED가 꺼졌다가 밝게 켜짐" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "LDR과 고정 저항의 위치를 바꿈 — 밝을수록 LED가 켜지는 반대 동작이 됩니다.",
+    "고정 저항 없이 LDR만 A1–GND에 연결 — 분배기가 아니라서 A1이 떠 있습니다."
+  ],
+  "challenges": [
+    "문턱 1200/3000을 조정해 형광등(약 300 lux)에서는 꺼지고 해 질 녘(약 10 lux)에 켜지게 하세요.",
+    "히스테리시스가 있는 켜짐/꺼짐(ON/OFF) 야간등으로 바꿔 보세요."
+  ]
+}

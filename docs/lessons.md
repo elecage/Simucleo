@@ -20,7 +20,7 @@ Simucleo의 **📝 실습**은 단계별 안내와 자동 채점이 붙은 과�
      (예: "PA5가 GND로 가는 길에 저항이 없습니다.", "저항과 LED가 PA6 (D12)에 연결되어 있습니다. PA5 (D13)에
      연결하세요.", "LED 방향이 반대입니다.").
    - **동작 검사**(검사 이름 옆에 "채점")는 **채점** 버튼으로 확인합니다. 채점은 펌웨어를 리셋하고 정해진
-     시뮬레이션 시간(실습마다 2–4초, 진행 막대 표시) 동안 실행하면서 핀의 주기, LED 밝기, 콘솔 출력 등을
+     시뮬레이션 시간(실습마다 1.5–6초, 진행 막대 표시) 동안 실행하면서 핀의 주기, LED 밝기, 콘솔 출력 등을
      잽니다. 필요하면 채점 중에 버튼을 자동으로 누르거나 가변저항을 돌립니다.
    - 채점은 시뮬레이션 시간으로 재므로 결과는 실행 속도와 상관없습니다. 다만 툴바의 실행 속도가 느리면
      (×0.1 등) 채점도 그만큼 오래 걸립니다.
@@ -33,18 +33,83 @@ Simucleo의 **📝 실습**은 단계별 안내와 자동 채점이 붙은 과�
 
 ![직접 만든 펌웨어 실습에서 hal-blinky를 올려 채점하면 "깜빡임 주기가 1002 ms입니다. 목표는 500 ms (±5%)입니다."라고 알려 준다](images/m16-hint.png)
 
-### 함께 들어 있는 실습
+### 함께 들어 있는 실습: 교육과정 (M32)
 
-| 순서 | id | 제목 | 수준 | 펌웨어 | 학생이 하는 일 · 채점 내용 |
-|---|---|---|---|---|---|
-| 1 | `led-blink` | LED 깜빡이 배선 | 입문 | `hal-blinky` | 빈 보드에 LED·저항을 놓고 D13(PA5) → 저항 → LED → GND. PA5 주기 1000 ms ± 5 %, LED 켜짐·꺼짐, 전기 규칙 경고 없음 |
-| 2 | `button-exti` | 버튼 인터럽트 | 초급 | `hal-button-exti` | 버튼을 D2(PA10)–GND, LED를 D7(PA8)에. 채점이 버튼을 두 번 눌러 콘솔의 `D2 pressed` 두 번과 LED 토글을 확인 |
-| 3 | `pwm-rgb` | PWM으로 RGB LED 밝기 조절 | 초급 | `hal-pwm-led` | RGB LED와 저항 3개를 D3/D5/D6(PB3/PB4/PB10)에. 듀티비 90 % 이상·10 % 이하인 순간, LD2 숨쉬기, 세 색이 각각 켜졌다 꺼짐 |
-| 4 | `adc-servo` | 가변저항(ADC)으로 서보 돌리기 | 중급 | `hal-adc-servo` | 가변저항을 3V3–GND, 와이퍼를 A0(PA0)에, 서보를 5V·GND·D9(PC7)에. 채점이 손잡이를 10 % → 90 %로 돌려 콘솔 `pot` 값 변화(2000 이상)와 서보 회전(90° 이상)을 확인 |
-| 5 | `i2c-oled` | I2C OLED 시계 | 중급 | `hal-i2c-oled` | RTC·AHT20이 이미 연결된 I2C 버스에 OLED의 VCC·GND·SCL(D15)·SDA(D14)를 연결. 펌웨어가 멈추지 않음, 버스 검색에 `0x3C`, OLED에 글자 |
-| 6 | `blink-2hz` | 내 펌웨어 올리기: 2 Hz 깜빡이 | 중급 | 학생이 직접 빌드 | STM32CubeIDE에서 `HAL_Delay(250)`로 PA5 토글(코드 힌트가 단계에 있음), **ELF 업로드** 후 채점. PA5 주기 500 ms ± 5 % |
+![실습 목록: 트랙 A–G가 접을 수 있는 묶음으로 보이고(완료 수 0/7 등), 펼친 G 트랙의 프로젝트 실습 셋에 수준과 예상 시간이 붙어 있다](images/m32-curriculum.png)
 
-6번의 모범 답안 펌웨어는 `firmware/lesson-blink-2hz`에 있지만 사이트에는 포함하지 않습니다(테스트 전용).
+![고장 난 시작 회로로 연 '버튼 폴링' 실습. 단계마다 📘 개념 상자(폴링 코드, 풀업 저항)와 펼친 💡 힌트가 보인다](images/m32-lesson.png)
+
+실습 **38개**를 일곱 트랙으로 묶었습니다(예상 시간을 모두 더하면 약 25시간 — 한 학기 주 2시간 수업과 보충 과제 분량).
+실습 목록은 트랙마다 접을 수 있는 묶음으로 보이고, 트랙 제목 옆에 완료한 실습 수(예: `3/7 완료`)가 나옵니다.
+트랙 안에서는 쉬운 것부터 차례로 놓았고, 각 실습의 **선수 학습**에 먼저 할 실습이 적혀 있습니다.
+
+| 트랙 | 묶음 | 실습 수 |
+|---|---|---|
+| A | 기초 (GPIO·시간) | 7 |
+| B | 타이머·PWM | 5 |
+| C | 아날로그 (ADC) | 5 |
+| D | 통신 (UART·I2C·SPI·1-Wire) | 7 |
+| E | 센서·액추에이터 응용 | 6 |
+| F | 고급 (DMA·RTOS·저전력·도구) | 5 |
+| G | 프로젝트 (종합) | 3 |
+
+모든 실습에는 학습 목표, 선수 학습, 단계별 설명과 **📘 개념** 상자(PWM, 풀업, 디바운스, I2C 주소, BCD, DMA…), 단계마다 접힌 **💡 힌트**,
+**⚠ 흔한 실수**, 빨리 끝낸 학생을 위한 **🚀 도전 과제**가 있습니다. 학생이 하는 일도 여러 가지입니다: 빈 보드에서 배선하기, 부품만
+놓인 회로 배선하기, 일부가 빠진 회로 완성하기, **고장 난 회로 고치기**(버튼 폴링, 릴레이), **버그 있는 펌웨어 고치기**(디버거),
+콘솔로 **측정·보고**하기(ADC, TMP36), 스코프로 재서 **답을 배선**하기, 값을 계산해 펌웨어 고치기(2 Hz 깜빡이).
+
+| 트랙 | id | 실습 | 다루는 내용 | 부품 | 방식 | 수준 | 시간 | 펌웨어 |
+|---|---|---|---|---|---|---|---|---|
+| A | `led-on` | LED 켜기: 첫 GPIO 출력 | GPIO 출력, LED 극성, 옴의 법칙 | LED, 저항 | 처음부터 배선 | 입문 | 20분 | `lesson-led-on` |
+| A | `led-blink` | LED 깜빡이 배선 | `HAL_Delay`, 주기·주파수 | LED, 저항 | 처음부터 배선 | 입문 | 25분 | `hal-blinky` |
+| A | `blink-2hz` | 내 펌웨어 올리기: 2 Hz 깜빡이 | CubeIDE 빌드, ELF 업로드, 지연 계산 | (보드만) | 펌웨어 직접 작성·값 조정 | 중급 | 40분 | 직접 빌드 |
+| A | `button-poll` | 버튼 폴링: 고장 난 회로 고치기 | 풀업 입력, 폴링 | 택트 스위치, LED, 저항 | 고장 난 회로 고치기 | 입문 | 30분 | `lesson-button-poll` |
+| A | `button-exti` | 버튼 인터럽트(EXTI)와 디바운스 | EXTI, WFI, 디바운스 | 택트 스위치, LED, 저항 | 처음부터 배선 | 초급 | 35분 | `hal-button-exti` |
+| A | `knight-rider` | 여러 LED 패턴: 나이트라이더 | GPIO 배열, 패턴 주기 | LED 4, 저항 4 | 부품만 놓인 회로 배선 | 초급 | 35분 | `lesson-knight-rider` |
+| A | `seven-segment` | 7세그먼트 다중화와 키패드 | 7세그먼트, 다중화, 키패드 스캔 | 4자리 7세그먼트, 4×4 키패드 | 일부 회로 완성 | 중급 | 45분 | `hal-7seg-keypad` |
+| B | `timer-irq` | 타이머 인터럽트로 정확한 주기 | PSC/ARR, 업데이트 인터럽트, 지연 누적 | LED 2, 저항 2 | 배선 + 스코프 측정 | 초급 | 40분 | `lesson-timer-irq` |
+| B | `pwm-breathe` | PWM으로 LED 밝기·숨쉬기 | PWM, 듀티비, AF 핀 | LED, 저항 | 처음부터 배선 + 스코프 측정 | 초급 | 35분 | `hal-pwm-led` |
+| B | `pwm-rgb` | PWM으로 RGB 색 혼합 | PWM 3채널, 색 혼합 | RGB LED, 저항 3 | 처음부터 배선 | 초급 | 35분 | `hal-pwm-led` |
+| B | `buzzer-melody` | 수동 부저로 음계·멜로디 | PWM 주파수, 음계 | 수동 부저 | 처음부터 배선 | 초급 | 30분 | `hal-buzzer-melody` |
+| B | `servo-angle` | 서보 각도: 50 Hz 펄스 폭 | 50 Hz 서보 펄스, 펄스 폭→각도 | 서보 3 | 일부 회로 완성 + 스코프 측정 | 초급 | 35분 | `hal-servos-multi` |
+| C | `pot-serial` | 가변저항 ADC → 시리얼 출력 | 전압 분배, 12비트 ADC, 전압 환산 | 가변저항 | 측정·보고 | 초급 | 35분 | `hal-adc-servo` |
+| C | `adc-servo` | 가변저항(ADC)으로 서보 돌리기 | ADC → 서보 사상 | 가변저항, 서보 | 일부 회로 완성 | 중급 | 40분 | `hal-adc-servo` |
+| C | `ldr-nightlight` | 조도센서로 자동 조명 | LDR 분배기, 데드존, PWM 비례 제어 | LDR, 저항 10 kΩ, LED | 부품만 놓인 회로 배선 | 중급 | 40분 | `lesson-ldr-nightlight` |
+| C | `tmp36` | 온도센서(TMP36) 단위 변환 | TMP36, mV → °C, VREFINT | TMP36 | 측정·보고 | 중급 | 35분 | `hal-adc-servo` |
+| C | `joystick-servos` | 조이스틱으로 서보 2축(팬·틸트) | ADC 2채널, 서보 2축 | 조이스틱, 서보 2 | 부품만 놓인 회로 배선 | 중급 | 45분 | `lesson-joystick-servos` |
+| D | `uart-command` | UART printf와 명령 파서 | UART 프레임, 수신 인터럽트, 명령 파서 | (보드만) | 콘솔 명령 입력 | 초급 | 40분 | `lesson-uart-cmd` |
+| D | `i2c-oled` | I2C OLED에 글자 표시 | I2C 주소, 오픈 드레인·풀업, 버스 검색 | OLED, RTC, AHT20 | 일부 회로 완성 | 중급 | 35분 | `hal-i2c-oled` |
+| D | `i2c-rtc` | I2C RTC 시계(DS3231) | RTC, BCD 레지스터 읽기·쓰기 | DS3231, OLED, AHT20 | 일부 회로 완성 | 중급 | 40분 | `hal-i2c-oled` |
+| D | `spi-595` | SPI로 74HC595 시프트 레지스터 | SPI, 시프트·래치 레지스터 | 74HC595, LED 8 | 일부 회로 완성 + SPI 디코더 | 중급 | 40분 | `hal-shift-register` |
+| D | `tm1637` | TM1637 4자리 시계 (비트뱅잉) | 비트뱅잉, DWT 지연, ACK | TM1637 | 처음부터 배선 | 중급 | 35분 | `hal-tm1637-clock` |
+| D | `onewire-ds18b20` | 1-Wire: DS18B20 여러 개 | 1-Wire 타임 슬롯, SEARCH ROM, CRC | DS18B20 3 | 일부 회로 완성 | 고급 | 45분 | `hal-onewire-multi` |
+| D | `bluetooth-hc05` | HC-05 블루투스로 원격 제어 | TX↔RX 교차, USART1, STATE | HC-05 | 처음부터 배선 + 휴대폰 명령 | 중급 | 40분 | `hal-bluetooth-led` |
+| E | `sonar-alarm` | 초음파 거리 경보 | 초음파 ToF, 입력 캡처, 5 V 내성 핀 | HC-SR04, LED | 부품만 놓인 회로 배선 | 중급 | 40분 | `lesson-parking` |
+| E | `pir-alarm` | PIR 침입 경보 | PIR, 유지·차단 시간, 양쪽 에지 EXTI | PIR, LED | 부품만 놓인 회로 배선 | 초급 | 30분 | `hal-pir-alarm` |
+| E | `dht-logger` | DHT22 온습도 로거 | DHT 프로토콜, 입력 캡처, 체크섬 | DHT22 | 처음부터 배선 + 기록 | 중급 | 35분 | `hal-dht-capture` |
+| E | `stepper-a4988` | 스테퍼 모터와 A4988 드라이버 | 스텝·마이크로스텝, STEP/DIR/EN, 가속 램프 | NEMA17, A4988, 12 V 전원 | 일부 회로 완성 | 고급 | 45분 | `hal-stepper-a4988` |
+| E | `dc-motor` | DC 모터 속도 제어 (PWM) | H 브리지, PWM 속도, 센서→모터 | DC 모터 모듈, LDR | 일부 회로 완성 | 중급 | 35분 | `hal-adc-servo` |
+| E | `relay` | 릴레이: 고장 난 회로 고치기 | 릴레이 COM/NO/NC, 액티브 Low | 릴레이, LED, 버튼 | 고장 난 회로 고치기 | 초급 | 30분 | `hal-relay` |
+| F | `dma-neopixel` | DMA로 NeoPixel 구동 | DMA, WS2812B 비트 인코딩, 타이머 PWM | NeoPixel 링 | 처음부터 배선 + 스코프 | 고급 | 45분 | `hal-neopixel-dma` |
+| F | `rtos-queue` | FreeRTOS 태스크와 큐 | 태스크, 큐, ISR→태스크, 스택 여유 | (보드만) | 관찰 + 콘솔 입력 | 고급 | 45분 | `freertos-queue-uart` |
+| F | `sleep-wfi` | 저전력: sleep 모드와 WFI | WFI, sleep 모드, SysTick 정지 | LED | 비교 측정 | 고급 | 35분 | `lesson-sleep-wfi` |
+| F | `scope-measure` | 오실로스코프로 PWM 측정·UART 해독 | 스코프 측정, 트리거, UART 디코더 | LED 2 | 측정해서 답을 배선 | 중급 | 45분 | `lesson-scope-mystery` |
+| F | `debugger` | 디버거로 버그 찾기 | 중단점, 조사식, 단계 실행, 오버플로 | 가변저항, LED | 버그 있는 펌웨어 고치기 | 고급 | 50분 | `lesson-debug-average` (버그 있음) |
+| G | `thermostat` | 프로젝트: 스마트 온도조절기 | 히스테리시스, 페일세이프, 시스템 통합 | AHT20, OLED, 릴레이, LED | 프로젝트(일부 회로 완성) | 고급 | 60분 | `lesson-thermostat` |
+| G | `parking-assist` | 프로젝트: 주차 보조 장치 | 거리 구간, 비차단 비프, 통합 시험 | HC-SR04, LED 3, 수동 부저 | 프로젝트(일부 회로 완성) | 고급 | 60분 | `lesson-parking` |
+| G | `digital-clock` | 프로젝트: 디지털 시계 | I2C + 비트뱅잉, 에지 검출, RTC 쓰기 | DS3231, TM1637, 버튼 | 프로젝트(일부 회로 완성) | 고급 | 60분 | `lesson-digital-clock` |
+
+- "방식"의 **측정·보고**는 학생이 콘솔과 스코프로 잰 값을 표로 만들어 따로 제출하는 활동입니다. 자동 채점은 그 측정이 가능한 상태인지
+  (값이 실제로 바뀌고 기대한 범위를 지나는지)까지만 확인합니다.
+- `blink-2hz`(직접 빌드)와 `debugger`(고친 펌웨어를 올림)의 모범 답안 펌웨어 `firmware/lesson-blink-2hz`, `firmware/lesson-debug-average-fixed`는
+  사이트에 넣지 않습니다(테스트 전용). `debugger`는 버그 있는 `lesson-debug-average`로 시작하므로, 그대로 채점하면 실패합니다.
+- `sonar-alarm`과 `parking-assist`는 같은 펌웨어(`lesson-parking`)를 씁니다 — 앞의 것은 센서와 빨간 LED만, 뒤의 것은 LED 셋과 부저까지.
+- 실습을 위해 새로 만든 펌웨어는 `firmware/lesson-*`이고, 각각 같은 이름의 예제 프로젝트(`web/examples/lesson-*.simucleo.json`, 모범 회로)가
+  있어 툴바의 예제 목록에서도 열 수 있습니다.
+
+**검증**: `web/e2e/m32.spec.ts`가 모든 실습을 모범 회로와 모범 펌웨어로 불러와 채점하고 모든 검사가 통과하는지 확인합니다. 또 트랙마다
+일부러 틀린 회로·펌웨어(LED 방향 반대, 서보 신호 핀이 다름, TX/RX를 교차하지 않음, 버그 있는 펌웨어, 시작할 때의 고장 난 회로 등)로
+채점해 해당 검사가 실패하는지도 확인합니다.
 
 ## 2. 결과 제출받기
 
@@ -220,7 +285,13 @@ JSON 파일을 나눠 주고 학생이 **레슨 파일 불러오기**를 하게 
 | `firmware` | | `{ "example": "hal-blinky.elf" }`(사이트에 들어 있는 예제 ELF, `web/scripts/examples.mjs` 목록), 또는 `"upload"`(학생이 직접 빌드해 올림). 없으면 펌웨어를 바꾸지 않음 |
 | `grade.ms` | | 채점할 때 실행할 시뮬레이션 시간(ms). 없으면 검사마다 필요한 시간 중 가장 긴 것 |
 | `grade.stimuli` | | 채점 중에 할 조작(아래) |
-| `steps` | ✔ | 단계 목록. 각 단계는 `title`, `text`, `checks` |
+| `steps` | ✔ | 단계 목록. 각 단계는 `title`, `text`, `checks`, 그리고 고를 수 있는 `theory`(📘 개념 상자)와 `hint`(접힌 💡 힌트) — 둘 다 Markdown |
+| `track` | | 목록에서 묶을 트랙 이름(`"A. 기초 (GPIO·시간)"`). 같은 이름끼리 한 묶음, 묶음은 그 안의 첫 실습 `order` 순서. 기본 실습 모두에 없으면 예전처럼 한 목록 (M32) |
+| `minutes` | | 예상 시간(분). 목록과 실습 머리에 "약 30분" (M32) |
+| `objectives` | | 학습 목표, 한 항목에 하나 (M32) |
+| `prereq` | | 선수 학습, Markdown (M32) |
+| `mistakes` | | ⚠ 흔한 실수, 한 항목에 하나(Markdown) (M32) |
+| `challenges` | | 🚀 도전 과제, 한 항목에 하나(Markdown). 실습을 완료하면 펼쳐져 보입니다 (M32) |
 
 `start`의 `project`를 쉽게 만들려면 편집기에서 원하는 시작 회로를 그린 뒤 **저장**한 파일에서
 `parts`와 `wires`를 복사하세요. 시작 회로에 부품만 놓고 배선을 비워 두면 학생이 배선할 몫이 됩니다.
@@ -233,7 +304,10 @@ JSON 파일을 나눠 주고 학생이 **레슨 파일 불러오기**를 하게 
 **부품은 id가 아니라 종류(`kind`)로 찾습니다.** 학생이 부품 이름을 `led1`이든 `myLed`든 마음대로 지어도
 됩니다. 같은 종류가 여럿이면 그중 하나라도 맞으면 통과입니다. 부품 종류 이름은 저장한 프로젝트 파일의 `kind`나
 `web/src/parts/*.tsx`를 보세요(예: `led-5mm`, `resistor`, `rgb-led`, `tact-switch`, `potentiometer`,
-`servo`, `dc-motor`, `oled-ssd1306`, `lcd-i2c`, `buzzer-passive`).
+`servo`, `dc-motor`, `oled-ssd1306`, `lcd-i2c`, `buzzer-passive`, `tm1637`, `neopixel-ring`, `hc05`, `relay`).
+
+M32의 필드(`track`, `minutes`, `objectives`, `prereq`, `mistakes`, `challenges`, 단계의 `theory`, `hint`)는 모두 고를 수 있는
+것이라 예전 레슨 파일도 그대로 열립니다. 이 필드들은 검사가 아니므로 바꿔도 진행 상황이 초기화되지 않습니다.
 
 **신호 이름**: `PA5`처럼 MCU 핀 이름을 씁니다(Arduino 이름 `D13`이 아님 — 같은 신호인 Morpho 핀에
 연결해도 맞게 하려고). 전원은 `GND`, `3V3`, `5V`, `VIN`. 안내 문구에는 `PA5 (D13)`처럼 둘 다 나옵니다.
@@ -264,12 +338,12 @@ GND에 있는지는 `{ "type": "series", "from": "3V3", "to": "GND", "through": 
 |---|---|---|---|
 | `running` | — | 채점하는 동안 펌웨어가 멈추지 않음(`Error_Handler`, HardFault 등이 없음) | 1 s |
 | `period` | `pin`, `ms`, `tolerance`(기본 0.05) | 핀의 주기(상승 에지 사이, 처음 한 주기는 빼고 평균)가 `ms` ± `tolerance`×`ms`. 레벨 변화를 프로브로 정확히 잼 | 3.5 × `ms` + 0.3 s |
-| `brightness` | `kind`, `channel`(RGB LED: 0 R, 1 G, 2 B), `above`, `below` | 그 종류의 LED가 어느 순간 `above`보다 밝았고, 어느 순간 `below`보다 어두웠음(둘 중 하나만 써도 됨, 0–1) | 2.5 s |
+| `brightness` | `kind`, `channel`(RGB LED: 0 R, 1 G, 2 B), `above`, `below` | 그 종류의 LED가 어느 순간 `above`보다 밝았고, 어느 순간 `below`보다 어두웠음(둘 중 하나만 써도 됨, 0–1). 4자리 7세그먼트는 `channel` = 자리 × 8 + 세그먼트(a = 0 … g = 6, dp = 7). NeoPixel(`neopixel-ring` 등)은 가장 밝은 LED의 색 값(`channel`이 없으면 R·G·B 중 큰 것, M32) | 2.5 s |
 | `duty` | `pin`, `min`, `max`, `mode`(`"some"` 기본 / `"always"`) | 핀의 PWM 듀티비(화면 한 프레임 평균, 0–1)가 어느 순간(`some`) 또는 내내(`always`) `min`–`max` 안 | 2.5 s |
 | `console` | `pattern`, `flags`, `count`(기본 1) | 가상 콘솔(USART2) 출력에 정규식 `pattern`이 `count`번 이상 나옴. JSON에서는 `\`를 `\\`로 | 2 s |
 | `consoleValues` | `pattern`, `minSpread` | `pattern`의 첫 번째 괄호가 잡은 숫자들의 최댓값 − 최솟값이 `minSpread` 이상(예: `"pot\\s+(\\d+)"`) | 2 s |
 | `motion` | `kind`, `field`(`"angle"` 서보 / `"rpm"` 모터), `minSpread` | 각도(°) 또는 회전수가 `minSpread` 이상 바뀜 | 2.5 s |
-| `display` | `kind`, `minPixels`(기본 20), `text` | OLED: 켜진 픽셀이 `minPixels`개 이상. 문자 LCD(`lcd-i2c`): 글자가 나옴(`text`가 있으면 그 정규식에 맞는 글자) | 2 s |
+| `display` | `kind`, `minPixels`(기본 20), `text` | OLED: 켜진 픽셀이 `minPixels`개 이상. 문자 LCD(`lcd-i2c`)와 TM1637(`tm1637`, M32): 글자가 나옴(`text`가 있으면 그 정규식에 맞는 글자). TM1637은 세그먼트를 숫자·글자로 읽고 콜론은 `:`(예: `"12:34"`, 콜론이 꺼지면 `"1234"` — `"\\d\\d:?\\d\\d"`처럼 쓰세요) | 2 s |
 
 채점은 펌웨어를 리셋하고 `grade.ms`(없으면 위 시간 중 가장 긴 것, 조작이 있으면 마지막 조작 + 0.6 s
 이상) 동안 실행합니다. 펌웨어가 중간에 멈추면 그때까지 본 것으로 채점합니다.
@@ -290,9 +364,17 @@ GND에 있는지는 `{ "type": "series", "from": "3V3", "to": "GND", "through": 
 }
 ```
 
-- `press`: 그 종류의 첫 부품(또는 보드의 파란 버튼 `B1`)을 `ms`(기본 100) 동안 누름
-- `set`: 그 종류의 첫 부품의 속성을 바꿈(가변저항 `position` 0–1, LDR `lux`, 온도센서 `temp` 등 속성 창에
-  있는 값). 채점이 끝나도 바뀐 값은 그대로입니다
+- `press`: 그 종류의 첫 부품(또는 보드의 파란 버튼 `B1`)을 `ms`(기본 100) 동안 누름. 키패드는 `"keypad-4x4:5"`처럼
+  종류와 키를 함께 씁니다(M32)
+- `set`: 그 종류의 첫 부품의 속성을 바꿈(가변저항 `position` 0–1, LDR `lux`, 온도센서 `temp`, 초음파 `distance`, PIR
+  `motion`·`person`, 조이스틱 `x`·`y` 등 속성 창에 있는 값). 채점이 끝나도 바뀐 값은 그대로입니다
+- `send`(M32): 한 줄을 입력합니다(끝에 CR LF가 붙음). `to`가 없거나 `"console"`이면 가상 콘솔(USART2)에,
+  `"hc05"`면 그 블루투스 모듈의 휴대폰에서 보냅니다. 예: `{ "at": 600, "send": "led on" }`
+- `connect`(M32): 그 종류의 첫 블루투스 모듈에 휴대폰을 연결합니다(`{ "at": 300, "connect": "hc05" }`). `send`로
+  휴대폰에서 보내기 전에 필요합니다
+
+같은 부품 종류가 여럿이면 `press`와 `set`은 첫 부품에만 합니다. 버튼 두 개가 필요하면 하나는 보드의 `B1`을 쓰세요
+(디지털 시계 실습처럼).
 
 ### 형식 검사 (스키마)
 
@@ -307,7 +389,8 @@ GND에 있는지는 `{ "type": "series", "from": "3V3", "to": "GND", "through": 
 | `order` | 숫자 |
 | `start` | `"empty"`, `{ "example": 문자열 }`, `{ "project": { "parts": [...], "wires": [...] } }` 중 하나 |
 | `firmware` | 없음, `"upload"`, `{ "example": 문자열 }` 중 하나 |
-| `grade` | `ms`는 0보다 큰 숫자, `stimuli`는 배열이고 각 항목은 숫자 `at`과 `press`(문자열, `ms`는 숫자) 또는 `set`(`kind`·`prop`·`value`, 알려진 부품 종류) |
+| `grade` | `ms`는 0보다 큰 숫자, `stimuli`는 배열이고 각 항목은 숫자 `at`과 `press`(문자열, `ms`는 숫자), `set`(`kind`·`prop`·`value`, 알려진 부품 종류), `send`(문자열, `to`는 `"console"`이나 알려진 부품 종류) 또는 `connect`(알려진 부품 종류) |
+| 과정 필드 (M32) | `track`은 비어 있지 않은 문자열, `minutes`는 0보다 큰 숫자, `objectives`·`mistakes`·`challenges`는 문자열 배열, `prereq`와 단계의 `theory`·`hint`는 문자열 또는 문자열 배열 |
 | `steps` | 비어 있지 않은 배열. 각 단계는 `title`, `text`(문자열 또는 문자열 배열), `checks`(배열) |
 | 검사 | 알려진 `type`, 종류마다 필수 필드(위 표의 "필드"에서 기본값이 없는 것), 숫자 필드(`count`, `ms`, `tolerance`, `channel`, `above`, `below`, `min`, `max`, `minSpread`, `minPixels`)는 숫자, 문자열 필드는 문자열, `kind`는 알려진 부품 종류, `series.through`는 비어 있지 않고 `resistor`·`led-5mm`·`tact-switch`·`potentiometer`·`rgb-led:R/G/B`만, `motion.field`는 `angle`/`rpm`, `duty.mode`는 `some`/`always`, `pattern`은 (`flags`와 함께) 올바른 정규식 |
 
@@ -322,5 +405,8 @@ npm test          # 모든 레슨 파일의 형식, 예제·펌웨어 이름, �
 npm run build && npm run preview
 ```
 
-함께 들어 있는 실습들은 `web/e2e/lessons.spec.ts`에서 예제의 배선으로 모두 통과하는지 확인합니다. 새
-실습도 같은 방식으로 테스트를 추가해 두면 펌웨어나 부품이 바뀌어도 채점이 맞는지 알 수 있습니다.
+함께 들어 있는 실습들은 `web/e2e/m32.spec.ts`에서 모범 회로와 모범 펌웨어로 모두 통과하는지(그리고 틀린 회로로는
+실패하는지) 확인합니다. 새 실습을 `web/lessons/`에 넣으면 그 파일의 `SOLUTIONS` 표에 모범 회로(예제 프로젝트나
+`web/e2e/solutions/`의 파일)를 적어야 테스트가 통과합니다 — 펌웨어나 부품이 바뀌어도 채점이 맞는지 알 수 있습니다.
+`npm test`(`web/test/m32.test.ts`)는 모든 실습에 트랙·예상 시간·학습 목표·흔한 실수·도전 과제·개념 상자가 있는지, 펌웨어가
+예제 목록과 `firmware/` 폴더, CI 빌드 목록에 있는지도 봅니다.

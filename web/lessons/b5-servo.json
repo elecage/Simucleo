@@ -1,0 +1,84 @@
+{
+  "id": "servo-angle",
+  "order": 205,
+  "track": "B. 타이머·PWM",
+  "title": "서보 각도: 50 Hz 펄스 폭",
+  "level": "초급",
+  "minutes": 35,
+  "goal": "서보 세 개의 신호선을 D5·D9·D7에 연결하고, 펄스 폭(0.5–2.5 ms)이 각도를 정하는 것을 측정합니다.",
+  "objectives": [
+    "서보 신호(주기 20 ms, 펄스 0.5–2.5 ms)를 설명한다",
+    "펄스 폭에서 각도를 계산한다 (1.5 ms = 90°)",
+    "여러 타이머 채널로 여러 서보를 동시에 움직인다"
+  ],
+  "prereq": "**PWM으로 LED 밝기·숨쉬기**.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "s1", "kind": "servo", "x": 50, "y": 12, "props": {} },
+        { "id": "s2", "kind": "servo", "x": 58, "y": 12, "props": {} },
+        { "id": "s3", "kind": "servo", "x": 66, "y": 12, "props": {} }
+      ],
+      "wires": [
+        { "id": "w1", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "s1", "pin": "V+" }, "color": "#e53935" },
+        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_P1" }, "b": { "part": "s1", "pin": "GND" }, "color": "#212121" },
+        { "id": "w4", "a": { "part": "s1", "pin": "V+" }, "b": { "part": "s2", "pin": "V+" }, "color": "#e53935" },
+        { "id": "w5", "a": { "part": "s1", "pin": "GND" }, "b": { "part": "s2", "pin": "GND" }, "color": "#212121" },
+        { "id": "w7", "a": { "part": "s2", "pin": "V+" }, "b": { "part": "s3", "pin": "V+" }, "color": "#e53935" },
+        { "id": "w8", "a": { "part": "s2", "pin": "GND" }, "b": { "part": "s3", "pin": "GND" }, "color": "#212121" }
+      ]
+    }
+  },
+  "firmware": { "example": "hal-servos-multi.elf" },
+  "grade": { "ms": 4500 },
+  "steps": [
+    {
+      "title": "신호선 연결",
+      "text": [
+        "서보 전원(V+ → 5V, GND)은 연결해 두었습니다. 신호선 **SIG**를 연결하세요.",
+        "- 서보 1 → **D5** (PB4, TIM3_CH1)",
+        "- 서보 2 → **D9** (PC7, TIM3_CH2)",
+        "- 서보 3 → **D7** (PA8, TIM1_CH1)"
+      ],
+      "theory": [
+        "서보는 **5 V 전원**으로 모터를 돌리고, 신호선으로는 전류가 거의 흐르지 않아 3.3 V 신호로도 됩니다.",
+        "신호는 20 ms(50 Hz)마다 오는 펄스이고, **펄스 폭**이 목표 각도입니다:",
+        "- 0.5 ms → 0°, 1.5 ms → 90°, 2.5 ms → 180°"
+      ],
+      "checks": [
+        { "type": "connected", "kind": "servo", "pin": "SIG", "to": "PB4", "label": "서보 SIG → D5(PB4)" },
+        { "type": "connected", "kind": "servo", "pin": "SIG", "to": "PC7", "label": "서보 SIG → D9(PC7)" },
+        { "type": "connected", "kind": "servo", "pin": "SIG", "to": "PA8", "label": "서보 SIG → D7(PA8)" }
+      ]
+    },
+    {
+      "title": "측정하고 채점",
+      "text": [
+        "**▶ 실행**하면 세 서보가 4초 주기로 0°↔180°를 오가고 콘솔에 각도와 펄스 폭이 나옵니다.",
+        "오실로스코프로 PC7을 보고 주기 20 ms와 펄스 폭이 바뀌는 것을 확인하세요."
+      ],
+      "theory": [
+        "타이머를 1 MHz로 세게 하면 비교값이 곧 µs입니다. `__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 1500)` → 1.5 ms → 90°.",
+        "**듀티비 = 펄스 / 주기** = 1.5 / 20 = 7.5 %."
+      ],
+      "hint": "서보가 움직이지 않으면 V+가 5V인지, SIG가 맞는 핀인지 보세요. 서보 종류는 같으므로 어느 서보든 상관없습니다.",
+      "checks": [
+        { "type": "running" },
+        { "type": "period", "pin": "PC7", "ms": 20, "tolerance": 0.02, "label": "D9(PC7) 주기 20 ms(50 Hz)" },
+        { "type": "duty", "pin": "PC7", "min": 0.02, "max": 0.035, "label": "펄스 0.5 ms 근처(듀티 2.5 %)인 순간" },
+        { "type": "duty", "pin": "PC7", "min": 0.115, "max": 0.13, "label": "펄스 2.5 ms 근처(듀티 12.5 %)인 순간" },
+        { "type": "motion", "kind": "servo", "field": "angle", "minSpread": 150, "label": "서보가 150° 이상 회전" },
+        { "type": "console", "pattern": "S1\\s+\\d+ deg", "label": "콘솔에 각도 출력" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "서보 V+를 3V3에 연결 — 토크가 모자라 실제로는 떨리거나 멈춥니다.",
+    "PWM 주기를 1 kHz로 둠 — 서보는 20 ms 주기를 기대합니다.",
+    "서보 GND를 보드 GND와 따로 둠 — 신호의 기준(GND)이 같아야 합니다."
+  ],
+  "challenges": [
+    "펄스 폭을 0.5–2.5 ms 밖(예: 3 ms)으로 보내면 어떻게 될까요? 실제 서보에서는 왜 위험할까요?"
+  ]
+}

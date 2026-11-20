@@ -1,0 +1,71 @@
+{
+  "id": "pwm-breathe",
+  "order": 202,
+  "track": "B. 타이머·PWM",
+  "title": "PWM으로 LED 밝기·숨쉬기",
+  "level": "초급",
+  "minutes": 35,
+  "goal": "D3(PB3, TIM2_CH2)의 PWM으로 LED 밝기를 바꾸고, LD2의 숨쉬기 패턴을 오실로스코프로 측정합니다.",
+  "objectives": [
+    "PWM의 주파수와 듀티비를 구분해 설명한다",
+    "듀티비가 평균 전압·밝기를 정한다는 것을 측정으로 확인한다",
+    "타이머 채널이 정해진 핀(대체 기능, AF)에만 나온다는 것을 안다"
+  ],
+  "prereq": "**타이머 인터럽트로 정확한 주기**(PSC/ARR).",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "r1", "kind": "resistor", "x": 52, "y": 16, "props": { "ohms": "220" } },
+        { "id": "led1", "kind": "led-5mm", "x": 52, "y": 10, "props": { "color": "red" } }
+      ],
+      "wires": []
+    }
+  },
+  "firmware": { "example": "hal-pwm-led.elf" },
+  "grade": { "ms": 3000 },
+  "steps": [
+    {
+      "title": "D3 → 저항 → LED → GND",
+      "text": "LED를 **D3** (PB3)에 연결하세요. PB3은 TIM2의 채널 2(TIM2_CH2)로 쓸 수 있는 핀입니다.",
+      "theory": [
+        "**PWM**(펄스 폭 변조): 핀을 아주 빠르게(여기서는 1 kHz, 1 ms마다) 켰다 껐다 하면서 켜져 있는 비율 = **듀티비**를 바꿉니다.",
+        "- 듀티 25 % → 평균 0.25 × 3.3 V ≈ 0.8 V, LED는 어둡게",
+        "- 듀티 100 % → 늘 켜짐",
+        "눈은 1 kHz 깜빡임을 따라가지 못해 평균 밝기로 봅니다."
+      ],
+      "checks": [
+        { "type": "series", "from": "PB3", "to": "GND", "through": ["resistor", "led-5mm"], "label": "D3(PB3) → 저항 → LED → GND" }
+      ]
+    },
+    {
+      "title": "숨쉬기 측정하고 채점",
+      "text": [
+        "**▶ 실행**하면 D3의 LED가 서서히 밝아졌다 어두워지고, 보드의 **LD2**(PA5, TIM2_CH1)는 2초마다 숨을 쉽니다.",
+        "",
+        "오실로스코프 탭에서 PA5를 프로브하고 측정값의 **듀티**가 0 %에서 100 %까지 바뀌는 것을 보세요. 주파수는 그대로 1 kHz입니다."
+      ],
+      "theory": [
+        "```c",
+        "__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, duty); // CCR1",
+        "```",
+        "카운터가 0부터 ARR(999)까지 세는 동안 CCR보다 작으면 High, 크면 Low(PWM 모드 1). CCR = 250이면 듀티 25 %입니다."
+      ],
+      "hint": "LED가 켜지지 않으면 D3 대신 D2/D4에 꽂혔는지 보세요. PWM은 타이머 채널이 연결된 핀에서만 나옵니다.",
+      "checks": [
+        { "type": "running" },
+        { "type": "duty", "pin": "PA5", "min": 0, "max": 0.05, "label": "LD2(PA5) 듀티 5 % 이하인 순간" },
+        { "type": "duty", "pin": "PA5", "min": 0.9, "max": 1, "label": "LD2(PA5) 듀티 90 % 이상인 순간" },
+        { "type": "brightness", "kind": "led-5mm", "above": 0.6, "below": 0.05, "label": "LED가 밝아졌다 어두워짐" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "PWM 주파수와 밝기를 혼동 — 밝기는 듀티비가 정하고, 주파수는 깜빡임이 보이지 않을 만큼만 높으면 됩니다.",
+    "아무 핀에서나 PWM이 나온다고 생각 — TIM2_CH2는 PA1, PB3 같은 정해진 핀에만 연결됩니다(데이터시트 AF 표)."
+  ],
+  "challenges": [
+    "숨쉬기가 선형(삼각파)이면 눈에는 밝은 쪽이 오래 보입니다. 감마 보정(듀티 = x²)을 하면 어떻게 달라질까요?",
+    "PWM 주파수를 20 Hz로 낮추면 무엇이 보일까요?"
+  ]
+}

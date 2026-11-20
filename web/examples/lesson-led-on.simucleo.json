@@ -1,0 +1,69 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "LED 켜기 (D7 출력)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "r1",
+      "kind": "resistor",
+      "x": 50,
+      "y": 16,
+      "props": {
+        "ohms": "220"
+      }
+    },
+    {
+      "id": "led1",
+      "kind": "led-5mm",
+      "x": 50,
+      "y": 10,
+      "props": {
+        "color": "red"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "r1",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "r1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "led1",
+        "pin": "A"
+      }
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "led1",
+        "pin": "K"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    }
+  ]
+}

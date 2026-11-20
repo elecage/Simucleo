@@ -1,9 +1,17 @@
 {
   "id": "pwm-rgb",
-  "order": 3,
-  "title": "PWM으로 RGB LED 밝기 조절",
+  "order": 203,
+  "track": "B. 타이머·PWM",
+  "title": "PWM으로 RGB 색 혼합",
   "level": "초급",
+  "minutes": 35,
   "goal": "타이머 PWM(TIM2/TIM3, 1 kHz)으로 RGB LED의 세 색을 각각 0–100% 밝기로 바꿔 색상환을 돌립니다.",
+  "objectives": [
+    "세 PWM 채널의 듀티비 조합으로 색을 섞는다 (빛의 삼원색)",
+    "공통 캐소드 RGB LED의 핀 구조를 안다",
+    "타이머 두 개(TIM2, TIM3)의 채널을 함께 쓴다"
+  ],
+  "prereq": "**PWM으로 LED 밝기·숨쉬기**.",
   "start": "empty",
   "firmware": { "example": "hal-pwm-led.elf" },
   "grade": { "ms": 3000 },
@@ -31,6 +39,10 @@
         "",
         "각 핀에서 저항을 거쳐 RGB LED의 해당 다리로, COM은 GND로 연결하세요."
       ],
+      "theory": [
+        "**공통 캐소드** RGB LED는 LED 세 개(R, G, B)의 캐소드를 COM 하나로 묶었습니다. COM은 GND로, 각 색은 저항을 거쳐 PWM 핀으로 갑니다.",
+        "색마다 저항이 하나씩 있어야 세 색의 전류를 따로 정할 수 있습니다."
+      ],
       "checks": [
         { "type": "series", "from": "PB3", "to": "GND", "through": ["resistor", "rgb-led:R"] },
         { "type": "series", "from": "PB4", "to": "GND", "through": ["resistor", "rgb-led:G"] },
@@ -46,6 +58,8 @@
         "",
         "**채점**은 3초 동안 실행하며 각 핀의 듀티비와 LED 색별 밝기를 잽니다."
       ],
+      "theory": "**색 혼합**: 빨강 100 % + 초록 100 % = 노랑, 셋 다 100 % = 흰색. 펌웨어는 색상환(color wheel)을 돌며 R·G·B 듀티를 120°씩 어긋나게 바꿉니다.",
+      "hint": "한 색만 안 켜지면 그 색의 핀(D3 R, D5 G, D6 B)과 저항을 보세요.",
       "checks": [
         { "type": "running" },
         { "type": "duty", "pin": "PB3", "min": 0.9, "max": 1, "label": "R(PB3) 듀티 90% 이상인 순간" },
@@ -56,5 +70,12 @@
         { "type": "brightness", "kind": "rgb-led", "channel": 2, "above": 0.5, "below": 0.1, "label": "파랑이 켜졌다 꺼짐" }
       ]
     }
+  ],
+  "mistakes": [
+    "공통 애노드 LED를 공통 캐소드처럼 연결 — COM이 3V3 쪽이어야 하고, 듀티가 거꾸로(0 %가 가장 밝음) 동작합니다.",
+    "저항 하나를 COM에 달아 세 색이 함께 씀 — 색마다 밝기가 달라집니다."
+  ],
+  "challenges": [
+    "가변저항 세 개로 R·G·B를 따로 정하는 색 섞기 장치를 설계해 보세요(ADC 실습 뒤에)."
   ]
 }

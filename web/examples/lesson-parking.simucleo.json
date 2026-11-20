@@ -1,0 +1,261 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "주차 보조 (HC-SR04, LED 3개, 부저)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "us",
+      "kind": "hc-sr04",
+      "x": 46,
+      "y": 4,
+      "props": {
+        "distance": 80
+      }
+    },
+    {
+      "id": "bz1",
+      "kind": "buzzer-passive",
+      "x": 48,
+      "y": 24,
+      "props": {}
+    },
+    {
+      "id": "r1",
+      "kind": "resistor",
+      "x": 58,
+      "y": 20,
+      "props": {
+        "ohms": "220"
+      }
+    },
+    {
+      "id": "led1",
+      "kind": "led-5mm",
+      "x": 58,
+      "y": 14,
+      "props": {
+        "color": "green"
+      }
+    },
+    {
+      "id": "r2",
+      "kind": "resistor",
+      "x": 63,
+      "y": 20,
+      "props": {
+        "ohms": "220"
+      }
+    },
+    {
+      "id": "led2",
+      "kind": "led-5mm",
+      "x": 63,
+      "y": 14,
+      "props": {
+        "color": "yellow"
+      }
+    },
+    {
+      "id": "r3",
+      "kind": "resistor",
+      "x": 68,
+      "y": 20,
+      "props": {
+        "ohms": "220"
+      }
+    },
+    {
+      "id": "led3",
+      "kind": "led-5mm",
+      "x": 68,
+      "y": 14,
+      "props": {
+        "color": "red"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "us",
+        "pin": "VCC"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "us",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "us",
+        "pin": "TRIG"
+      }
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D3"
+      },
+      "b": {
+        "part": "us",
+        "pin": "ECHO"
+      }
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "D8"
+      },
+      "b": {
+        "part": "bz1",
+        "pin": "+"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "bz1",
+        "pin": "-"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P2"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "nucleo",
+        "pin": "D4"
+      },
+      "b": {
+        "part": "r1",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "r1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "led1",
+        "pin": "A"
+      }
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "led1",
+        "pin": "K"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "nucleo",
+        "pin": "D5"
+      },
+      "b": {
+        "part": "r2",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w11",
+      "a": {
+        "part": "r2",
+        "pin": "2"
+      },
+      "b": {
+        "part": "led2",
+        "pin": "A"
+      }
+    },
+    {
+      "id": "w12",
+      "a": {
+        "part": "led2",
+        "pin": "K"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w13",
+      "a": {
+        "part": "nucleo",
+        "pin": "D6"
+      },
+      "b": {
+        "part": "r3",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w14",
+      "a": {
+        "part": "r3",
+        "pin": "2"
+      },
+      "b": {
+        "part": "led3",
+        "pin": "A"
+      }
+    },
+    {
+      "id": "w15",
+      "a": {
+        "part": "led3",
+        "pin": "K"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    }
+  ]
+}

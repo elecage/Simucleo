@@ -1,9 +1,17 @@
 {
   "id": "button-exti",
-  "order": 2,
-  "title": "버튼 인터럽트",
+  "order": 105,
+  "track": "A. 기초 (GPIO·시간)",
+  "title": "버튼 인터럽트(EXTI)와 디바운스",
   "level": "초급",
+  "minutes": 35,
   "goal": "D2(PA10)의 버튼을 누를 때마다 EXTI 인터럽트로 D7(PA8)의 LED가 켜졌다 꺼졌다 하고, 콘솔에 누른 횟수가 나옵니다.",
+  "objectives": [
+    "EXTI(외부 인터럽트)가 핀의 에지에서 콜백을 부르는 흐름을 따라간다",
+    "폴링과 인터럽트의 차이(CPU가 기다리는가)를 비교한다",
+    "버튼의 채터링(bounce)과 디바운스 방법을 안다"
+  ],
+  "prereq": "**버튼 폴링** 실습(풀업 입력).",
   "start": "empty",
   "firmware": { "example": "hal-button-exti.elf" },
   "grade": {
@@ -35,6 +43,11 @@
         "",
         "버튼 안에서 1a–1b, 2a–2b는 늘 이어져 있고, 누르면 1과 2가 이어집니다."
       ],
+      "theory": [
+        "**EXTI**: 핀에 하강 에지(1 → 0)가 생기면 하드웨어가 인터럽트를 겁니다. `EXTI15_10_IRQHandler` →",
+        "`HAL_GPIO_EXTI_IRQHandler` → 여러분의 `HAL_GPIO_EXTI_Callback(GPIO_Pin)` 순서로 불립니다.",
+        "메인 루프는 `__WFI()`로 잠들어 있다가 인터럽트가 오면 깨어납니다 — 폴링처럼 계속 핀을 볼 필요가 없습니다."
+      ],
       "checks": [
         { "type": "series", "from": "PA10", "to": "GND", "through": ["tact-switch"], "label": "D2(PA10) → 버튼 → GND" }
       ]
@@ -55,11 +68,27 @@
         "",
         "**채점**은 버튼을 자동으로 두 번 누르고 결과를 봅니다."
       ],
+      "theory": [
+        "**채터링(bounce)과 디바운스**: 실제 버튼은 누르는 순간 수 ms 동안 접점이 떨어졌다 붙었다 해서 에지가 여러 번 생깁니다.",
+        "한 번 눌렀는데 카운트가 3씩 오르는 원인입니다. 막는 방법:",
+        "- 소프트웨어: 마지막으로 받아들인 시각(`HAL_GetTick()`)에서 20–50 ms 안의 에지는 무시",
+        "- 하드웨어: RC 필터(10 kΩ + 100 nF)나 슈미트 트리거",
+        "",
+        "Simucleo의 택트 스위치는 채터링을 흉내 내지 않으므로 여기서는 늘 한 번씩 셉니다. 릴레이 실습의 펌웨어(`hal-relay`)에 200 ms 디바운스 예가 있습니다."
+      ],
+      "hint": "콘솔에 'D2 pressed'가 안 나오면 버튼이 D2와 GND 사이에 있는지, LED가 안 켜지면 D7 쪽 방향을 보세요.",
       "checks": [
         { "type": "running" },
         { "type": "console", "pattern": "D2 pressed \\(\\d+\\)", "count": 2, "label": "콘솔에 'D2 pressed' 두 번" },
         { "type": "brightness", "kind": "led-5mm", "above": 0.5, "below": 0.1, "label": "버튼으로 LED가 켜지고 꺼짐" }
       ]
     }
+  ],
+  "mistakes": [
+    "콜백 안에서 `HAL_Delay()`나 긴 `printf` — 인터럽트 안에서는 짧게 끝내고 플래그만 세우세요.",
+    "핀 설정을 `GPIO_MODE_INPUT`으로 둠 — EXTI는 `GPIO_MODE_IT_FALLING`이어야 하고, NVIC도 켜야 합니다."
+  ],
+  "challenges": [
+    "`HAL_GetTick()`으로 50 ms 소프트웨어 디바운스를 넣은 콜백을 직접 써 보세요."
   ]
 }

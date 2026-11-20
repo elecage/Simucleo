@@ -1,0 +1,93 @@
+{
+  "id": "sonar-alarm",
+  "order": 501,
+  "track": "E. 센서·액추에이터 응용",
+  "title": "초음파 거리 경보",
+  "level": "중급",
+  "minutes": 40,
+  "goal": "HC-SR04 초음파 센서로 거리를 재고, 20 cm보다 가까우면 D6의 빨간 LED로 경보합니다.",
+  "objectives": [
+    "초음파 비행 시간(ToF)으로 거리를 계산한다: 거리 = 시간 × 음속 / 2",
+    "타이머 입력 캡처로 에코 펄스 폭을 µs 단위로 잰다",
+    "5 V 센서의 신호를 3.3 V MCU에 연결할 때의 주의점을 안다"
+  ],
+  "prereq": "**타이머 인터럽트로 정확한 주기**, **버튼 인터럽트(EXTI)**.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "us", "kind": "hc-sr04", "x": 46, "y": 4, "props": { "distance": 80 } },
+        { "id": "r3", "kind": "resistor", "x": 62, "y": 18, "props": { "ohms": "220" } },
+        { "id": "led3", "kind": "led-5mm", "x": 62, "y": 12, "props": { "color": "red" } }
+      ],
+      "wires": []
+    }
+  },
+  "firmware": { "example": "lesson-parking.elf" },
+  "grade": {
+    "ms": 3000,
+    "stimuli": [
+      { "at": 300, "set": { "kind": "hc-sr04", "prop": "distance", "value": 100 } },
+      { "at": 1500, "set": { "kind": "hc-sr04", "prop": "distance", "value": 8 } }
+    ]
+  },
+  "steps": [
+    {
+      "title": "센서 연결",
+      "text": [
+        "**HC-SR04**의 네 핀을 연결하세요.",
+        "- VCC → **5V**, GND → **GND**",
+        "- TRIG → **D7** (PA8): 펌웨어가 12 µs 펄스로 측정을 시작",
+        "- ECHO → **D3** (PB3, TIM2_CH2): 거리만큼 긴 펄스가 돌아옴"
+      ],
+      "theory": [
+        "센서는 40 kHz 초음파를 쏘고 반사파가 돌아올 때까지 ECHO를 High로 둡니다. 소리는 약 343 m/s로 왕복하므로",
+        "**거리(cm) = 펄스 폭(µs) / 58**. 50 cm → 약 2.9 ms.",
+        "ECHO는 5 V 출력입니다. PB3은 **5 V 내성(FT)** 핀이라 직접 연결할 수 있지만, 모든 핀이 그런 것은 아닙니다(데이터시트의 FT 표시)."
+      ],
+      "checks": [
+        { "type": "connected", "kind": "hc-sr04", "pin": "VCC", "to": "5V" },
+        { "type": "connected", "kind": "hc-sr04", "pin": "GND", "to": "GND" },
+        { "type": "connected", "kind": "hc-sr04", "pin": "TRIG", "to": "PA8", "label": "TRIG → D7(PA8)" },
+        { "type": "connected", "kind": "hc-sr04", "pin": "ECHO", "to": "PB3", "label": "ECHO → D3(PB3)" }
+      ]
+    },
+    {
+      "title": "경보 LED",
+      "text": "빨간 LED를 **D6** (PB10) → 저항 → LED → GND로 연결하세요.",
+      "checks": [
+        { "type": "series", "from": "PB10", "to": "GND", "through": ["resistor", "led-5mm"], "label": "D6(PB10) → 저항 → 빨간 LED → GND" }
+      ]
+    },
+    {
+      "title": "거리 바꿔 보고 채점",
+      "text": [
+        "**▶ 실행**하고 센서 앞의 물체를 끌거나 속성 창의 **거리**를 바꿔 보세요. 콘솔에 `dist 50.0 cm  zone GREEN`처럼 나오고,",
+        "20 cm보다 가까우면 `RED`가 되며 LED가 켜집니다.",
+        "",
+        "채점은 거리를 100 cm → 8 cm로 바꿉니다."
+      ],
+      "theory": [
+        "**입력 캡처**: 타이머가 1 µs마다 세는 동안 핀에 에지가 오면 그때의 카운터 값을 CCR에 저장하고 인터럽트를 겁니다.",
+        "상승 에지 값과 하강 에지 값의 차가 펄스 폭입니다 — CPU가 바빠도 정확합니다."
+      ],
+      "hint": "'no echo'만 나오면 TRIG/ECHO가 바뀌었거나 VCC가 3V3에 연결되었습니다(이 센서는 5 V).",
+      "checks": [
+        { "type": "running" },
+        { "type": "consoleValues", "pattern": "dist (\\d+)\\.\\d cm", "minSpread": 50, "label": "거리 값이 50 cm 이상 변함" },
+        { "type": "console", "pattern": "zone GREEN", "label": "멀 때 GREEN" },
+        { "type": "console", "pattern": "zone RED", "label": "가까울 때 RED" },
+        { "type": "brightness", "kind": "led-5mm", "above": 0.5, "below": 0.1, "label": "가까울 때만 LED가 켜짐" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "VCC를 3V3에 연결 — HC-SR04는 5 V가 필요합니다.",
+    "측정 간격을 너무 짧게 — 이전 초음파의 메아리를 새 반사로 착각합니다(60 ms 이상 권장).",
+    "거리 = 시간 × 음속으로 계산 — 왕복이므로 2로 나눠야 합니다."
+  ],
+  "challenges": [
+    "5회 측정의 중앙값을 써서 튀는 값을 없애 보세요.",
+    "온도에 따라 음속이 바뀝니다(331 + 0.6 × T m/s). 30 °C에서는 오차가 얼마일까요?"
+  ]
+}

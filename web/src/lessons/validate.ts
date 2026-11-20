@@ -29,6 +29,8 @@ const STRINGS = ["kind", "pin", "to", "from", "pattern", "flags", "text", "label
 /** Lesson ids: also keys of saved progress and results files. */
 export const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
+const isText = (v: unknown) => typeof v === "string" || (Array.isArray(v) && v.every((t) => typeof t === "string"));
+
 /** Problems found in a lesson (empty: fine). `kinds`: known part kinds, if given. */
 export function validateLesson(raw: unknown, kinds?: Set<string>): string[] {
   const errors: string[] = [];
@@ -69,10 +71,23 @@ export function validateLesson(raw: unknown, kinds?: Set<string>): string[] {
           if (typeof set.kind !== "string" || typeof set.prop !== "string" || set.value === undefined) {
             errors.push(`${at}: 'set'에는 'kind', 'prop', 'value'가 있어야 합니다`);
           } else if (kinds && !kinds.has(set.kind)) errors.push(`${at}: 알 수 없는 부품 종류 '${set.kind}'`);
-        } else errors.push(`${at}: 'press' 또는 'set'이 있어야 합니다`);
+        } else if (typeof x?.send === "string") {
+          if (x.to !== undefined && typeof x.to !== "string") errors.push(`${at}: 'to'는 문자열이어야 합니다`);
+          else if (kinds && typeof x.to === "string" && x.to !== "console" && !kinds.has(x.to)) errors.push(`${at}: 알 수 없는 부품 종류 '${x.to}'`);
+        } else if (typeof x?.connect === "string") {
+          if (kinds && !kinds.has(x.connect)) errors.push(`${at}: 알 수 없는 부품 종류 '${x.connect}'`);
+        } else errors.push(`${at}: 'press' 또는 'set'(또는 'send', 'connect')이 있어야 합니다`);
       });
     }
   }
+  // Optional course fields (M32).
+  if (l.track !== undefined && (typeof l.track !== "string" || !l.track)) errors.push("'track'은 비어 있지 않은 문자열이어야 합니다");
+  if (l.minutes !== undefined && (typeof l.minutes !== "number" || !(l.minutes > 0))) errors.push("'minutes'는 0보다 큰 숫자여야 합니다");
+  for (const k of ["objectives", "mistakes", "challenges"] as const) {
+    const v = l[k];
+    if (v !== undefined && !(Array.isArray(v) && v.every((t) => typeof t === "string"))) errors.push(`'${k}'는 문자열 배열이어야 합니다`);
+  }
+  if (l.prereq !== undefined && !isText(l.prereq)) errors.push("'prereq'는 문자열 또는 문자열 배열이어야 합니다");
   if (!Array.isArray(l.steps) || !l.steps.length) {
     errors.push("'steps'가 비어 있습니다");
     return errors;
@@ -82,6 +97,9 @@ export function validateLesson(raw: unknown, kinds?: Set<string>): string[] {
     if (typeof step?.title !== "string" || !step.title) errors.push(`${at}: 'title'이 없습니다`);
     if (!(typeof step?.text === "string" || (Array.isArray(step?.text) && step.text.every((t) => typeof t === "string")))) {
       errors.push(`${at}: 'text'가 없습니다`);
+    }
+    for (const k of ["theory", "hint"] as const) {
+      if (step?.[k] !== undefined && !isText(step[k])) errors.push(`${at}: '${k}'는 문자열 또는 문자열 배열이어야 합니다`);
     }
     if (!Array.isArray(step?.checks)) {
       errors.push(`${at}: 'checks'가 없습니다`);

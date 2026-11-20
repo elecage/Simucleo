@@ -1,0 +1,98 @@
+{
+  "id": "relay",
+  "order": 506,
+  "track": "E. 센서·액추에이터 응용",
+  "title": "릴레이: 고장 난 회로 고치기",
+  "level": "초급",
+  "minutes": 30,
+  "goal": "버튼으로 릴레이를 켜서 5 V 램프(LED)를 스위칭하는 회로가 동작하지 않습니다. 릴레이 모듈의 전원과 제어선을 고치세요.",
+  "objectives": [
+    "릴레이가 코일(제어 쪽)과 접점(부하 쪽)이 전기적으로 분리된 스위치라는 것을 안다",
+    "COM, NO(평상시 열림), NC(평상시 닫힘)를 구분한다",
+    "액티브 Low 입력 모듈을 다룬다"
+  ],
+  "prereq": "**버튼 폴링**, **버튼 인터럽트(EXTI)와 디바운스**.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+        { "id": "k1", "kind": "relay", "x": 78, "y": 6, "props": { "trigger": "low" } },
+        { "id": "lamp", "kind": "led-5mm", "x": 63, "y": 9, "props": { "color": "yellow" } },
+        { "id": "r1", "kind": "resistor", "x": 64, "y": 10, "props": { "ohms": "330" } },
+        { "id": "sw1", "kind": "tact-switch", "x": 47, "y": 28, "props": {} }
+      ],
+      "wires": [
+        { "id": "w1", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "bb1", "pin": "tp1" }, "color": "#e53935" },
+        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_P1" }, "b": { "part": "bb1", "pin": "tn2" }, "color": "#212121" },
+        { "id": "w4", "a": { "part": "k1", "pin": "GND" }, "b": { "part": "bb1", "pin": "tn29" }, "color": "#212121" },
+        { "id": "w6", "a": { "part": "k1", "pin": "COM" }, "b": { "part": "bb1", "pin": "tp27" }, "color": "#e53935" },
+        { "id": "w7", "a": { "part": "k1", "pin": "NO" }, "b": { "part": "bb1", "pin": "a25" }, "color": "#fdd835" },
+        { "id": "w8", "a": { "part": "bb1", "pin": "a20" }, "b": { "part": "bb1", "pin": "tn19" }, "color": "#212121" },
+        { "id": "w9", "a": { "part": "nucleo", "pin": "D4" }, "b": { "part": "sw1", "pin": "1a" }, "color": "#1e88e5" },
+        { "id": "w10", "a": { "part": "sw1", "pin": "2a" }, "b": { "part": "nucleo", "pin": "GND_P2" }, "color": "#212121" },
+        { "id": "wb1", "a": { "part": "nucleo", "pin": "D8" }, "b": { "part": "k1", "pin": "IN" }, "color": "#43a047" },
+        { "id": "wb2", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "k1", "pin": "VCC" }, "color": "#e53935" }
+      ]
+    }
+  },
+  "firmware": { "example": "hal-relay.elf" },
+  "grade": {
+    "ms": 2800,
+    "stimuli": [
+      { "at": 500, "press": "tact-switch", "ms": 200 },
+      { "at": 1600, "press": "tact-switch", "ms": 200 }
+    ]
+  },
+  "steps": [
+    {
+      "title": "고장 찾기",
+      "text": "**▶ 실행**하고 버튼을 눌러 보세요. 콘솔에는 `relay ON`이 나오는데 램프가 켜지지 않습니다. 아래 검사 중 ❌인 것을 보세요.",
+      "theory": [
+        "**릴레이 모듈**: IN 신호가 트랜지스터를 켜서 코일에 전류가 흐르면 전자석이 접점을 끌어당깁니다 — **COM이 NC에서 NO로** 옮겨 붙습니다.",
+        "부하(램프) 전류는 COM–NO 접점으로만 흐르고, MCU 핀은 모듈 입력만 구동합니다. 코일은 **5 V**가 필요합니다."
+      ],
+      "checks": []
+    },
+    {
+      "title": "모듈 전원과 제어선 고치기",
+      "text": [
+        "- 모듈 **VCC**를 3V3이 아니라 **5V**(위쪽 레일)에 연결하세요.",
+        "- **IN**은 펌웨어가 쓰는 **D7** (PA8)이어야 합니다. 지금은 D8에 꽂혀 있습니다."
+      ],
+      "hint": "전선을 지우려면 전선을 클릭하고 Delete 키를 누르세요.",
+      "checks": [
+        { "type": "connected", "kind": "relay", "pin": "VCC", "to": "5V", "label": "릴레이 VCC → 5V" },
+        { "type": "connected", "kind": "relay", "pin": "GND", "to": "GND" },
+        { "type": "connected", "kind": "relay", "pin": "IN", "to": "PA8", "label": "릴레이 IN → D7(PA8)" },
+        { "type": "connected", "kind": "relay", "pin": "COM", "to": "5V", "label": "COM → 5V(램프 전원)" }
+      ]
+    },
+    {
+      "title": "눌러 보고 채점",
+      "text": [
+        "**▶ 실행**하고 버튼(D4)이나 B1을 누를 때마다 릴레이가 딸깍 켜지고 꺼지며 램프가 따라갑니다. LD2도 릴레이 상태를 보여 줍니다.",
+        "",
+        "채점은 버튼을 두 번 누릅니다."
+      ],
+      "theory": [
+        "이 모듈은 **액티브 Low**: IN = 0이면 코일이 켜집니다. 그래서 펌웨어는 시작할 때 먼저 핀을 High로 써 두고 출력으로 바꿉니다",
+        "(안 그러면 리셋 직후 잠깐 릴레이가 켜짐). 버튼은 200 ms 디바운스로 한 번 누름을 한 번으로 셉니다."
+      ],
+      "checks": [
+        { "type": "running" },
+        { "type": "console", "pattern": "relay ON", "label": "콘솔에 relay ON" },
+        { "type": "console", "pattern": "relay OFF", "label": "콘솔에 relay OFF" },
+        { "type": "brightness", "kind": "led-5mm", "above": 0.5, "below": 0.1, "label": "램프가 켜지고 꺼짐" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "램프를 NC에 연결 — 릴레이가 꺼져 있을 때 켜지는 반대 동작이 됩니다.",
+    "릴레이 모듈을 3V3으로 구동 — 코일이 붙지 않거나 불안정합니다.",
+    "실제 220 V를 브레드보드로 — 절대 금지. 수업에서는 저전압 부하만 다룹니다."
+  ],
+  "challenges": [
+    "버튼을 2초 이상 누르면 릴레이가 10초 동안만 켜지는 타이머 기능을 추가해 보세요."
+  ]
+}

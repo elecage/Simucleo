@@ -1,0 +1,90 @@
+{
+  "id": "pot-serial",
+  "order": 301,
+  "track": "C. 아날로그 (ADC)",
+  "title": "가변저항 ADC → 시리얼 출력",
+  "level": "초급",
+  "minutes": 35,
+  "goal": "가변저항의 전압을 A0(PA0)에서 12비트 ADC로 읽어 콘솔에 출력하고, 측정값으로 전압을 계산해 표로 보고합니다.",
+  "objectives": [
+    "전압 분배기로서의 가변저항(와이퍼 전압 = 위치 × 3.3 V)을 이해한다",
+    "12비트 ADC 값(0–4095)과 전압의 관계 V = ADC × 3.3 / 4095를 계산한다",
+    "콘솔 출력을 읽어 측정 결과를 보고한다(측정-보고형)"
+  ],
+  "prereq": "**LED 깜빡이 배선**(브레드보드 레일). `printf`가 콘솔(USART2)로 나간다는 것.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+        { "id": "pot", "kind": "potentiometer", "x": 46, "y": 28, "props": { "ohms": "10k", "position": 0.5 } }
+      ],
+      "wires": [
+        { "id": "w1", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "bb1", "pin": "tp1" }, "color": "#e53935" },
+        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_P1" }, "b": { "part": "bb1", "pin": "tn1" }, "color": "#212121" },
+        { "id": "w3", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "bb1", "pin": "bp1" }, "color": "#fb8c00" },
+        { "id": "w4", "a": { "part": "nucleo", "pin": "GND_P2" }, "b": { "part": "bb1", "pin": "bn1" }, "color": "#212121" }
+      ]
+    }
+  },
+  "firmware": { "example": "hal-adc-servo.elf" },
+  "grade": {
+    "ms": 3000,
+    "stimuli": [
+      { "at": 300, "set": { "kind": "potentiometer", "prop": "position", "value": 0 } },
+      { "at": 1600, "set": { "kind": "potentiometer", "prop": "position", "value": 1 } }
+    ]
+  },
+  "steps": [
+    {
+      "title": "가변저항 연결",
+      "text": [
+        "브레드보드 위쪽 레일은 **3V3**(+)과 **GND**(−)에 연결해 두었습니다.",
+        "- 가변저항의 양 끝(`1`, `2`)을 3V3과 GND에,",
+        "- 가운데 **와이퍼 W**를 **A0** (PA0)에 연결하세요."
+      ],
+      "theory": [
+        "가변저항은 저항 띠 위를 와이퍼가 미끄러지는 **전압 분배기**입니다. 양 끝에 3.3 V를 걸면 와이퍼 전압은 위치에 비례해 0–3.3 V가 됩니다.",
+        "**ADC**(아날로그-디지털 변환기)는 이 전압을 12비트 숫자 0–4095로 바꿉니다. 한 칸은 3.3 V / 4096 ≈ **0.8 mV**."
+      ],
+      "hint": "양 끝 핀을 3V3와 GND에 꽂고, 가운데(W)만 A0로 갑니다. W를 3V3에 꽂으면 단락이 될 수 있습니다.",
+      "checks": [
+        { "type": "series", "from": "3V3", "to": "GND", "through": ["potentiometer"], "label": "가변저항 양 끝 → 3V3, GND" },
+        { "type": "connected", "kind": "potentiometer", "pin": "W", "to": "PA0", "label": "와이퍼 W → A0(PA0)" }
+      ]
+    },
+    {
+      "title": "값 읽고 보고하기",
+      "text": [
+        "**▶ 실행**하고 손잡이를 돌려 보세요. 콘솔에 0.5초마다 `pot 2048 servo …`가 나옵니다.",
+        "",
+        "**보고서**: 손잡이를 약 25 %, 50 %, 75 %에 놓고 콘솔의 `pot` 값을 적은 뒤, 전압 V = pot × 3.3 / 4095를 계산해 표로 만드세요.",
+        "오실로스코프의 아날로그 프로브 `V(PA0)`로 잰 전압과 비교하세요.",
+        "",
+        "채점은 손잡이를 끝(0 %)에서 끝(100 %)까지 돌리고 값의 범위를 봅니다."
+      ],
+      "theory": [
+        "```c",
+        "HAL_ADC_Start(&hadc1);",
+        "HAL_ADC_PollForConversion(&hadc1, 10);   // 변환이 끝날 때까지 기다림(폴링)",
+        "uint32_t v = HAL_ADC_GetValue(&hadc1);    // 0–4095",
+        "```",
+        "`printf`는 정수만 쓰는 편이 빠르고 작습니다: 전압(mV) = v × 3300 / 4095."
+      ],
+      "hint": "값이 변하지 않으면 W가 A0에 꽂혔는지, 양 끝이 3V3/GND인지 보세요.",
+      "checks": [
+        { "type": "running" },
+        { "type": "consoleValues", "pattern": "pot\\s+(\\d+)", "minSpread": 3800, "label": "pot 값이 0 근처부터 4095 근처까지 변함" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "와이퍼 대신 양 끝 핀을 A0에 연결 — 값이 늘 0 또는 4095입니다.",
+    "5V 레일에 가변저항을 연결 — ADC 입력 최대 전압(3.3 V)을 넘습니다.",
+    "ADC 값 4095를 4096으로 나눠 3.3 V가 안 나온다고 고민 — 12비트 최댓값은 4095입니다."
+  ],
+  "challenges": [
+    "펌웨어를 고쳐 `pot` 대신 `mV`로 출력해 보세요(정수 연산만).",
+    "값이 조금씩 흔들린다면 평균 필터(최근 8개 평균)를 넣어 보세요."
+  ]
+}

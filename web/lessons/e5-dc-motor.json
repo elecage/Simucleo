@@ -1,0 +1,94 @@
+{
+  "id": "dc-motor",
+  "order": 505,
+  "track": "E. 센서·액추에이터 응용",
+  "title": "DC 모터 속도 제어 (PWM)",
+  "level": "중급",
+  "minutes": 35,
+  "goal": "모터 드라이버 모듈(IA, IB)을 D5·D4에 연결하고, 빛의 세기에 따라 PWM 듀티로 DC 모터 속도를 바꿉니다.",
+  "objectives": [
+    "DC 모터를 MCU 핀에 직접 연결하면 안 되는 이유(전류, 역기전력)를 안다",
+    "H 브리지 드라이버의 두 입력으로 방향을, PWM 듀티로 속도를 정한다",
+    "센서 → 액추에이터 제어 루프를 만든다"
+  ],
+  "prereq": "**조도센서로 자동 조명**, **PWM으로 LED 밝기·숨쉬기**.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+        { "id": "r1", "kind": "resistor", "x": 50, "y": 28, "props": { "ohms": "10k", "bands": "4", "tolerance": "5%", "tempco": "100" } },
+        { "id": "ldr", "kind": "ldr", "x": 56, "y": 26, "props": { "lux": 300 } },
+        { "id": "m", "kind": "dc-motor", "x": 72, "y": 27, "props": {} }
+      ],
+      "wires": [
+        { "id": "w1", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "bb1", "pin": "tp1" }, "color": "#e53935" },
+        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_P1" }, "b": { "part": "bb1", "pin": "tn1" }, "color": "#212121" },
+        { "id": "w3", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "bb1", "pin": "bp1" }, "color": "#e53935" },
+        { "id": "w4", "a": { "part": "nucleo", "pin": "GND_P2" }, "b": { "part": "bb1", "pin": "bn1" }, "color": "#212121" },
+        { "id": "w8", "a": { "part": "r1", "pin": "1" }, "b": { "part": "bb1", "pin": "tp8" }, "color": "#e53935" },
+        { "id": "w9", "a": { "part": "r1", "pin": "2" }, "b": { "part": "nucleo", "pin": "A1" }, "color": "#43a047" },
+        { "id": "w10", "a": { "part": "ldr", "pin": "1" }, "b": { "part": "r1", "pin": "2" }, "color": "#43a047" },
+        { "id": "w11", "a": { "part": "ldr", "pin": "2" }, "b": { "part": "bb1", "pin": "tn9" }, "color": "#212121" }
+      ]
+    }
+  },
+  "firmware": { "example": "hal-adc-servo.elf" },
+  "grade": {
+    "ms": 3500,
+    "stimuli": [
+      { "at": 300, "set": { "kind": "ldr", "prop": "lux", "value": 2 } },
+      { "at": 1700, "set": { "kind": "ldr", "prop": "lux", "value": 1000 } }
+    ]
+  },
+  "steps": [
+    {
+      "title": "모터 모듈 연결",
+      "text": [
+        "LDR(A1)은 연결해 두었습니다. 모터 모듈을 연결하세요.",
+        "- **VCC** → 아래쪽 레일 **5V**, **GND** → GND",
+        "- **IA** → **D5** (PB4, TIM3_CH1 PWM)",
+        "- **IB** → **D4** (PB5, Low로 고정 → 한 방향)"
+      ],
+      "theory": [
+        "DC 모터는 수백 mA를 먹고, 멈출 때 코일이 역전압을 만듭니다. MCU 핀(최대 약 25 mA)으로는 직접 돌릴 수 없어 **H 브리지 드라이버**를 씁니다.",
+        "- IA = PWM, IB = 0 → 정방향, 듀티만큼의 속도",
+        "- IA = 0, IB = PWM → 역방향",
+        "- 둘 다 0 → 정지(관성으로 멈춤)"
+      ],
+      "checks": [
+        { "type": "connected", "kind": "dc-motor", "pin": "VCC", "to": "5V", "label": "모터 VCC → 5V" },
+        { "type": "connected", "kind": "dc-motor", "pin": "GND", "to": "GND" },
+        { "type": "connected", "kind": "dc-motor", "pin": "IA", "to": "PB4", "label": "IA → D5(PB4, PWM)" },
+        { "type": "connected", "kind": "dc-motor", "pin": "IB", "to": "PB5", "label": "IB → D4(PB5)" }
+      ]
+    },
+    {
+      "title": "빛으로 속도 바꾸고 채점",
+      "text": [
+        "**▶ 실행**하고 LDR의 조도를 바꿔 보세요. 밝을수록 모터가 빨라집니다(콘솔의 `light` 값이 작을수록).",
+        "",
+        "채점은 조도를 2 lux(어두움) → 1000 lux(밝음)로 바꿉니다."
+      ],
+      "theory": [
+        "```c",
+        "__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, (4095 - light) * 20000 / 4095);",
+        "```",
+        "여기서는 서보와 같은 TIM3(50 Hz)을 써서 PWM이 느립니다. 실제 모터는 소음 때문에 보통 **20 kHz** 근처 PWM을 씁니다."
+      ],
+      "checks": [
+        { "type": "running" },
+        { "type": "motion", "kind": "dc-motor", "field": "rpm", "minSpread": 50, "label": "모터 회전수가 50 rpm 이상 변함" },
+        { "type": "duty", "pin": "PB4", "min": 0.7, "max": 1, "label": "밝을 때 IA 듀티 70 % 이상" },
+        { "type": "consoleValues", "pattern": "light\\s+(\\d+)", "minSpread": 2000, "label": "light 값이 2000 이상 변함" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "모터를 MCU 핀에 직접 연결 — 핀이 상합니다. 반드시 드라이버를 쓰세요.",
+    "IA와 IB에 둘 다 High — 브레이크(또는 일부 드라이버는 단락)입니다."
+  ],
+  "challenges": [
+    "가변저항으로 정·역방향과 속도를 모두 정하도록(가운데 = 정지) 바꿔 보세요."
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "id": "pir-alarm",
+  "order": 502,
+  "track": "E. 센서·액추에이터 응용",
+  "title": "PIR 침입 경보",
+  "level": "초급",
+  "minutes": 30,
+  "goal": "HC-SR501 PIR 센서의 출력을 D7(EXTI)로 받아, 사람이 움직이면 D6의 LED를 켜고 시각을 기록합니다.",
+  "objectives": [
+    "PIR 센서가 적외선의 '변화'를 감지한다는 것을 안다",
+    "모듈의 유지 시간, 차단 시간, 워밍업을 설명한다",
+    "양쪽 에지 인터럽트로 시작과 끝을 모두 잡는다"
+  ],
+  "prereq": "**버튼 인터럽트(EXTI)**.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "pir", "kind": "pir", "x": 50, "y": 4, "props": { "mode": "H", "delay": 3, "warmup": 3, "person": 0.05, "motion": 0 } },
+        { "id": "r1", "kind": "resistor", "x": 66, "y": 24, "props": { "ohms": "330" } },
+        { "id": "led", "kind": "led-5mm", "x": 72, "y": 21, "props": { "color": "red" } }
+      ],
+      "wires": []
+    }
+  },
+  "firmware": { "example": "hal-pir-alarm.elf" },
+  "grade": {
+    "ms": 6000,
+    "stimuli": [
+      { "at": 3600, "set": { "kind": "pir", "prop": "person", "value": 0.5 } },
+      { "at": 3600, "set": { "kind": "pir", "prop": "motion", "value": 1 } }
+    ]
+  },
+  "steps": [
+    {
+      "title": "센서와 LED 연결",
+      "text": [
+        "- PIR **VCC** → **5V**, **GND** → GND, **OUT** → **D7** (PA8)",
+        "- LED: **D6** (PB10) → 저항 → LED → GND"
+      ],
+      "theory": [
+        "**PIR**(수동 적외선) 센서는 사람 몸에서 나오는 적외선이 **바뀌는 것**을 감지합니다. 가만히 서 있으면 감지하지 못합니다.",
+        "모듈이 판단을 다 하고 OUT을 3.3 V로 올려 주므로 MCU는 디지털 입력만 보면 됩니다. 단, 전원은 5 V(4.5–20 V)가 필요합니다."
+      ],
+      "checks": [
+        { "type": "connected", "kind": "pir", "pin": "VCC", "to": "5V", "label": "PIR VCC → 5V" },
+        { "type": "connected", "kind": "pir", "pin": "GND", "to": "GND" },
+        { "type": "connected", "kind": "pir", "pin": "OUT", "to": "PA8", "label": "PIR OUT → D7(PA8)" },
+        { "type": "series", "from": "PB10", "to": "GND", "through": ["resistor", "led-5mm"], "label": "D6(PB10) → 저항 → LED → GND" }
+      ]
+    },
+    {
+      "title": "움직여 보고 채점",
+      "text": [
+        "**▶ 실행**하면 3초 동안 **워밍업**(감지 안 함)한 뒤 준비됩니다. 사람 그림을 끌어 부채꼴 안을 지나가게 하거나 **움직임** 값을 1로 바꾸세요.",
+        "LED가 켜지고 콘솔에 `motion detected (#1) - LED on`이 나옵니다. 유지 시간(3 s)이 지나면 꺼집니다.",
+        "",
+        "채점은 워밍업이 끝난 3.6초에 사람을 움직입니다(6초 동안 실행)."
+      ],
+      "theory": [
+        "모듈의 시간들: **유지 시간**(Tx 가변저항, OUT이 High로 있는 시간), **차단 시간**(Low로 돌아온 뒤 약 2.5초 감지 안 함),",
+        "**워밍업**(전원을 넣고 30–60초, 여기선 3초). 펌웨어는 EXTI를 양쪽 에지로 걸어 시작과 끝 시각을 모두 기록합니다."
+      ],
+      "hint": "LED가 안 켜지면 VCC가 5V인지(3V3에서는 동작하지 않음) 보세요.",
+      "checks": [
+        { "type": "running" },
+        { "type": "console", "pattern": "motion detected", "label": "움직임 감지" },
+        { "type": "brightness", "kind": "led-5mm", "above": 0.5, "below": 0.1, "label": "감지하면 LED가 켜짐" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "PIR을 3V3에 연결 — 모듈이 동작하지 않습니다.",
+    "워밍업 중에 움직이고 고장이라 판단 — 처음 몇 초는 기다리세요."
+  ],
+  "challenges": [
+    "밤(조도센서가 어두움)에만 경보하도록 LDR과 합쳐 보세요.",
+    "감지 횟수가 1분에 3번을 넘으면 부저를 울리게 해 보세요."
+  ]
+}

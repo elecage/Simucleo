@@ -1,0 +1,93 @@
+{
+  "id": "tmp36",
+  "order": 304,
+  "track": "C. 아날로그 (ADC)",
+  "title": "온도센서(TMP36) 단위 변환",
+  "level": "중급",
+  "minutes": 35,
+  "goal": "TMP36 아날로그 온도센서를 A2(PA4)에 연결해 ADC 값 → mV → °C로 변환되는 과정을 따라가고, 측정값을 보고합니다.",
+  "objectives": [
+    "TMP36의 출력식 V = 500 mV + 10 mV/°C × T를 안다",
+    "ADC 값 → 전압(mV) → 온도(°C) 변환을 정수 연산으로 한다",
+    "VREFINT로 실제 VDDA를 재는 이유를 이해한다"
+  ],
+  "prereq": "**가변저항 ADC → 시리얼 출력**.",
+  "start": {
+    "project": {
+      "parts": [
+        { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+        { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+        { "id": "tmp", "kind": "temp-sensor", "x": 52, "y": 28, "props": { "model": "TMP36", "temp": 25 } }
+      ],
+      "wires": [
+        { "id": "w1", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "bb1", "pin": "tp1" }, "color": "#e53935" },
+        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_P1" }, "b": { "part": "bb1", "pin": "tn1" }, "color": "#212121" },
+        { "id": "w3", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "bb1", "pin": "bp1" }, "color": "#fb8c00" },
+        { "id": "w4", "a": { "part": "nucleo", "pin": "GND_P2" }, "b": { "part": "bb1", "pin": "bn1" }, "color": "#212121" }
+      ]
+    }
+  },
+  "firmware": { "example": "hal-adc-servo.elf" },
+  "grade": {
+    "ms": 3200,
+    "stimuli": [
+      { "at": 300, "set": { "kind": "temp-sensor", "prop": "temp", "value": 0 } },
+      { "at": 1700, "set": { "kind": "temp-sensor", "prop": "temp", "value": 50 } }
+    ]
+  },
+  "steps": [
+    {
+      "title": "TMP36 연결",
+      "text": [
+        "TMP36은 평평한 면을 보고 왼쪽부터 **VS**(+), **OUT**, **GND**입니다.",
+        "- VS → 위쪽 레일 **3V3**",
+        "- GND → **GND**",
+        "- OUT → **A2** (PA4)"
+      ],
+      "theory": [
+        "**TMP36**: 출력 전압이 온도에 비례하는 반도체 센서입니다. **V_out = 0.5 V + 0.01 V/°C × T**.",
+        "- 0 °C → 500 mV, 25 °C → 750 mV, 50 °C → 1000 mV",
+        "0.5 V 오프셋 덕분에 영하(−40 °C → 100 mV)도 잴 수 있습니다."
+      ],
+      "hint": "Nucleo의 A2는 PA4입니다(A0 = PA0, A1 = PA1, A2 = PA4).",
+      "checks": [
+        { "type": "connected", "kind": "temp-sensor", "pin": "VS", "to": "3V3", "label": "VS → 3V3" },
+        { "type": "connected", "kind": "temp-sensor", "pin": "GND", "to": "GND", "label": "GND → GND" },
+        { "type": "connected", "kind": "temp-sensor", "pin": "OUT", "to": "PA4", "label": "OUT → A2(PA4)" }
+      ]
+    },
+    {
+      "title": "단위 변환 추적하고 채점",
+      "text": [
+        "**▶ 실행**하고 센서의 **온도** 슬라이더를 바꿔 보세요. 콘솔의 `TMP36 25.0 C`가 따라 바뀝니다.",
+        "",
+        "**보고서**: 0 °C, 25 °C, 50 °C에서 콘솔의 값과, 아날로그 프로브 `V(PA4)`로 잰 전압(mV)을 표로 만들고 식으로 확인하세요.",
+        "",
+        "채점은 온도를 0 °C → 50 °C로 바꿉니다."
+      ],
+      "theory": [
+        "```c",
+        "uint32_t vdda_mv = 1210 * 4095 / vref;     // VREFINT(1.21 V)로 실제 전원 전압",
+        "uint32_t tmp_mv  = tmp36 * vdda_mv / 4095; // ADC → mV",
+        "int32_t  t10     = (tmp_mv - 500);         // 10 mV/°C → 0.1 °C 단위",
+        "```",
+        "ADC의 기준은 VDDA입니다. 전원이 3.3 V가 아니라 3.25 V면 모든 측정이 1.5 % 틀어지므로, 내부 기준 전압 **VREFINT**로 보정합니다."
+      ],
+      "checks": [
+        { "type": "running" },
+        { "type": "consoleValues", "pattern": "TMP36 (-?\\d+)\\.\\d C", "minSpread": 40, "label": "TMP36 값이 40 °C 이상 변함" },
+        { "type": "console", "pattern": "TMP36 (4[6-9]|5[0-4])\\.\\d C", "label": "50 °C 근처(46–54 °C)를 읽음" },
+        { "type": "console", "pattern": "TMP36 -?[0-4]\\.\\d C", "label": "0 °C 근처(−4–4 °C)를 읽음" }
+      ]
+    }
+  ],
+  "mistakes": [
+    "TMP36을 거꾸로 꽂음 — 실제로는 센서가 뜨거워집니다. 평평한 면 기준 핀 순서를 확인하세요.",
+    "°C = mV / 10으로 계산 — 500 mV 오프셋을 빼야 합니다.",
+    "OUT을 A1에 연결 — 펌웨어는 A2(PA4)를 읽습니다."
+  ],
+  "challenges": [
+    "화씨로도 출력하세요: °F = °C × 9 / 5 + 32 (정수 연산으로, 0.1 °F 단위).",
+    "칩 내부 온도센서(`chip`) 값과 TMP36 값이 다른 이유를 찾아보세요."
+  ]
+}

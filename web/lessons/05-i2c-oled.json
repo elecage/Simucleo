@@ -1,9 +1,17 @@
 {
   "id": "i2c-oled",
-  "order": 5,
-  "title": "I2C OLED 시계",
+  "order": 402,
+  "track": "D. 통신 (UART·I2C·SPI·1-Wire)",
+  "title": "I2C OLED에 글자 표시",
   "level": "중급",
+  "minutes": 35,
   "goal": "SSD1306 OLED를 I2C 버스(D15 SCL, D14 SDA)에 연결해 RTC의 시각과 온습도를 화면에 띄웁니다.",
+  "objectives": [
+    "I2C 두 선(SCL 클럭, SDA 데이터)과 7비트 주소로 여러 장치를 한 버스에 연결한다",
+    "오픈 드레인과 풀업 저항이 필요한 이유를 안다",
+    "버스 검색(scan) 결과로 연결을 확인한다"
+  ],
+  "prereq": "**UART printf와 명령 파서**(통신의 기본).",
   "start": {
     "project": {
       "parts": [
@@ -49,6 +57,12 @@
         "",
         "두 선을 바꿔 꽂으면 OLED가 응답하지 않아 펌웨어가 `Error_Handler()`로 멈춥니다."
       ],
+      "theory": [
+        "**I2C 주소**: 장치마다 7비트 주소가 있습니다 — OLED 0x3C, DS3231 0x68, AHT20 0x38. 마스터(STM32)는 주소를 먼저 보내고,",
+        "그 주소의 장치만 ACK로 답합니다. HAL 함수에는 주소를 한 비트 왼쪽으로 민 값(`0x3C << 1`)을 줍니다.",
+        "SCL·SDA는 **오픈 드레인**: 누구나 0으로 당길 수만 있고, 1은 **풀업 저항**이 만듭니다. 그래서 여러 장치가 한 선을 함께 써도 충돌하지 않습니다."
+      ],
+      "hint": "SCL과 SDA를 바꿔 꽂으면 버스 검색에 아무것도 나오지 않습니다. D15 = SCL, D14 = SDA.",
       "checks": [
         { "type": "connected", "kind": "oled-ssd1306", "pin": "SCL", "to": "PB8", "label": "OLED SCL → D15 (PB8)" },
         { "type": "connected", "kind": "oled-ssd1306", "pin": "SDA", "to": "PB9", "label": "OLED SDA → D14 (PB9)" }
@@ -67,5 +81,11 @@
         { "type": "display", "kind": "oled-ssd1306", "minPixels": 50, "label": "OLED에 글자가 그려짐" }
       ]
     }
+  ],
+  "mistakes": [
+    "OLED 주소를 0x78로 씀 — 0x78은 0x3C를 한 비트 민 '8비트 주소'입니다."
+  ],
+  "challenges": [
+    "OLED에 여러분의 이름을 크게(scale 2) 그리도록 `text()` 호출을 바꿔 보세요."
   ]
 }

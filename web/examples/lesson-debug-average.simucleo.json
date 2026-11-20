@@ -1,0 +1,115 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "디버거 실습: 평균 필터 (가변저항 A0, LED D7)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "pot",
+      "kind": "potentiometer",
+      "x": 48,
+      "y": 22,
+      "props": {
+        "ohms": "10k",
+        "position": 0.5
+      }
+    },
+    {
+      "id": "r1",
+      "kind": "resistor",
+      "x": 58,
+      "y": 16,
+      "props": {
+        "ohms": "220"
+      }
+    },
+    {
+      "id": "led1",
+      "kind": "led-5mm",
+      "x": 58,
+      "y": 10,
+      "props": {
+        "color": "red"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "pot",
+        "pin": "2"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "pot",
+        "pin": "1"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "pot",
+        "pin": "W"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "A0"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "r1",
+        "pin": "1"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "r1",
+        "pin": "2"
+      },
+      "b": {
+        "part": "led1",
+        "pin": "A"
+      }
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "led1",
+        "pin": "K"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    }
+  ]
+}

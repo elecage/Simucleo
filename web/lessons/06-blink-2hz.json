@@ -1,9 +1,17 @@
 {
   "id": "blink-2hz",
-  "order": 6,
+  "order": 103,
+  "track": "A. 기초 (GPIO·시간)",
   "title": "내 펌웨어 올리기: 2 Hz 깜빡이",
   "level": "중급",
+  "minutes": 40,
   "goal": "STM32CubeIDE(또는 arm-none-eabi-gcc)로 직접 만든 펌웨어를 올려, PA5(LD2)를 2 Hz(주기 500 ms)로 깜빡이게 합니다.",
+  "objectives": [
+    "STM32CubeIDE에서 프로젝트를 빌드해 ELF 파일을 만든다",
+    "원하는 주파수에서 `HAL_Delay` 값을 계산한다 (2 Hz → 250 ms씩)",
+    "ELF 업로드로 직접 만든 펌웨어를 시뮬레이터에 올린다"
+  ],
+  "prereq": "**LED 깜빡이 배선** 실습. STM32CubeIDE 설치(학교 PC에 있으면 그대로).",
   "start": "empty",
   "firmware": "upload",
   "steps": [
@@ -26,6 +34,10 @@
         "",
         "빌드하면 `Debug/<프로젝트이름>.elf`가 만들어집니다."
       ],
+      "theory": [
+        "**주기 → 지연 시간**: 2 Hz는 1초에 두 번 깜빡임, 한 주기 T = 1 / 2 Hz = **500 ms**. 한 주기 = 켜짐 + 꺼짐이므로",
+        "토글 간격은 T / 2 = **250 ms** → `HAL_Delay(250)`. (`HAL_Delay(n)`은 실제로 n + 1 ms까지 기다릴 수 있어 오차 ±5 % 안에 듭니다.)"
+      ],
       "checks": []
     },
     {
@@ -40,5 +52,12 @@
         { "type": "period", "pin": "PA5", "ms": 500, "tolerance": 0.05 }
       ]
     }
+  ],
+  "mistakes": [
+    "`HAL_Delay(500)`으로 두어 주기가 1000 ms — 2 Hz는 한 주기가 500 ms이므로 토글 간격은 250 ms입니다.",
+    "Debug 빌드가 아니라 다른 폴더의 옛 ELF를 올림 — 업로드 후 상태 줄의 파일 이름과 시각을 확인하세요."
+  ],
+  "challenges": [
+    "`HAL_Delay` 대신 `HAL_GetTick()`으로 시간을 비교해 기다리지 않는(non-blocking) 깜빡이를 만들어 보세요."
   ]
 }

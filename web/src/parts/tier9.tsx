@@ -456,7 +456,7 @@ function bldcBody(visual: VisualState, withHalls: boolean) {
   const { x: cx, y: cy } = BLDC_C;
   return (
     <g data-rpm={rpm.toFixed(0)} data-halls={halls} data-stalled={m?.stalled ? "1" : "0"}>
-      {BLDC_PINS.map(([id, color], i) => (
+      {BLDC_PINS.slice(0, withHalls ? BLDC_PINS.length : 3).map(([id, color], i) => (
         <line key={id} x1={(1 + i) * P} y1={8.8 * P} x2={(1 + i) * P} y2={10 * P} stroke={color} strokeWidth={1.2} />
       ))}
       <circle cx={cx} cy={cy} r={3.4 * P} className="bldc-can" />

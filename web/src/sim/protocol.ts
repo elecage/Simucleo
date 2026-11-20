@@ -1,4 +1,5 @@
 /** Messages between the UI thread and the simulation worker. */
+import type { DataPlaced, SwvData, SwvSettings } from "../run/swv";
 import type { DecoderCfg } from "../run/scopeSettings";
 import type { ContentMatch } from "../run/decode";
 
@@ -239,6 +240,8 @@ export type ToWorker =
   | { type: "evaluate"; exprs: string[]; frame: number }
   | { type: "setVariable"; target: string; value: string; frame: number }
   | { type: "watchpoints"; list: WatchpointSpec[]; frame: number }
+  /** SWV: start the trace with these settings, or stop it (null). */
+  | { type: "swv"; settings: SwvSettings | null }
   | { type: "selectTask"; tcb: number | null }
   | { type: "sdLoad"; part: string; bytes: ArrayBuffer }
   | { type: "sdSnapshot"; part: string }
@@ -259,6 +262,8 @@ export interface FrameMsg {
   epoch: number;
   /** The `gen` of the last trigger setting or arming made before this frame. */
   triggerGen: number;
+  /** SWV trace since the last frame (while the trace is on). */
+  swv?: SwvData;
 }
 
 export type FromWorker =
@@ -278,6 +283,7 @@ export type FromWorker =
       epoch: number;
       /** See `FrameMsg.triggerGen`. */
       triggerGen: number;
+      swv?: SwvData;
     }
   /** M31: the frames made since the last batch, oldest first (performance mode). */
   | { type: "frames"; frames: FrameMsg[]; speed: number; work: number }
@@ -293,6 +299,8 @@ export type FromWorker =
   | { type: "assigned"; target: string; result: WatchValue }
   /** Where each watchpoint landed in memory, or why it could not be set. */
   | { type: "watchpoints"; placed: WatchpointPlaced[] }
+  /** Where each SWV data trace expression landed (after `swv` and after each firmware load). */
+  | { type: "swvPlaced"; placed: DataPlaced[] }
   /** Execution paused by the debugger (breakpoint, step done, …). */
   | { type: "paused"; reason: string };
 

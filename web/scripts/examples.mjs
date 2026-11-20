@@ -47,6 +47,7 @@ const EXAMPLES = [
   ["hal-bldc-hall", "hal-bldc-hall.elf", "HAL: BLDC with hall sensors — EXTI on the halls commutates a 3-phase bridge six-step; B1 swaps two halls (wrong commutation: it stalls)"],
   ["hal-bldc-pwm", "hal-bldc-pwm.elf", "HAL: BLDC on TIM1 complementary PWM — CH1–CH3 and CH1N–CH3N with 500 ns dead time, six-step by COM events from the hall interrupts, a pot on A0 sets the duty; B1 breaks (EGR.BG) and resumes"],
   ["hal-bldc-sensorless", "hal-bldc-sensorless.elf", "HAL: sensorless BLDC — TIM1 center-aligned complementary PWM (RCR 1: one update per period at its centre) samples the floating phase against a virtual neutral on the ADC; align, open-loop ramp, then commutation 30° after each back-EMF zero crossing (TIM2); a pot on A0 sets the duty"],
+  ["hal-swv-trace", "hal-swv-trace.elf", "HAL: SWV — printf over ITM port 0, the loop count on port 1, a triangle-wave variable for data trace, TIM2 at 1 kHz and a slow filter() for the profile; see the SWV tab"],
   ["freertos-two-tasks", "freertos-two-tasks.elf", "FreeRTOS (CMSIS-RTOS v2): Blink, Count and Button threads; B1 releases a semaphore — see the RTOS tab"],
   ["freertos-queue-uart", "freertos-queue-uart.elf", "FreeRTOS: UART RX ISR → queue → echo task; sensor → queue → logger with heap/stack stats"],
   ["lesson-led-on", "lesson-led-on.elf", "Lesson: D7 driven high once — the first GPIO output lights an LED"],

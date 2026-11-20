@@ -8,6 +8,8 @@
 
 ![PWM으로 RGB LED와 LD2 밝기 제어](docs/images/m3-pwm-rgb.png)
 
+> **SWV(Serial Wire Viewer).** 아래 탭의 **SWV**에서 STM32CubeIDE처럼 프로그램을 멈추지 않고 들여다본다. `ITM_SendChar`로 보낸 글자(ITM 콘솔), 변수 값의 변화(데이터 추적 그래프, DWT 비교기), 함수별 CPU 시간(PC 샘플링 통계 프로파일), 인터럽트 횟수·처리 시간·타임라인(예외 추적)을 보여 준다. 예제 hal-swv-trace([SWV로 프로그램을 멈추지 않고 들여다보기](docs/swv.md)).
+>
 > **M34: English UI.** 툴바의 언어 메뉴에서 **English**를 고르면 메뉴·안내·부품·설정 도구·채점 힌트와 레슨 38개 전체가 영어로 바뀐다(브라우저가 한국어가 아니면 처음부터 영어). The whole interface and all 38 lessons are available in English — pick **English** in the toolbar, or open the site with `?lang=en` ([영어 UI와 번역](docs/i18n.md)).
 >
 > **M36: CubeMX식 설정 도구.** 코드 탭의 **⚙ 새 프로젝트(설정 도구)**나 **⚙ 설정(.ioc)**에서 STM32CubeMX처럼 LQFP64 핀을 눌러 신호를
@@ -181,6 +183,7 @@
 - [오프라인에서 쓰기 — 설치, 오프라인, 업데이트](docs/offline.md)
 - [링크·QR로 공유하기 — 보내기, 받기, 선생님께 보내기, 형식](docs/share.md)
 - [저사양 기기에서 쓰기 — 기기 점검, 성능 모드, 예제별 속도](docs/performance.md)
+- [SWV로 프로그램을 멈추지 않고 들여다보기](docs/swv.md): ITM 콘솔, 데이터 추적 그래프, 통계 프로파일, 예외 추적
 - [영어 UI와 번역](docs/i18n.md): 언어 고르기, 문자열을 `t()`로 쓰는 법, 레슨 영어 파일
 - [실습(레슨) 안내 — 선생님용](docs/lessons.md): 수업에서 쓰기, 결과 제출받기와 모아보기, 레슨 편집기, 새 실습 파일 쓰기(모든 검사 종류, 형식 검사)
 - [외부 부품 계획](docs/parts.md)

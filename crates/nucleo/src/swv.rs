@@ -155,6 +155,7 @@ pub struct ProfileOut {
 
 /// What the trace produced since the last call.
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct SwvFrame {
     pub itm: Vec<ItmOut>,
     pub data: Vec<DataOut>,

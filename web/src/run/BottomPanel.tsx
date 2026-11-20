@@ -8,12 +8,14 @@ import type { SourceUpload } from "../upload/useSourceUpload";
 import type { Attached } from "../upload/attach";
 import type { CodePanelProps } from "../code/CodePanel";
 import { t } from "../i18n";
+import { DEFAULT_SETTINGS, SwvView, useSwvState } from "./SwvView";
+import type { SwvSettings } from "./swv";
 
 // M33: the code editor and CodeMirror load only when the tab is first opened.
 const CodePanel = lazy(() => import("../code/CodePanel"));
 
 /** A fixed tab, or `bt:<part id>` for an HC-05's phone. */
-type Tab = "console" | "code" | "source" | "waveform" | "rtos" | "registers" | "memory" | `bt:${string}`;
+type Tab = "console" | "code" | "source" | "waveform" | "rtos" | "swv" | "registers" | "memory" | `bt:${string}`;
 
 /** What changes with every frame: a hidden tab does not redraw for these (M31). */
 const LIVE: ReadonlySet<string> = new Set(["frame", "speed", "console", "bluetooth", "memory"]);
@@ -75,6 +77,15 @@ export function BottomPanel({
   codeTabSeq?: number;
 }) {
   const [tab, setTab] = useState<Tab>("console");
+  // SWV (Serial Wire Viewer): on, its settings, and the trace so far (kept
+  // while other tabs are open).
+  const [swvOn, setSwvOn] = useState(false);
+  const [swvSettings, setSwvSettings] = useState<SwvSettings>(DEFAULT_SETTINGS);
+  const [swvState, clearSwv] = useSwvState(runner, swvOn);
+  const { setSwv, ready: simReady } = runner;
+  useEffect(() => {
+    if (simReady) setSwv(swvOn ? swvSettings : null);
+  }, [setSwv, simReady, swvOn, swvSettings]);
   const [codeOpened, setCodeOpened] = useState(false);
   useEffect(() => {
     if (tab === "code") setCodeOpened(true);
@@ -112,6 +123,7 @@ export function BottomPanel({
             ["source", t("소스 (디버그)")],
             ["waveform", t("파형 (프로브)")],
             ["rtos", "RTOS"],
+            ["swv", "SWV"],
             ["registers", t("레지스터")],
             ["memory", t("메모리")],
           ] as [Tab, string][]
@@ -151,6 +163,17 @@ export function BottomPanel({
         {tab === "rtos" && <RtosView runner={runner} />}
         {tab === "registers" && <Registers runner={runner} />}
         {tab === "memory" && <Memory runner={runner} />}
+        {tab === "swv" && (
+          <SwvView
+            runner={runner}
+            on={swvOn}
+            setOn={setSwvOn}
+            settings={swvSettings}
+            setSettings={setSwvSettings}
+            state={swvState}
+            clear={clearSwv}
+          />
+        )}
       </div>
     </section>
   );

@@ -6,6 +6,8 @@
 // decoders (UART, I2C, SPI) over the digital channels, CSV/VCD export.
 // M25: 1-Wire, TM1637 and WS2812 decoders, a trigger on decoded content
 // (decoded here, from the live stream), the settings kept in the project.
+// M27: math channels (A±B, A×B, −A, k·A + c, moving average) and a
+// spectrum (FFT) view of any channel.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Runner } from "../sim/useRunner";
 import type { CaptureAnalog, CaptureChannel, ScopeCapture, ScopeState, TriggerConfig } from "../sim/protocol";
@@ -58,19 +60,27 @@ import {
 import {
   DECODER_NAMES,
   DECODER_TYPES,
+  MAX_MATH,
   PIN_ROLES,
+  fixMathSources,
+  mathSources,
   contentKinds,
   contentMatch,
   defaultScope,
   exactContent,
   newDecoder,
+  newMath,
   type ContentCfg,
   type DecoderCfg,
   type DecoderType,
+  type MathCfg,
   type ScopeSettings,
+  type SpectrumView,
   type TriggerSettings,
 } from "./scopeSettings";
 import { captureCsv, captureVcd } from "./export";
+import { BINARY, MATH_OPS, fromDigital, liveAnalog, liveDigital, mathChannel, measureWave, wavePoints, type MathOp, type Sourced } from "./math";
+import { SpectrumPanel } from "./Spectrum";
 
 const PIN_NAMES = [
   ...["A", "B", "C"].flatMap((p) => Array.from({ length: 16 }, (_, i) => `P${p}${i}`)),
@@ -103,6 +113,8 @@ interface Trace {
 interface ATrace {
   v0: number;
   samples: [number, number][];
+  /** Known from here on (ms): the probe added, or older samples dropped. */
+  since: number;
 }
 
 const KIND_TEXT: Record<AnnotationKind, string> = {
@@ -202,7 +214,9 @@ export function Waveform({
     <K extends keyof TriggerSettings>(k: K) =>
     (v: TriggerSettings[K]) =>
       setCfg((c) => ({ ...c, trigger: { ...c.trigger, [k]: v } }));
-  const { pins, analog, decoders, fmt } = cfg;
+  const { pins, analog, decoders, fmt, math, spectrum: specCfg } = cfg;
+  const setMath = field("math");
+  const setSpectrum = field("spectrum");
   const { source, edge, mode, widthCmp, widthUs, pre, pause, level, hysteresis, content } = cfg.trigger;
   const setPins = field("pins");
   const setAnalog = field("analog");
@@ -333,7 +347,7 @@ export function Waveform({
         for (const a of f.analog ?? []) {
           let t = atraces.current.get(a.name);
           if (!t) {
-            t = { v0: a.v0, samples: [] };
+            t = { v0: a.v0, samples: [], since: f.timeMs };
             atraces.current.set(a.name, t);
           }
           for (const s of a.samples) t.samples.push(s);
@@ -343,6 +357,7 @@ export function Waveform({
             t.v0 = t.samples[drop - 1][1];
             t.samples.splice(0, drop);
           }
+          t.since = Math.max(t.since, keepFrom);
         }
         const synth = f.probes
           .filter((p) => p.synth)
@@ -465,6 +480,48 @@ export function Waveform({
     return { cfg, name, ch: undefined, live: atraces.current.get(name) };
   });
 
+  // M27: channels as waves (ns, from the trigger or from now) for the math
+  // channels and the spectrum, each with the span it is known over.
+  const maxAvgNs = Math.max(0, ...math.filter((m) => m.op === "avg").map((m) => m.windowUs * 1e3));
+  const waveKey = showCapture ? capture : now;
+  const mathKey = JSON.stringify(math);
+  const { sourceWave, mathWaves } = useMemo(() => {
+    const liveFromMs = now - windowMs - maxAvgNs / 1e6;
+    const sourceWave = (name: string): Sourced | null => {
+      if (showCapture) {
+        if (name.startsWith("V(")) {
+          const ch = capture.analog?.find((c) => c.name === name);
+          return ch ? { wave: ch, from: Math.max(capture.startNs, ch.fromNs), to: Math.min(capture.endNs, ch.toNs) } : null;
+        }
+        const ch = capture.channels.find((c) => c.name === name);
+        return ch ? { wave: fromDigital(ch), from: Math.max(capture.startNs, ch.fromNs), to: Math.min(capture.endNs, ch.toNs) } : null;
+      }
+      if (name.startsWith("V(")) {
+        const t = atraces.current.get(name);
+        return t ? liveAnalog(t, now, liveFromMs) : null;
+      }
+      const t = traces.current.get(name);
+      return t ? liveDigital(t, now, liveFromMs) : null;
+    };
+    const mathWaves = new Map<string, Sourced | null>();
+    const lookup = (n: string) => (mathWaves.has(n) ? mathWaves.get(n)! : sourceWave(n));
+    for (const m of JSON.parse(mathKey) as MathCfg[]) {
+      const a = lookup(m.a);
+      const b = BINARY.includes(m.op) ? lookup(m.b) : undefined;
+      mathWaves.set(`M${m.id}`, mathChannel({ op: m.op, gain: m.gain, bias: m.bias, windowNs: m.windowUs * 1e3 }, a, b));
+    }
+    return { sourceWave, mathWaves };
+    // (The live traces change in place with each frame: `waveKey` is `now` then.)
+  }, [waveKey, mathKey, showCapture, windowMs, maxAvgNs]);
+  const span0 = showCapture ? capture.startNs : -windowNs;
+  const span1 = showCapture ? capture.endNs : 0;
+  const mrows = math.map((m) => {
+    const name = `M${m.id}`;
+    const r = mathWaves.get(name) ?? null;
+    const stats = r ? measureWave(r.wave, Math.max(span0, r.from), Math.min(span1, r.to)) : undefined;
+    return { cfg: m, name, r, stats };
+  });
+
   // What is measured: the trigger source, or a content trigger's decoder's first pin (its clock).
   const measured = showCapture && !capture.source.startsWith("dec:") ? capture.source : (contentDecoder?.pins[0] ?? source);
   const sourceStats: PulseStats | undefined = useMemo(() => {
@@ -511,7 +568,8 @@ export function Waveform({
   const digitalH = pins.length * ROW;
   const lanesTop = TOP + digitalH;
   const analogTop = lanesTop + decoders.length * LANE;
-  const plotH = digitalH + decoders.length * LANE + analog.length * AROW;
+  const mathTop = analogTop + analog.length * AROW;
+  const plotH = digitalH + decoders.length * LANE + analog.length * AROW + math.length * AROW;
   const height = TOP + plotH + AXIS;
   const markerPre = dragPre ?? pre;
   const markerX = showCapture && dragPre === null ? x(0) : markerPre * W;
@@ -519,6 +577,7 @@ export function Waveform({
     ...pins.map((_, i) => TOP + (i + 1) * ROW),
     ...decoders.map((_, i) => lanesTop + (i + 1) * LANE),
     ...analog.map((_, i) => analogTop + (i + 1) * AROW),
+    ...math.map((_, i) => mathTop + (i + 1) * AROW),
   ].slice(0, -1);
   const synth = new Set(synthPins.split(" "));
   const allPins = [...new Set([...PIN_NAMES])];
@@ -528,6 +587,27 @@ export function Waveform({
   const addPins = (list: string[]) => setPins((p) => [...p, ...list.filter((n) => n && !p.includes(n))]);
   const updateDecoder = (id: number, patch: Partial<DecoderCfg>) =>
     setDecoders((ds) => ds.map((d) => (d.id === id ? { ...d, ...patch } : d)));
+  /** What a math channel can take: analog channels, probed pins (0/3.3 V), and M1 for M2 (see `mathSources`). */
+  const channels = [...analogNames, ...pins];
+  // (A source the new operation cannot take is replaced, also in later channels.)
+  const updateMath = (id: number, patch: Partial<MathCfg>) =>
+    setMath((ms) => fixMathSources(ms.map((m) => (m.id === id ? { ...m, ...patch } : m)), channels));
+  // The spectrum: its channel, over the visible window or between the cursors.
+  const specSources: [string, string][] = [
+    ...pins.map((p) => [p, `${p} (디지털 0/3.3 V)`] as [string, string]),
+    ...analogNames.map((n) => [n, n] as [string, string]),
+    ...math.map((m) => [`M${m.id}`, `M${m.id} = ${mathLabel(m)}`] as [string, string]),
+  ];
+  const specSource = specCfg.source || specSources[0]?.[0] || "";
+  const specView = specCfg.view;
+  const specWave = useMemo(
+    () => (specView === "time" ? null : mathWaves.has(specSource) ? mathWaves.get(specSource)! : sourceWave(specSource)),
+    [specView, specSource, sourceWave, mathWaves],
+  );
+  const [r0, r1] =
+    specCfg.range === "cursors" && cursors ? [Math.min(cursors.a, cursors.b), Math.max(cursors.a, cursors.b)] : [v.start, v.start + v.span];
+  const specFrom = Math.max(r0, specWave?.from ?? r0);
+  const specTo = Math.min(r1, specWave?.to ?? r1);
 
   return (
     <div className="waveform">
@@ -730,6 +810,40 @@ export function Waveform({
               : STATE_TEXT[state]}
         </span>
       </div>
+      <div className="wave-controls scope-controls" data-testid="math-controls">
+        <b>수학</b>
+        <button
+          disabled={math.length >= MAX_MATH}
+          onClick={() => {
+            const id = [1, 2].find((k) => !math.some((m) => m.id === k))!;
+            setMath((ms) => [...ms, newMath(id, [...analogNames, ...pins])].sort((p, q) => p.id - q.id));
+          }}
+        >
+          수학 채널 추가
+        </button>
+        <span className="scope-view" role="group" aria-label="보기">
+          {(["time", "spectrum", "split"] as SpectrumView[]).map((k) => (
+            <button
+              key={k}
+              aria-pressed={specView === k}
+              className={specView === k ? "on" : undefined}
+              onClick={() => setSpectrum({ ...specCfg, view: k })}
+            >
+              {k === "time" ? "시간" : k === "spectrum" ? "스펙트럼 (FFT)" : "시간 + 스펙트럼"}
+            </button>
+          ))}
+        </span>
+        {math.length === 0 && <span className="hint">A±B·A×B·−A·k·A+c·이동 평균 채널을 만들고, 아무 채널의 스펙트럼을 봅니다.</span>}
+      </div>
+      {math.map((m) => (
+        <MathControls
+          key={m.id}
+          m={m}
+          sources={mathSources(m, math, channels)}
+          onChange={(patch) => updateMath(m.id, patch)}
+          onRemove={() => setMath((ms) => fixMathSources(ms.filter((q) => q.id !== m.id), channels))}
+        />
+      ))}
       <div className="wave-controls scope-controls">
         <b>디코더</b>
         <label>
@@ -832,7 +946,7 @@ export function Waveform({
       ))}
       {active && (
         <>
-          <div className="scope-body">
+          <div className="scope-body" style={specView === "spectrum" ? { display: "none" } : undefined}>
             <div className="wave-labels" style={{ paddingTop: TOP }}>
               {rows.map(({ name, ch, live: t }) => (
                 <div key={name} className="wave-label" data-probe={name} style={{ height: ROW }}>
@@ -892,6 +1006,35 @@ export function Waveform({
                     V
                   </div>
                   <div className="dim">{astats[i] ? `평균 ${fmtVolts(astats[i]!.mean)}` : "—"}</div>
+                </div>
+              ))}
+              {mrows.map(({ cfg: m, name, stats }) => (
+                <div key={name} className="wave-label analog-label math-label" data-math={name} style={{ height: AROW }}>
+                  <div title={mathLabel(m)}>
+                    <b>{name}</b> <span className="dim">{mathLabel(m)}</span>
+                  </div>
+                  <div>
+                    <select value={m.vdiv} aria-label={`${name} V/눈금`} onChange={(e) => updateMath(m.id, { vdiv: Number(e.target.value) })}>
+                      {VOLTS_DIV.map((vd) => (
+                        <option key={vd} value={vd}>
+                          {fmtVolts(vd)}/div
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    중앙{" "}
+                    <input
+                      type="number"
+                      step="any"
+                      className="num"
+                      value={m.offset}
+                      aria-label={`${name} 오프셋 (V)`}
+                      onChange={(e) => e.target.value !== "" && updateMath(m.id, { offset: Number(e.target.value) })}
+                    />{" "}
+                    V
+                  </div>
+                  <div className="dim">{stats ? `평균 ${fmtVolts(stats.mean)}` : "—"}</div>
                 </div>
               ))}
             </div>
@@ -958,6 +1101,30 @@ export function Waveform({
                   </g>
                 );
               })}
+              {mrows.map(({ cfg: m, name, r }, i) => {
+                const y0 = mathTop + i * AROW;
+                const yOf = (volts: number) => {
+                  const y = y0 + AROW / 2 - ((volts - m.offset) / m.vdiv) * (AROW / ADIVS);
+                  return Math.round(Math.min(y0 + AROW - 1, Math.max(y0 + 1, y)) * 2) / 2;
+                };
+                const shown = r && (showCapture || live);
+                const points = shown ? wavePoints(r.wave, v.start, v.start + v.span, W, yOf) : "";
+                const zero = y0 + AROW / 2 + (m.offset / m.vdiv) * (AROW / ADIVS);
+                return (
+                  <g key={name} data-mtrace={name} className="math-trace">
+                    {Array.from({ length: ADIVS - 1 }, (_, k) => (
+                      <line key={k} className="adiv" x1={0} x2={W} y1={y0 + ((k + 1) * AROW) / ADIVS} y2={y0 + ((k + 1) * AROW) / ADIVS} />
+                    ))}
+                    {zero > y0 && zero < y0 + AROW && <line className="azero" x1={0} x2={W} y1={zero} y2={zero} />}
+                    {shown && r.from > v.start && (
+                      <rect className="scope-invalid" x={0} width={Math.max(0, Math.min(W, x(r.from)))} y={y0 + 2} height={AROW - 4}>
+                        <title>{m.op === "avg" ? "이동 평균의 창이 아직 차지 않은 구간" : "소스가 기록되지 않은 구간"}</title>
+                      </rect>
+                    )}
+                    <polyline points={points} />
+                  </g>
+                );
+              })}
               {!showCapture && !live && (
                 <text x={W / 2} y={TOP + plotH / 2} className="scope-wait" textAnchor="middle">
                   트리거 대기 중…
@@ -989,7 +1156,27 @@ export function Waveform({
             </div>
           )}
           <Measurements stats={sourceStats} source={measured} cursors={cursors} live={!showCapture} />
-          {arows.length > 0 && <AnalogTable rows={arows.map((r, i) => ({ spec: r.cfg.spec, name: r.name, stats: astats[i] }))} live={!showCapture} />}
+          {arows.length + mrows.length > 0 && (
+            <AnalogTable
+              rows={[
+                ...arows.map((r, i) => ({ spec: r.cfg.spec, name: r.name, stats: astats[i] })),
+                ...mrows.map((r) => ({ spec: r.name, name: `${r.name} = ${mathLabel(r.cfg)}`, stats: r.stats })),
+              ]}
+              live={!showCapture}
+            />
+          )}
+          {specView !== "time" && (
+            <SpectrumPanel
+              wave={specWave?.wave ?? null}
+              from={specFrom}
+              to={specTo}
+              cfg={specCfg}
+              sources={specSources}
+              sourceName={specSource}
+              onChange={setSpectrum}
+              hasCursors={cursors !== null}
+            />
+          )}
           {decoders.map((d, di) => (
             <DecodedTable key={d.id} index={di} cfg={d} anns={decoded[di]} fmt={fmt} />
           ))}
@@ -1502,7 +1689,7 @@ function Measurements({
               주기 <b data-testid="scope-period" data-ns={stats?.period}>{stats?.period !== undefined ? fmtTime(stats.period) : "—"}</b>
             </td>
             <td>
-              듀티 <b data-testid="scope-duty">{stats?.duty !== undefined ? `${(stats.duty * 100).toFixed(1)}%` : "—"}</b>
+              듀티 <b data-testid="scope-duty" data-duty={stats?.duty}>{stats?.duty !== undefined ? `${(stats.duty * 100).toFixed(1)}%` : "—"}</b>
             </td>
             {cursors && (
               <>
@@ -1527,6 +1714,113 @@ function Measurements({
           </tr>
         </tbody>
       </table>
+    </div>
+  );
+}
+
+
+const OP_TEXT: Record<MathOp, string> = {
+  sub: "A − B",
+  add: "A + B",
+  mul: "A × B",
+  neg: "−A",
+  scale: "k·A + c",
+  avg: "이동 평균 (A)",
+};
+
+const fmtNum = (v: number) => String(Number(v.toPrecision(4)));
+
+/** "V(pot.W) − V(PA1)", "평균 1 ms (PA5)". */
+export function mathLabel(m: MathCfg): string {
+  switch (m.op) {
+    case "add":
+      return `${m.a} + ${m.b}`;
+    case "sub":
+      return `${m.a} − ${m.b}`;
+    case "mul":
+      return `${m.a} × ${m.b}`;
+    case "neg":
+      return `−${m.a}`;
+    case "scale":
+      return `${fmtNum(m.gain)}·${m.a} ${m.bias < 0 ? "−" : "+"} ${fmtNum(Math.abs(m.bias))} V`;
+    case "avg":
+      return `평균 ${fmtTime(m.windowUs * 1e3)} (${m.a})`;
+  }
+}
+
+/** A math channel's operation and sources. */
+function MathControls({ m, sources, onChange, onRemove }: { m: MathCfg; sources: string[]; onChange: (p: Partial<MathCfg>) => void; onRemove: () => void }) {
+  const name = `M${m.id}`;
+  const pick = (value: string, label: string, set: (v: string) => void) => (
+    <select value={value} aria-label={label} onChange={(e) => set(e.target.value)}>
+      {!sources.includes(value) && <option value={value}>{value || "—"} (없음)</option>}
+      {sources.map((n) => (
+        <option key={n} value={n}>
+          {n.startsWith("V(") || n.startsWith("M") ? n : `${n} (0/3.3 V)`}
+        </option>
+      ))}
+    </select>
+  );
+  return (
+    <div className="wave-controls scope-controls math-cfg" data-testid={`math-${m.id}`}>
+      <b>{name}</b>
+      <label>
+        연산{" "}
+        <select value={m.op} aria-label={`${name} 연산`} onChange={(e) => onChange({ op: e.target.value as MathOp })}>
+          {MATH_OPS.map((op) => (
+            <option key={op} value={op}>
+              {OP_TEXT[op]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>A {pick(m.a, `${name} 소스 A`, (a) => onChange({ a }))}</label>
+      {BINARY.includes(m.op) && <label>B {pick(m.b, `${name} 소스 B`, (b) => onChange({ b }))}</label>}
+      {m.op === "scale" && (
+        <>
+          <label>
+            k{" "}
+            <input
+              type="number"
+              step="any"
+              className="num"
+              value={m.gain}
+              aria-label={`${name} 배율 k`}
+              onChange={(e) => e.target.value !== "" && Number.isFinite(Number(e.target.value)) && onChange({ gain: Number(e.target.value) })}
+            />
+          </label>
+          <label>
+            c{" "}
+            <input
+              type="number"
+              step="any"
+              className="num"
+              value={m.bias}
+              aria-label={`${name} 더할 값 c (V)`}
+              onChange={(e) => e.target.value !== "" && Number.isFinite(Number(e.target.value)) && onChange({ bias: Number(e.target.value) })}
+            />{" "}
+            V
+          </label>
+        </>
+      )}
+      {m.op === "avg" && (
+        <label>
+          창{" "}
+          <input
+            type="number"
+            min={0.001}
+            step="any"
+            className="num wide"
+            value={m.windowUs}
+            aria-label={`${name} 평균 창 (µs)`}
+            onChange={(e) => Number(e.target.value) > 0 && onChange({ windowUs: Number(e.target.value) })}
+          />{" "}
+          µs
+        </label>
+      )}
+      <button aria-label={`${name} 제거`} onClick={onRemove}>
+        ×
+      </button>
     </div>
   );
 }

@@ -86,8 +86,8 @@ export function cacheVersion(entries) {
 
 /**
  * Problems that would make the app not work offline: no index.html,
- * manifest or WASM, an example (examples/index.json) or its project file
- * not in the list, or a bundled lesson (`lessonIds`) in none of the
+ * manifest or WASM, an example (examples/index.json), its project file or
+ * a file it sends to the board not in the list, or a bundled lesson (`lessonIds`) in none of the
  * precached scripts (lessons are compiled into the JS bundle).
  */
 export function missingForOffline(entries, distDir, lessonIds = []) {
@@ -98,7 +98,7 @@ export function missingForOffline(entries, distDir, lessonIds = []) {
   if (urls.has("examples/index.json")) {
     const index = JSON.parse(readFileSync(join(distDir, "examples", "index.json"), "utf8"));
     for (const ex of index) {
-      for (const f of [ex.file, ex.project]) if (f && !urls.has(`examples/${f}`)) missing.push(`examples/${f}`);
+      for (const f of [ex.file, ex.project, ...(ex.files ?? []).map((a) => a.file)]) if (f && !urls.has(`examples/${f}`)) missing.push(`examples/${f}`);
     }
   }
   if (lessonIds.length) {

@@ -15,6 +15,7 @@ import type {
   WatchpointSpec,
   TriggerConfig,
   WatchValue,
+  XmodemTransfer,
 } from "./protocol";
 import type { CircuitJson } from "../editor/model";
 import { boardSignals, busCatalog } from "../parts";
@@ -122,6 +123,14 @@ export interface Runner {
   armTrigger(): void;
   sendConsole(text: string): void;
   clearConsole(): void;
+  /** M37: send a file over the virtual COM port with XMODEM; the board's
+   * receiver starts the transfer ('C' or NAK). Replaces a running one. */
+  xmodemSend(name: string, bytes: ArrayBuffer): void;
+  xmodemCancel(): void;
+  /** The last XMODEM transfer: progress while it runs, then its result (null: none yet). */
+  xmodem: XmodemTransfer | null;
+  /** Forget the finished transfer's result. */
+  clearXmodem(): void;
   /** HC-05 modules by part id: link status and chat. */
   bluetooth: Record<string, BtChat>;
   /** The phone of HC-05 `part` sends `text` (a line end is added). */
@@ -184,6 +193,8 @@ export interface FrameEvent {
   triggerGen: number;
   /** SWV trace since the last frame (while the trace is on). */
   swv?: SwvData;
+  /** M37: the XMODEM transfer (while one runs, and in the frame it ends). */
+  xmodem?: XmodemTransfer;
 }
 export type FrameListener = (e: FrameEvent) => void;
 
@@ -223,6 +234,7 @@ export function useRunner(): Runner {
   const [speed, setSpeedState] = useState(0);
   const [frame, setFrame] = useState<SimFrame | null>(null);
   const [consoleText, setConsole] = useState("");
+  const [xmodem, setXmodem] = useState<XmodemTransfer | null>(null);
   const [bluetooth, setBluetooth] = useState<Record<string, BtChat>>({});
   const bluetoothRef = useRef(bluetooth);
   bluetoothRef.current = bluetooth;
@@ -298,6 +310,9 @@ export function useRunner(): Runner {
       }
       const text = msgs.length === 1 ? last.console : msgs.map((m) => m.console).join("");
       if (text) setConsole((c) => (c + text).slice(-CONSOLE_LIMIT));
+      let xm: XmodemTransfer | undefined;
+      for (const m of msgs) xm = m.xmodem ?? xm;
+      if (xm) setXmodem(xm);
       setBluetooth((b) => msgs.reduce((acc, m) => mergeBluetooth(acc, m.frame.bluetooth ?? []), b));
       const c = cost.current;
       c.handler += performance.now() - t0;
@@ -351,7 +366,11 @@ export function useRunner(): Runner {
           break;
         case "frame":
           perfWorkerShare(performance.now(), m.work);
-          deliver([{ frame: m.frame, console: m.console, running: m.running, epoch: m.epoch, triggerGen: m.triggerGen, swv: m.swv }], m.speed, false);
+          deliver(
+            [{ frame: m.frame, console: m.console, running: m.running, epoch: m.epoch, triggerGen: m.triggerGen, swv: m.swv, xmodem: m.xmodem }],
+            m.speed,
+            false,
+          );
           break;
         case "frames":
           perfWorkerShare(performance.now(), m.work);
@@ -412,6 +431,9 @@ export function useRunner(): Runner {
       armTrigger: () => send({ type: "armTrigger", gen: ++triggerGen.current }),
       sendConsole: (text: string) => send({ type: "console", text }),
       clearConsole: () => setConsole(""),
+      xmodemSend: (name: string, bytes: ArrayBuffer) => send({ type: "xmodemSend", name, bytes }, [bytes]),
+      xmodemCancel: () => send({ type: "xmodemCancel" }),
+      clearXmodem: () => setXmodem(null),
       bluetoothSend: (part: string, text: string) => {
         const chat = bluetoothRef.current[part];
         const say = (msg: BtMessage) =>
@@ -469,7 +491,7 @@ export function useRunner(): Runner {
   }, [actions]);
 
   return {
-    ready, firmware, firmwareBytes, firmwareExample, loadError, running, speed, frame, console: consoleText, memory, bluetooth,
+    ready, firmware, firmwareBytes, firmwareExample, loadError, running, speed, frame, console: consoleText, memory, bluetooth, xmodem,
     debugFiles, breakpoints, pauseEvent, debugState, disasm, watch, assigned, watchpoints, swvPlaced, loadGen, ...actions,
   };
 }

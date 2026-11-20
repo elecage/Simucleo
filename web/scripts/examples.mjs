@@ -4,8 +4,15 @@
 //
 //   --projects  print the firmware directories the examples come from (one
 //               list for the workflows to build) and stop
-//   --strict    fail when an example is not built (the deployed site would
-//               be without it; without the flag it is only skipped)
+//   --strict    fail when an example or one of its files to send is not
+//               built (the deployed site would be without it; without the
+//               flag it is only skipped, with a warning)
+//
+// An entry is [project, ELF, description] or [project, ELF, description,
+// { files }]: `files` are attachments the page offers to send to the
+// board (the console's XMODEM transfer, M37), each [project, file under
+// its build/, description]. They are copied to public/examples/ and listed
+// in the entry's `files` ({ file, description }).
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,12 +74,30 @@ const EXAMPLES = [
   ["lesson-thermostat", "lesson-thermostat.elf", "Lesson project: AHT20 thermostat with hysteresis switching a heater relay on D7, OLED display, B1 set point"],
   ["lesson-parking", "lesson-parking.elf", "Lesson project: HC-SR04 parking sensor — green/yellow/red LEDs on D4–D6 and a beeping buzzer on D8"],
   ["lesson-digital-clock", "lesson-digital-clock.elf", "Lesson project: DS3231 time on a TM1637 display, D4 sets the hour and B1 the minute"],
+  [
+    "hal-bootloader",
+    "hal-bootloader.elf",
+    "HAL: a bootloader on the virtual COM port — 'u' receives a new application over XMODEM, erases and programs flash, verifies it and jumps to it; two image slots, the independent watchdog rolls back an image that does not start properly; send the images from the console, watch the FLASH tab",
+    {
+      files: [
+        ["iap-app", "iap-app-v1.bin", "Application image v1"],
+        ["iap-app", "iap-app-v2.bin", "Application image v2"],
+        ["iap-app", "iap-app-bad.bin", "A bad application image: the watchdog resets it and the bootloader rolls back to the previous one"],
+      ],
+    },
+  ],
   ["bare-blinky", "bare-blinky.elf", "Bare metal: toggle PA5 with register writes"],
 ];
 
+/** Every firmware directory the examples and their files to send come from. */
+function projectDirs() {
+  return EXAMPLES.flatMap(([p, , , opt]) => [p, ...(opt?.files ?? []).map(([fp]) => fp)]);
+}
+
 const args = process.argv.slice(2);
 if (args.includes("--projects")) {
-  console.log([...new Set(EXAMPLES.map(([p]) => p))].join(" "));
+  // (With the projects the files to send come from.)
+  console.log([...new Set(projectDirs())].join(" "));
   process.exit(0);
 }
 const strict = args.includes("--strict");
@@ -96,7 +121,7 @@ function editable(project, file) {
 mkdirSync(out, { recursive: true });
 const index = [];
 const missing = [];
-for (const [project, file, description] of EXAMPLES) {
+for (const [project, file, description, opt] of EXAMPLES) {
   const src = join(root, project, "build", file);
   if (!existsSync(src)) {
     console.warn(`skip ${file}: not built (${src})`);
@@ -114,6 +139,19 @@ for (const [project, file, description] of EXAMPLES) {
     copyFileSync(projectSrc, join(out, projectFile));
     entry.project = projectFile;
   }
+  // Files to send to the board (XMODEM); a missing one is left out.
+  const files = [];
+  for (const [fproject, f, fdescription] of opt?.files ?? []) {
+    const fsrc = join(root, fproject, "build", f);
+    if (!existsSync(fsrc)) {
+      console.warn(`warning: ${file}: file to send ${f} not built (${fsrc})`);
+      missing.push(f);
+      continue;
+    }
+    copyFileSync(fsrc, join(out, f));
+    files.push({ file: f, description: fdescription });
+  }
+  if (files.length) entry.files = files;
   index.push(entry);
 }
 writeFileSync(join(out, "index.json"), JSON.stringify(index, null, 2) + "\n");
@@ -141,7 +179,7 @@ function copySources(rel) {
 // FatFs, CMSIS core): a stop inside HAL_Delay or a FreeRTOS call shows
 // that code, as CubeIDE does, instead of "no source".
 const LIBRARIES = ["vendor/stm32f4xx_hal_driver/Src", "vendor/freertos", "vendor/fatfs", "vendor/CMSIS/Include"];
-for (const project of new Set([...EXAMPLES.map(([p]) => p), "hal-common", "freertos-common", ...LIBRARIES])) copySources(project);
+for (const project of new Set([...projectDirs(), "hal-common", "freertos-common", ...LIBRARIES])) copySources(project);
 // (Their licences go with them, next to the sources.)
 for (const l of ["vendor/stm32f4xx_hal_driver/LICENSE.md", "vendor/freertos/LICENSE.md", "vendor/fatfs/LICENSE.md", "vendor/CMSIS/LICENSE.txt"]) {
   if (!existsSync(join(root, l))) continue;
@@ -152,6 +190,6 @@ writeFileSync(join(out, "sources.json"), JSON.stringify(sources.sort()) + "\n");
 console.log(`${sources.length} source files → public/examples/src`);
 console.log(`${index.length} examples → public/examples (${index.filter((e) => e.code).length} editable in the code tab)`);
 if (strict && missing.length) {
-  console.error(`--strict: ${missing.length} example(s) not built: ${missing.join(" ")}`);
+  console.error(`--strict: ${missing.length} example(s) or file(s) not built: ${missing.join(" ")}`);
   process.exit(1);
 }

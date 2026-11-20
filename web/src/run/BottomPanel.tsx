@@ -10,15 +10,17 @@ import type { CodePanelProps } from "../code/CodePanel";
 import { t } from "../i18n";
 import { DEFAULT_SETTINGS, SwvView, useSwvState } from "./SwvView";
 import type { SwvSettings } from "./swv";
+import { FlashView } from "./FlashView";
+import { XmodemSend, type SendFile, type UploadedFile } from "./XmodemSend";
 
 // M33: the code editor and CodeMirror load only when the tab is first opened.
 const CodePanel = lazy(() => import("../code/CodePanel"));
 
 /** A fixed tab, or `bt:<part id>` for an HC-05's phone. */
-type Tab = "console" | "code" | "source" | "waveform" | "rtos" | "swv" | "registers" | "memory" | `bt:${string}`;
+type Tab = "console" | "code" | "source" | "waveform" | "rtos" | "swv" | "flash" | "registers" | "memory" | `bt:${string}`;
 
 /** What changes with every frame: a hidden tab does not redraw for these (M31). */
-const LIVE: ReadonlySet<string> = new Set(["frame", "speed", "console", "bluetooth", "memory"]);
+const LIVE: ReadonlySet<string> = new Set(["frame", "speed", "console", "bluetooth", "memory", "xmodem"]);
 
 /**
  * For `memo`: a tab kept mounted while hidden (the source view, the
@@ -58,6 +60,7 @@ export function BottomPanel({
   code,
   codeSources,
   codeTabSeq = 0,
+  sendFiles = [],
 }: {
   runner: Runner;
   parts?: { id: string; kind: string }[];
@@ -75,8 +78,12 @@ export function BottomPanel({
   codeSources?: Attached | null;
   /** Changes when the code tab should come to the front. */
   codeTabSeq?: number;
+  /** M37: files the loaded example offers to send over XMODEM. */
+  sendFiles?: SendFile[];
 }) {
   const [tab, setTab] = useState<Tab>("console");
+  // .bin files picked for XMODEM (kept while the console tab is closed).
+  const [uploaded, setUploaded] = useState<UploadedFile[]>([]);
   // SWV (Serial Wire Viewer): on, its settings, and the trace so far (kept
   // while other tabs are open).
   const [swvOn, setSwvOn] = useState(false);
@@ -124,6 +131,7 @@ export function BottomPanel({
             ["waveform", t("파형 (프로브)")],
             ["rtos", "RTOS"],
             ["swv", "SWV"],
+            ["flash", "FLASH"],
             ["registers", t("레지스터")],
             ["memory", t("메모리")],
           ] as [Tab, string][]
@@ -135,7 +143,16 @@ export function BottomPanel({
         {status}
       </nav>
       <div className="tab-body">
-        {tab === "console" && <Console runner={runner} />}
+        {tab === "console" && (
+          <Console runner={runner}>
+            <XmodemSend
+              runner={runner}
+              files={sendFiles}
+              uploaded={uploaded}
+              onUpload={(f) => setUploaded((u) => [...u.filter((x) => x.name !== f.name), f])}
+            />
+          </Console>
+        )}
         {btPart && runner.bluetooth[btPart] && <Phone runner={runner} part={btPart} />}
         {/* Kept mounted: breakpoints and added sources survive tab switches. */}
         {code && (tab === "code" || codeOpened) && (
@@ -163,6 +180,7 @@ export function BottomPanel({
         {tab === "rtos" && <RtosView runner={runner} />}
         {tab === "registers" && <Registers runner={runner} />}
         {tab === "memory" && <Memory runner={runner} />}
+        {tab === "flash" && <FlashView runner={runner} />}
         {tab === "swv" && (
           <SwvView
             runner={runner}
@@ -179,7 +197,7 @@ export function BottomPanel({
   );
 }
 
-function Console({ runner }: { runner: Runner }) {
+function Console({ runner, children }: { runner: Runner; children?: ReactNode }) {
   const out = useRef<HTMLPreElement>(null);
   const [line, setLine] = useState("");
   useEffect(() => {
@@ -207,6 +225,7 @@ function Console({ runner }: { runner: Runner }) {
           {t("지우기")}
         </button>
       </form>
+      {children}
     </div>
   );
 }

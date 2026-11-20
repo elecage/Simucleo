@@ -35,6 +35,7 @@ use crate::devices::{
 };
 
 use crate::tft::{Tft, TftConfig};
+use crate::thermocouple::{ProbeFault, TcChip, Thermocouple, TC_VMIN};
 use crate::tier8::{Bmp280, Hc595, Pir, Tm1637, PIR_VMIN};
 use crate::tier9::{
     l298n_bridge, BipolarStepper, CoilDrive, Esc, EscState, HallBldc, PhaseBridge, PhaseDrive,
@@ -511,6 +512,10 @@ pub struct CircuitSim {
     /// Their state (display RAM, clock, …), by part id.
     devices: HashMap<String, Device>,
     spi_parts: Vec<SpiPart>,
+    /// Thermocouple modules (M35), read over SPI or bit-banged.
+    tc_parts: Vec<TcPart>,
+    /// SCK rate (Hz) and mode (CPOL, CPHA) of hardware SPI, by SCK pin.
+    spi_clocks: HashMap<(u8, u8), (f64, bool, bool)>,
     /// Single-wire parts (DHT, NeoPixel) and their data line.
     wire_parts: Vec<WirePart>,
     /// LED matrix drivers, whose CLK and CS edges are watched.
@@ -836,6 +841,17 @@ struct TftPart {
     led: usize,
 }
 
+/// A thermocouple module (M35): SO is a device output.
+#[derive(Debug, Clone)]
+struct TcPart {
+    id: String,
+    vcc: usize,
+    gnd: usize,
+    sck: usize,
+    cs: usize,
+    so: usize,
+}
+
 /// A part on an I2C bus.
 #[derive(Debug, Clone)]
 struct BusPart {
@@ -915,6 +931,8 @@ impl CircuitSim {
             voltage_log: Vec::new(),
             bus_parts: Vec::new(),
             spi_parts: Vec::new(),
+            tc_parts: Vec::new(),
+            spi_clocks: HashMap::new(),
             wire_parts: Vec::new(),
             matrix_parts: Vec::new(),
             tft_parts: Vec::new(),
@@ -1004,6 +1022,7 @@ impl CircuitSim {
                 Device::Bldc(x) => x.rebase(0.0),
                 Device::Rfid(r) => r.power_cycle(),
                 Device::Tft(x) => **x = Tft::new(x.cfg),
+                Device::Tc(x) => **x = x.power_cycled(),
             }
         }
         self.i2c_active.clear();
@@ -1251,6 +1270,7 @@ impl CircuitSim {
         let mut bad_values: Vec<String> = Vec::new();
         let mut bus_parts = Vec::new();
         let mut spi_parts = Vec::new();
+        let mut tc_parts = Vec::new();
         let mut wire_parts = Vec::new();
         let mut matrix_parts = Vec::new();
         let mut tft_parts = Vec::new();
@@ -2486,6 +2506,62 @@ impl CircuitSim {
                             .insert(p.id.clone(), Device::Tft(Box::new(Tft::new(cfg))));
                     }
                 }
+                "max6675" | "max31855" => {
+                    // Thermocouple module: MAX6675 VCC GND SCK CS SO,
+                    // MAX31855 (Adafruit style) VIN 3Vo GND DO CS CLK.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let chip = if p.kind == "max6675" {
+                        TcChip::Max6675
+                    } else {
+                        TcChip::Max31855
+                    };
+                    let [v, k, o] = match chip {
+                        TcChip::Max6675 => ["VCC", "SCK", "SO"],
+                        TcChip::Max31855 => ["VIN", "CLK", "DO"],
+                    };
+                    let (vcc, gnd) = (node(pin(v), &mut map), node(pin("GND"), &mut map));
+                    let (sck, cs, so) = (
+                        node(pin(k), &mut map),
+                        node(pin("CS"), &mut map),
+                        node(pin(o), &mut map),
+                    );
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: TC_VMIN,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    dev_outputs.push((p.id.clone(), so, 0));
+                    if chip == TcChip::Max31855 {
+                        dev_outputs.push((p.id.clone(), node(pin("3Vo"), &mut map), 1));
+                    }
+                    tc_parts.push(TcPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        sck,
+                        cs,
+                        so,
+                    });
+                    if !matches!(self.devices.get(&p.id), Some(Device::Tc(t)) if t.chip == chip) {
+                        let fresh = Box::new(Thermocouple::new(chip));
+                        self.devices.insert(p.id.clone(), Device::Tc(fresh));
+                    }
+                    if let Some(Device::Tc(t)) = self.devices.get_mut(&p.id) {
+                        t.hot = prop_f64(p, "temp", 25.0);
+                        t.cold = prop_f64(p, "ambient", 25.0);
+                        t.reversed = p.props.get("reversed").is_some_and(truthy);
+                        let unplugged = p.props.get("unplugged").is_some_and(truthy);
+                        t.fault = match prop_str(p, "short", "none").as_str() {
+                            _ if unplugged => ProbeFault::Open,
+                            "gnd" => ProbeFault::ShortGnd,
+                            "vcc" => ProbeFault::ShortVcc,
+                            _ => ProbeFault::None,
+                        };
+                    }
+                }
                 "oled-ssd1306-spi" | "sd-card" => {
                     let vis = add_visual(&p.id, VisualKind::Sensor, 1);
                     let pin = |n: &str| PinRef::new(&p.id, n);
@@ -2688,6 +2764,7 @@ impl CircuitSim {
             .chain(tm_parts.iter().map(|b: &TmPart| b.id.as_str()))
             .chain(pir_parts.iter().map(|b: &PirPart| b.id.as_str()))
             .chain(bldc_parts.iter().map(|b: &BldcPart| b.id.as_str()))
+            .chain(tc_parts.iter().map(|b: &TcPart| b.id.as_str()))
             .chain(encoders)
             .collect();
         self.devices.retain(|id, _| ids.contains(id.as_str()));
@@ -2697,6 +2774,7 @@ impl CircuitSim {
         self.i2c_active.retain(|_, id| on_bus(id));
         self.bus_parts = bus_parts;
         self.spi_parts = spi_parts;
+        self.tc_parts = tc_parts;
         self.line_levels
             .retain(|id, _| wire_parts.iter().any(|w| &w.id == id));
         self.wire_parts = wire_parts;
@@ -3375,6 +3453,7 @@ impl CircuitSim {
         self.observe_lines(now_s, &sol);
         self.observe_matrices(&sol);
         self.observe_tfts(now_s, &sol);
+        self.observe_thermocouples(now_s, &sol);
         self.observe_relays(now_s, &sol);
         self.observe_shift_registers(&sol);
         self.observe_tm1637(now_s, &sol);
@@ -4446,6 +4525,15 @@ impl CircuitSim {
                             v.on = Some(if r.field { 1.0 } else { 0.0 });
                             v.text = Some(r.card_state().into());
                         }
+                        Some(Device::Tc(x)) => {
+                            // The word the next read gives, in hex.
+                            let t =
+                                self.clock.1 + (time as f64 - self.clock.0 as f64) / self.clock.2;
+                            if x.powered {
+                                let digits = x.chip.bits() as usize / 4;
+                                v.text = Some(format!("{:0digits$X}", x.word(t)));
+                            }
+                        }
                         Some(Device::Sd(sd)) => {
                             if !powered_now {
                                 sd.power_cycle();
@@ -4591,6 +4679,75 @@ impl CircuitSim {
                 self.warnings.insert(format!("{}: {w}", part.id));
             }
         }
+    }
+
+    /// Thermocouple modules power up and down, and watch CS (and SCK, for
+    /// bit-banged reads).
+    fn observe_thermocouples(&mut self, now: f64, sol: &Solution) {
+        for part in &self.tc_parts {
+            let Some(Device::Tc(t)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            t.power(now, sol.v[part.vcc] - sol.v[part.gnd] >= TC_VMIN);
+            let high = |n: usize| sol.v[n] > VDD / 2.0;
+            t.pins(now, high(part.sck), high(part.cs));
+            if let Some(w) = t.warning.take() {
+                self.warnings.insert(format!("{}: {w}", part.id));
+            }
+        }
+    }
+
+    /// Hardware SPI on SCK `sck` into the thermocouple modules selected by
+    /// a low CS (they have no data input): what those whose SO is on
+    /// `miso` return, and who they are.
+    fn spi_thermocouples(&mut self, sck: (u8, u8), miso: Option<(u8, u8)>) -> (u8, Vec<String>) {
+        let (mut reply, mut drivers) = (0xFF, Vec::new());
+        let Some(kn) = self.mcu_node(sck) else {
+            return (reply, drivers);
+        };
+        let miso_n = miso.and_then(|p| self.mcu_node(p));
+        let (hz, cpol, cpha) = self
+            .spi_clocks
+            .get(&sck)
+            .copied()
+            .unwrap_or((1e6, false, false));
+        for i in 0..self.tc_parts.len() {
+            let part = self.tc_parts[i].clone();
+            let v = |n: usize| self.node_voltage(n);
+            if part.sck != kn || v(part.vcc) - v(part.gnd) < TC_VMIN || v(part.cs) >= 0.3 * VDD {
+                continue;
+            }
+            let Some(Device::Tc(t)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            let r = t.exchange(hz, cpol, cpha);
+            if let Some(w) = t.warning.take() {
+                self.warnings.insert(format!("{}: {w}", part.id));
+            }
+            if miso_n == Some(part.so) {
+                reply &= r;
+                drivers.push(part.id);
+            }
+        }
+        (reply, drivers)
+    }
+
+    /// The SCK rate and mode of the hardware SPI on `sck` (before its bytes).
+    pub fn spi_clock(&mut self, sck: (u8, u8), hz: f64, cpol: bool, cpha: bool) {
+        self.spi_clocks.insert(sck, (hz, cpol, cpha));
+    }
+
+    /// One byte of a receive-only SPI master (RXONLY: SCK and MISO, MOSI
+    /// not driven): only the thermocouple modules take part.
+    pub fn spi_rx(&mut self, _time: Cycles, sck: (u8, u8), miso: Option<(u8, u8)>) -> u8 {
+        let (reply, drivers) = self.spi_thermocouples(sck, miso);
+        if drivers.len() > 1 {
+            self.warnings.insert(format!(
+                "SPI: {} are selected at once and both drive MISO",
+                drivers.join(" and ")
+            ));
+        }
+        reply
     }
 
     /// LED matrix drivers watch CLK and CS: bit-banged frames shift in on
@@ -4793,14 +4950,14 @@ impl CircuitSim {
         miso: Option<(u8, u8)>,
         out: u8,
     ) -> u8 {
+        // Thermocouple modules need SCK only (they have no data input).
+        let (mut reply, mut drivers) = self.spi_thermocouples(sck, miso);
         let (Some(kn), Some(mn)) = (self.mcu_node(sck), self.mcu_node(mosi)) else {
-            return 0xFF;
+            return reply;
         };
         let miso_n = miso.and_then(|p| self.mcu_node(p));
         let now_s = self.seconds_at(time);
         let name = |(port, pin): (u8, u8)| format!("P{}{}", (b'A' + port) as char, pin);
-        let mut reply = 0xFF;
-        let mut drivers = Vec::new();
         // Bits that left a matrix on DOUT during this byte, by part.
         let mut overflow = Vec::new();
         for i in 0..self.spi_parts.len() {
@@ -8248,5 +8405,115 @@ mod tests {
         assert!(s.warnings.is_empty(), "{:?}", s.warnings);
         // No sensorless part: the hall motor's halls are not needed.
         assert!(motor(&mut s, 2.5, "mot").text.is_none());
+    }
+
+    #[test]
+    fn thermocouples_answer_spi_receive_only_and_bit_banged_reads() {
+        use crate::thermocouple::{decode_max31855, decode_max6675};
+        let mut s = sim(
+            vec![
+                part("k", "max6675", &[("temp", "100")]),
+                part("j", "max31855", &[("temp", "300"), ("ambient", "22")]),
+                part("x", "max31855", &[("unplugged", "1")]),
+            ],
+            vec![
+                wire(("k", "VCC"), ("mcu", "3V3")),
+                wire(("k", "GND"), ("mcu", "GND_1")),
+                wire(("k", "SCK"), ("mcu", "PA5")),
+                wire(("k", "SO"), ("mcu", "PA6")),
+                wire(("k", "CS"), ("mcu", "PB6")),
+                wire(("j", "VIN"), ("mcu", "3V3")),
+                wire(("j", "GND"), ("mcu", "GND_1")),
+                wire(("j", "CLK"), ("mcu", "PA5")),
+                wire(("j", "DO"), ("mcu", "PA6")),
+                wire(("j", "CS"), ("mcu", "PC7")),
+                wire(("x", "VIN"), ("mcu", "3V3")),
+                wire(("x", "GND"), ("mcu", "GND_1")),
+                wire(("x", "CLK"), ("mcu", "PA5")),
+                wire(("x", "DO"), ("mcu", "PA6")),
+                wire(("x", "CS"), ("mcu", "PB10")),
+            ],
+        );
+        let (sck, miso) = ((0, 5), (0, 6));
+        let pins = s.mcu_pins();
+        let so = pins.iter().position(|&p| p == miso).unwrap();
+        // Levels of SCK (None: the SPI peripheral's) and the three CS lines.
+        let set = |s: &mut CircuitSim, t: Cycles, clk: Option<bool>, sel: Option<(u8, u8)>| {
+            let d = drives(s, |p| {
+                let high = match p {
+                    (0, 5) => match clk {
+                        Some(c) => c,
+                        None => return Drive::Float,
+                    },
+                    (1, 6) | (2, 7) | (1, 10) => sel != Some(p),
+                    _ => return Drive::Float,
+                };
+                if high {
+                    Drive::High
+                } else {
+                    Drive::Low
+                }
+            });
+            s.update(t, &d)
+        };
+        let ms = |m: f64| (m * 16e3) as Cycles;
+        set(&mut s, 0, None, None);
+        // Hardware SPI, 2-line (MOSI is not wired) at 2.625 MHz, mode 0.
+        s.spi_clock(sck, 2.625e6, false, false);
+        let read = |s: &mut CircuitSim, t: Cycles, cs: (u8, u8), n: usize, rx: bool| {
+            set(s, t, None, Some(cs));
+            let w = (0..n).fold(0u32, |a, _| {
+                let b = if rx {
+                    s.spi_rx(t, sck, Some(miso))
+                } else {
+                    s.spi(t, sck, (0, 7), Some(miso), 0)
+                };
+                a << 8 | b as u32
+            });
+            set(s, t + 100, None, None);
+            w
+        };
+        let k = read(&mut s, ms(300.0), (1, 6), 2, false);
+        let (c, open) = decode_max6675(k as u16);
+        assert!(!open && (c - 100.5).abs() < 0.3, "{k:04X}");
+        // Receive-only: MAX31855, 32 bits.
+        let (hot, cold, f) = decode_max31855(read(&mut s, ms(310.0), (2, 7), 4, true));
+        assert_eq!((cold, f), (22.0, 0));
+        // (E(300) − E(22)) / 41.276 µV/°C + 22: the straight line reads low.
+        assert_eq!(hot, 296.5);
+        let w = read(&mut s, ms(320.0), (1, 10), 4, true);
+        assert_eq!((w & 7, w >> 16 & 1), (1, 1), "open: OC and the fault bit");
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        // The part shows the word the next read gives.
+        let v = s.end_frame(ms(330.0), 0.01);
+        assert_eq!(
+            visual(&v, "k").text.as_deref(),
+            Some(&*format!("{:04X}", k & !1))
+        );
+        // Bit-banged: SCK as a GPIO, SO read on the rising edges.
+        let mut t = ms(600.0);
+        let mut level = set(&mut s, t, Some(false), Some((1, 6))).unwrap();
+        let mut bits = 0u32;
+        for _ in 0..16 {
+            if let Some(l) = set(&mut s, t + 10, Some(true), Some((1, 6))) {
+                level = l;
+            }
+            bits = bits << 1 | level[so].unwrap_or(true) as u32;
+            if let Some(l) = set(&mut s, t + 20, Some(false), Some((1, 6))) {
+                level = l;
+            }
+            t += 20;
+        }
+        assert_eq!(bits & !1, k & !1, "{bits:04X}");
+        // Too soon after the last read: the conversion was stopped.
+        set(&mut s, t + 10, None, None);
+        read(&mut s, t + ms(50.0), (1, 6), 2, false);
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.starts_with("k: read 50 ms after CS went high")),
+            "{:?}",
+            s.warnings
+        );
     }
 }

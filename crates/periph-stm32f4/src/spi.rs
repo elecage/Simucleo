@@ -6,7 +6,9 @@
 //! After 8 or 16 SCK periods the frame received from the selected device
 //! lands in DR (RXNE), or sets OVR if the previous one was not read. MODF
 //! is raised for the classic mistake of a master with software NSS
-//! management and SSI low. Not modelled: slave mode, receive-only and
+//! management and SSI low. A receive-only master (RXONLY) clocks frames
+//! one after the other from the moment SPE is set until it is cleared,
+//! taking in what MISO brings (M35). Not modelled: slave mode,
 //! bidirectional modes, CRC, TI frame format, I2S, DMA requests.
 
 use simucleo_core::sched::Scheduler;
@@ -15,6 +17,8 @@ use simucleo_core::Cycles;
 // CR1
 const MSTR: u32 = 1 << 2;
 const SPE: u32 = 1 << 6;
+const RXONLY: u32 = 1 << 10;
+const BIDIMODE: u32 = 1 << 15;
 const LSBFIRST: u32 = 1 << 7;
 const SSI: u32 = 1 << 8;
 const SSM: u32 = 1 << 9;
@@ -95,6 +99,11 @@ impl Spi {
         self.cr1 & (SPE | MSTR) == SPE | MSTR
     }
 
+    /// Master in receive-only mode (2-line RXONLY, BIDIMODE off).
+    pub fn rx_only(&self) -> bool {
+        self.cr1 & (RXONLY | MSTR | BIDIMODE) == RXONLY | MSTR
+    }
+
     /// One frame in core cycles: 8 or 16 SCK periods of PCLK / 2^(BR+1).
     pub fn frame_cycles(&self, hclk: u32, pclk: u32) -> Cycles {
         let div = 2u64 << ((self.cr1 >> 3) & 7);
@@ -114,7 +123,13 @@ impl Spi {
         if self.shift.is_some() || !self.running() {
             return;
         }
-        if let Some(f) = self.tx_buf.take() {
+        // Receive only: the clock runs by itself, frame after frame.
+        let next = if self.rx_only() {
+            Some(0xFFFF)
+        } else {
+            self.tx_buf.take()
+        };
+        if let Some(f) = next {
             self.shift = Some(f);
             self.sr |= TXE | BSY;
             self.gen = self.gen.wrapping_add(1);
@@ -349,5 +364,40 @@ mod tests {
         s.write(0x0C, 0x01, 0xFF, 0, 16, &mut sched, 0);
         run(&mut s, &mut sched, &mut bus);
         assert_eq!(bus.0[2], 0x80, "bit 0 goes first");
+    }
+
+    #[test]
+    fn receive_only_master_clocks_until_spe_is_cleared() {
+        let mut s = Spi::new("SPI1", 35);
+        let mut sched = Scheduler::new();
+        let mut bus = Echo(Vec::new());
+        let cr1 = MSTR | SSM | SSI | DFF | RXONLY;
+        s.write(0x00, cr1, 0xFFFF, 0, 16, &mut sched, 0);
+        assert_eq!(s.sr & BSY, 0, "nothing before SPE");
+        // SPE starts the clock with no DR write.
+        s.write(0x00, cr1 | SPE, 0xFFFF, 0, 16, &mut sched, 0);
+        assert_ne!(s.sr & BSY, 0);
+        let mut frames = 0;
+        while frames < 2 {
+            let at = sched.next_deadline().unwrap();
+            sched.advance_to(at);
+            while let Some((at, ev)) = sched.pop_due() {
+                if let crate::Event::Spi { gen, .. } = ev {
+                    if gen == s.gen {
+                        s.event(at, 16, &mut sched, 0, &mut bus);
+                        frames += 1;
+                        if frames == 1 {
+                            assert_eq!(s.read(0x0C), 0x0000, "!0xFFFF from Echo");
+                        }
+                    }
+                }
+            }
+        }
+        // The second frame waits in DR, a third is on its way.
+        assert_eq!(s.sr & (RXNE | BSY), RXNE | BSY);
+        s.write(0x00, cr1, 0xFFFF, 0, 16, &mut sched, 0);
+        assert_eq!(s.sr & BSY, 0, "clearing SPE stops it");
+        run(&mut s, &mut sched, &mut bus);
+        assert_eq!(bus.0.len(), 4, "two 16-bit frames");
     }
 }

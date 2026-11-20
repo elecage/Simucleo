@@ -155,6 +155,16 @@ const BOX_LAYOUT: Record<
     right: ["SCK", "SDI", "SDO", "CS", "DC", "RESET"],
     subtitle: () => t("컬러 TFT 240×320 (ILI9341) · SPI"),
   },
+  max6675: {
+    left: ["VCC", "GND"],
+    right: ["SCK", "CS", "SO"],
+    subtitle: () => t("K형 열전대 앰프 (MAX6675) · SPI 읽기 전용"),
+  },
+  max31855: {
+    left: ["VIN", "3Vo", "GND"],
+    right: ["CLK", "CS", "DO"],
+    subtitle: () => t("K형 열전대 앰프 (MAX31855K) · SPI 읽기 전용"),
+  },
   bmp280: {
     left: ["VCC", "GND"],
     right: ["SCL", "SDA"],

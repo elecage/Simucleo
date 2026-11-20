@@ -1242,6 +1242,46 @@
    "nucleo:CN7_24 nucleo:VIN"
   ]
  },
+ "examples/hal-thermocouple.simucleo.json": {
+  "parts": [
+   "j max31855 {\"temp\":25,\"ambient\":25,\"unplugged\":0,\"reversed\":\"0\",\"short\":\"none\"}",
+   "k max6675 {\"temp\":25,\"ambient\":25,\"unplugged\":0,\"reversed\":\"0\",\"short\":\"none\"}",
+   "led led-5mm {\"color\":\"red\"}",
+   "nucleo nucleo-f401re {}",
+   "r resistor {\"ohms\":\"220\"}"
+  ],
+  "nets": [
+   "j:CLK k:SCK nucleo:CN10_11 nucleo:D13",
+   "j:CS nucleo:CN10_19 nucleo:D9",
+   "j:DO k:SO nucleo:CN10_13 nucleo:D12",
+   "j:GND k:GND led:K nucleo:CN10_20 nucleo:CN10_32 nucleo:CN10_9 nucleo:CN7_19 nucleo:CN7_20 nucleo:CN7_22 nucleo:CN7_8 nucleo:GND_D nucleo:GND_P1 nucleo:GND_P2",
+   "j:VIN k:VCC nucleo:3V3 nucleo:AREF nucleo:CN10_7 nucleo:CN7_16 nucleo:CN7_5",
+   "k:CS nucleo:CN10_17 nucleo:D10",
+   "led:A r:1",
+   "nucleo:5V nucleo:CN10_8 nucleo:CN7_18",
+   "nucleo:A0 nucleo:CN7_28",
+   "nucleo:A1 nucleo:CN7_30",
+   "nucleo:A2 nucleo:CN7_32",
+   "nucleo:A3 nucleo:CN7_34",
+   "nucleo:A4 nucleo:CN7_36",
+   "nucleo:A5 nucleo:CN7_38",
+   "nucleo:CN10_15 nucleo:D11",
+   "nucleo:CN10_21 nucleo:D8",
+   "nucleo:CN10_23 nucleo:D7 r:2",
+   "nucleo:CN10_25 nucleo:D6",
+   "nucleo:CN10_27 nucleo:D5",
+   "nucleo:CN10_29 nucleo:D4",
+   "nucleo:CN10_3 nucleo:D15",
+   "nucleo:CN10_31 nucleo:D3",
+   "nucleo:CN10_33 nucleo:D2",
+   "nucleo:CN10_35 nucleo:D1",
+   "nucleo:CN10_37 nucleo:D0",
+   "nucleo:CN10_5 nucleo:D14",
+   "nucleo:CN7_12 nucleo:IOREF",
+   "nucleo:CN7_14 nucleo:RESET",
+   "nucleo:CN7_24 nucleo:VIN"
+  ]
+ },
  "examples/hal-tm1637-clock.simucleo.json": {
   "parts": [
    "disp tm1637 {}",

@@ -3768,3 +3768,125 @@ fn st7735_tft_shows_colour_bars_text_and_a_moving_box() {
     assert!(v.inverted);
     assert_eq!(tft_px(&board, 8, 30), 0x07FF);
 }
+
+// ------------------------------------------- thermocouple amplifiers (M35)
+
+/// The last line of the console that starts with "MAX6675".
+fn last_reading(text: &str) -> String {
+    text.lines()
+        .rev()
+        .find(|l| l.starts_with("MAX6675"))
+        .unwrap_or_else(|| panic!("{text}"))
+        .to_string()
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-thermocouple"]
+fn thermocouples_on_spi_receive_only_and_bit_banged() {
+    let n = "nucleo";
+    let signals = m19_signals();
+    let mut circuit = m19_circuit(
+        serde_json::json!([
+            {"id": "k", "kind": "max6675", "props": {"temp": 25}},
+            {"id": "j", "kind": "max31855", "props": {"temp": 25}},
+            {"id": "r", "kind": "resistor", "props": {"ohms": "220"}},
+            {"id": "led", "kind": "led-5mm", "props": {"color": "red"}}
+        ]),
+        &[
+            ((n, "3V3"), ("k", "VCC")),
+            (("k", "GND"), (n, "GND")),
+            ((n, "PA5"), ("k", "SCK")),
+            ((n, "PA6"), ("k", "SO")),
+            ((n, "PB6"), ("k", "CS")),
+            ((n, "3V3"), ("j", "VIN")),
+            (("j", "GND"), (n, "GND")),
+            ((n, "PA5"), ("j", "CLK")),
+            ((n, "PA6"), ("j", "DO")),
+            ((n, "PC7"), ("j", "CS")),
+            ((n, "PA8"), ("r", "1")),
+            (("r", "2"), ("led", "A")),
+            (("led", "K"), (n, "GND")),
+        ],
+    );
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-thermocouple", "hal-thermocouple"))
+        .unwrap();
+    board.set_circuit(&circuit, &breadboard_catalog(), &signals);
+    board.run_for_ns(1000e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("SPI1 RX-only, 2.625 MHz"), "{text}");
+    assert_eq!(
+        last_reading(&text),
+        "MAX6675 25.00 C | MAX31855 25.00 C (cold 25.00 C) | heater on"
+    );
+    assert!(board.pin('A', 8), "heater LED on below 100 °C");
+    // A lighter under both probes: 200 °C. The chips' straight lines
+    // (41 and 41.276 µV/°C) read a little low.
+    let mut set = |board: &mut Nucleo, id: &str, props: serde_json::Value| {
+        set_part_props(board, &mut circuit, id, props, &signals);
+    };
+    set(&mut board, "k", serde_json::json!({"temp": 200}));
+    set(&mut board, "j", serde_json::json!({"temp": 200}));
+    board.run_for_ns(600e6);
+    assert_eq!(
+        last_reading(&console_text(&mut board)),
+        "MAX6675 199.00 C | MAX31855 198.00 C (cold 25.00 C) | heater off"
+    );
+    assert!(!board.pin('A', 8));
+    // The room warms up: the cold junction follows in 0.0625 °C steps.
+    set(
+        &mut board,
+        "j",
+        serde_json::json!({"ambient": 30.1, "temp": 30.1}),
+    );
+    board.run_for_ns(600e6);
+    assert_eq!(
+        last_reading(&console_text(&mut board)),
+        "MAX6675 199.00 C | MAX31855 30.00 C (cold 30.12 C) | heater on"
+    );
+    // Unplug the MAX31855's probe, short the MAX6675's to VCC.
+    set(&mut board, "j", serde_json::json!({"unplugged": 1}));
+    set(&mut board, "k", serde_json::json!({"short": "vcc"}));
+    board.run_for_ns(600e6);
+    assert_eq!(
+        last_reading(&console_text(&mut board)),
+        "MAX6675 OPEN | MAX31855 FAULT OC (open) (cold 30.12 C) | heater off"
+    );
+    assert!(!board.pin('A', 8), "no heating with a faulty probe");
+    set(
+        &mut board,
+        "j",
+        serde_json::json!({"unplugged": 0, "short": "gnd"}),
+    );
+    set(&mut board, "k", serde_json::json!({"short": "gnd"}));
+    board.run_for_ns(600e6);
+    // The MAX6675's T− is grounded anyway: it reads on.
+    assert_eq!(
+        last_reading(&console_text(&mut board)),
+        "MAX6675 199.00 C | MAX31855 FAULT SCG (short to GND) (cold 30.12 C) | heater off"
+    );
+    // B1: the same reads bit-banged on the GPIO pins, with the probe the
+    // wrong way round: it reads downwards.
+    set(
+        &mut board,
+        "j",
+        serde_json::json!({"short": "none", "reversed": 1, "temp": 130.1}),
+    );
+    board.set_user_button(true);
+    board.run_for_ns(300e6);
+    board.set_user_button(false);
+    board.run_for_ns(600e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("-- bit-banged --"), "{text}");
+    assert_eq!(
+        last_reading(&text),
+        "MAX6675 199.00 C | MAX31855 -69.75 C (cold 30.12 C) | heater on"
+    );
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}

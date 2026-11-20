@@ -34,6 +34,7 @@ export const DATA: Record<string, string> = {
   "SD 카드 데이터 로거 (SPI + I2C)": "SD card data logger (SPI + I2C)",
   "스테퍼 모터 + A4988 (가속 램프, 1/8 스텝)": "Stepper motor + A4988 (acceleration ramp, 1/8 step)",
   "스테퍼 모터 + L298N (반스텝)": "Stepper motor + L298N (half step)",
+  "K형 열전대 MAX6675 + MAX31855 (SPI 읽기 전용)": "K-type thermocouples MAX6675 + MAX31855 (read-only SPI)",
   "TM1637 4자리 시계 (비트뱅잉)": "TM1637 4-digit clock (bit-banging)",
   "버튼 폴링 (D2 → D7 LED)": "Button polling (D2 → D7 LED)",
   "디버거 실습: 평균 필터 (가변저항 A0, LED D7)": "Debugger lesson: averaging filter (potentiometer A0, LED D7)",

@@ -142,6 +142,14 @@ impl ExternalCircuit for CircuitLink {
     ) -> u8 {
         self.0.borrow_mut().spi(time, sck, mosi, miso, out)
     }
+
+    fn spi_clock(&mut self, sck: (u8, u8), hz: f64, cpol: bool, cpha: bool) {
+        self.0.borrow_mut().spi_clock(sck, hz, cpol, cpha)
+    }
+
+    fn spi_rx(&mut self, time: Cycles, sck: (u8, u8), miso: Option<(u8, u8)>) -> u8 {
+        self.0.borrow_mut().spi_rx(time, sck, miso)
+    }
 }
 
 pub struct Nucleo {

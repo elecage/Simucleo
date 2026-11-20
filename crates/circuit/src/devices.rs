@@ -2463,6 +2463,8 @@ pub enum Device {
     Rfid(Box<crate::rc522::Mfrc522>),
     /// M35: an ST7735S / ILI9341 colour TFT controller.
     Tft(Box<crate::tft::Tft>),
+    /// M35: a MAX6675 or MAX31855 thermocouple module.
+    Tc(Box<crate::thermocouple::Thermocouple>),
 }
 
 impl Device {
@@ -2516,6 +2518,7 @@ impl Device {
             Device::Pir(p) => p.powered().then_some(p.out),
             Device::Bldc(b) => b.hall_output(index),
             Device::Rfid(r) => r.irq_pin(),
+            Device::Tc(t) => t.drive(index),
             // STATE (0) is high while a phone is connected; TXD (1) idles high.
             Device::Bluetooth(b) => match index {
                 0 => Some(b.powered && b.connected && !b.at_mode),

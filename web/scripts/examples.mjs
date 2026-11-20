@@ -42,6 +42,7 @@ const EXAMPLES = [
   ["hal-bmp280", "hal-bmp280.elf", "HAL: BMP280 on I2C1 — trimming registers, forced measurements and the Bosch compensation code print temperature, pressure and altitude"],
   ["hal-rfid-rc522", "hal-rfid-rc522.elf", "HAL: RC522 RFID reader on SPI1 — REQA, anticollision and SELECT print the UID of the card dragged onto the antenna; the key fob is allowed (green LED, a visit counter written to block 5), other cards are denied (red LED); MIFARE Classic block 4 and Ultralight pages read"],
   ["hal-tft-st7735", "hal-tft-st7735.elf", "HAL: a 1.8\" ST7735S colour TFT on SPI1 — init sequence, colour bars, text, a counter and a bouncing box drawn with CASET/RASET/RAMWR; B1 inverts the colours"],
+  ["hal-thermocouple", "hal-thermocouple.elf", "HAL: K-type thermocouples — a MAX6675 and a MAX31855K on SPI1 receive-only (B1: bit-banged), °C and faults every 250 ms, a heater LED with hysteresis; heat the probe with the lighter, unplug it"],
   ["hal-neopixel-chain", "hal-neopixel-chain.elf", "HAL: a 12-LED NeoPixel ring with an 8-LED strip on its DOUT, one 20-LED frame by TIM3 PWM + DMA"],
   ["hal-stepper-a4988", "hal-stepper-a4988.elf", "HAL: NEMA17 stepper on an A4988 — TIM2 PWM STEP pulses with an acceleration ramp, 1/8 steps, back and forth one revolution; B1 switches the driver off so the shaft turns by hand"],
   ["hal-stepper-l298n", "hal-stepper-l298n.elf", "HAL: NEMA17 stepper on an L298N H-bridge — the half-step sequence on IN1–IN4 from a TIM4 interrupt, ENA/ENB 80 % PWM"],

@@ -319,6 +319,10 @@ test("regenerating a project: plan per file (kept, orphaned, lost edits), syscal
   const m = plan.find((x) => x.path === "Core/Src/main.c")!;
   assert.ok(m.after.includes("57600") && m.after.includes('printf("hi\\r\\n");') && m.after.includes("__io_putchar"));
   assert.ok(m.kept.includes("3") && m.kept.includes("0"));
+  // The changed baud rate line is the generator's, not an edit to lose.
+  assert.equal(m.lostEdits, 0);
+  const outside = { ...edited, files: edited.files.map((f) => (f.path === "Core/Src/main.c" ? { ...f, text: f.text.replace("  HAL_Init();", "  HAL_Init(); /* mine */") } : f)) };
+  assert.equal(planRegeneration(outside, cfg).find((x) => x.path === "Core/Src/main.c")!.lostEdits, 1);
   assert.ok(!plan.some((x) => x.path === "Core/Src/syscalls.c"), "syscalls.c exists: not regenerated");
   const next = applyRegeneration(edited, cfg, plan);
   assert.equal(projectConfig(next).config.usart.USART2!.baud, 57600);

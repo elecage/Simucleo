@@ -70,11 +70,14 @@ export function planRegeneration(project: CodeProject, c0: CubeConfig): FileChan
   const c = clone(c0);
   c.projectName = safeProjectName(c.projectName);
   const cur = new Map(project.files.map((f) => [f.path, f.text]));
+  const previous = new Map(project.ioc ? generate({ ...parseIoc(project.ioc).config, projectName: c.projectName }).map((f) => [f.path, f.text]) : []);
   const out: FileChange[] = [];
   for (const f of generate(c)) {
     const before = cur.get(f.path) ?? null;
     const m = mergeUserCode(f.text, before);
-    out.push({ path: f.path, before, after: m.text, kept: m.kept, orphaned: m.orphaned, lostEdits: before ? editsOutsideRegions(m.text, before) : 0 });
+    // Edits outside the regions: what differs from the code the project's own (old) configuration generates.
+    const base = previous.get(f.path);
+    out.push({ path: f.path, before, after: m.text, kept: m.kept, orphaned: m.orphaned, lostEdits: before && base !== undefined ? editsOutsideRegions(base, before) : 0 });
   }
   for (const [path, text] of [
     ["Core/Src/syscalls.c", SYSCALLS_C],

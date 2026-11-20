@@ -164,6 +164,7 @@ test("change USART2's baud rate and regenerate: the diff keeps USER CODE, the us
   const main = panel(page).locator('[data-file="Core/Src/main.c"]');
   await expect(main).toContainText("USER CODE");
   await expect(main).toContainText("유지");
+  await expect(main).not.toContainText("사라짐");
   await main.click();
   await expect(page.getByTestId("diff").locator(".d-add", { hasText: "huart2.Init.BaudRate = 9600;" })).toBeVisible();
   await expect(page.getByTestId("diff").locator(".d-del", { hasText: "huart2.Init.BaudRate = 115200;" })).toBeVisible();

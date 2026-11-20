@@ -29,6 +29,21 @@ Simucleo 자체는 MIT다. 사이트가 함께 내려보내거나 빌드에 쓰�
 | HAL·CMSIS·newlib 헤더에서 뽑은 자동완성 색인 | `web/public/editor/hal-symbols.json` | 위 헤더의 라이선스(이름·시그니처·문서 첫 문장) | — |
 | CodeMirror 6 (`@codemirror/*`), Lezer (`@lezer/cpp`, `@lezer/common`, `@lezer/lr`, `@lezer/highlight`), `style-mod`, `w3c-keyname`, `crelt`, `@marijn/find-cluster-break` | 코드 탭의 JavaScript 묶음 | MIT | 각 패키지의 `LICENSE` (`web/node_modules/…`) |
 
+## CubeMX식 설정 도구 (M36)
+
+설정 도구가 만드는 프로젝트의 `Drivers/`·시작 코드·링커 스크립트는 사이트에 든 STM32CubeF4 묶음에서 온다. 편집기에서 읽기 전용으로
+보이고, **zip으로 내보내기**를 누르면 프로젝트와 함께 zip에 들어간다(라이선스 파일도 같이).
+
+| 무엇 | 어디에 | 라이선스 | 원문 |
+|---|---|---|---|
+| STM32F4 HAL 드라이버 v1.8.6 (`Inc/`, `Inc/Legacy/`, 예제가 쓰는 `Src/` 20개) | `web/public/cube/cubef4-hal-1.8.6.tar.gz.bin` (`Drivers/STM32F4xx_HAL_Driver`); 원본 `firmware/vendor/stm32f4xx_hal_driver` | BSD-3-Clause | 묶음 안 `Drivers/STM32F4xx_HAL_Driver/LICENSE.md` |
+| CMSIS 장치 파일 STM32F4 v2.6.11 (`stm32f401xe.h`, `stm32f4xx.h`, `system_stm32f4xx.h`, `system_stm32f4xx.c`, `startup_stm32f401xe.s` → `Core/Startup/startup_stm32f401retx.s`) | 같은 묶음 (`Drivers/CMSIS/Device/ST/STM32F4xx`, `Core/`); 원본 `firmware/vendor/cmsis_device_f4` | Apache-2.0 | 묶음 안 `Drivers/CMSIS/Device/ST/STM32F4xx/LICENSE.md` |
+| CMSIS Core 헤더 (`core_cm4.h` 등) | 같은 묶음 (`Drivers/CMSIS/Include`); 원본 `firmware/vendor/CMSIS/Include` | Apache-2.0 | 묶음 안 `Drivers/CMSIS/LICENSE.txt` |
+| `stm32f4xx_hal_conf.h`의 틀 | 생성 코드(`web/src/cube/codegen.ts`) — ST의 템플릿과 같은 구성을 따름 | BSD-3-Clause (ST 템플릿) | 위 HAL 라이선스 |
+
+생성하는 `main.c`·`stm32f4xx_it.c`·`stm32f4xx_hal_msp.c`·`syscalls.c`·`sysmem.c`와 `.ioc`·`.project`·`.cproject`는 Simucleo가 CubeMX·
+CubeIDE의 형식을 따라 쓴 것이다(ST의 파일을 복사하지 않음). 테스트용 `.ioc` 세 개(`web/test/data/m36/`)도 직접 썼다.
+
 ## 그 밖
 
 - 예제 펌웨어가 쓰는 HAL, CMSIS, FreeRTOS, FatFs: [firmware/vendor/README.md](firmware/vendor/README.md).

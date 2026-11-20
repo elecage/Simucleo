@@ -8,6 +8,7 @@
 
 use crate::bus::{AccessSize, Bus, BusError};
 use crate::cpu::Registers;
+use crate::trace::{self, ExcKind, Trace};
 use crate::Cycles;
 
 /// Number of external interrupt lines modelled (STM32F401 uses 0..=84).
@@ -210,6 +211,9 @@ pub struct CortexM {
     pub nvic_pending: [u32; NUM_IRQS / 32],
     nvic_active: [u32; NUM_IRQS / 32],
     nvic_prio: [u8; NUM_IRQS],
+    /// Peripheral interrupt request lines as last reported (see
+    /// [`CortexM::irq_lines`]).
+    irq_line: [u32; NUM_IRQS / 32],
 
     // System exceptions 1..=15, bit n = exception n.
     sys_pending: u16,
@@ -241,6 +245,12 @@ pub struct CortexM {
     pub dwt_cyccnt: u32,
     pub demcr: u32,
     pub dbgmcu_cr: u32,
+    /// ITM and DWT trace (SWO): registers and the packets not yet drained.
+    pub trace: Trace,
+    /// Whether a DWT comparator traces data accesses (TRCENA and a FUNCTION
+    /// set): the CPU reports each data access to [`Trace::data_access`] only
+    /// then.
+    pub trace_data: bool,
 
     /// Total simulated processor cycles since power-on.
     pub cycles: Cycles,
@@ -282,6 +292,7 @@ impl CortexM {
             nvic_pending: [0; NUM_IRQS / 32],
             nvic_active: [0; NUM_IRQS / 32],
             nvic_prio: [0; NUM_IRQS],
+            irq_line: [0; NUM_IRQS / 32],
             sys_pending: 0,
             sys_active: 0,
             shpr: [0; 12],
@@ -308,6 +319,8 @@ impl CortexM {
             dwt_cyccnt: 0,
             demcr: 0,
             dbgmcu_cr: 0,
+            trace: Trace::default(),
+            trace_data: false,
             cycles: 0,
             reset_requested: false,
             time_reads: 0,
@@ -318,17 +331,46 @@ impl CortexM {
     }
 
     /// System reset (keeps the cycle counter running, like a warm reset).
+    /// The debug and trace registers (DEMCR, DWT, ITM) are in the debug power
+    /// domain and keep the debugger's settings, as on the chip.
     pub fn reset(&mut self) {
+        let cycles = self.cycles;
+        let (demcr, dwt_ctrl, trace) = (self.demcr, self.dwt_ctrl, std::mem::take(&mut self.trace));
+        *self = Self::new();
+        self.cycles = cycles;
+        self.demcr = demcr;
+        self.dwt_ctrl = dwt_ctrl;
+        self.trace = trace;
+        self.update_trace_data();
+    }
+
+    /// A power-on reset: the debug and trace registers too.
+    pub fn power_on_reset(&mut self) {
         let cycles = self.cycles;
         *self = Self::new();
         self.cycles = cycles;
+    }
+
+    fn update_trace_data(&mut self) {
+        self.trace_data = self.trace.data_active(self.demcr);
+    }
+
+    /// Exception trace for exception `number`.
+    fn trace_exception(&mut self, number: u16, kind: ExcKind) {
+        self.trace
+            .exception(self.demcr, self.dwt_ctrl, self.cycles, number, kind);
     }
 
     // ----------------------------------------------------------------- time
 
     /// Account for `cycles` processor cycles of execution.
     pub fn advance(&mut self, cycles: Cycles) {
+        let from = self.cycles;
         self.cycles += cycles;
+        if self.demcr & trace::DEMCR_TRCENA != 0 {
+            self.trace
+                .advance(self.demcr, self.dwt_ctrl, from, self.cycles);
+        }
         if self.dwt_ctrl & 1 != 0 {
             self.dwt_cyccnt = self.dwt_cyccnt.wrapping_add(cycles as u32);
         }
@@ -510,6 +552,25 @@ impl CortexM {
         self.set_pending(irq + exc::IRQ0);
     }
 
+    /// The peripherals' interrupt request lines now (bit n = IRQ n high).
+    /// A high line pends its interrupt unless the interrupt is active and the
+    /// line has stayed high since: a handler that clears its flag does not
+    /// run a second time (the NVIC samples a held level again only at the
+    /// handler's return, see [`CortexM::exception_return`]); a line that
+    /// went low and rose again during the handler pends it again.
+    pub fn irq_lines(&mut self, lines: &[u32; NUM_IRQS / 32]) {
+        for (w, &word) in lines.iter().enumerate() {
+            let rising = word & !self.irq_line[w];
+            for b in set_bits(word, 0) {
+                let irq = (w * 32) as u16 + b;
+                if rising & (1 << b) != 0 || !self.is_active(irq + exc::IRQ0) {
+                    self.set_irq_pending(irq);
+                }
+            }
+            self.irq_line[w] = word;
+        }
+    }
+
     fn clear_pending(&mut self, n: u16) {
         if n < 16 {
             self.sys_pending &= !(1 << n);
@@ -665,6 +726,7 @@ impl CortexM {
 
         self.clear_pending(number);
         self.set_active(number, true);
+        self.trace_exception(number, ExcKind::Enter);
         regs.r[15] = vector & !1;
         regs.xpsr = (regs.xpsr & !(psr::IPSR_MASK | psr::IT_MASK | psr::T))
             | number as u32
@@ -692,6 +754,13 @@ impl CortexM {
             return Err(Fault::InvPc);
         }
         self.set_active(returning, false);
+        // A level interrupt still requested when its handler returns runs again.
+        if returning >= exc::IRQ0 {
+            let i = (returning - exc::IRQ0) as usize;
+            if self.irq_line[i / 32] & (1 << (i % 32)) != 0 {
+                self.set_pending(returning);
+            }
+        }
         if returning != exc::NMI {
             regs.faultmask = 0;
         }
@@ -737,6 +806,8 @@ impl CortexM {
         if to_thread {
             regs.xpsr &= !psr::IPSR_MASK;
         }
+        self.trace_exception(returning, ExcKind::Exit);
+        self.trace_exception((regs.xpsr & psr::IPSR_MASK) as u16, ExcKind::Return);
         regs.control = (regs.control & !(control::SPSEL | control::FPCA))
             | if to_thread && use_psp {
                 control::SPSEL
@@ -917,8 +988,26 @@ impl CortexM {
                 self.time_reads += 1;
                 self.dwt_cyccnt
             }
-            // ITM: report ports as disabled so ITM_SendChar returns at once.
-            0xE000_0000..=0xE000_0FFC => 0,
+            // ITM stimulus ports: 1 = ready (the FIFO never fills here) while
+            // the ITM is enabled; ITM_SendChar does not write otherwise.
+            0xE000_0000..=0xE000_007C => {
+                (self.demcr & trace::DEMCR_TRCENA != 0 && self.trace.tcr & trace::TCR_ITMENA != 0)
+                    as u32
+            }
+            0xE000_0E00 => self.trace.ter,
+            0xE000_0E40 => self.trace.tpr,
+            0xE000_0E80 => self.trace.tcr,
+            0xE000_0FB4 => 0, // LSR: unlocked
+            0xE000_0080..=0xE000_0FFC => 0,
+            0xE000_1020..=0xE000_105C => {
+                let c = &self.trace.comparators[((addr - 0xE000_1020) / 16) as usize];
+                match addr & 0xF {
+                    0x0 => c.comp,
+                    0x4 => c.mask,
+                    0x8 => c.function,
+                    _ => 0,
+                }
+            }
             0xE004_2000 => 0x1000_6433, // DBGMCU IDCODE: STM32F401xD/E rev Z
             0xE004_2004 => self.dbgmcu_cr,
             0xE004_2008 | 0xE004_200C => 0,
@@ -1024,7 +1113,10 @@ impl CortexM {
                 self.mpu[i] = merge(self.mpu[i]);
             }
             0xE000_EDF0 => {}
-            0xE000_EDFC => self.demcr = merge(self.demcr),
+            0xE000_EDFC => {
+                self.demcr = merge(self.demcr);
+                self.update_trace_data();
+            }
             0xE000_EF00 => {
                 let irq = (v & 0x1FF) as u16;
                 if (irq as usize) < NUM_IRQS {
@@ -1036,7 +1128,27 @@ impl CortexM {
             0xE000_EF3C => self.fpdscr = merge(self.fpdscr) & 0x07C0_0000,
             0xE000_1000 => self.dwt_ctrl = (merge(self.dwt_ctrl) & 0x0FFF_FFFF) | 0x4000_0000,
             0xE000_1004 => self.dwt_cyccnt = merge(self.dwt_cyccnt),
-            0xE000_0000..=0xE000_0FFC => {}
+            0xE000_0000..=0xE000_007C => {
+                let size = (lanes.count_ones() / 8) as u8;
+                let port = (addr - 0xE000_0000) / 4;
+                let cycle = self.cycles;
+                self.trace
+                    .itm_write(self.demcr, cycle, port, size, v >> lanes.trailing_zeros());
+            }
+            0xE000_0E00 => self.trace.ter = merge(self.trace.ter),
+            0xE000_0E40 => self.trace.tpr = merge(self.trace.tpr) & 0xF,
+            0xE000_0E80 => self.trace.tcr = merge(self.trace.tcr) & 0x00FF_FF3F,
+            0xE000_0080..=0xE000_0FFC => {}
+            0xE000_1020..=0xE000_105C => {
+                let c = &mut self.trace.comparators[((addr - 0xE000_1020) / 16) as usize];
+                match addr & 0xF {
+                    0x0 => c.comp = merge(c.comp),
+                    0x4 => c.mask = merge(c.mask) & 0x1F,
+                    0x8 => c.function = merge(c.function) & 0x000F_0FBF,
+                    _ => {}
+                }
+                self.update_trace_data();
+            }
             0xE004_2004 => self.dbgmcu_cr = merge(self.dbgmcu_cr),
             0xE004_2008 | 0xE004_200C => {}
             _ => self.unimplemented.push(addr),
@@ -1067,6 +1179,65 @@ mod tests {
         fn write(&mut self, a: u32, s: AccessSize, v: u32) -> Result<(), BusError> {
             self.0.write(a, s, v)
         }
+    }
+
+    /// A request line held high pends its interrupt once: not again while
+    /// the handler runs (it clears the flag), but again if the line drops
+    /// and rises during the handler, and again if it is still high when the
+    /// handler returns.
+    #[test]
+    fn irq_line_held_high_does_not_pend_an_active_interrupt_again() {
+        let mut m = CortexM::new();
+        m.nvic_enabled[0] = 1 << 28;
+        let n = exc::IRQ0 + 28;
+        let high = [1u32 << 28, 0, 0];
+        let low = [0u32; 3];
+        m.irq_lines(&high);
+        assert!(m.highest_pending() == Some(n), "pends when it rises");
+        // The handler starts: no longer pending, active; the line is still
+        // high until the handler clears its flag.
+        m.clear_pending(n);
+        m.set_active(n, true);
+        m.irq_lines(&high);
+        assert_eq!(m.highest_pending(), None, "held level while active");
+        m.irq_lines(&low);
+        m.irq_lines(&high);
+        assert_eq!(
+            m.highest_pending(),
+            Some(n),
+            "a new request during the handler"
+        );
+        // Not active (handler done): a high level pends.
+        m.clear_pending(n);
+        m.set_active(n, false);
+        m.irq_lines(&high);
+        assert_eq!(m.highest_pending(), Some(n));
+    }
+
+    /// Still requested when the handler returns: pending again.
+    #[test]
+    fn irq_line_still_high_at_exception_return_pends_again() {
+        let mut m = CortexM::new();
+        m.nvic_enabled[0] = 1 << 28;
+        let mut bus = Ram(Memory::new(0x2000_0000, 0x1000, true));
+        let mut regs = thread_regs(0x2000_0800);
+        m.vtor = 0x2000_0000;
+        let n = exc::IRQ0 + 28;
+        m.irq_lines(&[1 << 28, 0, 0]);
+        m.exception_entry(&mut regs, &mut bus, n, 0x0800_0100)
+            .unwrap();
+        m.irq_lines(&[1 << 28, 0, 0]);
+        assert_eq!(m.highest_pending(), None);
+        let lr = regs.r[14];
+        m.exception_return(&mut regs, &mut bus, lr).unwrap();
+        assert_eq!(m.highest_pending(), Some(n));
+        // Cleared before the return: not again.
+        m.exception_entry(&mut regs, &mut bus, n, 0x0800_0100)
+            .unwrap();
+        m.irq_lines(&[0; 3]);
+        let lr = regs.r[14];
+        m.exception_return(&mut regs, &mut bus, lr).unwrap();
+        assert_eq!(m.highest_pending(), None);
     }
 
     fn thread_regs(sp: u32) -> Registers {

@@ -8,6 +8,7 @@
 mod debugger;
 mod diagnose;
 pub mod rtos;
+pub mod swv;
 
 pub use debugger::{Step, StepEnd};
 
@@ -157,6 +158,8 @@ pub struct Nucleo {
     rtos: Option<rtos::FreeRtos>,
     /// UART modules (HC-05) and the MCU pins on their lines.
     uart_links: Vec<UartLink>,
+    /// SWV settings, applied again to each new firmware's core.
+    swv: Option<swv::SwvConfig>,
 }
 
 impl Default for Nucleo {
@@ -188,6 +191,7 @@ impl Nucleo {
             ))),
             rtos: None,
             uart_links: Vec::new(),
+            swv: None,
         };
         board.power_on();
         board
@@ -221,6 +225,9 @@ impl Nucleo {
         self.set_watchpoints(&[]);
         self.debug.new_firmware(bytes);
         self.sys = CortexM::new();
+        if let Some(cfg) = &self.swv {
+            cfg.apply(&mut self.sys);
+        }
         self.timeline.clear();
         self.power_on();
         for seg in &fw.segments {
@@ -725,6 +732,26 @@ impl Nucleo {
         std::mem::take(&mut self.bus.watch_log)
     }
 
+    /// Start (`Some`) or stop the SWV trace, as the debugger does; the
+    /// settings stay for firmware loaded later.
+    pub fn swv_configure(&mut self, cfg: Option<swv::SwvConfig>) {
+        match &cfg {
+            Some(c) => c.apply(&mut self.sys),
+            None => swv::SwvConfig::stop(&mut self.sys),
+        }
+        self.swv = cfg;
+    }
+
+    /// The SWV trace since the last call.
+    pub fn swv_take(&mut self) -> swv::SwvFrame {
+        let drained = self.sys.trace.drain();
+        swv::SwvFrame::collect(
+            drained,
+            |c| self.ns_at(c),
+            |pc| self.symbol_at(pc).map(str::to_string),
+        )
+    }
+
     /// Name of the function containing `addr` (nearest symbol at or below).
     pub fn symbol_at(&self, addr: u32) -> Option<&str> {
         let fw = self.firmware.as_ref()?;
@@ -833,6 +860,46 @@ mod tests {
             }
             assert_eq!(results[0], results[1], "horizon {horizon}");
         }
+    }
+
+    /// `r0 = 0x2000_0000; loop: ldr r1, [r0]; cmp r1, #1; bne loop; b .`
+    const POLL_PROGRAM: [u8; 20] = [
+        0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, // SP, reset
+        0x20, 0x20, 0x00, 0x06, // movs r0, #0x20; lsls r0, r0, #24
+        0x01, 0x68, 0x01, 0x29, 0xfc, 0xd1, // ldr r1, [r0]; cmp r1, #1; bne loop
+        0xfe, 0xe7, // b .
+    ];
+
+    #[test]
+    fn traced_reads_in_a_polling_loop_are_all_reported() {
+        // The loop reads the same word without changing anything: the CPU
+        // would skip through it, but a data trace comparator on the word
+        // must see every read (as on the chip).
+        use crate::swv::{DataMode, DataTrace, SwvConfig};
+        let mut board = Nucleo::new();
+        board.bus.load(0x0800_0000, &POLL_PROGRAM).unwrap();
+        board.reset().unwrap();
+        board.swv_configure(Some(SwvConfig {
+            ports: 0,
+            pc_sampling: None,
+            exceptions: false,
+            data: vec![DataTrace {
+                addr: 0x2000_0000,
+                size: 4,
+                mode: DataMode::Read,
+            }],
+        }));
+        board.run(12_000);
+        let reads = board.swv_take().data.len();
+        // One read per iteration of about 6 cycles.
+        assert!(
+            (1_500..=2_500).contains(&reads),
+            "{reads} reads in 12000 cycles"
+        );
+        // Without the comparator the loop is still skipped through.
+        board.swv_configure(None);
+        board.run(12_000);
+        assert!(board.swv_take().data.is_empty());
     }
 
     /// Enable DWT CYCCNT, then poll it with `lsrs r1, r1, #8; beq` (exits

@@ -810,6 +810,77 @@ impl Simulator {
         .to_string()
     }
 
+    /// Start the SWV trace with `{ ports, pcSampling: [postpreset, cyctap] |
+    /// null, exceptions, data: [{ expr, mode: "write"|"read"|"rw" }] }`, or
+    /// stop it with `null`. Each data trace expression (a variable, member,
+    /// element) is resolved to its memory as the watchpoints are; returns
+    /// `[{addr, len, type} | {error}]` for them. The settings stay for
+    /// firmware loaded later (the page sends them again to resolve the
+    /// expressions in the new firmware).
+    #[wasm_bindgen(js_name = swvConfigure)]
+    pub fn swv_configure(&mut self, json: &str) -> Result<String, JsError> {
+        use simucleo_nucleo::swv::{DataMode, DataTrace, SwvConfig};
+        #[derive(serde::Deserialize)]
+        struct Data {
+            expr: String,
+            #[serde(default)]
+            mode: DataMode,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Settings {
+            ports: u32,
+            pc_sampling: Option<(u32, bool)>,
+            exceptions: bool,
+            #[serde(default)]
+            data: Vec<Data>,
+        }
+        let Some(set): Option<Settings> = serde_json::from_str(json)? else {
+            self.board.swv_configure(None);
+            return Ok("[]".into());
+        };
+        let mut data = Vec::new();
+        let placed: Vec<serde_json::Value> = set
+            .data
+            .iter()
+            .take(4)
+            .map(|d| match self.board.address_of(&d.expr, 0) {
+                Ok((addr, len)) => {
+                    data.push(DataTrace {
+                        addr,
+                        size: len,
+                        mode: d.mode,
+                    });
+                    let ty = self
+                        .board
+                        .evaluate(&d.expr, 0)
+                        .ok()
+                        .and_then(|v| serde_json::to_value(v).ok())
+                        .and_then(|v| v.get("type").cloned())
+                        .unwrap_or(serde_json::Value::Null);
+                    json!({ "addr": addr, "len": len, "type": ty })
+                }
+                Err(e) => json!({ "error": e }),
+            })
+            .collect();
+        self.board.swv_configure(Some(SwvConfig {
+            ports: set.ports,
+            pc_sampling: set.pc_sampling,
+            exceptions: set.exceptions,
+            data,
+        }));
+        Ok(serde_json::to_string(&placed)?)
+    }
+
+    /// The SWV trace since the last call: `{ itm: [{t, port, size, value}],
+    /// data: [{t, comparator, addr, value, size, write, pc}], exceptions:
+    /// [{t, number, name, kind}], profile: [{function, samples}],
+    /// sleepSamples, dropped }` (times in ns).
+    #[wasm_bindgen(js_name = swvTake)]
+    pub fn swv_take(&mut self) -> String {
+        serde_json::to_string(&self.board.swv_take()).unwrap_or_default()
+    }
+
     /// Read `len` bytes for the memory viewer, without side effects on the
     /// simulated peripherals; unmapped bytes read as 0.
     #[wasm_bindgen(js_name = readMemory)]

@@ -711,3 +711,27 @@ main.schematic-on .notice { top: 44px; }
 .upload-msg.error { color: #c0392b; }
 .elf-choice { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; border: 1px solid var(--border, #ccc); border-radius: 6px; flex-basis: 100%; }
 .drop-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; pointer-events: none; background: rgba(30, 110, 200, 0.12); border: 4px dashed rgba(30, 110, 200, 0.7); font-size: 22px; font-weight: 600; color: #1e5fa8; }
+
+/* SWV (Serial Wire Viewer) tab */
+.swv { display: flex; flex-direction: column; gap: 6px; height: 100%; min-height: 0; font-size: 13px; }
+.swv-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.swv-ports { display: inline-flex; gap: 6px; align-items: center; }
+.swv-views, .swv-sub { display: flex; gap: 4px; flex-wrap: wrap; }
+.swv-itm { display: flex; flex-direction: column; gap: 4px; min-height: 0; flex: 1; }
+.swv-text { flex: 1; min-height: 80px; overflow: auto; margin: 0; }
+.swv-data { display: flex; flex-direction: column; gap: 4px; min-height: 0; flex: 1; }
+.swv-vars { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+.swv-var { display: inline-flex; gap: 6px; align-items: center; }
+.swv-var input { width: 13em; font: inherit; }
+.swv-var .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+.swv-graph, .swv-timeline { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; }
+.swv-graph { flex: 1; min-height: 70px; height: 160px; }
+.swv-graph .axis, .swv-timeline .axis { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.swv-timeline .exc-bar { fill: #2563eb; }
+.swv-axis { display: flex; justify-content: space-between; font-size: 12px; }
+.swv-profile, .swv-exc { overflow: auto; min-height: 0; flex: 1; }
+.swv table { border-collapse: collapse; font-size: 12px; }
+.swv th, .swv td { padding: 2px 10px 2px 0; text-align: left; white-space: nowrap; }
+.swv td.bar-cell { width: 200px; }
+.swv .bar { display: inline-block; height: 9px; background: #2563eb; border-radius: 2px; }
+.swv .bar.sleep { background: var(--muted); }

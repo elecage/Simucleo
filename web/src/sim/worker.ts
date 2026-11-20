@@ -2,6 +2,7 @@
 // Runs the simulator off the UI thread and keeps it in step with wall time.
 import init, { Simulator, version } from "../wasm/pkg/simucleo_wasm.js";
 import type { FrameMsg, FromWorker, SimFrame, ToWorker } from "./protocol";
+import type { SwvSettings } from "../run/swv";
 import { batchDue, batchHz, RatioMeter } from "./perf";
 
 const FRAME_MS = 16; // ~60 Hz display updates
@@ -25,6 +26,8 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 let epoch = 0;
 /** The `gen` of the last trigger message (see `FrameMsg.triggerGen`). */
 let triggerGen = 0;
+/** SWV settings while the trace is on (sent again after each load). */
+let swvSettings: SwvSettings | null = null;
 
 // M31: frames go to the page in batches at most `uiHz` times a second and
 // only once it has drawn the last one (null: each frame at once, as
@@ -49,6 +52,7 @@ function sendFrame(now = true) {
   if (!sim) return;
   const frame = JSON.parse(sim.frame()) as SimFrame;
   const m: FrameMsg = { frame, console: sim.takeConsole(), running, epoch, triggerGen };
+  if (swvSettings) m.swv = JSON.parse(sim.swvTake());
   const hz = batchHz(uiHz, speedCap);
   if (hz === null) {
     post({ type: "frame", ...m, speed: achieved, work: workShare });
@@ -123,6 +127,14 @@ function stop() {
   sendFrame();
 }
 
+/** Start (or stop, null) the SWV trace and report where its variables are. */
+function configureSwv(settings: SwvSettings | null) {
+  if (!sim) return;
+  swvSettings = settings;
+  const placed = JSON.parse(sim.swvConfigure(JSON.stringify(settings)));
+  post({ type: "swvPlaced", placed });
+}
+
 /** Messages that need no simulator: taken even before it is ready. */
 function setting(m: ToWorker): boolean {
   switch (m.type) {
@@ -162,6 +174,8 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
         sim.loadElf(new Uint8Array(m.bytes));
         loaded = true;
         post({ type: "loaded", name: m.name });
+        // The trace settings name variables: resolve them in this firmware.
+        if (swvSettings) configureSwv(swvSettings);
       } catch (err) {
         loaded = false;
         post({ type: "loaded", name: m.name, error: String(err) });
@@ -254,6 +268,9 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     }
     case "selectTask":
       sim.selectTask(m.tcb ?? -1);
+      break;
+    case "swv":
+      configureSwv(m.settings);
       break;
     case "watchpoints":
       post({ type: "watchpoints", placed: JSON.parse(sim.setWatchpoints(JSON.stringify(m.list), m.frame)) });

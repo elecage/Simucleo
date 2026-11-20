@@ -1,4 +1,5 @@
 // React hook around the simulation worker.
+import type { DataPlaced, SwvData, SwvSettings } from "../run/swv";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   BluetoothFrame,
@@ -159,6 +160,14 @@ export interface Runner {
   /** Data watchpoints, resolved in call-stack frame `frame`. */
   setWatchpoints(list: WatchpointSpec[], frame: number): void;
   watchpoints: WatchpointPlaced[];
+  /** SWV: start the trace with these settings, or stop it (null). The
+   * trace comes with each frame (`onFrame`, `FrameMsg.swv`). */
+  setSwv(settings: SwvSettings | null): void;
+  /** Where each SWV data trace expression landed. */
+  swvPlaced: DataPlaced[];
+  /** Bumped by every successful firmware load, also of the same file again
+   * (a rebuild): what describes the last run starts over. */
+  loadGen: number;
   /** Look at an RTOS task's call stack (null: the running code). */
   selectTask(tcb: number | null): void;
   assigned: { n: number; target: string; result: WatchValue | null };
@@ -172,6 +181,8 @@ export interface FrameEvent {
   epoch: number;
   /** See `FrameMsg.triggerGen`. */
   triggerGen: number;
+  /** SWV trace since the last frame (while the trace is on). */
+  swv?: SwvData;
 }
 export type FrameListener = (e: FrameEvent) => void;
 
@@ -224,6 +235,8 @@ export function useRunner(): Runner {
   const [disasm, setDisasm] = useState<DisasmRow[]>([]);
   const [watch, setWatch] = useState<WatchValue[]>([]);
   const [watchpoints, setWatchpointsPlaced] = useState<WatchpointPlaced[]>([]);
+  const [swvPlaced, setSwvPlaced] = useState<DataPlaced[]>([]);
+  const [loadGen, setLoadGen] = useState(0);
   const [assigned, setAssigned] = useState<{ n: number; target: string; result: WatchValue | null }>({
     n: 0,
     target: "",
@@ -298,6 +311,7 @@ export function useRunner(): Runner {
           break;
         case "loaded":
           setFirmware(m.error ? null : m.name);
+          if (!m.error) setLoadGen((g) => g + 1);
           setLoadError(m.error ?? null);
           setConsole("");
           setDebugState(null);
@@ -324,6 +338,9 @@ export function useRunner(): Runner {
         case "watch":
           setWatch(m.values);
           break;
+        case "swvPlaced":
+          setSwvPlaced(m.placed);
+          break;
         case "watchpoints":
           setWatchpointsPlaced(m.placed);
           break;
@@ -332,7 +349,7 @@ export function useRunner(): Runner {
           break;
         case "frame":
           perfWorkerShare(performance.now(), m.work);
-          deliver([{ frame: m.frame, console: m.console, running: m.running, epoch: m.epoch, triggerGen: m.triggerGen }], m.speed, false);
+          deliver([{ frame: m.frame, console: m.console, running: m.running, epoch: m.epoch, triggerGen: m.triggerGen, swv: m.swv }], m.speed, false);
           break;
         case "frames":
           perfWorkerShare(performance.now(), m.work);
@@ -435,6 +452,7 @@ export function useRunner(): Runner {
       requestDisasm: (addr: number | null) => send({ type: "disassemble", addr }),
       requestWatch: (exprs: string[], frame: number) => send({ type: "evaluate", exprs, frame }),
       setWatchpoints: (list: WatchpointSpec[], frame: number) => send({ type: "watchpoints", list, frame }),
+      setSwv: (settings: SwvSettings | null) => send({ type: "swv", settings }),
       selectTask: (tcb: number | null) => send({ type: "selectTask", tcb }),
       setVariable: (target: string, value: string, frame: number) =>
         send({ type: "setVariable", target, value, frame }),
@@ -450,6 +468,6 @@ export function useRunner(): Runner {
 
   return {
     ready, firmware, firmwareBytes, firmwareExample, loadError, running, speed, frame, console: consoleText, memory, bluetooth,
-    debugFiles, breakpoints, pauseEvent, debugState, disasm, watch, assigned, watchpoints, ...actions,
+    debugFiles, breakpoints, pauseEvent, debugState, disasm, watch, assigned, watchpoints, swvPlaced, loadGen, ...actions,
   };
 }

@@ -48,6 +48,8 @@ jobs:
           for d in $(node web/scripts/examples.mjs --projects); do
             if [ "$d" != hal-blinky ]; then make -C firmware/$d; fi
           done
+          # M33: the prebuilt HAL library the in-browser compiler links against.
+          make -C firmware/editor-sdk
       # (--strict: an example that did not build fails the deploy.)
       - run: npm run examples -- --strict
         working-directory: web

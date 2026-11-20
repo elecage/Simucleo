@@ -198,7 +198,7 @@ test("a rule suggestion with its why, a syntax error inline and the build blocke
   await page.keyboard.press("Backspace");
   const lineNo = DELAY_LINE;
   await build(page, false);
-  const err = page.getByTestId("problems").locator(".problem.error").first();
+  const err = page.getByTestId("problems").locator(".problem.p-error").first();
   await expect(err).toHaveAttribute("data-line", String(lineNo));
   await expect(err).toContainText("expected ';'");
   await expect(editor(page).locator(".cm-lintRange-error")).toHaveCount(1);
@@ -214,7 +214,7 @@ test("a rule suggestion with its why, a syntax error inline and the build blocke
   await page.keyboard.insertText(";");
   await expect(line(page, "HAL_Delay(120);")).toBeVisible();
   await build(page);
-  await expect(page.getByTestId("problems").locator(".problem.error")).toHaveCount(0);
+  await expect(page.getByTestId("problems").locator(".problem.p-error")).toHaveCount(0);
 });
 
 test("a breakpoint on an edited line stops there; a reload keeps the code and its firmware", async ({ browser }) => {

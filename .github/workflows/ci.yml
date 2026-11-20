@@ -65,7 +65,7 @@ jobs:
       - run: make -C firmware/difftest
       - run: make -C firmware/hal-blinky variants
       - run: make -C firmware/hal-uart-printf
-      - run: for d in hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture hal-7seg-keypad hal-encoder-stepper-lcd hal-sonar-onewire hal-imu-matrix hal-ir-remote hal-onewire-multi hal-bluetooth-led hal-relay hal-servos-multi hal-shift-register hal-tm1637-clock hal-joystick-oled hal-pir-alarm hal-bmp280 hal-neopixel-chain hal-stepper-a4988 hal-stepper-l298n hal-esc-bldc hal-bldc-hall hal-bldc-pwm hal-bldc-sensorless freertos-two-tasks freertos-queue-uart lesson-blink-2hz lesson-led-on lesson-button-poll lesson-knight-rider lesson-timer-irq lesson-ldr-nightlight lesson-joystick-servos lesson-uart-cmd lesson-sleep-wfi lesson-scope-mystery lesson-debug-average lesson-debug-average-fixed lesson-thermostat lesson-parking lesson-digital-clock cubeide-blinky; do make -C firmware/$d; done
+      - run: for d in hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture hal-7seg-keypad hal-encoder-stepper-lcd hal-sonar-onewire hal-imu-matrix hal-ir-remote hal-onewire-multi hal-bluetooth-led hal-relay hal-servos-multi hal-shift-register hal-tm1637-clock hal-joystick-oled hal-pir-alarm hal-bmp280 hal-neopixel-chain hal-stepper-a4988 hal-stepper-l298n hal-esc-bldc hal-bldc-hall hal-bldc-pwm hal-bldc-sensorless freertos-two-tasks freertos-queue-uart lesson-blink-2hz lesson-led-on lesson-button-poll lesson-knight-rider lesson-timer-irq lesson-ldr-nightlight lesson-joystick-servos lesson-uart-cmd lesson-sleep-wfi lesson-scope-mystery lesson-debug-average lesson-debug-average-fixed lesson-thermostat lesson-parking lesson-digital-clock cubeide-blinky editor-sdk; do make -C firmware/$d; done
       - name: Run firmware on the simulator
         run: |
           cargo test --release -p simucleo-nucleo --test firmware -- --include-ignored
@@ -133,7 +133,7 @@ jobs:
           make -C firmware/bare-blinky
           make -C firmware/hal-blinky variants
           make -C firmware/hal-uart-printf
-          for d in hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture hal-7seg-keypad hal-encoder-stepper-lcd hal-sonar-onewire hal-imu-matrix hal-ir-remote hal-onewire-multi hal-bluetooth-led hal-relay hal-servos-multi hal-shift-register hal-tm1637-clock hal-joystick-oled hal-pir-alarm hal-bmp280 hal-neopixel-chain hal-stepper-a4988 hal-stepper-l298n hal-esc-bldc hal-bldc-hall hal-bldc-pwm hal-bldc-sensorless freertos-two-tasks freertos-queue-uart lesson-blink-2hz lesson-led-on lesson-button-poll lesson-knight-rider lesson-timer-irq lesson-ldr-nightlight lesson-joystick-servos lesson-uart-cmd lesson-sleep-wfi lesson-scope-mystery lesson-debug-average lesson-debug-average-fixed lesson-thermostat lesson-parking lesson-digital-clock cubeide-blinky; do make -C firmware/$d; done
+          for d in hal-button-exti hal-pwm-led hal-buzzer-melody hal-adc-servo hal-i2c-oled hal-spi-sd-logger hal-neopixel-dma hal-dht-capture hal-7seg-keypad hal-encoder-stepper-lcd hal-sonar-onewire hal-imu-matrix hal-ir-remote hal-onewire-multi hal-bluetooth-led hal-relay hal-servos-multi hal-shift-register hal-tm1637-clock hal-joystick-oled hal-pir-alarm hal-bmp280 hal-neopixel-chain hal-stepper-a4988 hal-stepper-l298n hal-esc-bldc hal-bldc-hall hal-bldc-pwm hal-bldc-sensorless freertos-two-tasks freertos-queue-uart lesson-blink-2hz lesson-led-on lesson-button-poll lesson-knight-rider lesson-timer-irq lesson-ldr-nightlight lesson-joystick-servos lesson-uart-cmd lesson-sleep-wfi lesson-scope-mystery lesson-debug-average lesson-debug-average-fixed lesson-thermostat lesson-parking lesson-digital-clock cubeide-blinky editor-sdk; do make -C firmware/$d; done
       - run: npm run examples -- --strict
         working-directory: web
       - run: npm run wasm
@@ -144,6 +144,12 @@ jobs:
       # (release build; a slow one is measured twice more, the best counts).
       - name: Example speed check (native)
         run: node scripts/bench.mjs --native --seconds 2 --check 1.5
+        working-directory: web
+      # M33: the shipped compiler (public/toolchain/, made by npm run build
+      # from firmware/editor-sdk and the compiler package) builds every
+      # editable example's main.c in Node, and the ELFs run on the core.
+      - name: In-browser compiler, in Node
+        run: npm run test:toolchain
         working-directory: web
       - name: End-to-end tests (wiring editor, running firmware)
         run: |

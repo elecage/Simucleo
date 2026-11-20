@@ -223,6 +223,8 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
     if (emit.current) {
       clearTimeout(emit.current);
       emit.current = null;
+      refreshTable();
+      relint();
     }
     const files = filesRef.current;
     onCode({ ...c, files });
@@ -236,7 +238,7 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
       runner.load(CODE_ELF, r.elf.slice().buffer as ArrayBuffer);
       runner.run();
     }
-  }, [comp.building, onCode, pushDiagnostics, runner]);
+  }, [comp.building, onCode, pushDiagnostics, runner, refreshTable, relint]);
 
   // A build asked for from outside (a received link with code).
   useEffect(() => {
@@ -446,7 +448,7 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
           {notice && <p className="error">{notice}</p>}
           <ul>
             {problems.map((p) => (
-              <li key={p.key} className={`problem ${p.severity}`} data-severity={p.severity} data-line={p.line ?? ""} data-file={p.file ?? ""}>
+              <li key={p.key} className={`problem p-${p.severity}`} data-severity={p.severity} data-line={p.line ?? ""} data-file={p.file ?? ""}>
                 <button className="problem-where" onClick={() => goto(p.file, p.line)}>
                   <b>{SEVERITY_LABEL[p.severity]}</b> {p.file ? `${baseName(p.file)}${p.line ? `:${p.line}` : ""}` : ""}
                 </button>{" "}

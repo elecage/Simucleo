@@ -19,6 +19,7 @@ import type {
 import type { CircuitJson } from "../editor/model";
 import { boardSignals, busCatalog } from "../parts";
 import { dropStaleCaptures } from "./staleCapture";
+import { takeTftPixels } from "./tftStore";
 import { t } from "../i18n";
 import { connectPerf, perfLongTask, perfRunning, perfUpdate, perfWorkerShare } from "./perfStore";
 
@@ -283,6 +284,7 @@ export function useRunner(): Runner {
     /** Frames from the worker, one or a batch (M31): every one to the listeners, the last one on screen. */
     const deliver = (msgs: FrameMsg[], speed: number, batched: boolean) => {
       const t0 = performance.now();
+      takeTftPixels(msgs.map((m) => m.frame));
       msgs = dropStaleCaptures(msgs, triggerGen.current);
       for (const m of msgs) for (const l of listeners.current) l(m);
       const last = msgs[msgs.length - 1];

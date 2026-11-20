@@ -34,6 +34,7 @@ use crate::devices::{
     Mpu6050, NeoPixel, Relay, SdCard, Sonar, Ssd1306,
 };
 
+use crate::tft::{Tft, TftConfig};
 use crate::tier8::{Bmp280, Hc595, Pir, Tm1637, PIR_VMIN};
 use crate::tier9::{
     l298n_bridge, BipolarStepper, CoilDrive, Esc, EscState, HallBldc, PhaseBridge, PhaseDrive,
@@ -301,6 +302,31 @@ pub struct PartVisual {
     /// Motors and their drivers (M21).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub motor: Option<MotorView>,
+    /// Colour TFT display (M35): its state; the pixels come separately
+    /// ([`CircuitSim::tft_pixels`]) when `version` moves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tft: Option<TftView>,
+}
+
+/// What a colour TFT display shows (M35).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct TftView {
+    /// Panel size in pixels.
+    pub width: u16,
+    pub height: u16,
+    /// Changes whenever the picture does (unique across displays).
+    pub version: u64,
+    /// The panel shows the frame memory (powered, out of reset, SLPOUT,
+    /// DISPON).
+    pub lit: bool,
+    /// Backlight: the fraction of the frame the LED pin was high (PWM
+    /// dims it).
+    pub backlight: f64,
+    pub sleeping: bool,
+    pub display_on: bool,
+    pub inverted: bool,
+    pub madctl: u8,
+    pub colmod: u8,
 }
 
 /// What a motor or a motor driver shows (M21).
@@ -489,6 +515,8 @@ pub struct CircuitSim {
     wire_parts: Vec<WirePart>,
     /// LED matrix drivers, whose CLK and CS edges are watched.
     matrix_parts: Vec<MatrixPart>,
+    /// Colour TFT displays (M35): serial lines, reset and backlight.
+    tft_parts: Vec<TftPart>,
     /// Lines devices pull low on their own: (part id, node).
     dev_outputs: Vec<(String, usize, usize)>,
     /// UART modules (HC-05) and where their pins are.
@@ -793,6 +821,21 @@ struct SpiPart {
     vmin: f64,
 }
 
+/// A colour TFT module (M35): its serial lines as nets (bit-banged or
+/// SPI), RESET and the backlight pin.
+#[derive(Debug, Clone)]
+struct TftPart {
+    id: String,
+    vcc: usize,
+    gnd: usize,
+    sck: usize,
+    mosi: usize,
+    cs: usize,
+    dc: usize,
+    res: usize,
+    led: usize,
+}
+
 /// A part on an I2C bus.
 #[derive(Debug, Clone)]
 struct BusPart {
@@ -818,6 +861,9 @@ const SEGMENTS: [&str; 8] = ["a", "b", "c", "d", "e", "f", "g", "dp"];
 const I2C_HIGH: f64 = 0.7 * VDD;
 /// Lowest supply a bus module works from.
 const MODULE_VMIN: f64 = 2.0;
+/// Lowest VCC of a TFT module (its regulator and the controller's 2.8 V
+/// minimum).
+const TFT_VMIN: f64 = 2.8;
 /// 2026-01-01 00:00:00 UTC, until the UI gives the real time.
 const DEFAULT_WALL_CLOCK: f64 = 1_767_225_600.0;
 
@@ -871,6 +917,7 @@ impl CircuitSim {
             spi_parts: Vec::new(),
             wire_parts: Vec::new(),
             matrix_parts: Vec::new(),
+            tft_parts: Vec::new(),
             dev_outputs: Vec::new(),
             uart_parts: Vec::new(),
             relay_parts: Vec::new(),
@@ -956,6 +1003,7 @@ impl CircuitSim {
                 // The shaft stays where it is; the clock starts again.
                 Device::Bldc(x) => x.rebase(0.0),
                 Device::Rfid(r) => r.power_cycle(),
+                Device::Tft(x) => **x = Tft::new(x.cfg),
             }
         }
         self.i2c_active.clear();
@@ -1205,6 +1253,7 @@ impl CircuitSim {
         let mut spi_parts = Vec::new();
         let mut wire_parts = Vec::new();
         let mut matrix_parts = Vec::new();
+        let mut tft_parts = Vec::new();
         let mut dev_outputs = Vec::new();
         let mut uart_parts = Vec::new();
         let mut relay_parts = Vec::new();
@@ -2382,6 +2431,61 @@ impl CircuitSim {
                         r.set_card(card);
                     }
                 }
+                "tft-st7735" | "tft-ili9341" => {
+                    // M35: channel 0 = supply, 1 = backlight (LED pin).
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 2);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let ili = p.kind == "tft-ili9341";
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    let (sda, dc) = if ili { ("SDI", "DC") } else { ("SDA", "A0") };
+                    let part = TftPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        sck: node(pin("SCK"), &mut map),
+                        mosi: node(pin(sda), &mut map),
+                        cs: node(pin("CS"), &mut map),
+                        dc: node(pin(dc), &mut map),
+                        res: node(pin("RESET"), &mut map),
+                        led: node(pin("LED"), &mut map),
+                    };
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: TFT_VMIN,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    elements.push(Element::Sense {
+                        a: part.led,
+                        b: gnd,
+                        threshold: 1.5,
+                        visual: vis,
+                        channel: 1,
+                    });
+                    spi_parts.push(SpiPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        sck: part.sck,
+                        mosi: part.mosi,
+                        miso: ili.then(|| node(pin("SDO"), &mut map)),
+                        cs: part.cs,
+                        dc: Some(part.dc),
+                        res: Some(part.res),
+                        vmin: TFT_VMIN,
+                    });
+                    tft_parts.push(part);
+                    let cfg = if ili {
+                        TftConfig::ili9341()
+                    } else {
+                        TftConfig::st7735(&prop_str(p, "tab", "black"))
+                    };
+                    if !matches!(self.devices.get(&p.id), Some(Device::Tft(t)) if t.cfg == cfg) {
+                        self.devices
+                            .insert(p.id.clone(), Device::Tft(Box::new(Tft::new(cfg))));
+                    }
+                }
                 "oled-ssd1306-spi" | "sd-card" => {
                     let vis = add_visual(&p.id, VisualKind::Sensor, 1);
                     let pin = |n: &str| PinRef::new(&p.id, n);
@@ -2597,6 +2701,7 @@ impl CircuitSim {
             .retain(|id, _| wire_parts.iter().any(|w| &w.id == id));
         self.wire_parts = wire_parts;
         self.matrix_parts = matrix_parts;
+        self.tft_parts = tft_parts;
         self.dev_outputs = dev_outputs;
         self.uart_parts = uart_parts;
         self.relay_parts = relay_parts;
@@ -3269,6 +3374,7 @@ impl CircuitSim {
         self.drives = Some(drives.to_vec());
         self.observe_lines(now_s, &sol);
         self.observe_matrices(&sol);
+        self.observe_tfts(now_s, &sol);
         self.observe_relays(now_s, &sol);
         self.observe_shift_registers(&sol);
         self.observe_tm1637(now_s, &sol);
@@ -4205,6 +4311,20 @@ impl CircuitSim {
                             (fresh.gyro, fresh.temp) = (m.gyro, m.temp);
                             **m = fresh;
                         }
+                        Some(Device::Tft(t)) => {
+                            v.tft = Some(TftView {
+                                width: t.cfg.panel_w,
+                                height: t.cfg.panel_h,
+                                version: t.frame_version(),
+                                lit: t.lit() && powered_now,
+                                backlight: avg.get(1).copied().unwrap_or(0.0),
+                                sleeping: t.sleeping,
+                                display_on: t.display_on,
+                                inverted: t.inverted,
+                                madctl: t.madctl,
+                                colmod: t.colmod,
+                            });
+                        }
                         Some(Device::Matrix(m)) => {
                             v.matrix = Some(MatrixView {
                                 rows: (0..m.count).flat_map(|i| m.rows(i)).collect(),
@@ -4423,6 +4543,53 @@ impl CircuitSim {
         }
         for id in latched {
             self.forward_pixels(&id);
+        }
+    }
+
+    /// TFT displays (M35) watch their supply, RESET and (bit-banged) serial
+    /// lines.
+    fn observe_tfts(&mut self, now: f64, sol: &Solution) {
+        for part in &self.tft_parts {
+            let Some(Device::Tft(t)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            let high = |n: usize| sol.v[n] > VDD / 2.0;
+            if sol.v[part.vcc] - sol.v[part.gnd] < TFT_VMIN {
+                // Without power the controller forgets everything.
+                if t.powered {
+                    **t = Tft::new(t.cfg);
+                }
+                continue;
+            }
+            if !t.powered {
+                t.power_on(now);
+            }
+            // Wired to nothing that drives it (an MCU pin counts even while
+            // it is still an input).
+            let open = |n: usize| !sol.driven[n] && !self.mcu.iter().any(|&(_, m)| m == n);
+            if open(part.res) {
+                self.warnings.insert(format!(
+                    "{}: RESET is not connected — the controller stays in reset; connect it to a GPIO (or to 3V3)",
+                    part.id
+                ));
+            }
+            if open(part.led) {
+                self.warnings.insert(format!(
+                    "{}: LED (backlight) is not connected — the screen stays dark; connect it to 3V3 or a GPIO",
+                    part.id
+                ));
+            }
+            t.reset_pin(now, !high(part.res));
+            t.pins(
+                now,
+                high(part.sck),
+                high(part.cs),
+                high(part.mosi),
+                high(part.dc),
+            );
+            if let Some(w) = t.warning.take() {
+                self.warnings.insert(format!("{}: {w}", part.id));
+            }
         }
     }
 
@@ -4673,6 +4840,19 @@ impl CircuitSim {
                         _ => {}
                     }
                 }
+                Some(Device::Tft(t)) => {
+                    let r = t.byte(now_s, dc_high, out);
+                    if let Some(w) = t.warning.take() {
+                        self.warnings.insert(format!("{}: {w}", part.id));
+                    }
+                    match (r, part.miso, miso_n) {
+                        (Some(r), Some(a), Some(b)) if a == b => {
+                            reply &= r;
+                            drivers.push(part.id.clone());
+                        }
+                        _ => {}
+                    }
+                }
                 Some(Device::Sd(sd)) => {
                     let r = sd.exchange(out);
                     match (part.miso, miso_n) {
@@ -4770,6 +4950,15 @@ impl CircuitSim {
                     fed.insert(m.id);
                 }
             }
+        }
+    }
+
+    /// What the TFT display in part `id` shows, RGB565 little-endian row by
+    /// row (`width × height × 2` bytes, empty while it is not lit).
+    pub fn tft_pixels(&self, id: &str) -> Option<Vec<u8>> {
+        match self.devices.get(id) {
+            Some(Device::Tft(t)) => Some(t.screen565()),
+            _ => None,
         }
     }
 

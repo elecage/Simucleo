@@ -309,6 +309,11 @@ impl Nucleo {
         }
     }
 
+    /// What the TFT display of part `id` shows (RGB565, little-endian).
+    pub fn tft_pixels(&self, id: &str) -> Option<Vec<u8>> {
+        self.circuit.borrow().tft_pixels(id)
+    }
+
     /// The SD card of part `id` as a disk image.
     pub fn sd_image(&self, id: &str) -> Option<Vec<u8>> {
         self.circuit.borrow().sd_image(id)

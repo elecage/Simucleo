@@ -1,0 +1,22 @@
+// English for the colour TFT displays (M35, parts/tft.tsx and the schematic).
+export const TFT: Record<string, string> = {
+  "전원 부족": "Low supply",
+  "컬러 TFT 1.8인치 (ST7735S)": 'Colour TFT 1.8" (ST7735S)',
+  "컬러 TFT 2.8인치 (ILI9341)": 'Colour TFT 2.8" (ILI9341)',
+  "VCC (3.3–5 V, 모듈에 레귤레이터)": "VCC (3.3–5 V, regulator on the module)",
+  "CS (칩 선택, Low = 선택)": "CS (chip select, low = selected)",
+  "RESET (하드웨어 리셋, Low = 리셋)": "RESET (hardware reset, low = reset)",
+  "A0 = D/C (Low = 명령, High = 데이터)": "A0 = D/C (low = command, high = data)",
+  "DC (Low = 명령, High = 데이터)": "DC (low = command, high = data)",
+  "SDA = MOSI (D11, 직렬 데이터 입력)": "SDA = MOSI (D11, serial data in)",
+  "SDI = MOSI (D11, 직렬 데이터 입력)": "SDI = MOSI (D11, serial data in)",
+  "SDO = MISO (D12, 읽기 데이터 출력)": "SDO = MISO (D12, read data out)",
+  "SCK (D13, 상승 에지에 샘플)": "SCK (D13, sampled on the rising edge)",
+  "LED (백라이트, High = 켜짐, PWM으로 밝기)": "LED (backlight, high = on, PWM sets the brightness)",
+  "1.8인치 128×160 컬러 TFT(빨간 기판) — ST7735S 컨트롤러, 4선 SPI. CS를 Low로 하고 SCK 상승 에지마다 SDA로 MSB부터 바이트를 보냅니다(SPI 모드 0, 하드웨어 SPI1이면 D13 SCK, D11 MOSI). A0(D/C)이 Low면 명령, High면 파라미터·픽셀 데이터. 전원을 켜거나 RESET을 Low로 하면 잠자기·화면 꺼짐 상태라 아무것도 보이지 않습니다: SLPOUT(0x11, 리셋 뒤 120 ms 기다린 다음), COLMOD(0x3A: 0x05 = 16비트 RGB565, 0x06 = 18비트, 0x03 = 12비트), MADCTL(0x36: MY·MX 뒤집기, MV 회전, BGR 색 순서), DISPON(0x29)을 보내야 합니다. 그리기: CASET(0x2A)·RASET(0x2B)로 창을 정하고 RAMWR(0x2C) 뒤 픽셀을 보내면 창 안을 왼쪽→오른쪽, 위→아래로 채우고 끝나면 처음으로 돌아갑니다. INVON/INVOFF(0x21/0x20)는 색 반전, SWRESET(0x01)은 레지스터 초기화(리셋·SLPOUT 뒤 5 ms 동안 명령 무시). 지우지 않은 메모리는 처음에 무작위 잡음입니다. 이 모듈의 패널은 MADCTL 0일 때 위아래가 뒤집혀 있어 보통 MY|MX(0xC0)를 씁니다. tab: black(RGB 패널), red(BGR), green(132×162 메모리, 패널이 2열·1행 안쪽). LED는 백라이트: 연결하지 않으면 화면이 어둡고, PWM 듀티만큼 밝아집니다. VCC는 5V 또는 3V3.":
+    '1.8" 128×160 colour TFT (red PCB) — ST7735S controller, 4-wire SPI. With CS low, send bytes MSB first on SDA, one bit per SCK rising edge (SPI mode 0; with hardware SPI1, D13 SCK and D11 MOSI). A0 (D/C) low means a command, high its parameters or pixel data. After power-up or with RESET low it sleeps with the display off, so nothing shows: send SLPOUT (0x11, 120 ms after a reset), COLMOD (0x3A: 0x05 = 16-bit RGB565, 0x06 = 18-bit, 0x03 = 12-bit), MADCTL (0x36: MY/MX mirror, MV rotate, BGR colour order) and DISPON (0x29). Drawing: CASET (0x2A) and RASET (0x2B) set a window; after RAMWR (0x2C) the pixels fill it left to right, top to bottom, starting over when it is full. INVON/INVOFF (0x21/0x20) invert the colours, SWRESET (0x01) resets the registers (commands are ignored for 5 ms after a reset or SLPOUT). Memory never cleared shows random noise at first. On this module the panel is upside down with MADCTL 0, so drivers use MY|MX (0xC0). tab: black (RGB panel), red (BGR), green (132×162 memory, the panel 2 columns and 1 row in). LED is the backlight: unconnected the screen stays dark, with PWM it is as bright as the duty. VCC 5V or 3V3.',
+  "2.4/2.8인치 240×320 컬러 TFT — ILI9341 컨트롤러, 4선 SPI(터치 핀은 없음). 명령은 ST7735S와 같은 계열입니다: CS Low, SCK 상승 에지에 SDI(MOSI)를 MSB부터, DC Low = 명령 / High = 데이터. 리셋 뒤 잠자기·화면 꺼짐: SLPOUT(0x11) → 120 ms → COLMOD(0x3A = 0x55 16비트 또는 0x66 18비트) → MADCTL(0x36) → DISPON(0x29). CASET/RASET/RAMWR(0x2A/0x2B/0x2C)로 창에 픽셀을 채우고, 0x3C는 쓰던 자리에서 이어 씁니다. SDO(MISO)로 읽기: 0xD3(ID4 → 더미, 0x00, 0x93, 0x41), 0x04, 0x09(상태), 0x0A(전원 모드, 켜진 뒤 0x9C), 0x0B, 0x0C, RAMRD(0x2E, 픽셀당 R·G·B 3바이트) — 모두 첫 바이트는 더미. 패널이 좌우로 뒤집혀 붙어 있고 BGR이라 보통 MADCTL 0x48(MX|BGR)을 씁니다. LED는 백라이트(High = 켜짐, PWM으로 밝기). VCC는 5V 또는 3V3.":
+    '2.4/2.8" 240×320 colour TFT — ILI9341 controller, 4-wire SPI (no touch pins). The commands are the same family as the ST7735S: CS low, SDI (MOSI) MSB first on SCK rising edges, DC low = command / high = data. After a reset it sleeps with the display off: SLPOUT (0x11) → 120 ms → COLMOD (0x3A = 0x55 16-bit or 0x66 18-bit) → MADCTL (0x36) → DISPON (0x29). CASET/RASET/RAMWR (0x2A/0x2B/0x2C) fill a window with pixels; 0x3C goes on where the last write stopped. Reads on SDO (MISO): 0xD3 (ID4 → dummy, 0x00, 0x93, 0x41), 0x04, 0x09 (status), 0x0A (power mode, 0x9C once on), 0x0B, 0x0C, RAMRD (0x2E, R, G, B bytes per pixel) — each after a dummy byte. The panel is mounted mirrored left to right and is BGR, so drivers use MADCTL 0x48 (MX|BGR). LED is the backlight (high = on, PWM sets the brightness). VCC 5V or 3V3.',
+  "컬러 TFT 128×160 (ST7735S) · SPI": "Colour TFT 128×160 (ST7735S) · SPI",
+  "컬러 TFT 240×320 (ILI9341) · SPI": "Colour TFT 240×320 (ILI9341) · SPI",
+};

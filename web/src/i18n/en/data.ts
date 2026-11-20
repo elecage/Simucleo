@@ -20,6 +20,7 @@ export const DATA: Record<string, string> = {
   "I2C 시계·온습도 (OLED, RTC, AHT20)": "I2C clock, temperature and humidity (OLED, RTC, AHT20)",
   "MPU-6050 기울기·흔들기 + MAX7219 도트 매트릭스 2개 (DOUT 체인)": "MPU-6050 tilt and shake + two MAX7219 dot matrices (DOUT chain)",
   "IR 리모컨 (NEC) 수신": "IR remote (NEC) receiver",
+  "컬러 TFT ST7735S (SPI1) 색 막대·카운터·튀는 상자": "Colour TFT ST7735S (SPI1): colour bars, counter, bouncing box",
   "조이스틱으로 OLED 점 움직이기 (ADC)": "Move a dot on the OLED with a joystick (ADC)",
   "NeoPixel 링 → 스트립 체인 (DOUT → DIN)": "NeoPixel ring → strip chain (DOUT → DIN)",
   "NeoPixel 무지개 (TIM PWM + DMA)": "NeoPixel rainbow (TIM PWM + DMA)",

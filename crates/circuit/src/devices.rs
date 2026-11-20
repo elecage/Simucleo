@@ -2461,6 +2461,8 @@ pub enum Device {
     Bldc(Box<crate::tier9::HallBldc>),
     /// M35: MFRC522 RFID reader and the cards placed on it.
     Rfid(Box<crate::rc522::Mfrc522>),
+    /// M35: an ST7735S / ILI9341 colour TFT controller.
+    Tft(Box<crate::tft::Tft>),
 }
 
 impl Device {

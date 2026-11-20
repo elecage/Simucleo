@@ -4,6 +4,7 @@
 // the browser's install prompt and the network state. No DOM access at
 // import time: `createPwa` gets everything it touches (unit tests pass
 // fakes; PwaUi.tsx passes the browser's).
+import { t } from "./i18n/index.ts";
 
 export interface OfflineStatus {
   /** off: no service worker (dev, unsupported); preparing: caching; ready: all cached. */
@@ -68,9 +69,9 @@ export interface PwaEnv {
   confirm(message: string): boolean;
 }
 
-export const UPDATE_TEXT = "새 버전이 있습니다";
+export const UPDATE_TEXT = t("새 버전이 있습니다");
 export const RUNNING_CONFIRM =
-  "시뮬레이션이 실행 중입니다. 새로 고치면 실행이 멈춥니다(배선과 펌웨어는 자동 저장되어 있습니다). 지금 새로 고칠까요?";
+  t("시뮬레이션이 실행 중입니다. 새로 고치면 실행이 멈춥니다(배선과 펌웨어는 자동 저장되어 있습니다). 지금 새로 고칠까요?");
 
 export interface Pwa {
   state(): PwaState;

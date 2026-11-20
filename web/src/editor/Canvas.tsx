@@ -5,6 +5,7 @@ import { pinKey, pinPosition, type PlacedPart as PartInstance, type PinRef, type
 import { usePerfLite } from "../sim/perfStore";
 import { countRender } from "../sim/renderCount";
 import { sameJson } from "../sim/sameJson";
+import { t } from "../i18n";
 
 interface Props {
   project: Project;
@@ -862,7 +863,7 @@ export function Canvas({
                   startDrag(e, { kind: "end", wire: selectedWire.id, end });
                 }}
               >
-                <title>끌어서 다른 핀으로 옮기기</title>
+                <title>{t("끌어서 다른 핀으로 옮기기")}</title>
               </rect>
             );
           })}
@@ -878,26 +879,26 @@ export function Canvas({
       )}
       {pending && (
         <div className="wiring-hint">
-          배선 중: 다른 핀을 클릭(또는 끌어다 놓기) · 빈 곳 클릭 = 꺾는 점 · Backspace = 점 취소 · Esc/우클릭 = 취소
+          {t("배선 중: 다른 핀을 클릭(또는 끌어다 놓기) · 빈 곳 클릭 = 꺾는 점 · Backspace = 점 취소 · Esc/우클릭 = 취소")}
         </div>
       )}
-      <div className="zoom-controls" role="group" aria-label="확대/축소">
-        <button onClick={() => zoomBy(1 / 1.25)} aria-label="축소" title="축소 (−, 휠)">
+      <div className="zoom-controls" role="group" aria-label={t("확대/축소")}>
+        <button onClick={() => zoomBy(1 / 1.25)} aria-label={t("축소")} title={t("축소 (−, 휠)")}>
           −
         </button>
         <button
           onClick={() => zoomBy(BASE_SCALE / view.scale)}
-          title="100%로"
+          title={t("100%로")}
           data-testid="zoom-level"
           className="zoom-level"
         >
           {Math.round((view.scale / BASE_SCALE) * 100)}%
         </button>
-        <button onClick={() => zoomBy(1.25)} aria-label="확대" title="확대 (+, 휠)">
+        <button onClick={() => zoomBy(1.25)} aria-label={t("확대")} title={t("확대 (+, 휠)")}>
           +
         </button>
-        <button onClick={fit} title="모든 부품이 보이게 맞춤">
-          ⤢ 맞춤
+        <button onClick={fit} title={t("모든 부품이 보이게 맞춤")}>
+          {t("⤢ 맞춤")}
         </button>
       </div>
     </div>

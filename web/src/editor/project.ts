@@ -3,6 +3,7 @@
 // saved, shared and reopened. The format itself is in `projectFormat.ts`.
 import { PART_BY_KIND } from "../parts";
 import { parseWith, type Loaded } from "./projectFormat";
+import { t } from "../i18n";
 
 export { FORMAT, VERSION, serialize, type FirmwareRef, type Loaded, type ProjectFile } from "./projectFormat";
 
@@ -126,7 +127,7 @@ export async function svgToPng(svgText: string, scale = 2): Promise<Blob> {
     const img = new Image();
     await new Promise<void>((resolve, reject) => {
       img.onload = () => resolve();
-      img.onerror = () => reject(new Error("SVG를 그림으로 바꾸지 못했습니다."));
+      img.onerror = () => reject(new Error(t("SVG를 그림으로 바꾸지 못했습니다.")));
       img.src = url;
     });
     const canvas = document.createElement("canvas");
@@ -136,7 +137,7 @@ export async function svgToPng(svgText: string, scale = 2): Promise<Blob> {
     g.scale(scale, scale);
     g.drawImage(img, 0, 0);
     return await new Promise((resolve, reject) =>
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("PNG 인코딩 실패"))), "image/png"),
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error(t("PNG 인코딩 실패")))), "image/png"),
     );
   } finally {
     URL.revokeObjectURL(url);

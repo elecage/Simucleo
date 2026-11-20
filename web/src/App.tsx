@@ -689,7 +689,9 @@ export function App() {
   const categories = [...new Set(PARTS.map((p) => p.category))];
 
   return (
-    <div className={lessonOpen ? "app with-lesson" : "app"}>
+    // data-restored: the last session is back (or there was none); until then
+    // a load the user starts may still meet the restored circuit.
+    <div className={lessonOpen ? "app with-lesson" : "app"} data-restored={restoredDone ? "yes" : "no"}>
       <header className="toolbar">
         <strong>Simucleo</strong>
         {/* M30: the share button sits inside the name field's box, so the

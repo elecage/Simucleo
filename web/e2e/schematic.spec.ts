@@ -5,8 +5,16 @@ import { expect, test, type Page } from "@playwright/test";
 
 const status = (page: Page) => page.getByTestId("run-status");
 
-test.beforeEach(async ({ page }) => {
+/** Ready: the core is up and the last session is back (picking an example
+ * before that would meet the restored circuit's "replace?" question). */
+async function ready(page: Page) {
   await page.goto("/");
+  await expect(page.locator(".app[data-restored=yes]")).toHaveCount(1);
+}
+
+test.beforeEach(async ({ page }) => {
+  page.on("dialog", (d) => void d.accept());
+  await ready(page);
   await expect(status(page)).toContainText("예제를");
 });
 
@@ -126,9 +134,9 @@ test("loading while the schematic shows fits the breadboard once it is back", as
   await page.getByLabel("예제 펌웨어").selectOption("hal-adc-servo.elf");
   await expect(status(page)).toContainText("hal-adc-servo");
   const fitted = await page.getByTestId("zoom-level").textContent();
-  // …and the same load made while the schematic is on screen.
-  await page.goto("/");
-  await expect(status(page)).toContainText("예제를");
+  // …and the same load made while the schematic is on screen (after a
+  // reload, which brings the last session back first).
+  await ready(page);
   await page.getByRole("group", { name: "보기" }).getByRole("button", { name: "회로도" }).click();
   await page.getByLabel("예제 펌웨어").selectOption("hal-adc-servo.elf");
   await expect(status(page)).toContainText("hal-adc-servo");
@@ -159,8 +167,7 @@ test("module boxes: supply on the left, signals on the right, chained matrices i
   await expect(sch.locator("[data-part=bar] [data-pin=DOUT] .sym-nc")).toHaveCount(1);
 
   // The IR receiver: three pins, none for the remote's buttons.
-  await page.goto("/");
-  await expect(status(page)).toContainText("예제를");
+  await ready(page);
   await openSchematic(page, "hal-ir-remote");
   expect(await side("ir")).toEqual(["VCC:L", "GND:L", "OUT:R"]);
   await expect(sch.locator("[data-part=ir] .sym-sub")).toContainText("IR 수신기");

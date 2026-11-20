@@ -6,6 +6,7 @@ import { readTar } from "../code/tar.ts";
 import { maybeGunzip } from "../code/toolchain.ts";
 import { PACK_PREFIX, PACKS_INDEX, type PackListing } from "./packs.ts";
 import type { PackFile } from "./tree.ts";
+import { t } from "../i18n/index.ts";
 
 let index: Promise<PackListing[]> | null = null;
 export function packIndex(): Promise<PackListing[]> {
@@ -24,7 +25,7 @@ export function packFilesOf(id: string): Promise<PackFile[]> {
   if (!p) {
     p = (async () => {
       const l = (await packIndex()).find((x) => x.id === id);
-      if (!l) throw new Error(`드라이버 묶음 ${id}이(가) 사이트에 없습니다`);
+      if (!l) throw new Error(t("드라이버 묶음 {id}이(가) 사이트에 없습니다", { id }));
       const r = await fetch(`./${l.url}`);
       if (!r.ok) throw new Error(`${l.url}: HTTP ${r.status}`);
       return readTar(await maybeGunzip(new Uint8Array(await r.arrayBuffer())))

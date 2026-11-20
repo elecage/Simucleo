@@ -38,7 +38,7 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** The region that collects user code of regions that are gone. */
 export const ORPHAN_REGION = "Orphaned";
-const ORPHAN_NOTE = (name: string) => `/* 설정에서 없어진 USER CODE 영역 '${name}'의 코드 (다시 생성할 때 옮겨 둠) */`;
+const ORPHAN_NOTE = (name: string) => `/* 설정에서 없어진 USER CODE 영역 '${name}'의 코드 (다시 생성할 때 옮겨 둠) */`; // i18n-ok
 
 /** Only whitespace (an untouched region). */
 const blank = (s: string) => s.trim() === "";

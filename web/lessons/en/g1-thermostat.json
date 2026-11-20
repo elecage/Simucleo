@@ -6,7 +6,7 @@
   "센서 → 판단(히스테리시스) → 액추에이터 → 표시로 이어지는 시스템을 구성한다": "Build a system that runs sensor → decision (hysteresis) → actuator → display",
   "히스테리시스로 릴레이 떨림(chattering)을 막는다": "Prevent relay chattering with hysteresis",
   "센서 고장 시 안전한 쪽(히터 끔)으로 동작하는 페일세이프를 안다": "Know fail-safe design: when the sensor fails, go to the safe side (heater off)",
-  "**I2C OLED에 글자 표시**, **I2C RTC 시계**, **릴레이: 고장 난 회로 고치기**.": "**Text on an I2C OLED**, **I2C RTC clock**, **Relay: fix a broken circuit**.",
+  "**I2C OLED에 글자 표시**, **I2C RTC 시계**, **릴레이: 고장 난 회로 고치기**.": "**Showing showing text on an I2C OLED**, **I2C RTC clock**, **Relay: fix a broken circuit**.",
   "설계 읽기": "Read the design",
   "**요구 사항**": "**Requirements**",
   "1. 1초마다 온도를 재서 OLED와 콘솔에 표시": "1. Measure the temperature every second and show it on the OLED and the console",

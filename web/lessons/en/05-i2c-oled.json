@@ -1,6 +1,6 @@
 {
   "D. 통신 (UART·I2C·SPI·1-Wire)": "D. Communication (UART·I2C·SPI·1-Wire)",
-  "I2C OLED에 글자 표시": "Showing text on an I2C OLED",
+  "I2C OLED에 글자 표시": "Showing showing text on an I2C OLED",
   "중급": "Intermediate",
   "SSD1306 OLED를 I2C 버스(D15 SCL, D14 SDA)에 연결해 RTC의 시각과 온습도를 화면에 띄웁니다.": "Connect an SSD1306 OLED to the I2C bus (D15 SCL, D14 SDA) and show the RTC's time and the temperature and humidity on the screen.",
   "I2C 두 선(SCL 클럭, SDA 데이터)과 7비트 주소로 여러 장치를 한 버스에 연결한다": "Connect several devices to one bus using the two I2C lines (SCL clock, SDA data) and 7-bit addresses",

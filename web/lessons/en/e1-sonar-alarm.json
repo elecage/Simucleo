@@ -6,7 +6,7 @@
   "초음파 비행 시간(ToF)으로 거리를 계산한다: 거리 = 시간 × 음속 / 2": "Calculate distance from ultrasonic time of flight (ToF): distance = time × speed of sound / 2",
   "타이머 입력 캡처로 에코 펄스 폭을 µs 단위로 잰다": "Measure the echo pulse width in µs with timer input capture",
   "5 V 센서의 신호를 3.3 V MCU에 연결할 때의 주의점을 안다": "Know what to watch out for when connecting a 5 V sensor's signal to a 3.3 V MCU",
-  "**타이머 인터럽트로 정확한 주기**, **버튼 인터럽트(EXTI)**.": "**Precise periods with a timer interrupt**, **button interrupt (EXTI)**.",
+  "**타이머 인터럽트로 정확한 주기**, **버튼 인터럽트(EXTI)**.": "**Exact periods with a timer interrupt**, **button interrupt (EXTI)**.",
   "센서 연결": "Connect the sensor",
   "**HC-SR04**의 네 핀을 연결하세요.": "Connect the four pins of the **HC-SR04**.",
   "- TRIG → **D7** (PA8): 펌웨어가 12 µs 펄스로 측정을 시작": "- TRIG → **D7** (PA8): the firmware starts a measurement with a 12 µs pulse",

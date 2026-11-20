@@ -6,7 +6,7 @@
   "WFI(Wait For Interrupt)와 sleep 모드에서 CPU 클럭이 멈추는 것을 안다": "Know that WFI (Wait For Interrupt) and sleep mode stop the CPU clock",
   "SysTick도 인터럽트라 잠을 깨운다는 것과 HAL_SuspendTick을 안다": "Know that SysTick is an interrupt too and wakes the CPU, and know HAL_SuspendTick",
   "배터리 기기에서 busy-wait가 왜 나쁜지 수치로 설명한다": "Explain with numbers why busy-waiting is bad in battery-powered devices",
-  "**타이머 인터럽트로 정확한 주기**.": "**Precise periods with a timer interrupt**.",
+  "**타이머 인터럽트로 정확한 주기**.": "**Exact periods with a timer interrupt**.",
   "LED 연결": "Connect the LED",
   "초록 LED를 **D7** (PA8) → 저항 → LED → GND로 연결하세요. TIM2 인터럽트가 100 ms마다 토글합니다.": "Connect a green LED: **D7** (PA8) → resistor → LED → GND. The TIM2 interrupt toggles it every 100 ms.",
   "D7(PA8) → 저항 → LED → GND": "D7 (PA8) → resistor → LED → GND",

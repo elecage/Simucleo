@@ -6,7 +6,7 @@
   "태스크, 우선순위, 블록(대기) 상태를 설명한다": "Explain tasks, priorities and the Blocked (waiting) state",
   "큐로 ISR과 태스크, 태스크와 태스크 사이에 데이터를 안전하게 넘긴다": "Pass data safely between an ISR and a task, and between tasks, with a queue",
   "스택 여유(high-water mark)와 힙 여유를 확인한다": "Check the free stack (high-water mark) and free heap",
-  "**UART printf와 명령 파서**, **타이머 인터럽트로 정확한 주기**.": "**UART printf and a command parser**, **precise periods with a timer interrupt**.",
+  "**UART printf와 명령 파서**, **타이머 인터럽트로 정확한 주기**.": "**UART printf and a command parser**, **exact periods with a timer interrupt**.",
   "구조 읽기": "Read the structure",
   "펌웨어에는 태스크 셋과 큐 둘이 있습니다.": "The firmware has three tasks and two queues.",
   "- **UART 수신 ISR** → `rxQueue`(바이트) → **Echo** 태스크: 한 줄을 대문자로 되돌려 줌": "- **UART receive ISR** → `rxQueue` (bytes) → **Echo** task: sends a line back in upper case",

@@ -6,7 +6,7 @@
   "직렬 → 병렬 변환(시프트 레지스터 + 저장 레지스터)을 설명한다": "Explain serial → parallel conversion (shift register + storage register)",
   "SPI의 SCK(클럭)와 MOSI(데이터), 그리고 래치(STCP)의 역할을 구분한다": "Tell apart the roles of SPI's SCK (clock) and MOSI (data), and of the latch (STCP)",
   "핀이 모자랄 때 출력을 늘리는 방법을 안다": "Know how to add outputs when you run out of pins",
-  "**여러 LED 패턴: 나이트라이더**.": "**Multiple LED patterns: Knight Rider**.",
+  "**여러 LED 패턴: 나이트라이더**.": "**Multi-LED patterns: Knight Rider**.",
   "SPI 세 선 연결": "Connect the three SPI wires",
   "LED 8개와 595의 전원, OE(→GND), MR(→3V3)은 연결해 두었습니다. 신호선 세 개를 연결하세요.": "The 8 LEDs, the 595's power, OE (→GND) and MR (→3V3) are already connected. Connect the three signal wires.",
   "- **SHCP** (시프트 클럭) → **D13** (PA5, SPI1_SCK)": "- **SHCP** (shift clock) → **D13** (PA5, SPI1_SCK)",

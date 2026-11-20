@@ -6,7 +6,7 @@
   "RTC가 MCU와 따로 시간을 세는 이유(배터리 백업)를 안다": "Know why an RTC keeps time separately from the MCU (battery backup)",
   "BCD(이진화 십진수) 레지스터를 읽고 쓴다": "Read and write BCD (binary-coded decimal) registers",
   "`HAL_I2C_Mem_Read`/`Mem_Write`로 레지스터 주소를 지정한다": "Select a register address with `HAL_I2C_Mem_Read`/`Mem_Write`",
-  "**I2C OLED에 글자 표시**.": "**Text on an I2C OLED**.",
+  "**I2C OLED에 글자 표시**.": "**Showing showing text on an I2C OLED**.",
   "RTC를 버스에 연결": "Connect the RTC to the bus",
   "OLED와 AHT20은 이미 버스에 있습니다. **DS3231** 모듈의 네 핀을 연결하세요.": "The OLED and the AHT20 are already on the bus. Connect the four pins of the **DS3231** module.",
   "다른 모듈의 같은 핀에 이어도 됩니다(버스는 한 줄입니다).": "You can also connect to the same pins of another module (the bus is a single line).",

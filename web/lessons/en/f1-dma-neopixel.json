@@ -6,7 +6,7 @@
   "DMA(직접 메모리 접근)가 CPU 없이 메모리 → 주변장치로 데이터를 옮긴다는 것을 안다": "Know that DMA (direct memory access) moves data from memory → peripheral without the CPU",
   "WS2812B의 비트 인코딩(1.25 µs 중 High 0.4 µs = 0, 0.8 µs = 1)을 설명한다": "Explain the WS2812B bit encoding (out of 1.25 µs, High for 0.4 µs = 0, 0.8 µs = 1)",
   "타이머 비교 이벤트가 DMA 요청을 만드는 연결을 이해한다": "Understand how a timer compare event generates a DMA request",
-  "**PWM으로 RGB 색 혼합**, **SPI로 74HC595**.": "**RGB color mixing with PWM**, **74HC595 shift register over SPI**.",
+  "**PWM으로 RGB 색 혼합**, **SPI로 74HC595**.": "**Mixing RGB colors with PWM**, **74HC595 shift register over SPI**.",
   "링 연결": "Connect the ring",
   "**NeoPixel 링**(12개)을 놓고 VCC → **5V**, GND → **GND**, DIN → **D5** (PB4, TIM3_CH1)로 연결하세요.": "Place a **NeoPixel ring** (12 LEDs) and connect VCC → **5V**, GND → **GND**, DIN → **D5** (PB4, TIM3_CH1).",
   "**WS2812B**는 LED마다 작은 칩이 있어 한 선으로 줄줄이 색을 받습니다. LED 하나에 24비트(G, R, B 순서), 비트 하나는 **1.25 µs**:": "In a **WS2812B** every LED has a small chip, so the colors are passed down the chain over a single wire. Each LED takes 24 bits (in G, R, B order), and each bit is **1.25 µs**:",

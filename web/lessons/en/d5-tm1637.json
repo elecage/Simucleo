@@ -6,7 +6,7 @@
   "비트뱅잉(GPIO로 프로토콜 흉내 내기)과 DWT 마이크로초 지연을 안다": "Know bit-banging (imitating a protocol with GPIO) and DWT microsecond delays",
   "TM1637의 START/STOP, LSB 먼저, ACK를 I2C와 비교한다": "Compare TM1637's START/STOP, LSB-first order and ACK with I2C",
   "표시기 응답(ACK)으로 배선 오류를 찾는다": "Find wiring errors from the display's response (ACK)",
-  "**I2C OLED에 글자 표시**, **7세그먼트 다중화**(세그먼트 패턴).": "**Text on an I2C OLED**, **7-segment multiplexing** (segment patterns).",
+  "**I2C OLED에 글자 표시**, **7세그먼트 다중화**(세그먼트 패턴).": "**Showing showing text on an I2C OLED**, **7-segment multiplexing** (segment patterns).",
   "표시기 연결": "Connect the display",
   "**TM1637 4자리 7세그먼트**를 놓고 연결하세요.": "Place a **TM1637 4-digit 7-segment** display and connect it.",
   "**TM1637**은 다중화를 칩이 대신 해 주는 표시기 드라이버입니다. 선은 CLK와 DIO 두 개뿐이지만 **I2C가 아닙니다**:": "The **TM1637** is a display driver chip that does the multiplexing for you. It has only two wires, CLK and DIO, but it is **not I2C**:",

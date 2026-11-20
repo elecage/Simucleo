@@ -6,7 +6,7 @@
   "스테퍼의 스텝 각(1.8°), 마이크로스텝, 한 바퀴 스텝 수를 계산한다": "Calculate a stepper's step angle (1.8°), microsteps and steps per revolution",
   "STEP 펄스(타이머 PWM)와 DIR, EN(액티브 Low)의 역할을 안다": "Know the roles of the STEP pulse (timer PWM), DIR and EN (active Low)",
   "가속 램프가 필요한 이유(탈조)를 설명한다": "Explain why an acceleration ramp is needed (lost steps)",
-  "**PWM으로 LED 밝기·숨쉬기**, **타이머 인터럽트로 정확한 주기**.": "**LED brightness and breathing with PWM**, **precise periods with a timer interrupt**.",
+  "**PWM으로 LED 밝기·숨쉬기**, **타이머 인터럽트로 정확한 주기**.": "**LED brightness and breathing with PWM**, **exact periods with a timer interrupt**.",
   "제어선 세 개 연결": "Connect the three control wires",
   "모터 코일, 12 V 전원, 마이크로스텝(MS1–MS3) 선은 연결해 두었습니다. 제어선 세 개를 연결하세요.": "The motor coils, the 12 V supply and the microstep (MS1–MS3) wires are already connected. Connect the three control wires.",
   "**스테퍼 모터**는 코일에 순서대로 전류를 흘려 한 칸(1.8°)씩 돕니다 — 한 바퀴 200스텝.": "A **stepper motor** turns one notch (1.8°) at a time as current flows through its coils in sequence — 200 steps per revolution.",

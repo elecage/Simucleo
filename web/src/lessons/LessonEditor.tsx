@@ -5,6 +5,7 @@
 import { useMemo, useState } from "react";
 import type { Project } from "../editor/model";
 import { download } from "../editor/project";
+import { t } from "../i18n";
 import { PARTS, PART_BY_KIND } from "../parts";
 import type { Example } from "../run/RunControls";
 import { checksFromWiring, POWER } from "./fromWiring";
@@ -30,18 +31,18 @@ interface Props {
 
 const KINDS = new Set(Object.keys(PART_BY_KIND));
 const TYPE_KO: Record<string, string> = {
-  part: "부품 있음 (part)",
-  connected: "핀 연결 (connected)",
-  series: "직렬 연결 (series)",
-  noWarnings: "전기 규칙 경고 없음 (noWarnings)",
-  period: "핀 주기 (period)",
-  brightness: "LED 밝기 (brightness)",
-  console: "콘솔 출력 (console)",
-  consoleValues: "콘솔 숫자 변화 (consoleValues)",
-  duty: "PWM 듀티비 (duty)",
-  motion: "서보·모터 움직임 (motion)",
-  display: "디스플레이 표시 (display)",
-  running: "펌웨어가 멈추지 않음 (running)",
+  part: t("부품 있음 (part)"),
+  connected: t("핀 연결 (connected)"),
+  series: t("직렬 연결 (series)"),
+  noWarnings: t("전기 규칙 경고 없음 (noWarnings)"),
+  period: t("핀 주기 (period)"),
+  brightness: t("LED 밝기 (brightness)"),
+  console: t("콘솔 출력 (console)"),
+  consoleValues: t("콘솔 숫자 변화 (consoleValues)"),
+  duty: t("PWM 듀티비 (duty)"),
+  motion: t("서보·모터 움직임 (motion)"),
+  display: t("디스플레이 표시 (display)"),
+  running: t("펌웨어가 멈추지 않음 (running)"),
 };
 
 type FieldType = "kind" | "signal" | "text" | "number" | "through" | "select";
@@ -54,55 +55,55 @@ interface Field {
 }
 const FIELDS: Record<string, Field[]> = {
   part: [
-    { k: "kind", label: "부품 종류", t: "kind" },
-    { k: "count", label: "개수 (기본 1)", t: "number" },
+    { k: "kind", label: t("부품 종류"), t: "kind" },
+    { k: "count", label: t("개수 (기본 1)"), t: "number" },
   ],
   connected: [
-    { k: "kind", label: "부품 종류", t: "kind" },
-    { k: "pin", label: "부품 핀", t: "text", placeholder: "SDA" },
-    { k: "to", label: "연결할 신호", t: "signal" },
+    { k: "kind", label: t("부품 종류"), t: "kind" },
+    { k: "pin", label: t("부품 핀"), t: "text", placeholder: "SDA" },
+    { k: "to", label: t("연결할 신호"), t: "signal" },
   ],
   series: [
-    { k: "from", label: "시작 신호", t: "signal" },
-    { k: "to", label: "끝 신호", t: "signal" },
-    { k: "through", label: "사이의 부품 (쉼표로)", t: "through" },
+    { k: "from", label: t("시작 신호"), t: "signal" },
+    { k: "to", label: t("끝 신호"), t: "signal" },
+    { k: "through", label: t("사이의 부품 (쉼표로)"), t: "through" },
   ],
   noWarnings: [],
   period: [
-    { k: "pin", label: "핀", t: "signal" },
-    { k: "ms", label: "주기 (ms)", t: "number" },
-    { k: "tolerance", label: "허용 오차 (0.05 = ±5%)", t: "number" },
+    { k: "pin", label: t("핀"), t: "signal" },
+    { k: "ms", label: t("주기 (ms)"), t: "number" },
+    { k: "tolerance", label: t("허용 오차 (0.05 = ±5%)"), t: "number" },
   ],
   brightness: [
-    { k: "kind", label: "LED 종류", t: "kind" },
-    { k: "channel", label: "RGB 채널 (0 R, 1 G, 2 B)", t: "number" },
-    { k: "above", label: "이보다 밝은 순간 (0–1)", t: "number" },
-    { k: "below", label: "이보다 어두운 순간 (0–1)", t: "number" },
+    { k: "kind", label: t("LED 종류"), t: "kind" },
+    { k: "channel", label: t("RGB 채널 (0 R, 1 G, 2 B)"), t: "number" },
+    { k: "above", label: t("이보다 밝은 순간 (0–1)"), t: "number" },
+    { k: "below", label: t("이보다 어두운 순간 (0–1)"), t: "number" },
   ],
   console: [
-    { k: "pattern", label: "정규식", t: "text", placeholder: "hello" },
-    { k: "flags", label: "정규식 플래그", t: "text", placeholder: "i" },
-    { k: "count", label: "횟수 (기본 1)", t: "number" },
+    { k: "pattern", label: t("정규식"), t: "text", placeholder: "hello" },
+    { k: "flags", label: t("정규식 플래그"), t: "text", placeholder: "i" },
+    { k: "count", label: t("횟수 (기본 1)"), t: "number" },
   ],
   consoleValues: [
-    { k: "pattern", label: "정규식 (첫 괄호가 숫자)", t: "text", placeholder: "pot\\s+(\\d+)" },
-    { k: "minSpread", label: "최소 변화량", t: "number" },
+    { k: "pattern", label: t("정규식 (첫 괄호가 숫자)"), t: "text", placeholder: "pot\\s+(\\d+)" },
+    { k: "minSpread", label: t("최소 변화량"), t: "number" },
   ],
   duty: [
-    { k: "pin", label: "핀", t: "signal" },
-    { k: "min", label: "최소 (0–1)", t: "number" },
-    { k: "max", label: "최대 (0–1)", t: "number" },
-    { k: "mode", label: "언제", t: "select", options: ["", "some", "always"] },
+    { k: "pin", label: t("핀"), t: "signal" },
+    { k: "min", label: t("최소 (0–1)"), t: "number" },
+    { k: "max", label: t("최대 (0–1)"), t: "number" },
+    { k: "mode", label: t("언제"), t: "select", options: ["", "some", "always"] },
   ],
   motion: [
-    { k: "kind", label: "부품 종류", t: "kind" },
-    { k: "field", label: "값", t: "select", options: ["angle", "rpm"] },
-    { k: "minSpread", label: "최소 변화량", t: "number" },
+    { k: "kind", label: t("부품 종류"), t: "kind" },
+    { k: "field", label: t("값"), t: "select", options: ["angle", "rpm"] },
+    { k: "minSpread", label: t("최소 변화량"), t: "number" },
   ],
   display: [
-    { k: "kind", label: "디스플레이 종류", t: "kind" },
-    { k: "minPixels", label: "최소 픽셀 (OLED, 기본 20)", t: "number" },
-    { k: "text", label: "글자 정규식 (LCD)", t: "text" },
+    { k: "kind", label: t("디스플레이 종류"), t: "kind" },
+    { k: "minPixels", label: t("최소 픽셀 (OLED, 기본 20)"), t: "number" },
+    { k: "text", label: t("글자 정규식 (LCD)"), t: "text" },
   ],
   running: [],
 };
@@ -122,7 +123,7 @@ const DEFAULTS: Record<string, Record<string, unknown>> = {
 };
 const SIGNALS = [...POWER, ...["A", "B", "C"].flatMap((p) => Array.from({ length: 16 }, (_, i) => `P${p}${i}`))];
 
-const textOf = (t: string | string[]) => (Array.isArray(t) ? t.join("\n") : t);
+const textOf = (s: string | string[]) => (Array.isArray(s) ? s.join("\n") : s);
 const move = <T,>(list: T[], i: number, d: number) => {
   const j = i + d;
   if (j < 0 || j >= list.length) return list;
@@ -146,7 +147,7 @@ function CheckForm({ c, onChange, onRemove, onMove }: { c: Check; onChange(c: Ch
     if (f.t === "kind")
       input = (
         <select value={String(v ?? "")} onChange={(e) => set(f.k, e.target.value)} aria-label={f.label}>
-          <option value="">(고르기)</option>
+          <option value="">{t("(고르기)")}</option>
           {PARTS.filter((p) => p.category !== "board").map((p) => (
             <option key={p.kind} value={p.kind}>
               {p.name} ({p.kind})
@@ -159,7 +160,7 @@ function CheckForm({ c, onChange, onRemove, onMove }: { c: Check; onChange(c: Ch
         <select value={String(v ?? "")} onChange={(e) => set(f.k, e.target.value || undefined)} aria-label={f.label}>
           {f.options!.map((o) => (
             <option key={o} value={o}>
-              {o || "(기본)"}
+              {o || t("(기본)")}
             </option>
           ))}
         </select>
@@ -214,46 +215,46 @@ function CheckForm({ c, onChange, onRemove, onMove }: { c: Check; onChange(c: Ch
       <div className="editor-row">
         <select
           value={c.type}
-          aria-label="검사 종류"
+          aria-label={t("검사 종류")}
           onChange={(e) => {
-            const t = e.target.value;
-            onChange({ type: t, ...DEFAULTS[t], ...(c.label ? { label: c.label } : {}), ...(c.hint ? { hint: c.hint } : {}) } as Check);
+            const type = e.target.value;
+            onChange({ type, ...DEFAULTS[type], ...(c.label ? { label: c.label } : {}), ...(c.hint ? { hint: c.hint } : {}) } as Check);
           }}
         >
-          <optgroup label="배선 검사 (바로바로)">
-            {WIRING_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {TYPE_KO[t]}
+          <optgroup label={t("배선 검사 (바로바로)")}>
+            {WIRING_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {TYPE_KO[type]}
               </option>
             ))}
           </optgroup>
-          <optgroup label="동작 검사 (채점)">
-            {BEHAVIOUR_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {TYPE_KO[t]}
+          <optgroup label={t("동작 검사 (채점)")}>
+            {BEHAVIOUR_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {TYPE_KO[type]}
               </option>
             ))}
           </optgroup>
         </select>
-        <button className="small" onClick={() => onMove(-1)} aria-label="검사 위로">
+        <button className="small" onClick={() => onMove(-1)} aria-label={t("검사 위로")}>
           ↑
         </button>
-        <button className="small" onClick={() => onMove(1)} aria-label="검사 아래로">
+        <button className="small" onClick={() => onMove(1)} aria-label={t("검사 아래로")}>
           ↓
         </button>
-        <button className="small" onClick={onRemove} aria-label="검사 삭제">
-          삭제
+        <button className="small" onClick={onRemove} aria-label={t("검사 삭제")}>
+          {t("삭제")}
         </button>
       </div>
       <div className="editor-fields">
         {FIELDS[c.type]?.map(field)}
         <label>
-          <span>표시 이름 (비우면 자동)</span>
-          <input value={c.label ?? ""} onChange={(e) => set("label", e.target.value)} aria-label="표시 이름" />
+          <span>{t("표시 이름 (비우면 자동)")}</span>
+          <input value={c.label ?? ""} onChange={(e) => set("label", e.target.value)} aria-label={t("표시 이름")} />
         </label>
         <label>
-          <span>틀렸을 때 안내 (비우면 자동)</span>
-          <input value={c.hint ?? ""} onChange={(e) => set("hint", e.target.value)} aria-label="안내" />
+          <span>{t("틀렸을 때 안내 (비우면 자동)")}</span>
+          <input value={c.hint ?? ""} onChange={(e) => set("hint", e.target.value)} aria-label={t("안내")} />
         </label>
       </div>
     </li>
@@ -268,8 +269,8 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
 
   const errors = useMemo(() => {
     const e = validateLesson(draft, KINDS);
-    if (LESSONS.some((b) => b.lesson.id === draft.id)) e.push(`id '${draft.id}'는 기본 실습의 id입니다. 다른 id를 쓰세요`);
-    if (stimuliError) e.push(`채점 중 조작: ${stimuliError}`);
+    if (LESSONS.some((b) => b.lesson.id === draft.id)) e.push(t("id '{id}'는 기본 실습의 id입니다. 다른 id를 쓰세요", { id: draft.id }));
+    if (stimuliError) e.push(t("채점 중 조작: {error}", { error: stimuliError }));
     return e;
   }, [draft, stimuliError]);
 
@@ -288,7 +289,7 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
   const generate = (i: number) => {
     const checks = checksFromWiring(wiring);
     if (!checks.length) {
-      setNote("지금 회로에 보드 말고 부품이 없어 만들 검사가 없습니다.");
+      setNote(t("지금 회로에 보드 말고 부품이 없어 만들 검사가 없습니다."));
       return;
     }
     const s = draft.steps[i];
@@ -296,7 +297,7 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
     const have = new Set(s.checks.map(key));
     const added = checks.filter((c) => !have.has(key(c)));
     setStep(i, { ...s, checks: [...s.checks, ...added] });
-    setNote(`배선 검사 ${added.length}개를 단계 ${i + 1}에 넣었습니다 (지금 회로는 모두 통과).`);
+    setNote(t("배선 검사 {n}개를 단계 {step}에 넣었습니다 (지금 회로는 모두 통과).", { n: added.length, step: i + 1 }));
   };
 
   const json = JSON.stringify(draft, null, 2) + "\n";
@@ -306,7 +307,7 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
     try {
       raw = JSON.parse((await f.text()).replace(/^﻿/, ""));
     } catch (e) {
-      setLoadError(`${f.name}: JSON 오류: ${(e as Error).message}`);
+      setLoadError(t("{file}: JSON 오류: {message}", { file: f.name, message: (e as Error).message }));
       return;
     }
     const r = raw as Partial<Lesson> | null;
@@ -314,7 +315,7 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
     // something that is not a lesson at all is refused.
     const l = normalizeLesson(raw);
     if (!l || !Array.isArray(r?.steps) || !r.steps.every((s) => s && typeof s === "object" && Array.isArray(s.checks))) {
-      setLoadError(`${f.name}: 레슨 파일이 아닙니다 ('steps'와 각 단계의 'checks'가 필요합니다)`);
+      setLoadError(t("{file}: 레슨 파일이 아닙니다 ('steps'와 각 단계의 'checks'가 필요합니다)", { file: f.name }));
       return;
     }
     setLoadError(null);
@@ -324,7 +325,7 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
   };
 
   return (
-    <div className="overlay" role="dialog" aria-label="레슨 편집기">
+    <div className="overlay" role="dialog" aria-label={t("레슨 편집기")}>
       <div className="overlay-box editor">
         <datalist id="lesson-signals">
           {SIGNALS.map((s) => (
@@ -337,10 +338,10 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
           ))}
         </datalist>
         <header>
-          <b>✏️ 레슨 편집기</b>
+          <b>{t("✏️ 레슨 편집기")}</b>
           <button
             onClick={() => {
-              if (!window.confirm("편집 중인 레슨을 버리고 새로 만들까요? (내 레슨에 저장한 것은 남습니다)")) return;
+              if (!window.confirm(t("편집 중인 레슨을 버리고 새로 만들까요? (내 레슨에 저장한 것은 남습니다)"))) return;
               onNew();
               setStimuliText("[]");
               setStimuliError(null);
@@ -348,10 +349,10 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
               setNote(null);
             }}
           >
-            새 레슨
+            {t("새 레슨")}
           </button>
           <label className="file-btn">
-            JSON 불러오기
+            {t("JSON 불러오기")}
             <input
               type="file"
               accept=".json,application/json"
@@ -363,7 +364,7 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
               }}
             />
           </label>
-          <button className="close" onClick={onClose} aria-label="레슨 편집기 닫기">
+          <button className="close" onClick={onClose} aria-label={t("레슨 편집기 닫기")}>
             ×
           </button>
         </header>
@@ -371,38 +372,38 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
         <div className="editor-body">
           <section className="editor-main">
             <fieldset>
-              <legend>기본 정보</legend>
+              <legend>{t("기본 정보")}</legend>
               <div className="editor-fields">
                 <label className="req">
-                  <span>id (영문, 진행·결과 파일의 열쇠)</span>
-                  <input value={draft.id} onChange={(e) => set("id", e.target.value)} aria-label="레슨 id" />
+                  <span>{t("id (영문, 진행·결과 파일의 열쇠)")}</span>
+                  <input value={draft.id} onChange={(e) => set("id", e.target.value)} aria-label={t("레슨 id")} />
                 </label>
                 <label className="req">
-                  <span>제목</span>
-                  <input value={draft.title} onChange={(e) => set("title", e.target.value)} aria-label="레슨 제목" />
+                  <span>{t("제목")}</span>
+                  <input value={draft.title} onChange={(e) => set("title", e.target.value)} aria-label={t("레슨 제목")} />
                 </label>
                 <label className="req">
-                  <span>수준</span>
-                  <input value={draft.level} list="lesson-levels" onChange={(e) => set("level", e.target.value)} aria-label="수준" />
+                  <span>{t("수준")}</span>
+                  <input value={draft.level} list="lesson-levels" onChange={(e) => set("level", e.target.value)} aria-label={t("수준")} />
                   <datalist id="lesson-levels">
-                    {["입문", "초급", "중급", "고급"].map((s) => (
+                    {[t("입문"), t("초급"), t("중급"), t("고급")].map((s) => (
                       <option key={s} value={s} />
                     ))}
                   </datalist>
                 </label>
                 <label className="req">
-                  <span>순서</span>
-                  <input type="number" value={draft.order} onChange={(e) => set("order", Number(e.target.value))} aria-label="순서" />
+                  <span>{t("순서")}</span>
+                  <input type="number" value={draft.order} onChange={(e) => set("order", Number(e.target.value))} aria-label={t("순서")} />
                 </label>
                 <label className="req wide">
-                  <span>목표 (한두 문장)</span>
-                  <input value={draft.goal} onChange={(e) => set("goal", e.target.value)} aria-label="목표" />
+                  <span>{t("목표 (한두 문장)")}</span>
+                  <input value={draft.goal} onChange={(e) => set("goal", e.target.value)} aria-label={t("목표")} />
                 </label>
                 <label>
-                  <span>시작 회로</span>
+                  <span>{t("시작 회로")}</span>
                   <select
                     value={startKind}
-                    aria-label="시작 회로"
+                    aria-label={t("시작 회로")}
                     onChange={(e) => {
                       const v = e.target.value;
                       if (v === "empty") set("start", "empty");
@@ -410,15 +411,15 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
                       else set("start", { project: currentCircuit() });
                     }}
                   >
-                    <option value="empty">빈 보드 + 브레드보드</option>
-                    <option value="example">예제 프로젝트</option>
-                    <option value="project">레슨에 담은 회로</option>
+                    <option value="empty">{t("빈 보드 + 브레드보드")}</option>
+                    <option value="example">{t("예제 프로젝트")}</option>
+                    <option value="project">{t("레슨에 담은 회로")}</option>
                   </select>
                 </label>
                 {startKind === "example" && typeof draft.start === "object" && "example" in draft.start && (
                   <label>
-                    <span>예제</span>
-                    <select value={draft.start.example} onChange={(e) => set("start", { example: e.target.value })} aria-label="시작 예제">
+                    <span>{t("예제")}</span>
+                    <select value={draft.start.example} onChange={(e) => set("start", { example: e.target.value })} aria-label={t("시작 예제")}>
                       {projects.map((p) => (
                         <option key={p}>{p}</option>
                       ))}
@@ -428,17 +429,17 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
                 {startKind === "project" && typeof draft.start === "object" && "project" in draft.start && (
                   <label>
                     <span>
-                      부품 {draft.start.project.parts.length}개 · 와이어 {draft.start.project.wires.length}개
+                      {t("부품 {parts}개 · 와이어 {wires}개", { parts: draft.start.project.parts.length, wires: draft.start.project.wires.length })}
                     </span>
-                    <button onClick={() => set("start", { project: currentCircuit() })} title="지금 화면의 회로를 시작 회로로 담습니다">
-                      현재 회로를 시작 회로로
+                    <button onClick={() => set("start", { project: currentCircuit() })} title={t("지금 화면의 회로를 시작 회로로 담습니다")}>
+                      {t("현재 회로를 시작 회로로")}
                     </button>
                   </label>
                 )}
                 <label>
-                  <span>펌웨어</span>
+                  <span>{t("펌웨어")}</span>
                   <select
-                    aria-label="펌웨어"
+                    aria-label={t("펌웨어")}
                     value={draft.firmware === undefined ? "" : draft.firmware === "upload" ? "upload" : draft.firmware.example}
                     onChange={(e) => {
                       const v = e.target.value;
@@ -448,8 +449,8 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
                       onChange(next);
                     }}
                   >
-                    <option value="">바꾸지 않음</option>
-                    <option value="upload">학생이 직접 빌드해 올림</option>
+                    <option value="">{t("바꾸지 않음")}</option>
+                    <option value="upload">{t("학생이 직접 빌드해 올림")}</option>
                     {elfs.map((f) => (
                       <option key={f} value={f}>
                         {f}
@@ -458,10 +459,10 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
                   </select>
                 </label>
                 <label>
-                  <span>채점 시간 (ms, 비우면 자동)</span>
+                  <span>{t("채점 시간 (ms, 비우면 자동)")}</span>
                   <input
                     type="number"
-                    aria-label="채점 시간"
+                    aria-label={t("채점 시간")}
                     value={draft.grade?.ms ?? ""}
                     onChange={(e) => {
                       const grade = { ...draft.grade };
@@ -475,17 +476,18 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
                 </label>
                 <label className="wide">
                   <span>
-                    채점 중 조작 (JSON 배열, 예: <code>{`[{ "at": 500, "press": "tact-switch", "ms": 150 }]`}</code>)
+                    {t("채점 중 조작 (JSON 배열, 예: ")}
+                    <code>{`[{ "at": 500, "press": "tact-switch", "ms": 150 }]`}</code>)
                   </span>
                   <textarea
                     rows={2}
-                    aria-label="채점 중 조작"
+                    aria-label={t("채점 중 조작")}
                     value={stimuliText}
                     onChange={(e) => {
                       setStimuliText(e.target.value);
                       try {
                         const v = JSON.parse(e.target.value || "[]") as Stimulus[];
-                        if (!Array.isArray(v)) throw new Error("배열이 아닙니다");
+                        if (!Array.isArray(v)) throw new Error(t("배열이 아닙니다"));
                         setStimuliError(null);
                         const grade = { ...draft.grade };
                         if (v.length) grade.stimuli = v;
@@ -506,26 +508,26 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
               {draft.steps.map((s, i) => (
                 <li key={i} className="editor-step" data-step={i}>
                   <div className="editor-row">
-                    <b>단계 {i + 1}</b>
-                    <input value={s.title} onChange={(e) => setStep(i, { ...s, title: e.target.value })} aria-label={`단계 ${i + 1} 제목`} />
-                    <button className="small" onClick={() => set("steps", move(draft.steps, i, -1))} aria-label="단계 위로">
+                    <b>{t("단계 {n}", { n: i + 1 })}</b>
+                    <input value={s.title} onChange={(e) => setStep(i, { ...s, title: e.target.value })} aria-label={t("단계 {n} 제목", { n: i + 1 })} />
+                    <button className="small" onClick={() => set("steps", move(draft.steps, i, -1))} aria-label={t("단계 위로")}>
                       ↑
                     </button>
-                    <button className="small" onClick={() => set("steps", move(draft.steps, i, 1))} aria-label="단계 아래로">
+                    <button className="small" onClick={() => set("steps", move(draft.steps, i, 1))} aria-label={t("단계 아래로")}>
                       ↓
                     </button>
                     <button
                       className="small"
                       onClick={() => set("steps", draft.steps.filter((_, j) => j !== i))}
                       disabled={draft.steps.length < 2}
-                      aria-label="단계 삭제"
+                      aria-label={t("단계 삭제")}
                     >
-                      삭제
+                      {t("삭제")}
                     </button>
                   </div>
                   <label className="wide">
-                    <span>설명 (간단한 Markdown: **굵게**, `코드`, - 목록, 빈 줄로 문단)</span>
-                    <textarea rows={3} value={textOf(s.text)} onChange={(e) => setStep(i, { ...s, text: e.target.value })} aria-label={`단계 ${i + 1} 설명`} />
+                    <span>{t("설명 (간단한 Markdown: **굵게**, `코드`, - 목록, 빈 줄로 문단)")}</span>
+                    <textarea rows={3} value={textOf(s.text)} onChange={(e) => setStep(i, { ...s, text: e.target.value })} aria-label={t("단계 {n} 설명", { n: i + 1 })} />
                   </label>
                   <ul className="editor-checks">
                     {s.checks.map((c, j) => (
@@ -539,22 +541,22 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
                     ))}
                   </ul>
                   <div className="editor-row">
-                    <button onClick={() => setStep(i, { ...s, checks: [...s.checks, { type: "part", kind: "led-5mm" }] })}>+ 검사</button>
-                    <button onClick={() => generate(i)} title="지금 회로의 부품·직렬 연결·핀 연결을 검사로 만듭니다">
-                      현재 배선에서 검사 만들기
+                    <button onClick={() => setStep(i, { ...s, checks: [...s.checks, { type: "part", kind: "led-5mm" }] })}>{t("+ 검사")}</button>
+                    <button onClick={() => generate(i)} title={t("지금 회로의 부품·직렬 연결·핀 연결을 검사로 만듭니다")}>
+                      {t("현재 배선에서 검사 만들기")}
                     </button>
                   </div>
                 </li>
               ))}
             </ol>
-            <button onClick={() => set("steps", [...draft.steps, { title: `${draft.steps.length + 1}단계`, text: "", checks: [] }])}>+ 단계</button>
+            <button onClick={() => set("steps", [...draft.steps, { title: t("{n}단계", { n: draft.steps.length + 1 }), text: "", checks: [] }])}>{t("+ 단계")}</button>
           </section>
 
           <aside className="editor-side">
             <div className={errors.length ? "editor-errors" : "editor-ok"} data-testid="editor-errors" role="status">
               {errors.length ? (
                 <>
-                  <b>레슨 오류 {errors.length}개</b>
+                  <b>{t("레슨 오류 {n}개", { n: errors.length })}</b>
                   <ul>
                     {errors.map((e) => (
                       <li key={e}>{e}</li>
@@ -562,7 +564,7 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
                   </ul>
                 </>
               ) : (
-                "✅ 레슨 형식이 맞습니다"
+                t("✅ 레슨 형식이 맞습니다")
               )}
             </div>
             {loadError && (
@@ -577,24 +579,24 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
                 disabled={errors.length > 0}
                 onClick={() => {
                   onSaveMine(draft);
-                  setNote(`'${draft.title}'을(를) 내 레슨에 저장했습니다.`);
+                  setNote(t("'{title}'을(를) 내 레슨에 저장했습니다.", { title: draft.title }));
                 }}
               >
-                내 레슨에 저장
+                {t("내 레슨에 저장")}
               </button>
               <button
                 disabled={errors.length > 0}
                 onClick={() => download(`${draft.id}.json`, new Blob([json], { type: "application/json" }))}
-                title="web/lessons/에 넣거나 다른 선생님께 줄 수 있는 파일"
+                title={t("web/lessons/에 넣거나 다른 선생님께 줄 수 있는 파일")}
               >
-                JSON 파일로 내려받기
+                {t("JSON 파일로 내려받기")}
               </button>
-              <button disabled={errors.length > 0} onClick={() => onPreview(draft)} title="시작 회로를 불러오지 않고 지금 회로·펌웨어로 실행해 봅니다">
-                미리 보기 (현재 프로젝트로)
+              <button disabled={errors.length > 0} onClick={() => onPreview(draft)} title={t("시작 회로를 불러오지 않고 지금 회로·펌웨어로 실행해 봅니다")}>
+                {t("미리 보기 (현재 프로젝트로)")}
               </button>
             </div>
             <details>
-              <summary>JSON 보기</summary>
+              <summary>{t("JSON 보기")}</summary>
               <pre className="editor-json" data-testid="editor-json">
                 {json}
               </pre>

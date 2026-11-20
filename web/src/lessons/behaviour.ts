@@ -1,7 +1,7 @@
 // Behaviour checks, evaluated over a run of the firmware from the frames
 // the simulation worker sends (pins, part visuals, console, probes). Pure:
 // unit tested with Node (`npm test`).
-import { josa } from "./korean.ts";
+import { t } from "../i18n/index.ts";
 import type { BehaviourCheck, CheckResult, Lesson } from "./types.ts";
 import { isWiring } from "./types.ts";
 
@@ -113,24 +113,28 @@ function period(c: Extract<BehaviourCheck, { type: "period" }>, rec: Recording):
   if (e.length === 0) {
     return {
       pass: false,
-      hint: `${josa(c.pin, "이/가")} 한 번도 바뀌지 않았습니다. 펌웨어가 ${josa(c.pin, "을/를")} 출력으로 설정하고 토글하나요?`,
+      hint: t("{pin|이/가} 한 번도 바뀌지 않았습니다. 펌웨어가 {pin|을/를} 출력으로 설정하고 토글하나요?", { pin: c.pin }),
     };
   }
   if (marks.length < 3) {
     return {
       pass: false,
-      hint: `${josa(c.pin, "이/가")} 채점 시간 동안 ${e.length}번만 바뀌었습니다. 너무 느리거나 멈췄습니다. 목표 주기는 ${target}입니다.`,
+      hint: t("{pin|이/가} 채점 시간 동안 {n}번만 바뀌었습니다. 너무 느리거나 멈췄습니다. 목표 주기는 {target}입니다.", {
+        pin: c.pin,
+        n: e.length,
+        target,
+      }),
     };
   }
   const used = marks.slice(1);
   const measured = (used[used.length - 1] - used[0]) / (used.length - 1);
-  const detail = `측정 주기 ${fmt(measured)} ms (${(1000 / measured).toFixed(2)} Hz)`;
+  const detail = t("측정 주기 {ms} ms ({hz} Hz)", { ms: fmt(measured), hz: (1000 / measured).toFixed(2) });
   if (Math.abs(measured - c.ms) <= tol * c.ms) return { pass: true, detail };
-  return { pass: false, detail, hint: `깜빡임 주기가 ${fmt(measured)} ms입니다. 목표는 ${target}입니다.` };
+  return { pass: false, detail, hint: t("깜빡임 주기가 {ms} ms입니다. 목표는 {target}입니다.", { ms: fmt(measured), target }) };
 }
 
 function brightness(c: Extract<BehaviourCheck, { type: "brightness" }>, rec: Recording, ids: string[], name: string): CheckResult {
-  if (!ids.length) return { pass: false, hint: `${josa(name, "이/가")} 회로에 없습니다.` };
+  if (!ids.length) return { pass: false, hint: t("{name|이/가} 회로에 없습니다.", { name }) };
   const ch = c.channel ?? 0;
   let best: { max: number; min: number } | null = null;
   for (const id of ids) {
@@ -143,22 +147,26 @@ function brightness(c: Extract<BehaviourCheck, { type: "brightness" }>, rec: Rec
       min = Math.min(min, v);
     }
     const ok = (c.above === undefined || max > c.above) && (c.below === undefined || min < c.below);
-    if (ok) return { pass: true, detail: `밝기 ${pct(min)}–${pct(max)}` };
+    if (ok) return { pass: true, detail: t("밝기 {min}–{max}", { min: pct(min), max: pct(max) }) };
     if (!best || max > best.max) best = { max, min };
   }
   const { max, min } = best!;
-  const detail = `밝기 ${pct(min)}–${pct(max)}`;
+  const detail = t("밝기 {min}–{max}", { min: pct(min), max: pct(max) });
   if (c.above !== undefined && max <= c.above) {
     return {
       pass: false,
       detail,
       hint:
         max === 0
-          ? `${josa(name, "이/가")} 한 번도 켜지지 않았습니다. 배선과 LED 방향, 펌웨어가 쓰는 핀을 확인하세요.`
-          : `${josa(name, "이/가")} 충분히 밝아지지 않았습니다 (최대 ${pct(max)}, 목표 ${pct(c.above)} 초과). 저항값이 너무 큰가요?`,
+          ? t("{name|이/가} 한 번도 켜지지 않았습니다. 배선과 LED 방향, 펌웨어가 쓰는 핀을 확인하세요.", { name })
+          : t("{name|이/가} 충분히 밝아지지 않았습니다 (최대 {max}, 목표 {above} 초과). 저항값이 너무 큰가요?", {
+              name,
+              max: pct(max),
+              above: pct(c.above),
+            }),
     };
   }
-  return { pass: false, detail, hint: `${josa(name, "이/가")} 꺼지지 않았습니다 (최소 ${pct(min)}). 계속 켜져 있으면 깜빡이지 않는 것입니다.` };
+  return { pass: false, detail, hint: t("{name|이/가} 꺼지지 않았습니다 (최소 {min}). 계속 켜져 있으면 깜빡이지 않는 것입니다.", { name, min: pct(min) }) };
 }
 
 /** The brightest NeoPixel of a chain, 0–1: one colour (`channel` 0 R, 1 G, 2 B) or any. */
@@ -175,25 +183,27 @@ function consoleCheck(c: Extract<BehaviourCheck, { type: "console" }>, rec: Reco
   const re = new RegExp(c.pattern, (c.flags ?? "").replace("g", "") + "g");
   const n = [...rec.console.matchAll(re)].length;
   const need = c.count ?? 1;
-  if (n >= need) return { pass: true, detail: `${n}번 출력` };
+  if (n >= need) return { pass: true, detail: t("{n}번 출력", { n }) };
   return {
     pass: false,
-    detail: `${n}번 출력`,
+    detail: t("{n}번 출력", { n }),
     hint: rec.console.trim()
-      ? `콘솔에 기대한 출력(/${c.pattern}/)이 ${need > 1 ? `${need}번 나와야 하는데 ${n}번 나왔습니다` : "없습니다"}.`
-      : "콘솔(USART2)에 아무것도 출력되지 않았습니다.",
+      ? need > 1
+        ? t("콘솔에 기대한 출력(/{pattern}/)이 {need}번 나와야 하는데 {n}번 나왔습니다.", { pattern: c.pattern, need, n })
+        : t("콘솔에 기대한 출력(/{pattern}/)이 없습니다.", { pattern: c.pattern })
+      : t("콘솔(USART2)에 아무것도 출력되지 않았습니다."),
   };
 }
 
 function consoleValues(c: Extract<BehaviourCheck, { type: "consoleValues" }>, rec: Recording): CheckResult {
   const re = new RegExp(c.pattern, "g");
   const values = [...rec.console.matchAll(re)].map((m) => Number(m[1])).filter(Number.isFinite);
-  if (!values.length) return { pass: false, hint: `콘솔에서 값을 찾지 못했습니다 (/${c.pattern}/).` };
+  if (!values.length) return { pass: false, hint: t("콘솔에서 값을 찾지 못했습니다 (/{pattern}/).", { pattern: c.pattern }) };
   const lo = Math.min(...values);
   const hi = Math.max(...values);
-  const detail = `값 ${lo}–${hi}`;
+  const detail = t("값 {lo}–{hi}", { lo, hi });
   if (hi - lo >= c.minSpread) return { pass: true, detail };
-  return { pass: false, detail, hint: `값이 거의 변하지 않았습니다 (최소 ${lo}, 최대 ${hi}). ${c.minSpread} 이상 바뀌어야 합니다.` };
+  return { pass: false, detail, hint: t("값이 거의 변하지 않았습니다 (최소 {lo}, 최대 {hi}). {spread} 이상 바뀌어야 합니다.", { lo, hi, spread: c.minSpread }) };
 }
 
 /** Duty windows are at least this long in simulated time (ms). */
@@ -281,22 +291,23 @@ function duty(c: Extract<BehaviourCheck, { type: "duty" }>, rec: Recording): Che
   const values =
     fromEdges ??
     dutyWindows(rec.samples.map((s) => ({ t: s.t, duty: s.frame.pins.find((p) => pin && p.port === pin.port && p.pin === pin.pin)?.duty })));
-  if (!values.length) return { pass: false, hint: `${josa(c.pin, "이/가")} 출력으로 쓰이지 않았습니다.` };
+  if (!values.length) return { pass: false, hint: t("{pin|이/가} 출력으로 쓰이지 않았습니다.", { pin: c.pin }) };
   const lo = Math.min(...values);
   const hi = Math.max(...values);
-  const detail = `듀티 ${pct(lo)}–${pct(hi)}`;
+  const detail = t("듀티 {lo}–{hi}", { lo: pct(lo), hi: pct(hi) });
   const inside = (v: number) => v >= c.min - 1e-6 && v <= c.max + 1e-6;
   const range = `${pct(c.min)}–${pct(c.max)}`;
   if (c.mode === "always") {
     if (values.every(inside)) return { pass: true, detail };
-    return { pass: false, detail, hint: `${c.pin}의 PWM 듀티가 ${range}를 벗어났습니다 (${pct(lo)}–${pct(hi)}).` };
+    return { pass: false, detail, hint: t("{pin}의 PWM 듀티가 {range}를 벗어났습니다 ({lo}–{hi}).", { pin: c.pin, range, lo: pct(lo), hi: pct(hi) }) };
   }
   if (values.some(inside)) return { pass: true, detail };
-  return { pass: false, detail, hint: `${c.pin}의 PWM 듀티가 한 번도 ${range}에 들지 않았습니다 (측정 ${pct(lo)}–${pct(hi)}).` };
+  return { pass: false, detail, hint: t("{pin}의 PWM 듀티가 한 번도 {range}에 들지 않았습니다 (측정 {lo}–{hi}).", { pin: c.pin, range, lo: pct(lo), hi: pct(hi) }),
+  };
 }
 
 function motion(c: Extract<BehaviourCheck, { type: "motion" }>, rec: Recording, ids: string[], name: string): CheckResult {
-  if (!ids.length) return { pass: false, hint: `${josa(name, "이/가")} 회로에 없습니다.` };
+  if (!ids.length) return { pass: false, hint: t("{name|이/가} 회로에 없습니다.", { name }) };
   const unit = c.field === "angle" ? "°" : " rpm";
   let spread = 0;
   let range = "";
@@ -310,12 +321,17 @@ function motion(c: Extract<BehaviourCheck, { type: "motion" }>, rec: Recording, 
       range = `${lo.toFixed(0)}–${hi.toFixed(0)}${unit}`;
     }
   }
-  const detail = range ? `범위 ${range}` : undefined;
+  const detail = range ? t("범위 {range}", { range }) : undefined;
   if (spread >= c.minSpread) return { pass: true, detail };
   return {
     pass: false,
     detail,
-    hint: `${josa(name, "이/가")} 거의 움직이지 않았습니다 (${spread.toFixed(0)}${unit}). ${c.minSpread}${unit} 이상 움직여야 합니다.`,
+    hint: t("{name|이/가} 거의 움직이지 않았습니다 ({spread}{unit}). {need}{unit} 이상 움직여야 합니다.", {
+      name,
+      spread: spread.toFixed(0),
+      unit,
+      need: c.minSpread,
+    }),
   };
 }
 
@@ -351,7 +367,7 @@ export function digitsText(d: { segments: number[]; on: boolean } | undefined): 
 }
 
 function display(c: Extract<BehaviourCheck, { type: "display" }>, rec: Recording, ids: string[], name: string): CheckResult {
-  if (!ids.length) return { pass: false, hint: `${josa(name, "이/가")} 회로에 없습니다.` };
+  if (!ids.length) return { pass: false, hint: t("{name|이/가} 회로에 없습니다.", { name }) };
   let most = 0;
   let lastText = "";
   const re = c.text ? new RegExp(c.text) : null;
@@ -359,26 +375,30 @@ function display(c: Extract<BehaviourCheck, { type: "display" }>, rec: Recording
     for (const p of s.frame.parts) {
       if (!ids.includes(p.id)) continue;
       if (p.lcd || p.digits) {
-        const t = p.lcd ? lcdText(p.lcd) : digitsText(p.digits);
-        if (t.trim()) lastText = t;
-        if (re ? re.test(t) : t.trim().length > 0) return { pass: true, detail: `"${t.trim().replace(/\s+/g, " ")}"` };
+        const text = p.lcd ? lcdText(p.lcd) : digitsText(p.digits);
+        if (text.trim()) lastText = text;
+        if (re ? re.test(text) : text.trim().length > 0) return { pass: true, detail: `"${text.trim().replace(/\s+/g, " ")}"` };
       } else {
         most = Math.max(most, litPixels(p.screen));
-        if (!re && most >= (c.minPixels ?? 20)) return { pass: true, detail: `켜진 픽셀 ${most}개` };
+        if (!re && most >= (c.minPixels ?? 20)) return { pass: true, detail: t("켜진 픽셀 {n}개", { n: most }) };
       }
     }
   }
-  if (lastText) return { pass: false, hint: `${name}에 기대한 글자가 나오지 않았습니다. 지금: "${lastText.trim().replace(/\s+/g, " ")}"` };
+  if (lastText) return { pass: false, hint: t("{name}에 기대한 글자가 나오지 않았습니다. 지금: \"{text}\"", { name, text: lastText.trim().replace(/\s+/g, " ") }),
+    };
   return {
     pass: false,
-    detail: most ? `켜진 픽셀 ${most}개` : undefined,
-    hint: `${josa(name, "이/가")} 아무것도 표시하지 않았습니다. 전원(VCC, GND)과 ${c.kind === "tm1637" ? "CLK·DIO" : "SDA·SCL"} 배선을 확인하세요.`,
+    detail: most ? t("켜진 픽셀 {n}개", { n: most }) : undefined,
+    hint: t("{name|이/가} 아무것도 표시하지 않았습니다. 전원(VCC, GND)과 {pins} 배선을 확인하세요.", {
+      name,
+      pins: c.kind === "tm1637" ? "CLK·DIO" : "SDA·SCL",
+    }),
   };
 }
 
 /** Judge one behaviour check on a finished recording. */
 export function evaluateBehaviour(c: BehaviourCheck, rec: Recording, partsOfKind: PartsOfKind, nameOf: (kind: string) => string): CheckResult {
-  if (!rec.samples.length) return { pass: false, hint: "펌웨어가 실행되지 않았습니다." };
+  if (!rec.samples.length) return { pass: false, hint: t("펌웨어가 실행되지 않았습니다.") };
   switch (c.type) {
     case "period":
       return period(c, rec);
@@ -396,8 +416,8 @@ export function evaluateBehaviour(c: BehaviourCheck, rec: Recording, partsOfKind
       return display(c, rec, partsOfKind(c.kind), nameOf(c.kind));
     case "running":
       return rec.stopped
-        ? { pass: false, hint: `펌웨어가 멈췄습니다: ${rec.stopped}` }
-        : { pass: true, detail: `${(rec.elapsed / 1000).toFixed(1)} s 동안 실행` };
+        ? { pass: false, hint: t("펌웨어가 멈췄습니다: {reason}", { reason: rec.stopped }) }
+        : { pass: true, detail: t("{s} s 동안 실행", { s: (rec.elapsed / 1000).toFixed(1) }) };
   }
 }
 
@@ -405,26 +425,33 @@ export function evaluateBehaviour(c: BehaviourCheck, rec: Recording, partsOfKind
 export function behaviourLabel(c: BehaviourCheck, nameOf: (kind: string) => string): string {
   switch (c.type) {
     case "period":
-      return `${c.pin} 주기 ${fmt(c.ms)} ms ±${Math.round((c.tolerance ?? 0.05) * 100)}%`;
+      return t("{pin} 주기 {ms} ms ±{tol}%", { pin: c.pin, ms: fmt(c.ms), tol: Math.round((c.tolerance ?? 0.05) * 100) });
     case "brightness":
       return `${nameOf(c.kind)}${c.channel !== undefined ? ` ${"RGB"[c.channel] ?? c.channel}` : ""} ${[
-        c.above !== undefined ? `밝기 ${pct(c.above)} 초과` : "",
-        c.below !== undefined ? `${pct(c.below)} 미만` : "",
+        c.above !== undefined ? t("밝기 {pct} 초과", { pct: pct(c.above) }) : "",
+        c.below !== undefined ? t("{pct} 미만", { pct: pct(c.below) }) : "",
       ]
         .filter(Boolean)
         .join(", ")}`;
     case "console":
-      return `콘솔 출력 /${c.pattern}/${c.count && c.count > 1 ? ` ${c.count}번` : ""}`;
+      return c.count && c.count > 1
+        ? t("콘솔 출력 /{pattern}/ {n}번", { pattern: c.pattern, n: c.count })
+        : t("콘솔 출력 /{pattern}/", { pattern: c.pattern });
     case "consoleValues":
-      return `콘솔 값 변화 ${c.minSpread} 이상`;
+      return t("콘솔 값 변화 {n} 이상", { n: c.minSpread });
     case "duty":
-      return `${c.pin} PWM 듀티 ${pct(c.min)}–${pct(c.max)}${c.mode === "always" ? " 유지" : ""}`;
+      {
+      const v = { pin: c.pin, min: pct(c.min), max: pct(c.max) };
+      return c.mode === "always" ? t("{pin} PWM 듀티 {min}–{max} 유지", v) : t("{pin} PWM 듀티 {min}–{max}", v);
+    }
     case "motion":
-      return `${nameOf(c.kind)} ${c.field === "angle" ? `${c.minSpread}° 이상 회전` : `${c.minSpread} rpm 이상 변화`}`;
+      return c.field === "angle"
+        ? t("{name} {n}° 이상 회전", { name: nameOf(c.kind), n: c.minSpread })
+        : t("{name} {n} rpm 이상 변화", { name: nameOf(c.kind), n: c.minSpread });
     case "display":
-      return `${nameOf(c.kind)}에 표시${c.text ? ` /${c.text}/` : ""}`;
+      return c.text ? t("{name}에 표시 /{text}/", { name: nameOf(c.kind), text: c.text }) : t("{name}에 표시", { name: nameOf(c.kind) });
     case "running":
-      return "펌웨어가 멈추지 않음";
+      return t("펌웨어가 멈추지 않음");
   }
 }
 

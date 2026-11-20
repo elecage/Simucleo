@@ -1,7 +1,7 @@
 // Wiring checks, evaluated live from the netlist the core computes
 // (`sim.setCircuit`). Pure: no React, no part drawings, so it can be unit
 // tested with Node (`npm test`).
-import { josa } from "./korean.ts";
+import { t } from "../i18n/index.ts";
 import type { CheckResult, ConnectedCheck, PartCheck, SeriesCheck, WiringCheck } from "./types.ts";
 
 export interface PinRef {
@@ -25,11 +25,11 @@ export interface WiringContext {
 /** Short names for hints ("저항이 없습니다", not "저항 (Ω)이 …"). */
 const SHORT: Record<string, string> = {
   "led-5mm": "LED",
-  resistor: "저항",
+  resistor: t("저항"),
   "rgb-led": "RGB LED",
-  "tact-switch": "버튼",
-  potentiometer: "가변저항",
-  servo: "서보",
+  "tact-switch": t("버튼"),
+  potentiometer: t("가변저항"),
+  servo: t("서보"),
   "oled-ssd1306": "OLED",
   "lcd-i2c": "LCD",
 };
@@ -117,8 +117,8 @@ function checkPart(c: PartCheck, ctx: WiringContext): CheckResult {
     pass: false,
     hint:
       have === 0
-        ? `${josa(name, "이/가")} 없습니다. 왼쪽 부품 목록에서 '${ctx.nameOf(c.kind)}'을(를) 추가하세요.`
-        : `${name} ${need}개가 필요합니다 (지금 ${have}개).`,
+        ? t("{name|이/가} 없습니다. 왼쪽 부품 목록에서 '{part}'을(를) 추가하세요.", { name, part: ctx.nameOf(c.kind) })
+        : t("{name} {need}개가 필요합니다 (지금 {have}개).", { name, need, have }),
   };
 }
 
@@ -127,7 +127,7 @@ function checkConnected(c: ConnectedCheck, ctx: WiringContext): CheckResult {
   const target = nets.ofSignal(c.to);
   const parts = ctx.parts.filter((p) => p.kind === c.kind);
   const name = shortName(ctx, c.kind);
-  if (!parts.length) return { pass: false, hint: `${josa(name, "이/가")} 없습니다.` };
+  if (!parts.length) return { pass: false, hint: t("{name|이/가} 없습니다.", { name }) };
   const elsewhere = new Set<string>();
   for (const p of parts) {
     const n = nets.of({ part: p.id, pin: c.pin });
@@ -138,8 +138,8 @@ function checkConnected(c: ConnectedCheck, ctx: WiringContext): CheckResult {
   return {
     pass: false,
     hint:
-      `${name}의 ${c.pin} 핀이 ${named(ctx, c.to)}에 연결되어 있지 않습니다.` +
-      (now.length ? ` 지금은 ${now.join(", ")}에 연결되어 있습니다.` : ""),
+      t("{name}의 {pin} 핀이 {to}에 연결되어 있지 않습니다.", { name, pin: c.pin, to: named(ctx, c.to) }) +
+      (now.length ? t(" 지금은 {now}에 연결되어 있습니다.", { now: now.join(", ") }) : ""),
   };
 }
 
@@ -185,7 +185,9 @@ function paths(ctx: WiringContext, nets: Nets, from: Set<number>, to: Set<number
 
 /** "저항과 LED" */
 function andList(names: string[]): string {
-  return names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).map((n) => josa(n, "와/과")).join(" ")} ${names.at(-1)}`;
+  if (names.length < 2) return names[0] ?? "";
+  if (names.length === 2) return t("{a|와/과} {b}", { a: names[0], b: names[1] });
+  return t("{first|와/과} {rest}", { first: names[0], rest: andList(names.slice(1)) });
 }
 
 const sameItems = (a: string[], b: string[]) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
@@ -202,19 +204,21 @@ function checkSeries(c: SeriesCheck, ctx: WiringContext): CheckResult {
   const allowed = new Set(c.through);
   const items = andList(c.through.map((l) => labelName(ctx, l)));
   for (const n of from) {
-    if (to.has(n)) return { pass: false, hint: `${josa(c.from, "이/가")} ${c.to}에 바로 연결되어 있습니다 (단락). 사이에 ${josa(items, "을/를")} 넣으세요.` };
+    if (to.has(n)) return { pass: false, hint: t("{from|이/가} {to}에 바로 연결되어 있습니다 (단락). 사이에 {items|을/를} 넣으세요.", { from: c.from, to: c.to, items }),
+      };
   }
   const found = paths(ctx, nets, from, to, allowed, c.through.length);
   if (found.some((p) => !p.reversed && sameItems(p.labels, c.through))) return { pass: true };
   if (found.some((p) => p.reversed && sameItems(p.labels, c.through))) {
-    return { pass: false, hint: `LED 방향이 반대입니다. 긴 다리(A, 애노드)가 ${c.from} 쪽, 짧은 다리(K)가 ${c.to} 쪽이어야 합니다.` };
+    return { pass: false, hint: t("LED 방향이 반대입니다. 긴 다리(A, 애노드)가 {from} 쪽, 짧은 다리(K)가 {to} 쪽이어야 합니다.", { from: c.from, to: c.to }),
+    };
   }
   // Something is in series, but not everything.
   const partial = found.filter((p) => p.labels.length < c.through.length);
   if (partial.length) {
     const missing = c.through.filter((l) => !partial[0].labels.includes(l));
     const what = andList(missing.map((l) => labelName(ctx, l)));
-    return { pass: false, hint: `${josa(c.from, "이/가")} ${josa(c.to, "으로/로")} 가는 길에 ${josa(what, "이/가")} 없습니다.` };
+    return { pass: false, hint: t("{from|이/가} {to|으로/로} 가는 길에 {what|이/가} 없습니다.", { from: c.from, to: c.to, what }) };
   }
   // The right chain, on the wrong pin?
   const others = new Set<number>();
@@ -231,14 +235,19 @@ function checkSeries(c: SeriesCheck, ctx: WiringContext): CheckResult {
     );
     return {
       pass: false,
-      hint: `${josa(items, "이/가")} ${[...new Set(at)].map((s) => named(ctx, s)).join(", ")}에 연결되어 있습니다. ${named(ctx, c.from)}에 연결하세요.`,
+      hint: t("{items|이/가} {at}에 연결되어 있습니다. {from}에 연결하세요.", {
+        items,
+        at: [...new Set(at)].map((s) => named(ctx, s)).join(", "),
+        from: named(ctx, c.from),
+      }),
     };
   }
   const missingParts = c.through.filter((l) => !ctx.parts.some((p) => terminals(p).some((t) => t[3] === l)));
   if (missingParts.length) {
-    return { pass: false, hint: `${josa(andList(missingParts.map((l) => labelName(ctx, l))), "이/가")} 회로에 없습니다.` };
+    return { pass: false, hint: t("{name|이/가} 회로에 없습니다.", { name: andList(missingParts.map((l) => labelName(ctx, l))) }) };
   }
-  return { pass: false, hint: `${c.from}에서 ${c.to}까지 ${josa(items, "이/가")} 이어진 길이 없습니다. 브레드보드의 같은 줄에 꽂혔는지 확인하세요.` };
+  return { pass: false, hint: t("{from}에서 {to}까지 {items|이/가} 이어진 길이 없습니다. 브레드보드의 같은 줄에 꽂혔는지 확인하세요.", { from: c.from, to: c.to, items }),
+  };
 }
 
 export function evaluateWiring(c: WiringCheck, ctx: WiringContext): CheckResult {
@@ -251,7 +260,7 @@ export function evaluateWiring(c: WiringCheck, ctx: WiringContext): CheckResult 
       return checkSeries(c, ctx);
     case "noWarnings":
       return ctx.warnings.length
-        ? { pass: false, hint: `전기 규칙 경고가 있습니다: ${ctx.warnings.join(" / ")}` }
+        ? { pass: false, hint: t("전기 규칙 경고가 있습니다: {warnings}", { warnings: ctx.warnings.join(" / ") }) }
         : { pass: true };
   }
 }
@@ -260,12 +269,18 @@ export function evaluateWiring(c: WiringCheck, ctx: WiringContext): CheckResult 
 export function wiringLabel(c: WiringCheck, ctx: Pick<WiringContext, "nameOf">): string {
   switch (c.type) {
     case "part":
-      return `${shortName(ctx, c.kind)}${c.count && c.count > 1 ? ` ${c.count}개` : ""} 놓기`;
+      return c.count && c.count > 1
+        ? t("{name} {n}개 놓기", { name: shortName(ctx, c.kind), n: c.count })
+        : t("{name} 놓기", { name: shortName(ctx, c.kind) });
     case "connected":
-      return `${shortName(ctx, c.kind)}의 ${c.pin} 핀 → ${c.to}`;
+      return t("{name}의 {pin} 핀 → {to}", { name: shortName(ctx, c.kind), pin: c.pin, to: c.to });
     case "series":
-      return `${c.from} → ${c.through.map((l) => labelName(ctx as WiringContext, l)).join(" → ")} → ${c.to} 직렬 연결`;
+      return t("{from} → {through} → {to} 직렬 연결", {
+        from: c.from,
+        through: c.through.map((l) => labelName(ctx as WiringContext, l)).join(" → "),
+        to: c.to,
+      });
     case "noWarnings":
-      return "전기 규칙 경고 없음";
+      return t("전기 규칙 경고 없음");
   }
 }

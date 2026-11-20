@@ -119,6 +119,20 @@ function handles(c: CubeConfig): string[] {
 
 // ------------------------------------------------------------------ main.h
 
+/**
+ * A SysTick priority other than the HAL's 15: set again after HAL_Init().
+ * The priority is TICK_INT_PRIORITY in stm32f4xx_hal_conf.h, which HAL_Init
+ * uses — but the in-browser build links a HAL compiled before (with 15), so
+ * the project sets it itself; HAL_InitTick keeps it (uwTickPrio) for the
+ * SysTick set up again by SystemClock_Config. The default makes nothing
+ * (as CubeMX writes it).
+ */
+function tickPriorityLine(c: CubeConfig): string {
+  const p = c.nvic.SysTick?.preempt ?? 15;
+  if (p === 15) return "";
+  return "  /* SysTick priority from the configuration (TICK_INT_PRIORITY), also for a HAL built before */\n  HAL_InitTick(TICK_INT_PRIORITY);\n";
+}
+
 export function mainH(c: CubeConfig): string {
   const defines: string[] = [];
   for (const [pin, v] of pinsInOrder(c)) {
@@ -507,7 +521,7 @@ int main(void)
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
-
+${tickPriorityLine(c)}
   ${R("Init", "\n\n  ")}
 
   /* Configure the system clock */

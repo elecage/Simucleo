@@ -183,6 +183,22 @@ test("TIM2 PWM on PA5 (1 kHz, 25 %) after HAL_TIM_PWM_Start in USER CODE 2: the 
   }
 });
 
+test("a SysTick priority other than 15 is the one the running firmware has, in the in-browser build too", { skip, timeout: 300_000 }, async () => {
+  // The in-browser build links a HAL compiled with TICK_INT_PRIORITY 15:
+  // HAL_Init() alone would leave SysTick at 15 whatever was configured.
+  const c = nucleoDefaults("tickprio");
+  c.nvic.SysTick = { enabled: true, preempt: 5, sub: 0 };
+  const p = newCubeProject(c);
+  for (const [name, elf] of [["gcc", gccBuild(p).elf], ["wasm", (await wasmBuild(p.files)).elf!]] as const) {
+    const sim = await simulator();
+    sim.loadElf(elf);
+    sim.runForMs(20);
+    assert.equal(sim.stopped(), false, name);
+    // SHPR3[31:24]: SysTick's priority, 4 bits implemented (<< 4).
+    assert.equal(sim.readWord(0xe000ed20) >>> 24, 5 << 4, `${name}: SysTick priority`);
+  }
+});
+
 test("every snapshot configuration builds with gcc (no warnings in Core/) and the in-browser toolchain, and starts without Error_Handler", { skip, timeout: 600_000 }, async () => {
   const failed: string[] = [];
   const configs: Record<string, CubeConfig> = snapshotConfigs();

@@ -56,7 +56,11 @@ export function scan(file: string): { untranslated: Found[]; keys: Found[] } {
   };
   const visit = (n: ts.Node) => {
     if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
-      if (isKey(n)) keys.push(at(n, n.text));
+      if (isKey(n)) {
+        // t(ko, vars, "context"): the entry is "context::ko".
+        const ctx = (n.parent as ts.CallExpression).arguments[2];
+        keys.push(at(n, ctx && ts.isStringLiteral(ctx) ? `${ctx.text}::${n.text}` : n.text));
+      }
       else if (HANGUL.test(n.text) && !ok(n)) untranslated.push(at(n, n.text));
     } else if (ts.isTemplateExpression(n)) {
       const text = [n.head.text, ...n.templateSpans.map((s) => s.literal.text)].join("${…}");
@@ -74,7 +78,7 @@ const FILES = sources(join(web, "src"));
 const scanned = FILES.map(scan);
 
 const placeholders = (s: string) =>
-  [...s.matchAll(/\{(\w+)(?:[|#][^{}]*)?\}/g)].map((m) => m[1]).filter((v, i, a) => a.indexOf(v) === i).sort();
+  [...s.replace(/^[\w-]+::/, "").matchAll(/\{(\w+)(?:[|#][^{}]*)?\}/g)].map((m) => m[1]).filter((v, i, a) => a.indexOf(v) === i).sort();
 
 test("i18n: no Korean interface text outside t()", () => {
   const all = scanned.flatMap((s) => s.untranslated);
@@ -128,6 +132,9 @@ test("i18n: t() fills placeholders, particles and plurals", () => {
     assert.equal(t("{name|을/를} 찾지 못했습니다", { name: "LED" }), "LED를 찾지 못했습니다");
     assert.equal(t("와이어 {n}개", { n: 3 }), "와이어 3개");
     setLangForTest("en");
+    // A context picks its own entry; the plain key keeps its own.
+    assert.equal(t("연결", undefined, "category"), "Connectivity");
+    assert.equal(t("연결"), "Connect");
     // Not in a dictionary: the Korean, filled in.
     assert.equal(t("사전에 없는 말 {n}", { n: 1 }), "사전에 없는 말 1");
   } finally {

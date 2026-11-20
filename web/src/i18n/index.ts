@@ -91,10 +91,15 @@ function fill(template: string, vars: Vars | undefined, l: Lang): string {
   });
 }
 
-/** `ko` in the page's language, with its placeholders filled in. */
-export function t(ko: string, vars?: Vars): string {
+/**
+ * `ko` in the page's language, with its placeholders filled in. A Korean word
+ * that needs two different English ones (연결: "Connect" on a button,
+ * "Connectivity" as a category) takes a context: its entry is then
+ * "<context>::<ko>".
+ */
+export function t(ko: string, vars?: Vars, context?: string): string {
   if (current === "ko") return fill(ko, vars, "ko");
-  return fill(EN[ko] ?? ko, vars, "en");
+  return fill(EN[context ? `${context}::${ko}` : ko] ?? ko, vars, "en");
 }
 
 /**

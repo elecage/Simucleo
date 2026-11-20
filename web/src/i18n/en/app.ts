@@ -32,7 +32,7 @@ export const APP: Record<string, string> = {
   "알 수 없는 부품 '{kind}' ({id})은 건너뜁니다.": "Skipping unknown part '{kind}' ({id}).",
   "없는 부품에 연결된 와이어를 건너뜁니다.": "Skipping a wire connected to a missing part.",
   "없는 핀에 연결된 와이어를 건너뜁니다 ({a} — {b}).": "Skipping a wire connected to a missing pin ({a} — {b}).",
-  "연결 안 됨": "not connected",
+  "연결 안 됨": "Not connected",
   "보드": "Board",
   "회로도 축소": "Zoom out schematic",
   "회로도 확대": "Zoom in schematic",

@@ -100,7 +100,7 @@ export const CUBE: Record<string, string> = {
   "SysTick·Cortex 클럭 = HCLK ({f}). 숫자는 고치는 대로 다시 계산하고, 넘는 값은 빨간 상자와 아래 목록으로 알려 준다.":
     "SysTick·Cortex clock = HCLK ({f}). Frequencies are recalculated as you edit; values out of range show as red boxes and in the list below.",
   // Peripherals
-  "연결": "Connectivity",
+  "category::연결": "Connectivity",
   "타이머": "Timers",
   "시스템": "System",
   "{p} 사용": "Use {p}",

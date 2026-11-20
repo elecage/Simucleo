@@ -671,7 +671,7 @@ function ClockTab({ cfg, update, issues }: { cfg: CubeConfig; update: (f: (c: Cu
 // ------------------------------------------------------------------ peripherals
 
 const PERI_GROUPS: [string, string[]][] = [
-  [t("연결"), [...USARTS, ...I2CS, ...SPIS]],
+  [t("연결", undefined, "category"), [...USARTS, ...I2CS, ...SPIS]],
   [t("타이머"), [...TIMS]],
   [t("아날로그"), ["ADC1"]],
   [t("시스템"), ["GPIO", "NVIC", "SYS"]],

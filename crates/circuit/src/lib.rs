@@ -7,6 +7,7 @@
 //! pin drives.
 
 pub mod devices;
+pub mod mcp2515;
 pub mod models;
 pub mod netlist;
 pub mod rc522;

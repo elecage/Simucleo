@@ -38,6 +38,7 @@ import {
 import {
   annotationLabel,
   decodeI2c,
+  decodeCan,
   decodeNec,
   decodeOneWire,
   decodeSpi,
@@ -131,6 +132,12 @@ const KIND_TEXT: Record<AnnotationKind, string> = {
   pixel: t("픽셀"),
   leader: t("리더"),
   repeat: t("반복"),
+  sof: "SOF",
+  dlc: "DLC",
+  crc: "CRC",
+  ack: "ACK",
+  eof: "EOF",
+  error: t("오류"),
 };
 const CONTENT_KIND_TEXT: Record<ContentCfg["kind"], string> = {
   byte: t("바이트"),
@@ -145,6 +152,11 @@ const CONTENT_SPAN = 200e6;
 const CONTENT_MARGIN = 1e6;
 /** Rows a decoded table shows. */
 const TABLE_ROWS = 400;
+
+/** M35: part pins a digital probe can go on — a CAN module's CANH and CANL show its bus. */
+function linePins(parts: { id: string; kind: string }[]): string[] {
+  return parts.filter((p) => p.kind === "can-mcp2515").flatMap((p) => [`${p.id}.CANH`, `${p.id}.CANL`]);
+}
 
 /** Pins of the project's parts an analog probe can go on ("pot.W"). */
 function partPins(parts: { id: string; kind: string }[]): string[] {
@@ -619,7 +631,7 @@ export function Waveform({
     ...math.map((_, i) => mathTop + (i + 1) * AROW),
   ].slice(0, -1);
   const synth = new Set(synthPins.split(" "));
-  const allPins = [...new Set([...PIN_NAMES])];
+  const allPins = [...new Set([...PIN_NAMES, ...linePins(parts)])];
   const analogChoices = [...PIN_NAMES.filter((n) => n.startsWith("PA") || n.startsWith("PB") || n.startsWith("PC")), ...partPins(parts)].filter(
     (n) => !analog.some((a) => a.spec === n),
   );
@@ -664,7 +676,7 @@ export function Waveform({
             }}
           >
             <option value="">…</option>
-            {PIN_NAMES.filter((n) => !pins.includes(n)).map((n) => (
+            {[...PIN_NAMES, ...linePins(parts)].filter((n) => !pins.includes(n)).map((n) => (
               <option key={n}>{n}</option>
             ))}
           </select>
@@ -959,6 +971,18 @@ export function Waveform({
                 </select>
               </label>
             </>
+          )}
+          {d.type === "can" && (
+            <label>
+              {t("비트레이트")}{" "}
+              <select value={d.baud} onChange={(e) => updateDecoder(d.id, { baud: Number(e.target.value) })} aria-label={t("CAN 비트레이트")}>
+                {[...new Set([10000, 20000, 50000, 100000, 125000, 250000, 500000, 1000000, d.baud])].sort((a, b) => a - b).map((r) => (
+                  <option key={r} value={r}>
+                    {r >= 1000 ? `${r / 1000} kbit/s` : `${r} bit/s`}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
           {d.type === "spi" && (
             <>
@@ -1518,6 +1542,8 @@ function runDecoder(d: DecoderCfg, lineOf: LineOf, from: number): Annotation[] {
       return ls[0] ? decodeWs2812(ls[0].line, from, ls[0].to) : [];
     case "nec":
       return ls[0] ? decodeNec(ls[0].line) : [];
+    case "can":
+      return ls[0] ? decodeCan(ls[0].line, { bitrate: d.baud }, ls[0].to) : [];
   }
 }
 

@@ -2465,6 +2465,8 @@ pub enum Device {
     Tft(Box<crate::tft::Tft>),
     /// M35: a MAX6675 or MAX31855 thermocouple module.
     Tc(Box<crate::thermocouple::Thermocouple>),
+    /// M35: an MCP2515 CAN controller (its bus is `sim`'s `CanNet`).
+    Can(Box<crate::mcp2515::Mcp2515>),
 }
 
 impl Device {
@@ -2519,6 +2521,8 @@ impl Device {
             Device::Bldc(b) => b.hall_output(index),
             Device::Rfid(r) => r.irq_pin(),
             Device::Tc(t) => t.drive(index),
+            // INT: push-pull, low while an enabled interrupt is pending.
+            Device::Can(c) => c.powered.then_some(!c.int_active()),
             // STATE (0) is high while a phone is connected; TXD (1) idles high.
             Device::Bluetooth(b) => match index {
                 0 => Some(b.powered && b.connected && !b.at_mode),

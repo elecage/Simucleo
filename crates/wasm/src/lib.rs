@@ -67,6 +67,10 @@ pub struct Simulator {
     frame_start_ns: f64,
     /// Probed pins with their level at the start of the frame.
     probes: Vec<((u8, u8), bool)>,
+    /// M35: probed part pins (a CAN module's "can1.CANH": its bus, high
+    /// = recessive) with their level at the start of the frame; their
+    /// channels come after the MCU pins'.
+    lines: Vec<(String, bool)>,
     /// Edges of each probed pin in this frame (ms, level), capped at
     /// `PROBE_EDGES_MAX`, and whether some did not fit.
     probe_edges: Vec<(Vec<(f64, bool)>, bool)>,
@@ -123,6 +127,7 @@ impl Simulator {
             pins: BTreeMap::new(),
             frame_start_ns: 0.0,
             probes: Vec::new(),
+            lines: Vec::new(),
             probe_edges: Vec::new(),
             probe_level: Vec::new(),
             synth: Vec::new(),
@@ -171,7 +176,17 @@ impl Simulator {
         for e in &mut self.probe_edges {
             *e = (Vec::new(), false);
         }
-        let levels: Vec<bool> = self.probes.iter().map(|p| p.1).collect();
+        let line_levels = self.board.line_levels();
+        for ((_, level), now) in self.lines.iter_mut().zip(line_levels) {
+            *level = now.unwrap_or(true);
+        }
+        self.board.take_line_edges();
+        let levels: Vec<bool> = self
+            .probes
+            .iter()
+            .map(|p| p.1)
+            .chain(self.lines.iter().map(|l| l.1))
+            .collect();
         self.probe_level = levels.clone();
         self.synth = vec![None; self.probes.len()];
         self.synth_last = vec![f64::MIN; self.probes.len()];
@@ -341,6 +356,11 @@ impl Simulator {
             }
         }
         self.wire_buf = buf;
+        // Part pins probed as lines (a CAN bus's bits).
+        let base = self.probes.len();
+        for (t, k, level) in self.board.take_line_edges() {
+            self.pending.push((t, Pending::Edge(base + k, level)));
+        }
         // Voltages, at each change of the circuit's operating point.
         if !self.analog.is_empty() {
             for (cycle, volts) in self.board.take_voltage_log() {
@@ -685,6 +705,18 @@ impl Simulator {
                 "synth": synth.is_some(),
             }));
             *level0 = level;
+        }
+        let base = self.probes.len();
+        for (k, (name, level0)) in self.lines.iter_mut().enumerate() {
+            let (edges, dense) = &mut self.probe_edges[base + k];
+            probes.push(json!({
+                "name": name,
+                "level0": *level0,
+                "edges": std::mem::take(edges),
+                "dense": std::mem::take(dense),
+                "synth": false,
+            }));
+            *level0 = self.probe_level[base + k];
         }
         let mut analog = Vec::new();
         for a in &mut self.analog {
@@ -1074,13 +1106,30 @@ impl Simulator {
             self.probe_level.push(level);
         }
         self.synth_last = vec![now; self.probes.len()];
+        // Any other name is a part's pin: a line the circuit may show.
+        let mut lines: Vec<String> = Vec::new();
+        for n in names.iter().filter(|n| parse_mcu_pin(n).is_none()) {
+            if !lines.contains(n) {
+                lines.push(n.clone());
+            }
+        }
+        self.board.set_line_probes(&lines);
+        self.board.take_line_edges();
+        let levels = self.board.line_levels();
+        self.lines = lines
+            .into_iter()
+            .zip(levels)
+            .map(|(n, l)| (n, l.unwrap_or(true)))
+            .collect();
+        self.probe_level.extend(self.lines.iter().map(|l| l.1));
         self.apply_probe_mask();
         self.holdback_ns = 0.0;
-        self.probe_edges = vec![(Vec::new(), false); self.probes.len()];
+        self.probe_edges = vec![(Vec::new(), false); self.probes.len() + self.lines.len()];
         self.scope.set_channels(
             self.probes
                 .iter()
                 .map(|&((port, pin), level)| (format!("P{}{pin}", (b'A' + port) as char), level))
+                .chain(self.lines.iter().cloned())
                 .collect(),
             now,
         );

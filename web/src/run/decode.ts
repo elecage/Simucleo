@@ -3,6 +3,7 @@
 // lists with times in ns, unit tested in test/decode.test.ts.
 // M25: 1-Wire (DS18B20), TM1637 and WS2812 decoders, and matching decoded
 // content for the content trigger.
+// M35: CAN frames on a CAN module's bus (decodeCan).
 // M26: NEC infrared decoder. The content trigger runs inside the simulator
 // (crates/wasm/src/decode.rs, the same decoders taking one edge at a time);
 // `findMatches` here is the reference its matches must equal.
@@ -43,7 +44,13 @@ export type AnnotationKind =
   | "triplet"
   | "pixel"
   | "leader"
-  | "repeat";
+  | "repeat"
+  | "sof"
+  | "dlc"
+  | "crc"
+  | "ack"
+  | "eof"
+  | "error";
 
 /** One decoded item, drawn as a box over [start, end] (ns). */
 export interface Annotation {
@@ -54,10 +61,11 @@ export interface Annotation {
   value?: number;
   /** SPI: the word on MISO. */
   miso?: number;
-  /** I2C address byte: 7-bit address and direction; NEC leader: the frame's address (`value` its command). */
+  /** I2C address byte: 7-bit address and direction; NEC leader: the frame's address (`value` its command);
+   * CAN identifier: the ID, "R" for a remote frame (note "EXT": 29 bits). */
   addr?: number;
   rw?: "R" | "W";
-  /** I2C: the byte was acknowledged. */
+  /** I2C: the byte was acknowledged; CAN: the ACK slot was dominant. */
   ack?: boolean;
   /** Framing, parity or NACK: shown in red. */
   error?: string;
@@ -334,7 +342,24 @@ export function annotationLabel(a: Annotation, f: Format): string {
     case "stop":
       return "P";
     case "address":
+      if (a.ack === undefined) {
+        // A CAN identifier.
+        const id = "0x" + a.addr!.toString(16).toUpperCase().padStart(a.note ? 8 : 3, "0");
+        return `ID ${id}${a.note ? " EXT" : ""}${a.rw === "R" ? " RTR" : ""}`;
+      }
       return `${fmtByte(a.addr!, "hex")} ${a.rw} ${a.ack ? "ACK" : "NACK"}`;
+    case "sof":
+      return "SOF";
+    case "dlc":
+      return `DLC ${a.value}`;
+    case "crc":
+      return `CRC 0x${a.value!.toString(16).toUpperCase().padStart(4, "0")}`;
+    case "ack":
+      return a.ack ? "ACK" : "NACK";
+    case "eof":
+      return "EOF";
+    case "error":
+      return a.error ?? "";
     case "reset":
       return a.presence === undefined ? "RESET" : a.presence ? t("리셋·프레즌스") : t("리셋 (응답 없음)");
     case "triplet": {
@@ -916,12 +941,248 @@ export function necLast(anns: Annotation[]): { addr: number; cmd: number } | nul
   return last;
 }
 
+// ------------------------------------------------------------------ CAN
+
+// M35: CAN 2.0 frames on a bus probed as one line (a CAN module's CANH or
+// CANL in the waveform view: high = recessive, as a transceiver's RXD).
+// Each run of one level holds round(length / bit time) bits — the
+// receiver re-synchronises on every edge; stuff bits are removed (six
+// equal bits: a stuff error), the CRC-15 checked, and the delimiters, ACK
+// slot and EOF looked at. After an error the decoder waits for 7
+// recessive bits (the error delimiter) before taking a SOF again.
+
+const STUFF_ERROR = t("스터프 오류");
+const CRC_ERROR = t("CRC 오류");
+const formError = (field: string) => t("형식 오류 ({field})", { field });
+
+export interface CanOptions {
+  /** Bit rate (bit/s). */
+  bitrate: number;
+}
+
+/** CRC-15 of CAN (polynomial 0x4599) over bits. */
+export function canCrc(bits: boolean[]): number {
+  let crc = 0;
+  for (const b of bits) {
+    const next = b !== ((crc & 0x4000) !== 0);
+    crc = (crc << 1) & 0x7fff;
+    if (next) crc ^= 0x4599;
+  }
+  return crc;
+}
+
+type CanField = "id" | "b12" | "ide" | "eid" | "rtr" | "r1" | "r0" | "dlc" | "data" | "crc" | "crcdel" | "ack" | "ackdel" | "eof";
+
+/** The bit-level state machine (the same in crates/wasm/src/decode.rs). */
+class CanBits {
+  st: "idle" | "wait" | "frame" = "idle";
+  /** Wait: recessive bits so far. */
+  count = 0;
+  field: CanField = "id";
+  /** Bits of the field so far and their value. */
+  n = 0;
+  v = 0;
+  start = 0;
+  /** Destuffing: last level and its run, while stuffing applies. */
+  last = false;
+  run = 0;
+  stuffing = false;
+  raw: boolean[] = [];
+  id = 0;
+  ext = false;
+  rtr = false;
+  dlc = 0;
+  len = 0;
+  idStart = 0;
+  dlcStart = 0;
+  readonly bit: number;
+  readonly out: Annotation[];
+  constructor(bit: number, out: Annotation[]) {
+    this.bit = bit;
+    this.out = out;
+  }
+
+  /** A bit the run-length step would not change anything with. */
+  idle(level: boolean): boolean {
+    return (this.st === "idle" && level) || (this.st === "wait" && !level);
+  }
+
+  error(t: number, error: string) {
+    this.out.push({ start: t, end: t + this.bit, kind: "error", error });
+    this.st = "wait";
+    this.count = 0;
+  }
+
+  /** Field `f` starts with the next bit. */
+  next(f: CanField) {
+    this.field = f;
+    this.n = 0;
+    this.v = 0;
+  }
+
+  push(b: boolean, t: number) {
+    if (this.st === "wait") {
+      this.count = b ? this.count + 1 : 0;
+      if (this.count >= 7) this.st = "idle";
+      return;
+    }
+    if (this.st === "idle") {
+      if (b) return;
+      this.out.push({ start: t, end: t + this.bit, kind: "sof" });
+      this.st = "frame";
+      this.raw = [false];
+      this.last = false;
+      this.run = 1;
+      this.stuffing = true;
+      this.next("id");
+      this.idStart = t + this.bit;
+      return;
+    }
+    if (this.stuffing) {
+      if (this.run === 5) {
+        if (b === this.last) return this.error(t, STUFF_ERROR);
+        this.last = b;
+        this.run = 1;
+        return;
+      }
+      if (this.field === "crcdel") this.stuffing = false;
+      else if (b === this.last) this.run++;
+      else {
+        this.last = b;
+        this.run = 1;
+      }
+    }
+    if (this.n === 0) this.start = t;
+    this.n++;
+    this.v = this.v * 2 + (b ? 1 : 0);
+    const end = t + this.bit;
+    const f = this.field;
+    if (f !== "crc" && f !== "crcdel" && f !== "ack" && f !== "ackdel" && f !== "eof") this.raw.push(b);
+    switch (f) {
+      case "id":
+        if (this.n === 11) {
+          this.id = this.v;
+          this.next("b12");
+        }
+        break;
+      case "b12":
+        this.rtr = b;
+        this.next("ide");
+        break;
+      case "ide":
+        this.ext = b;
+        if (!b) {
+          this.out.push({ start: this.idStart, end: t, kind: "address", value: this.id, addr: this.id, rw: this.rtr ? "R" : "W" });
+          this.dlcStart = t;
+          this.next("r0");
+        } else this.next("eid");
+        break;
+      case "eid":
+        if (this.n === 18) {
+          this.id = this.id * 0x40000 + this.v;
+          this.next("rtr");
+        }
+        break;
+      case "rtr":
+        this.rtr = b;
+        this.out.push({ start: this.idStart, end, kind: "address", value: this.id, addr: this.id, rw: b ? "R" : "W", note: "EXT" });
+        this.dlcStart = end;
+        this.next("r1");
+        break;
+      case "r1":
+        this.next("r0");
+        break;
+      case "r0":
+        this.next("dlc");
+        break;
+      case "dlc":
+        if (this.n === 4) {
+          this.dlc = this.v;
+          this.len = this.rtr ? 0 : Math.min(this.v, 8);
+          this.out.push({ start: this.dlcStart, end, kind: "dlc", value: this.v });
+          this.next(this.len > 0 ? "data" : "crc");
+        }
+        break;
+      case "data":
+        if (this.n === 8) {
+          this.out.push({ start: this.start, end, kind: "data", value: this.v });
+          this.len--;
+          this.next(this.len > 0 ? "data" : "crc");
+        }
+        break;
+      case "crc":
+        if (this.n === 15) {
+          const want = canCrc(this.raw);
+          this.out.push({ start: this.start, end, kind: "crc", value: this.v, ...(want === this.v ? {} : { error: CRC_ERROR }) });
+          this.next("crcdel");
+        }
+        break;
+      case "crcdel":
+        if (!b) return this.error(t, formError("CRC delimiter"));
+        this.next("ack");
+        break;
+      case "ack":
+        this.out.push({ start: t, end, kind: "ack", ack: !b, ...(b ? { error: "NACK" } : {}) });
+        this.next("ackdel");
+        break;
+      case "ackdel":
+        if (!b) return this.error(t, formError("ACK delimiter"));
+        this.next("eof");
+        break;
+      case "eof":
+        if (!b) return this.error(t, formError("EOF"));
+        if (this.n === 7) {
+          this.out.push({ start: this.start, end, kind: "eof" });
+          this.st = "idle";
+        }
+        break;
+    }
+  }
+}
+
+/** Bits of a run of `level` from `s` to `e` (ns): round(length / bit). */
+const runBits = (s: number, e: number, bit: number) => Math.floor((e - s) / bit + 0.5);
+
+/**
+ * CAN frames on `line` (high = recessive) at `bitrate`: SOF, the ID
+ * (11 or 29 bits, `rw` "R" for a remote frame, note "EXT" for an
+ * extended one) as an "address", the DLC, data bytes, the CRC (checked),
+ * the ACK slot (a NACK is an error) and EOF; stuff and form errors as
+ * "error" items. Bits up to `to` count.
+ */
+export function decodeCan(line: Line, o: CanOptions, to = Infinity): Annotation[] {
+  const bit = 1e9 / o.bitrate;
+  const out: Annotation[] = [];
+  const d = new CanBits(bit, out);
+  let level = line.level0;
+  // Starting on a dominant level: in the middle of something.
+  if (!level) d.st = "wait";
+  let s = -Infinity;
+  const run = (e: number) => {
+    if (s === -Infinity) return;
+    const n = runBits(s, e, bit);
+    for (let k = 0; k < n; k++) {
+      if (d.idle(level)) break;
+      d.push(level, s + k * bit);
+    }
+  };
+  for (const [t, l] of line.edges) {
+    if (l === level) continue;
+    run(t);
+    level = l;
+    s = t;
+  }
+  run(to);
+  return out;
+}
+
 // ---------------------------------------------------- content trigger
 
 /**
  * What a content trigger looks for in a decoder's items: a byte (UART,
- * SPI MOSI or MISO, 1-Wire, TM1637), UART text, an I2C address with
- * R/W, or a WS2812 pixel by index (and colour).
+ * SPI MOSI or MISO, 1-Wire, TM1637, CAN data), UART text, an I2C address
+ * with R/W (or a CAN ID, R: remote frame), or a WS2812 pixel by index (and
+ * colour).
  */
 export type ContentMatch =
   | { kind: "byte"; value: number }
@@ -988,10 +1249,12 @@ export interface ScanState {
 
 /**
  * The items a decoder can start from without what came before: a UART
- * frame, an SPI word, an I2C or TM1637 START, a 1-Wire or WS2812 reset.
+ * frame, an SPI word, an I2C or TM1637 START, a 1-Wire or WS2812 reset,
+ * a CAN SOF.
  */
 export function isSyncPoint(a: Annotation, type: string): boolean {
   if (type === "uart" || type === "spi") return a.kind === "data";
+  if (type === "can") return a.kind === "sof";
   return a.kind === "start" || a.kind === "restart" || a.kind === "reset" || a.kind === "leader" || a.kind === "repeat";
 }
 

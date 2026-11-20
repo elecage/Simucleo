@@ -170,6 +170,12 @@ const BOX_LAYOUT: Record<
     right: ["SCL", "SDA"],
     subtitle: (p) => t("기압 (BMP280) · I2C {address}", { address: p.address ?? "0x76" }),
   },
+  // M35: SPI side on the left, the bus on the right.
+  "can-mcp2515": {
+    left: ["VCC", "GND", "CS", "SCK", "SI", "SO", "INT"],
+    right: ["CANH", "CANL"],
+    subtitle: (p) => `CAN (MCP2515 + TJA1050) · ${p.osc ?? "8 MHz"}${String(p.term ?? "on") === "off" ? "" : " · 120 Ω"}`,
+  },
   ...Object.fromEntries(
     ["neopixel-ring", "neopixel-strip", "neopixel-matrix"].map((k) => [
       k,

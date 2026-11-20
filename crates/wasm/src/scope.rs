@@ -1537,7 +1537,7 @@ mod tests {
         assert_eq!(s.status(), Status::NoSource, "MOSI not probed");
         s.set_channels(vec![("PA5".into(), false), ("PA7".into(), false)], 0.0);
         assert_eq!(s.status(), Status::Armed, "CS left out when not probed");
-        c.content.as_mut().unwrap().decoder.kind = "can".into();
+        c.content.as_mut().unwrap().decoder.kind = "lin".into();
         s.configure(Some(c));
         assert_eq!(s.status(), Status::NoSource, "unknown decoder");
     }

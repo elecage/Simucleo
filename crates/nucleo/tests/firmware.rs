@@ -3890,3 +3890,125 @@ fn thermocouples_on_spi_receive_only_and_bit_banged() {
         board.circuit_warnings()
     );
 }
+
+/// M35: two MCP2515 modules on SPI1 (CS D10/D9, INT D2/D8) with their
+/// CANH and CANL wired together; `term` on both (the J1 jumper).
+fn can_circuit(term: &str) -> simucleo_nucleo::Circuit {
+    let n = "nucleo";
+    let mut wires = Vec::new();
+    for (id, cs, int) in [("canA", "D10", "D2"), ("canB", "D9", "D8")] {
+        wires.extend([
+            wire_json((n, "5V"), (id, "VCC")),
+            wire_json((id, "GND"), (n, "GND")),
+            wire_json((n, "D13"), (id, "SCK")),
+            wire_json((n, "D12"), (id, "SO")),
+            wire_json((n, "D11"), (id, "SI")),
+            wire_json((n, cs), (id, "CS")),
+            wire_json((id, "INT"), (n, int)),
+        ]);
+    }
+    wires.push(wire_json(("canA", "CANH"), ("canB", "CANH")));
+    wires.push(wire_json(("canA", "CANL"), ("canB", "CANL")));
+    m8_circuit(
+        serde_json::json!([
+            {"id": "canA", "kind": "can-mcp2515", "props": {"term": term}},
+            {"id": "canB", "kind": "can-mcp2515", "props": {"term": term}}
+        ]),
+        wires,
+    )
+}
+
+fn can_board(term: &str) -> Nucleo {
+    use simucleo_nucleo::BusCatalog;
+    let mut signals = arduino_signals();
+    signals.insert("D13".into(), "PA5".into());
+    signals.insert("D9".into(), "PC7".into());
+    signals.insert("D8".into(), "PA9".into());
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-can-mcp2515", "hal-can-mcp2515"))
+        .unwrap();
+    board.set_circuit(&can_circuit(term), &BusCatalog::default(), &signals);
+    board
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-can-mcp2515"]
+fn can_frames_go_between_two_mcp2515_modules() {
+    let mut board = can_board("on");
+    board.set_line_probes(&["canA.CANH".into()]);
+    board.run_for_ns(650e6);
+    let text = console_text(&mut board);
+    assert!(
+        text.contains("node A normal mode, node B normal mode"),
+        "{text}"
+    );
+    // B gets A's counter every 100 ms, A gets B's extended frame.
+    for k in 0..5u16 {
+        let line = format!("B <- 0x123 [2] {:02X} {:02X}\r\n", k >> 8, k & 0xFF);
+        assert!(text.contains(&line), "{line} in {text}");
+    }
+    assert!(
+        text.contains("A <- 0x18FF1234 [4] B0 0B 00 00\r\n"),
+        "{text}"
+    );
+    assert!(!text.contains("TEC"), "{text}");
+    // The bus carried the frames bit by bit: 8 µs bits at 125 kbit/s.
+    let edges = board.take_line_edges();
+    assert!(edges.len() > 200, "{}", edges.len());
+    let min_gap = edges
+        .windows(2)
+        .map(|w| w[1].0 - w[0].0)
+        .fold(f64::INFINITY, f64::min);
+    assert!((min_gap - 8000.0).abs() < 1.0, "{min_gap}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+
+    // B1: node B at 250 kbit/s — no ACK, the TECs climb, nothing received.
+    board.set_user_button(true);
+    board.run_for_ns(30e6);
+    board.set_user_button(false);
+    board.run_for_ns(400e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("B1: node B now at 250 kbit/s"), "{text}");
+    assert!(text.contains("A: TEC "), "{text}");
+    assert!(text.contains("TXERR (no ACK)"), "{text}");
+    assert!(
+        text.contains("BUS-OFF") || text.contains("error-passive"),
+        "{text}"
+    );
+    let after = text.split("250 kbit/s").nth(1).unwrap();
+    assert!(!after.contains("B <- 0x123"), "{after}");
+
+    // Back to 125 kbit/s: frames get through again.
+    board.set_user_button(true);
+    board.run_for_ns(30e6);
+    board.set_user_button(false);
+    board.run_for_ns(800e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("B1: node B now at 125 kbit/s"), "{text}");
+    let after = text.split("125 kbit/s").last().unwrap();
+    assert!(after.contains("B <- 0x123"), "{text}");
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-can-mcp2515"]
+fn can_bus_without_termination_gets_no_ack() {
+    let mut board = can_board("off");
+    board.run_for_ns(400e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("TXERR (no ACK)"), "{text}");
+    assert!(!text.contains("B <- 0x123"), "{text}");
+    assert!(
+        board
+            .circuit_warnings()
+            .iter()
+            .any(|w| w.contains("no 120 Ω termination")),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}

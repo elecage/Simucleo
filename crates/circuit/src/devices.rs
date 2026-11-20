@@ -2459,6 +2459,8 @@ pub enum Device {
     Baro(Box<Bmp280>),
     /// M21: a BLDC whose hall sensors are open-collector outputs.
     Bldc(Box<crate::tier9::HallBldc>),
+    /// M35: a MAX6675 or MAX31855 thermocouple module.
+    Tc(Box<crate::thermocouple::Thermocouple>),
 }
 
 impl Device {
@@ -2510,6 +2512,7 @@ impl Device {
             Device::Tm(x) => x.ack.then_some(false),
             Device::Pir(p) => p.powered().then_some(p.out),
             Device::Bldc(b) => b.hall_output(index),
+            Device::Tc(t) => t.drive(index),
             // STATE (0) is high while a phone is connected; TXD (1) idles high.
             Device::Bluetooth(b) => match index {
                 0 => Some(b.powered && b.connected && !b.at_mode),

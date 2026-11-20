@@ -147,6 +147,14 @@ pub trait ExternalCircuit {
     ) -> u8 {
         0xFF
     }
+    /// The SCK rate (Hz) and mode of the SPI controller on `sck`, given
+    /// before each of its bytes.
+    fn spi_clock(&mut self, _sck: (u8, u8), _hz: f64, _cpol: bool, _cpha: bool) {}
+    /// One byte of a receive-only master (RXONLY) on `sck`: what the
+    /// selected device puts on `miso` (0xFF: nothing).
+    fn spi_rx(&mut self, _time: Cycles, _sck: (u8, u8), _miso: Option<(u8, u8)>) -> u8 {
+        0xFF
+    }
 }
 
 /// Pins as (port, pin, alternate function).
@@ -295,10 +303,17 @@ const SPIS: [SpiInfo; 4] = [
 /// SCK, MOSI and (if routed) MISO of an SPI controller.
 type SpiPins = ((u8, u8), (u8, u8), Option<(u8, u8)>);
 
+/// SCK and (if routed) MISO of a receive-only SPI master.
+type SpiRxPins = ((u8, u8), Option<(u8, u8)>);
+
 /// The devices an SPI controller reaches through the external circuit.
 struct CircuitSpi<'a> {
     circuit: Option<&'a mut Box<dyn ExternalCircuit>>,
     pins: Option<SpiPins>,
+    /// Receive-only master: SCK and (if routed) MISO, MOSI not needed.
+    rx_only: Option<SpiRxPins>,
+    /// SCK in Hz, CPOL, CPHA.
+    clock: (f64, bool, bool),
     time: Cycles,
     /// Bytes exchanged (MOSI, MISO), logged for probes.
     log: Option<Vec<(u8, u8)>>,
@@ -306,8 +321,16 @@ struct CircuitSpi<'a> {
 
 impl SpiBus for CircuitSpi<'_> {
     fn exchange(&mut self, out: u8) -> u8 {
-        let inp = match (&mut self.circuit, self.pins) {
-            (Some(c), Some((sck, mosi, miso))) => c.spi(self.time, sck, mosi, miso, out),
+        let (hz, cpol, cpha) = self.clock;
+        let inp = match (&mut self.circuit, self.rx_only, self.pins) {
+            (Some(c), Some((sck, miso)), _) => {
+                c.spi_clock(sck, hz, cpol, cpha);
+                c.spi_rx(self.time, sck, miso)
+            }
+            (Some(c), None, Some((sck, mosi, miso))) => {
+                c.spi_clock(sck, hz, cpol, cpha);
+                c.spi(self.time, sck, mosi, miso, out)
+            }
             _ => 0xFF,
         };
         if let Some(log) = &mut self.log {
@@ -882,6 +905,35 @@ impl Stm32f401Bus {
         Some((routed(c.sck)?, routed(c.mosi)?, routed(c.miso)))
     }
 
+    /// A receive-only master's pins (RXONLY): SCK and, if routed, MISO.
+    fn spi_rx_pins(&self, i: usize) -> Option<SpiRxPins> {
+        if !self.spi[i].rx_only() {
+            return None;
+        }
+        let routed = |pins: I2cPins| {
+            pins.iter()
+                .find(|&&(port, pin, af)| {
+                    let g = &self.gpio[port as usize];
+                    g.mode(pin) == gpio::PinMode::Alternate && g.af(pin) == af
+                })
+                .map(|&(port, pin, _)| (port, pin))
+        };
+        let c = &SPIS[i];
+        Some((routed(c.sck)?, routed(c.miso)))
+    }
+
+    /// SCK frequency (Hz), CPOL and CPHA of an SPI controller.
+    fn spi_clock(&self, i: usize) -> (f64, bool, bool) {
+        let pclk = if SPIS[i].apb2 {
+            self.clocks.pclk2
+        } else {
+            self.clocks.pclk1
+        };
+        let cr1 = self.spi[i].cr1;
+        let div = 2u64 << ((cr1 >> 3) & 7);
+        (pclk as f64 / div as f64, cr1 & 2 != 0, cr1 & 1 != 0)
+    }
+
     fn spi_frame_cycles(&self, i: usize) -> Cycles {
         let pclk = if SPIS[i].apb2 {
             self.clocks.pclk2
@@ -1054,9 +1106,12 @@ impl Stm32f401Bus {
                                 || self.probed(mosi)
                                 || miso.is_some_and(|m| self.probed(m))
                         });
+                        let (rx_only, clock) = (self.spi_rx_pins(i), self.spi_clock(i));
                         let mut bus = CircuitSpi {
                             circuit: self.circuit.as_mut(),
                             pins,
+                            rx_only,
+                            clock,
                             time: at,
                             log: logging.then(Vec::new),
                         };

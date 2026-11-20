@@ -318,3 +318,53 @@ test("offline: after '편집기 오프라인으로 받기' the build works with 
     await context.close();
   }
 });
+
+test("edits and file switches during a build: the project keeps the edit, each file keeps its own text", async ({ browser }) => {
+  // The first build fetches the compiler: held 2.5 s here, so the student
+  // switches file and types while it runs (and the edit is saved, 300 ms,
+  // before it ends). The service worker is off so the route sees the fetch.
+  const context = await browser.newContext({ viewport: { width: 1400, height: 820 }, serviceWorkers: "block" });
+  await context.route("**/toolchain/manifest.json", async (route) => {
+    await new Promise((r) => setTimeout(r, 2500));
+    await route.continue();
+  });
+  const page = await context.newPage();
+  page.on("dialog", (d) => void d.accept(d.type() === "prompt" ? "led.h" : undefined));
+  await page.goto("/");
+  await expect(status(page)).toContainText("예제를");
+  await startFromBlinky(page);
+  await page.getByRole("button", { name: "+ 파일" }).click();
+  await expect(page.locator('[data-file="Core/Inc/led.h"]')).toBeVisible();
+  await expect(line(page, "#define LED_H")).toBeVisible();
+  await page.locator(`[data-file="Core/Src/main.c"]`).click();
+  await expect(line(page, "HAL_Delay(500);")).toBeVisible();
+
+  await page.getByRole("button", { name: "▶ 빌드" }).click();
+  await expect(buildStatus(page)).not.toContainText("빌드 성공");
+  // While it builds: to led.h, and an edit there.
+  await page.locator(`[data-file="Core/Inc/led.h"]`).click();
+  await endOf(page, "#define LED_H");
+  await page.keyboard.insertText("\n#define LED_PERIOD 250");
+  await expect(line(page, "#define LED_PERIOD 250")).toBeVisible();
+  await page.waitForTimeout(600); // (saved: past the 300 ms)
+  await expect(buildStatus(page)).not.toContainText("빌드 성공");
+  await expect(buildStatus(page)).toContainText("빌드 성공", { timeout: 180_000 });
+
+  // Each file still shows its own text: led.h (the view at the end of the
+  // build) was not stored as main.c.
+  await expect(line(page, "#define LED_PERIOD 250")).toBeVisible();
+  await page.locator(`[data-file="Core/Src/main.c"]`).click();
+  await expect(line(page, "HAL_Delay(500);")).toBeVisible();
+  await expect(line(page, "LED_PERIOD")).toHaveCount(0);
+  await page.locator(`[data-file="Core/Inc/led.h"]`).click();
+  await expect(line(page, "#define LED_PERIOD 250")).toBeVisible();
+  // And the project kept the edit made during the build: after a reload
+  // (the autosave) led.h has it.
+  await page.waitForTimeout(500);
+  await page.reload();
+  await expect(status(page)).toContainText("code.elf", { timeout: 20_000 });
+  await openCodeTab(page);
+  await page.locator(`[data-file="Core/Inc/led.h"]`).click();
+  await expect(line(page, "#define LED_PERIOD 250")).toBeVisible();
+  await context.close();
+});

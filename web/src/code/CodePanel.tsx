@@ -198,8 +198,16 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
   };
 
   // ------------------------------------------------ build
+  // (Read when a build finishes, not when it began: the student may have
+  // opened another file or a header meanwhile, and the view then holds
+  // that one — its state must not be saved under the file built from.)
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const headerRef = useRef(header);
+  headerRef.current = header;
   const pushDiagnostics = useCallback((diags: Diagnostic[]) => {
-    const shown = header === null && view.current && states.current.has(active) ? active : null;
+    const now = activeRef.current;
+    const shown = headerRef.current === null && view.current && states.current.has(now) ? now : null;
     for (const [path, st] of states.current) {
       const mine = diags.filter((d) => d.file === path);
       if (path === shown) {
@@ -215,7 +223,7 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
       const l = doc.line(Math.min(Math.max(first.line!, 1), doc.lines));
       view.current.dispatch({ selection: { anchor: l.to }, scrollIntoView: true });
     }
-  }, [active, header]);
+  }, []);
 
   const build = useCallback(async () => {
     const c = codeRef.current;
@@ -234,7 +242,9 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
     pushDiagnostics(r.diagnostics);
     if (r.ok && r.elf) {
       const key = elfKey(r.elf);
-      onCode({ ...codeRef.current!, files, built: { key, files } });
+      // The project keeps the files as they are now (edited during the
+      // build, maybe); `built` is what this ELF was made from.
+      onCode({ ...codeRef.current!, built: { key, files } });
       runner.load(CODE_ELF, r.elf.slice().buffer as ArrayBuffer);
       runner.run();
     }

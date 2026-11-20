@@ -3,13 +3,14 @@
 import { useRef, useState } from "react";
 import type { RtosTask } from "../sim/protocol";
 import type { Runner } from "../sim/useRunner";
+import { t } from "../i18n";
 
 const STATE_KO: Record<RtosTask["state"], string> = {
-  running: "실행 중",
-  ready: "준비",
-  blocked: "대기",
-  suspended: "일시중단",
-  deleted: "삭제됨",
+  running: t("실행 중"),
+  ready: t("준비"),
+  blocked: t("대기"),
+  suspended: t("일시중단"),
+  deleted: t("삭제됨"),
 };
 
 /** CMSIS-RTOS2 priority names (osPriority values); ST's wrapper runs tasks at osPriority − 1. */
@@ -81,11 +82,11 @@ export function RtosView({ runner }: { runner: Runner }) {
     }
   }
 
-  if (!f) return <p className="hint">펌웨어를 불러오면 RTOS 태스크가 보입니다.</p>;
+  if (!f) return <p className="hint">{t("펌웨어를 불러오면 RTOS 태스크가 보입니다.")}</p>;
   if (!rtos) {
     return (
       <p className="hint">
-        이 펌웨어에서 RTOS를 찾지 못했습니다. FreeRTOS(CubeMX의 CMSIS-RTOS v2 포함)를 쓰는 펌웨어를 불러오세요.
+        {t("이 펌웨어에서 RTOS를 찾지 못했습니다. FreeRTOS(CubeMX의 CMSIS-RTOS v2 포함)를 쓰는 펌웨어를 불러오세요.")}
       </p>
     );
   }
@@ -115,12 +116,12 @@ export function RtosView({ runner }: { runner: Runner }) {
           {snap.api ? ` · ${snap.api}` : ""}
         </b>
         <span className="dim">
-          tick {snap.tick} · 태스크 {snap.tasks.length}
-          {snap.schedulerRunning ? "" : " · 스케줄러 시작 전"}
+          {t("tick {tick} · 태스크 {n}", { tick: snap.tick, n: snap.tasks.length })}
+          {snap.schedulerRunning ? "" : t(" · 스케줄러 시작 전")}
         </span>
         <label>
-          타임라인 폭{" "}
-          <select value={windowMs} onChange={(e) => setWindowMs(Number(e.target.value))} aria-label="타임라인 폭">
+          {t("타임라인 폭")}{" "}
+          <select value={windowMs} onChange={(e) => setWindowMs(Number(e.target.value))} aria-label={t("타임라인 폭")}>
             {WINDOWS.map(([l, v]) => (
               <option key={v} value={v}>
                 {l}
@@ -128,36 +129,36 @@ export function RtosView({ runner }: { runner: Runner }) {
             ))}
           </select>
         </label>
-        {rtos.dense && <span className="error">전환이 너무 잦아 일부만 표시</span>}
+        {rtos.dense && <span className="error">{t("전환이 너무 잦아 일부만 표시")}</span>}
       </div>
       <table className="rtos-tasks">
         <thead>
           <tr>
-            <th>태스크</th>
-            <th>상태</th>
-            <th>우선순위</th>
-            <th>스택 (최대 사용)</th>
+            <th>{t("태스크")}</th>
+            <th>{t("상태")}</th>
+            <th>{t("우선순위")}</th>
+            <th>{t("스택 (최대 사용)")}</th>
             <th>CPU</th>
-            <th className="lane-head">실행 타임라인 (최근 {windowMs} ms)</th>
+            <th className="lane-head">{t("실행 타임라인 (최근 {ms} ms)", { ms: windowMs })}</th>
           </tr>
         </thead>
         <tbody>
-          {tasks.map((t) => {
-            const used = t.stackSize !== null && t.stackFreeMin !== null ? t.stackSize - t.stackFreeMin : null;
-            const ratio = used !== null && t.stackSize ? used / t.stackSize : null;
-            const cpu = cpuAvg.current.get(t.tcb) ?? 0;
+          {tasks.map((task) => {
+            const used = task.stackSize !== null && task.stackFreeMin !== null ? task.stackSize - task.stackFreeMin : null;
+            const ratio = used !== null && task.stackSize ? used / task.stackSize : null;
+            const cpu = cpuAvg.current.get(task.tcb) ?? 0;
             return (
-              <tr key={t.tcb} data-task={t.name}>
+              <tr key={task.tcb} data-task={task.name}>
                 <td>
-                  <b>{t.name || "(이름 없음)"}</b>
+                  <b>{task.name || t("(이름 없음)")}</b>
                 </td>
                 <td>
-                  <span className={`badge ${t.state}`} data-testid={`task-state-${t.name}`}>
-                    {STATE_KO[t.state]}
+                  <span className={`badge ${task.state}`} data-testid={`task-state-${task.name}`}>
+                    {STATE_KO[task.state]}
                   </span>
                 </td>
-                <td title={cmsis ? "CMSIS osPriority (FreeRTOS 우선순위)" : "FreeRTOS 우선순위"}>
-                  {cmsis && !KERNEL_TASKS.has(t.name) ? `${cmsisPriority(t.priority)} (${t.priority})` : t.priority}
+                <td title={cmsis ? t("CMSIS osPriority (FreeRTOS 우선순위)") : t("FreeRTOS 우선순위")}>
+                  {cmsis && !KERNEL_TASKS.has(task.name) ? `${cmsisPriority(task.priority)} (${task.priority})` : task.priority}
                 </td>
                 <td>
                   {used !== null ? (
@@ -165,17 +166,17 @@ export function RtosView({ runner }: { runner: Runner }) {
                       <span className="stack-bar">
                         <span style={{ width: `${Math.min(100, ratio! * 100)}%` }} />
                       </span>
-                      {used} / {t.stackSize} B
+                      {used} / {task.stackSize} B
                     </span>
                   ) : (
-                    <span className="dim">알 수 없음</span>
+                    <span className="dim">{t("알 수 없음")}</span>
                   )}
                 </td>
-                <td data-testid={`task-cpu-${t.name}`}>{(cpu * 100).toFixed(cpu < 0.1 ? 1 : 0)}%</td>
+                <td data-testid={`task-cpu-${task.name}`}>{(cpu * 100).toFixed(cpu < 0.1 ? 1 : 0)}%</td>
                 <td className="lane">
                   <svg viewBox={`0 0 ${WIDTH} ${ROW}`} preserveAspectRatio="none" className="lane-svg">
-                    {(segments.get(t.tcb) ?? []).map(([a, b], i) => (
-                      <rect key={i} x={x(a)} width={Math.max(0.8, x(b) - x(a))} y={3} height={ROW - 6} className={t.name === "IDLE" ? "run idle" : "run"} />
+                    {(segments.get(task.tcb) ?? []).map(([a, b], i) => (
+                      <rect key={i} x={x(a)} width={Math.max(0.8, x(b) - x(a))} y={3} height={ROW - 6} className={task.name === "IDLE" ? "run idle" : "run"} />
                     ))}
                   </svg>
                 </td>

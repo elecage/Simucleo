@@ -7,6 +7,7 @@ import { SourceView } from "./SourceView";
 import type { SourceUpload } from "../upload/useSourceUpload";
 import type { Attached } from "../upload/attach";
 import type { CodePanelProps } from "../code/CodePanel";
+import { t } from "../i18n";
 
 // M33: the code editor and CodeMirror load only when the tab is first opened.
 const CodePanel = lazy(() => import("../code/CodePanel"));
@@ -93,7 +94,7 @@ export function BottomPanel({
   const phones = Object.keys(runner.bluetooth).sort();
   const btTabs: [Tab, string][] = phones.map((id) => [
     `bt:${id}`,
-    phones.length > 1 ? `블루투스 (HC-05 · ${id})` : "블루투스 (HC-05)",
+    phones.length > 1 ? t("블루투스 (HC-05 · {id})", { id }) : t("블루투스 (HC-05)"),
   ]);
   // The module was removed: back to the console.
   const btPart = tab.startsWith("bt:") ? tab.slice(3) : null;
@@ -105,17 +106,17 @@ export function BottomPanel({
       <nav className="tabs">
         {(
           [
-            ["console", "가상 콘솔 (USART2)"],
+            ["console", t("가상 콘솔 (USART2)")],
             ...btTabs,
-            ...(code ? ([["code", "코드"]] as [Tab, string][]) : []),
-            ["source", "소스 (디버그)"],
-            ["waveform", "파형 (프로브)"],
+            ...(code ? ([["code", t("코드")]] as [Tab, string][]) : []),
+            ["source", t("소스 (디버그)")],
+            ["waveform", t("파형 (프로브)")],
             ["rtos", "RTOS"],
-            ["registers", "레지스터"],
-            ["memory", "메모리"],
+            ["registers", t("레지스터")],
+            ["memory", t("메모리")],
           ] as [Tab, string][]
-        ).map(([t, label]) => (
-          <button key={t} className={tab === t ? "tab on" : "tab"} onClick={() => setTab(t)}>
+        ).map(([id, label]) => (
+          <button key={id} className={tab === id ? "tab on" : "tab"} onClick={() => setTab(id)}>
             {label}
           </button>
         ))}
@@ -127,7 +128,7 @@ export function BottomPanel({
         {/* Kept mounted: breakpoints and added sources survive tab switches. */}
         {code && (tab === "code" || codeOpened) && (
           <div className="tab-keep" hidden={tab !== "code"}>
-            <Suspense fallback={<p className="hint">편집기를 불러오는 중…</p>}>
+            <Suspense fallback={<p className="hint">{t("편집기를 불러오는 중…")}</p>}>
               <CodePanel runner={runner} {...code} visible={tab === "code"} />
             </Suspense>
           </div>
@@ -164,7 +165,7 @@ function Console({ runner }: { runner: Runner }) {
   return (
     <div className="console">
       <pre ref={out} data-testid="console-output">
-        {runner.console || <span className="hint">USART2(PA2/PA3)로 보낸 내용이 여기에 나옵니다. 115200 baud</span>}
+        {runner.console || <span className="hint">{t("USART2(PA2/PA3)로 보낸 내용이 여기에 나옵니다. 115200 baud")}</span>}
       </pre>
       <form
         onSubmit={(e) => {
@@ -176,11 +177,11 @@ function Console({ runner }: { runner: Runner }) {
         <input
           value={line}
           onChange={(e) => setLine(e.target.value)}
-          placeholder="입력 후 Enter (CR LF와 함께 전송)"
-          aria-label="콘솔 입력"
+          placeholder={t("입력 후 Enter (CR LF와 함께 전송)")}
+          aria-label={t("콘솔 입력")}
         />
         <button type="button" onClick={runner.clearConsole}>
-          지우기
+          {t("지우기")}
         </button>
       </form>
     </div>
@@ -200,46 +201,48 @@ function Phone({ runner, part }: { runner: Runner; part: string }) {
   const garbled = chat.messages.some((m) => m.garbled);
   const mismatch = s.mcuBaud !== null && Math.abs(s.mcuBaud / s.baud - 1) > 0.03;
   const wiring = s.txUsart
-    ? `${s.txUsart} TX → RXD${s.rxUsart ? `, TXD → ${s.rxUsart} RX` : " (TXD는 MCU RX에 연결 안 됨)"}`
-    : "MCU의 USART TX가 RXD에 연결되지 않았습니다";
+    ? `${s.txUsart} TX → RXD${s.rxUsart ? `, TXD → ${s.rxUsart} RX` : t(" (TXD는 MCU RX에 연결 안 됨)")}`
+    : t("MCU의 USART TX가 RXD에 연결되지 않았습니다");
   return (
     <div className="phone" data-testid="bt-phone" data-part={part}>
       <div className="phone-bar">
         <b>📱 {s.name}</b>
         <span className={linked ? "bt-status on" : "bt-status"} data-testid="bt-status">
-          {!s.powered ? "모듈 전원 없음" : s.atMode ? "AT 모드 (38400 baud)" : s.connected ? "연결됨" : "연결 안 됨"}
+          {!s.powered ? t("모듈 전원 없음") : s.atMode ? t("AT 모드 (38400 baud)") : s.connected ? t("연결됨") : t("연결 안 됨")}
         </span>
         <button
           onClick={() => runner.bluetoothConnect(part, !s.connected)}
           disabled={!s.powered || s.atMode}
-          aria-label={s.connected ? "블루투스 연결 끊기" : "블루투스 연결"}
+          aria-label={s.connected ? t("블루투스 연결 끊기") : t("블루투스 연결")}
         >
-          {s.connected ? "연결 끊기" : "연결"}
+          {s.connected ? t("연결 끊기") : t("연결")}
         </button>
         <span className="hint">
-          {wiring} · 모듈 {s.baud} baud{s.mcuBaud ? ` · MCU ${Math.round(s.mcuBaud)} baud` : ""}
+          {wiring}{t(" · 모듈 {baud} baud", { baud: s.baud })}{s.mcuBaud ? ` · MCU ${Math.round(s.mcuBaud)} baud` : ""}
         </span>
         <button type="button" onClick={() => runner.clearBluetooth(part)}>
-          지우기
+          {t("지우기")}
         </button>
       </div>
       {s.swapped && (
         <p className="bt-warn" role="alert">
-          ⚠ MCU의 TX가 모듈의 TXD에 연결되어 있습니다. TX는 상대의 RX로 — MCU TX → 모듈 RXD, 모듈 TXD → MCU RX로 교차해서 연결하세요.
+          {t("⚠ MCU의 TX가 모듈의 TXD에 연결되어 있습니다. TX는 상대의 RX로 — MCU TX → 모듈 RXD, 모듈 TXD → MCU RX로 교차해서 연결하세요.")}
         </p>
       )}
       {(mismatch || garbled) && (
         <p className="bt-warn" role="alert" data-testid="bt-baud-warning">
-          ⚠ 글자가 깨집니다: 보레이트가 맞지 않습니다 (모듈 {s.baud} baud
-          {s.mcuBaud ? `, 펌웨어 ${Math.round(s.mcuBaud)} baud` : ""}). 펌웨어의 BaudRate나 부품의 baud 속성을 맞추세요.
+          {t("⚠ 글자가 깨집니다: 보레이트가 맞지 않습니다 (모듈 {baud} baud{firmware}). 펌웨어의 BaudRate나 부품의 baud 속성을 맞추세요.", {
+            baud: s.baud,
+            firmware: s.mcuBaud ? t(", 펌웨어 {baud} baud", { baud: Math.round(s.mcuBaud) }) : "",
+          })}
         </p>
       )}
       <div className="chat" ref={out} data-testid="bt-chat">
         {chat.messages.length === 0 && (
           <p className="hint">
             {linked
-              ? "MCU가 보낸 내용이 여기에 나옵니다. 아래에 입력하면 MCU의 RX로 갑니다."
-              : "'연결'을 누르면 휴대폰이 HC-05에 연결되고 STATE가 High가 됩니다."}
+              ? t("MCU가 보낸 내용이 여기에 나옵니다. 아래에 입력하면 MCU의 RX로 갑니다.")
+              : t("'연결'을 누르면 휴대폰이 HC-05에 연결되고 STATE가 High가 됩니다.")}
           </p>
         )}
         {chat.messages.map((m, i) => (
@@ -259,10 +262,10 @@ function Phone({ runner, part }: { runner: Runner; part: string }) {
         <input
           value={line}
           onChange={(e) => setLine(e.target.value)}
-          placeholder={linked ? "메시지 입력 후 Enter (CR LF와 함께 전송)" : "먼저 '연결'을 누르세요"}
-          aria-label="블루투스 메시지"
+          placeholder={linked ? t("메시지 입력 후 Enter (CR LF와 함께 전송)") : t("먼저 '연결'을 누르세요")}
+          aria-label={t("블루투스 메시지")}
         />
-        <button type="submit">보내기</button>
+        <button type="submit">{t("보내기")}</button>
       </form>
     </div>
   );
@@ -270,7 +273,7 @@ function Phone({ runner, part }: { runner: Runner; part: string }) {
 
 function Registers({ runner }: { runner: Runner }) {
   const f = runner.frame;
-  if (!f) return <p className="hint">펌웨어를 불러오면 레지스터가 보입니다.</p>;
+  if (!f) return <p className="hint">{t("펌웨어를 불러오면 레지스터가 보입니다.")}</p>;
   const names = ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "SP", "LR", "PC"];
   const x = f.xpsr >>> 0;
   const flags = ["N", "Z", "C", "V", "Q"].map((n, i) => (x & (1 << (31 - i)) ? n : n.toLowerCase())).join("");
@@ -292,8 +295,8 @@ function Registers({ runner }: { runner: Runner }) {
           <tr><th>xPSR</th><td>{hex(x)}</td><td className="dim">{flags}</td></tr>
           <tr><th>MSP</th><td>{hex(f.msp)}</td><td /></tr>
           <tr><th>PSP</th><td>{hex(f.psp)}</td><td /></tr>
-          <tr><th>모드</th><td colSpan={2}>{f.exception ? `Handler (${f.exception})` : "Thread"}</td></tr>
-          <tr><th>클럭</th><td colSpan={2}>{(f.clockHz / 1e6).toFixed(1)} MHz</td></tr>
+          <tr><th>{t("모드")}</th><td colSpan={2}>{f.exception ? `Handler (${f.exception})` : "Thread"}</td></tr>
+          <tr><th>{t("클럭")}</th><td colSpan={2}>{(f.clockHz / 1e6).toFixed(1)} MHz</td></tr>
         </tbody>
       </table>
     </div>
@@ -326,10 +329,10 @@ function Memory({ runner }: { runner: Runner }) {
   return (
     <div className="memory">
       <label>
-        주소{" "}
-        <input value={addrText} onChange={(e) => setAddrText(e.target.value)} aria-label="메모리 주소" />
+        {t("주소")}{" "}
+        <input value={addrText} onChange={(e) => setAddrText(e.target.value)} aria-label={t("메모리 주소")} />
       </label>
-      <span className="hint"> 0x08000000 플래시 · 0x20000000 SRAM · 0x40000000 Peripheral</span>
+      <span className="hint">{t(" 0x08000000 플래시 · 0x20000000 SRAM · 0x40000000 Peripheral")}</span>
       <table>
         <tbody>{rows}</tbody>
       </table>

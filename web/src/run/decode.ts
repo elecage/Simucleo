@@ -11,7 +11,21 @@
 // from the bytes the peripheral moves (crates/periph-stm32f4/src/wire.rs);
 // bit-banged protocols (TM1637, software I2C, 1-Wire) are real GPIO edges.
 // The decoders do not care which.
+import { t } from "../i18n/index.ts";
 import { levelAt, lowerBound } from "./scope.ts";
+
+// Messages (in the page's language) used where `t` is a time.
+const PARITY_ERROR = t("패리티 오류");
+const FRAMING_ERROR = t("프레이밍 오류");
+const unfinishedByte = (n: number | string) => t("바이트가 끝나지 않음 ({n}비트)", { n });
+const unfinishedPixel = (n: number | string) => t("픽셀이 끝나지 않음 ({n}비트)", { n });
+const unfinishedFrame = (n: number) => t("프레임이 끝나지 않음 ({n}비트)", { n });
+const wsBitError = (ns: number) => t("비트 High {ns} ns (0.4/0.8 µs ±150 ns 밖)", { ns });
+/** Whether `error` is the message `msg(…)` makes, whatever its number. */
+const isMessage = (error: string | undefined, msg: (n: string) => string) => {
+  const [head, tail] = msg("\0").split("\0");
+  return !!error && error.startsWith(head) && error.endsWith(tail);
+};
 
 /** A digital channel: level before the first edge, then [ns, level]. */
 export interface Line {
@@ -119,11 +133,11 @@ export function decodeUart(line: Line, o: UartOptions, to = Infinity): Annotatio
     let error: string | undefined;
     if (parity !== "none") {
       const p = at(t + (k + 0.5) * bit);
-      if (((ones + (p ? 1 : 0)) % 2 === 1) !== (parity === "odd")) error = "패리티 오류";
+      if (((ones + (p ? 1 : 0)) % 2 === 1) !== (parity === "odd")) error = PARITY_ERROR;
       k++;
     }
     for (let s = 0; s < stops; s++, k++) {
-      if (!at(t + (k + 0.5) * bit)) error = "프레이밍 오류";
+      if (!at(t + (k + 0.5) * bit)) error = FRAMING_ERROR;
     }
     out.push({ start: t, end: t + k * bit, kind: "data", value, ...(error ? { error } : {}) });
     // The next start bit comes after the middle of the (last) stop bit.
@@ -322,7 +336,7 @@ export function annotationLabel(a: Annotation, f: Format): string {
     case "address":
       return `${fmtByte(a.addr!, "hex")} ${a.rw} ${a.ack ? "ACK" : "NACK"}`;
     case "reset":
-      return a.presence === undefined ? "RESET" : a.presence ? "리셋·프레즌스" : "리셋 (응답 없음)";
+      return a.presence === undefined ? "RESET" : a.presence ? t("리셋·프레즌스") : t("리셋 (응답 없음)");
     case "triplet": {
       const [b, c, d] = a.bits!.map((x) => (x ? 1 : 0));
       return `${a.index ?? ""}: ${b}${c}→${d}`;
@@ -330,9 +344,11 @@ export function annotationLabel(a: Annotation, f: Format): string {
     case "pixel":
       return `#${a.index ?? "?"} ${fmtColor(a.value!)}`;
     case "leader":
-      return a.value === undefined ? "리더" : `리더 · 주소 ${fmtByte(a.addr!, "hex")} 명령 ${fmtByte(a.value, "hex")}`;
+      return a.value === undefined
+        ? t("리더")
+        : t("리더 · 주소 {addr} 명령 {cmd}", { addr: fmtByte(a.addr!, "hex"), cmd: fmtByte(a.value, "hex") });
     case "repeat":
-      return "반복";
+      return t("반복");
     default: {
       let s = fmtByte(a.value!, f);
       if (a.miso !== undefined) s += ` / ${fmtByte(a.miso, f)}`;
@@ -386,7 +402,7 @@ export const OW = {
   presenceMax: 240 * US,
 };
 
-const ROM_BYTES = ["ROM 계열", "ROM 일련번호 1", "ROM 일련번호 2", "ROM 일련번호 3", "ROM 일련번호 4", "ROM 일련번호 5", "ROM 일련번호 6", "ROM CRC"];
+const ROM_BYTES = [t("ROM 계열"), ...[1, 2, 3, 4, 5, 6].map((n) => t("ROM 일련번호 {n}", { n })), "ROM CRC"];
 
 /**
  * 1-Wire on its data line (idle high): every low pulse is a reset (with
@@ -426,7 +442,7 @@ export function decodeOneWire(line: Line, to = Infinity): Annotation[] {
   let lastFall = NaN;
   const flushPartial = (end: number) => {
     if (bits.length > 0) {
-      out.push({ start: byteStart, end, kind: "data", value: 0, error: `바이트가 끝나지 않음 (${bits.length}비트)` });
+      out.push({ start: byteStart, end, kind: "data", value: 0, error: unfinishedByte(bits.length) });
     }
     bits = [];
     bitErr = undefined;
@@ -445,14 +461,14 @@ export function decodeOneWire(line: Line, to = Infinity): Annotation[] {
         next[1] - next[0] <= 2 * OW.presenceMax;
       let end = r;
       let error: string | undefined;
-      if (w < OW.resetMin) error = `리셋 펄스가 짧음 (${(w / US).toFixed(0)} µs < 480 µs)`;
+      if (w < OW.resetMin) error = t("리셋 펄스가 짧음 ({us} µs < 480 µs)", { us: (w / US).toFixed(0) });
       if (presence) {
         i++;
         end = next[1];
         const pw = next[1] - next[0];
         if (!error && (pw < OW.presenceMin || pw > OW.presenceMax))
-          error = `프레즌스 폭 ${(pw / US).toFixed(0)} µs (60–240 µs 밖)`;
-      } else if (!error) error = "프레즌스 없음";
+          error = t("프레즌스 폭 {us} µs (60–240 µs 밖)", { us: (pw / US).toFixed(0) });
+      } else if (!error) error = t("프레즌스 없음");
       out.push({ start: f, end, kind: "reset", presence, ...(error ? { error } : {}) });
       phase = "rom";
       lastFall = NaN;
@@ -460,9 +476,9 @@ export function decodeOneWire(line: Line, to = Infinity): Annotation[] {
     }
     // A time slot.
     let err: string | undefined;
-    if (w > OW.slotMax) err = `Low ${(w / US).toFixed(0)} µs: 슬롯(최대 120 µs)도 리셋(480 µs)도 아님`;
+    if (w > OW.slotMax) err = t("Low {us} µs: 슬롯(최대 120 µs)도 리셋(480 µs)도 아님", { us: (w / US).toFixed(0) });
     else if (!Number.isNaN(lastFall) && f - lastFall < OW.slotMin)
-      err = `슬롯 간격 ${((f - lastFall) / US).toFixed(1)} µs < 60 µs`;
+      err = t("슬롯 간격 {us} µs < 60 µs", { us: ((f - lastFall) / US).toFixed(1) });
     lastFall = f;
     if (bits.length === 0) byteStart = f;
     bits.push(w < OW.sample);
@@ -471,7 +487,7 @@ export function decodeOneWire(line: Line, to = Infinity): Annotation[] {
     if (phase === "search") {
       if (bits.length < 3) continue;
       const [b, c, d] = bits as [boolean, boolean, boolean];
-      const error = bitErr ?? (b && c ? "응답하는 장치 없음 (1·1)" : undefined);
+      const error = bitErr ?? (b && c ? t("응답하는 장치 없음 (1·1)") : undefined);
       out.push({ start: byteStart, end: slotEnd, kind: "triplet", bits: [b, c, d], index: 64 - count, ...(error ? { error } : {}) });
       bits = [];
       bitErr = undefined;
@@ -485,7 +501,7 @@ export function decodeOneWire(line: Line, to = Infinity): Annotation[] {
       case "rom":
         note = OW_ROM[value];
         if (!note) {
-          note = "알 수 없는 ROM 명령";
+          note = t("알 수 없는 ROM 명령");
           phase = "data";
           dataName = "";
         } else if (value === 0x33 || value === 0x55) {
@@ -501,9 +517,9 @@ export function decodeOneWire(line: Line, to = Infinity): Annotation[] {
         if (--count === 0) phase = "func";
         break;
       case "func":
-        note = OW_FUNC[value] ?? "알 수 없는 기능 명령";
+        note = OW_FUNC[value] ?? t("알 수 없는 기능 명령");
         phase = "data";
-        dataName = value === 0xbe ? "스크래치패드" : value === 0x4e ? "쓰기" : "";
+        dataName = value === 0xbe ? t("스크래치패드") : value === 0x4e ? t("쓰기") : "";
         dataIdx = 0;
         break;
       case "data":
@@ -533,15 +549,23 @@ const SEGMENT_CHARS: Record<number, string> = {
 /** The character a segment byte shows (bit 7, the colon or point, aside). */
 export const segmentChar = (seg: number) => SEGMENT_CHARS[seg & 0x7f] ?? "?";
 
+const UNKNOWN_COMMAND = t("알 수 없는 명령");
+/** A segment byte's note: the digit, its character, and the colon or point. */
+const digitNote = (addr: number, value: number) =>
+  t("자리 {n}: {char}", { n: addr, char: segmentChar(value) }) + (value & 0x80 ? (addr === 1 ? t(" + 콜론") : t(" + 점")) : "");
+
 /** What a TM1637 command byte (the first after a START) means. */
 export function tm1637Command(v: number): string | undefined {
   switch (v & 0xc0) {
     case 0x40:
-      return `데이터 명령: ${v & 2 ? "키 읽기" : "쓰기"}, ${v & 4 ? "고정 주소" : "주소 자동 증가"}`;
+      return t("데이터 명령: {rw}, {mode}", {
+        rw: v & 2 ? t("키 읽기") : t("쓰기"),
+        mode: v & 4 ? t("고정 주소") : t("주소 자동 증가"),
+      });
     case 0x80:
-      return v & 8 ? `표시 켜기, 밝기 ${v & 7}` : "표시 끄기";
+      return v & 8 ? t("표시 켜기, 밝기 {n}", { n: v & 7 }) : t("표시 끄기");
     case 0xc0:
-      return `주소 ${v & 0x0f}`;
+      return t("주소 {n}", { n: v & 0x0f });
     default:
       return undefined;
   }
@@ -590,12 +614,12 @@ export function decodeTm1637(clk: Line, dio: Line): Annotation[] {
         first = false;
         const note = tm1637Command(value);
         if (note) a.note = note;
-        else a.error = "알 수 없는 명령";
+        else a.error = UNKNOWN_COMMAND;
         if ((value & 0xc0) === 0x40) fixed = (value & 4) !== 0;
         addr = (value & 0xc0) === 0xc0 ? value & 0x0f : -1;
       } else if (addr >= 0) {
         a.digit = addr;
-        a.note = `자리 ${addr}: ${segmentChar(value)}${value & 0x80 ? (addr === 1 ? " + 콜론" : " + 점") : ""}`;
+        a.note = digitNote(addr, value);
         if (!fixed) addr++;
       }
       if (!ack) a.error = "NACK";
@@ -679,7 +703,7 @@ export function decodeWs2812(line: Line, from?: number, to = Infinity): Annotati
         kind: "pixel",
         value: 0,
         ...(index !== undefined ? { index } : {}),
-        error: `픽셀이 끝나지 않음 (${bits.length}비트)`,
+        error: unfinishedPixel(bits.length),
       });
     bits = [];
     err = undefined;
@@ -702,7 +726,7 @@ export function decodeWs2812(line: Line, from?: number, to = Infinity): Annotati
     if (Number.isNaN(rise)) continue;
     const h = t - rise;
     const one = h > (WS.t0h + WS.t1h) / 2;
-    if (Math.abs(h - (one ? WS.t1h : WS.t0h)) > WS.tolerance) err ??= `비트 High ${Math.round(h)} ns (0.4/0.8 µs ±150 ns 밖)`;
+    if (Math.abs(h - (one ? WS.t1h : WS.t0h)) > WS.tolerance) err ??= wsBitError(Math.round(h));
     if (bits.length === 0) pixStart = rise;
     const period = Number.isNaN(lastRise) || rise - lastRise > 4 * WS.bit ? WS.bit : rise - lastRise;
     lastRise = rise;
@@ -770,7 +794,18 @@ export const NEC = {
   oneMax: 2.2e6,
 };
 
-const NEC_BYTES = ["주소", "주소 반전", "명령", "명령 반전"];
+const NEC_BYTES = [t("주소"), t("주소 반전"), t("명령"), t("명령 반전")];
+const NEC_MSG = {
+  leaderSpace: (us: string) => t("리더 뒤 공백 {us} µs (4.5 ms도 2.25 ms도 아님)", { us }),
+  bitSpace: (n: number, us: string) => t("비트 {n}: 공백 {us} µs (0.56 ms도 1.69 ms도 아님)", { n, us }),
+  address: (a: string, na: string) => t("주소 검사 실패 (0x{a} / 0x{na})", { a, na }),
+  command: (c: string, nc: string) => t("명령 검사 실패 (0x{c} / 0x{nc})", { c, nc }),
+  noFinalMark: (us: string) => t("프레임이 끝나지 않음 (마지막 마크 {us} µs)", { us }),
+  finalMark: (us: string) => t("마지막 마크 폭 {us} µs (0.56 ms가 아님)", { us }),
+  mark: (us: string) => t("마크 폭 {us} µs (0.56 ms가 아님)", { us }),
+  repeatMark: (us: string) => t("마크 폭 {us} µs", { us }),
+  noFinalMarkYet: () => t("프레임이 끝나지 않음 (마지막 마크)"),
+};
 
 const within = (x: number, lo: number, hi: number) => x >= lo && x <= hi;
 
@@ -813,13 +848,13 @@ export function decodeNec(line: Line): Annotation[] {
           st = { s: "bits", lead, n: 0, cur: 0, bytes: [], byteStart: t };
         } else if (within(space, NEC.repeatSpaceMin, NEC.repeatSpaceMax)) st = { s: "repeat", start: st.start };
         else {
-          out.push({ start: st.start, end: t, kind: "leader", error: `리더 뒤 공백 ${us(space)} µs (4.5 ms도 2.25 ms도 아님)` });
+          out.push({ start: st.start, end: t, kind: "leader", error: NEC_MSG.leaderSpace(us(space)) });
           st = { s: "idle" };
         }
       } else if (st.s === "bits") {
         const one = within(space, NEC.oneMin, NEC.oneMax);
         if (!one && !within(space, NEC.markMin, NEC.markMax)) {
-          st.lead.error = `비트 ${st.n}: 공백 ${us(space)} µs (0.56 ms도 1.69 ms도 아님)`;
+          st.lead.error = NEC_MSG.bitSpace(st.n, us(space));
           st = { s: "idle" };
         } else {
           if (one) st.cur |= 1 << st.n % 8;
@@ -835,8 +870,8 @@ export function decodeNec(line: Line): Annotation[] {
             const [a, na, c, nc] = st.bytes;
             st.lead.addr = a;
             st.lead.value = c;
-            if ((a ^ na) !== 0xff) st.lead.error = `주소 검사 실패 (0x${a.toString(16)} / 0x${na.toString(16)})`;
-            else if ((c ^ nc) !== 0xff) st.lead.error = `명령 검사 실패 (0x${c.toString(16)} / 0x${nc.toString(16)})`;
+            if ((a ^ na) !== 0xff) st.lead.error = NEC_MSG.address(a.toString(16), na.toString(16));
+            else if ((c ^ nc) !== 0xff) st.lead.error = NEC_MSG.command(c.toString(16), nc.toString(16));
             // This edge starts the final mark: the frame counts once it ends within tolerance.
             st = { s: "stop", lead: st.lead };
           }
@@ -850,27 +885,27 @@ export function decodeNec(line: Line): Annotation[] {
         // The final mark: a leader-long one cuts the frame short.
         if (!within(w, NEC.markMin, NEC.markMax))
           st.lead.error ??= within(w, NEC.leaderMarkMin, NEC.leaderMarkMax)
-            ? `프레임이 끝나지 않음 (마지막 마크 ${us(w)} µs)`
-            : `마지막 마크 폭 ${us(w)} µs (0.56 ms가 아님)`;
+            ? NEC_MSG.noFinalMark(us(w))
+            : NEC_MSG.finalMark(us(w));
         st = { s: "idle" };
       }
       if (within(w, NEC.leaderMarkMin, NEC.leaderMarkMax)) {
-        if (st.s === "bits") st.lead.error = `프레임이 끝나지 않음 (${st.n}비트)`;
+        if (st.s === "bits") st.lead.error = unfinishedFrame(st.n);
         st = { s: "leader", start: lastFall };
       } else if (st.s === "bits") {
         if (!within(w, NEC.markMin, NEC.markMax)) {
-          st.lead.error = `마크 폭 ${us(w)} µs (0.56 ms가 아님)`;
+          st.lead.error = NEC_MSG.mark(us(w));
           st = { s: "idle" };
         }
       } else if (st.s === "repeat") {
-        out.push({ start: st.start, end: t, kind: "repeat", ...(within(w, NEC.markMin, NEC.markMax) ? {} : { error: `마크 폭 ${us(w)} µs` }) });
+        out.push({ start: st.start, end: t, kind: "repeat", ...(within(w, NEC.markMin, NEC.markMax) ? {} : { error: NEC_MSG.repeatMark(us(w)) }) });
         st = { s: "idle" };
       }
       lastRise = t;
     }
   }
   // The span ends before the frame (or its final mark) does.
-  if (st.s === "bits" || st.s === "stop") st.lead.error ??= st.s === "stop" ? "프레임이 끝나지 않음 (마지막 마크)" : `프레임이 끝나지 않음 (${st.n}비트)`;
+  if (st.s === "bits" || st.s === "stop") st.lead.error ??= st.s === "stop" ? NEC_MSG.noFinalMarkYet() : unfinishedFrame(st.n);
   return out;
 }
 
@@ -922,10 +957,10 @@ export function findMatches(anns: Annotation[], m: ContentMatch, after = -Infini
   for (const a of anns) {
     if (a.start <= after) continue;
     let hit = false;
-    if (m.kind === "byte") hit = a.kind === "data" && !a.error?.startsWith("바이트가") && (a.value === m.value || a.miso === m.value);
+    if (m.kind === "byte") hit = a.kind === "data" && !isMessage(a.error, unfinishedByte) &&(a.value === m.value || a.miso === m.value);
     else if (m.kind === "address") hit = a.kind === "address" && a.addr === m.addr && (m.rw === "any" || a.rw === m.rw);
     else if (m.kind === "nec") hit = a.kind === "leader" && !a.error && a.value === m.cmd && (m.addr === undefined || a.addr === m.addr);
-    else hit = a.kind === "pixel" && a.index === m.index && !a.error?.startsWith("픽셀이") && (m.color === undefined || a.value === m.color);
+    else hit = a.kind === "pixel" && a.index === m.index && !isMessage(a.error, unfinishedPixel) &&(m.color === undefined || a.value === m.color);
     if (hit) out.push(a.start);
   }
   return out;

@@ -83,6 +83,7 @@ import {
 import { captureCsv, captureVcd } from "./export";
 import { BINARY, MATH_OPS, fromDigital, liveAnalog, liveDigital, mathChannel, measureWave, wavePoints, type MathOp, type Sourced } from "./math";
 import { SpectrumPanel } from "./Spectrum";
+import { t } from "../i18n";
 
 const PIN_NAMES = [
   ...["A", "B", "C"].flatMap((p) => Array.from({ length: 16 }, (_, i) => `P${p}${i}`)),
@@ -120,23 +121,23 @@ interface ATrace {
 }
 
 const KIND_TEXT: Record<AnnotationKind, string> = {
-  data: "데이터",
-  address: "주소",
+  data: t("데이터"),
+  address: t("주소"),
   start: "START",
-  restart: "재START",
+  restart: t("재START"),
   stop: "STOP",
-  reset: "리셋",
-  triplet: "탐색",
-  pixel: "픽셀",
-  leader: "리더",
-  repeat: "반복",
+  reset: t("리셋"),
+  triplet: t("탐색"),
+  pixel: t("픽셀"),
+  leader: t("리더"),
+  repeat: t("반복"),
 };
 const CONTENT_KIND_TEXT: Record<ContentCfg["kind"], string> = {
-  byte: "바이트",
-  text: "텍스트",
-  address: "주소",
-  pixel: "픽셀",
-  nec: "명령",
+  byte: t("바이트"),
+  text: t("텍스트"),
+  address: t("주소"),
+  pixel: t("픽셀"),
+  nec: t("명령"),
 };
 /** A content trigger decodes at most this far back (ns) for the context it needs. */
 const CONTENT_SPAN = 200e6;
@@ -170,10 +171,10 @@ type Drag = { kind: "trigger" | "a" | "b" | "pan"; x0: number; view0: View } | n
 
 const STATE_TEXT: Record<ScopeState, string> = {
   off: "",
-  nosource: "트리거 소스 핀이 프로브되지 않았습니다 — 핀을 추가하세요",
-  armed: "트리거 대기 중…",
-  collecting: "트리거됨 — 수집 중…",
-  stopped: "정지 (단일 캡처 완료)",
+  nosource: t("트리거 소스 핀이 프로브되지 않았습니다 — 핀을 추가하세요"),
+  armed: t("트리거 대기 중…"),
+  collecting: t("트리거됨 — 수집 중…"),
+  stopped: t("정지 (단일 캡처 완료)"),
 };
 
 /** When the waveform view last drew (see `scopeDue`). */
@@ -632,7 +633,7 @@ export function Waveform({
     setMath((ms) => fixMathSources(ms.map((m) => (m.id === id ? { ...m, ...patch } : m)), channels));
   // The spectrum: its channel, over the visible window or between the cursors.
   const specSources: [string, string][] = [
-    ...pins.map((p) => [p, `${p} (디지털 0/3.3 V)`] as [string, string]),
+    ...pins.map((p) => [p, t("{pin} (디지털 0/3.3 V)", { pin: p })] as [string, string]),
     ...analogNames.map((n) => [n, n] as [string, string]),
     ...math.map((m) => [`M${m.id}`, `M${m.id} = ${mathLabel(m)}`] as [string, string]),
   ];
@@ -651,10 +652,10 @@ export function Waveform({
     <div className="waveform">
       <div className="wave-controls">
         <label>
-          핀 추가{" "}
+          {t("핀 추가")}{" "}
           <select
             value=""
-            aria-label="프로브 핀 추가"
+            aria-label={t("프로브 핀 추가")}
             onChange={(e) => {
               const n = e.target.value;
               if (!n) return;
@@ -669,10 +670,10 @@ export function Waveform({
           </select>
         </label>
         <label>
-          아날로그 추가{" "}
+          {t("아날로그 추가")}{" "}
           <select
             value=""
-            aria-label="아날로그 채널 추가"
+            aria-label={t("아날로그 채널 추가")}
             onChange={(e) => {
               const n = e.target.value;
               if (!n) return;
@@ -686,8 +687,8 @@ export function Waveform({
           </select>
         </label>
         <label>
-          시간/눈금{" "}
-          <select value={divIdx} onChange={(e) => setDivIdx(Number(e.target.value))} aria-label="시간/눈금">
+          {t("시간/눈금")}{" "}
+          <select value={divIdx} onChange={(e) => setDivIdx(Number(e.target.value))} aria-label={t("시간/눈금")}>
             {TIMEBASE_NS.map((ns, i) => (
               <option key={ns} value={i}>
                 {divLabel(ns)}
@@ -696,22 +697,22 @@ export function Waveform({
           </select>
         </label>
         <button disabled={!showCapture} onClick={() => capture && download(`simucleo-capture-${capture.seq}.csv`, captureCsv(capture), "text/csv")}>
-          CSV 내보내기
+          {t("CSV 내보내기")}
         </button>
         <button
           disabled={!showCapture}
           onClick={() => capture && download(`simucleo-capture-${capture.seq}.vcd`, captureVcd(capture), "text/plain")}
         >
-          VCD 내보내기
+          {t("VCD 내보내기")}
         </button>
-        <span className="hint">핀의 실제 레벨(입력 포함)과 네트 전압을 보여 줍니다.</span>
+        <span className="hint">{t("핀의 실제 레벨(입력 포함)과 네트 전압을 보여 줍니다.")}</span>
       </div>
       <div className="wave-controls scope-controls">
-        <b>트리거</b>
+        <b>{t("트리거")}</b>
         <label>
-          소스{" "}
-          <select value={source} onChange={(e) => setSource(e.target.value)} aria-label="트리거 소스">
-            {!sourceProbed && <option value={source}>{source} (프로브 안 됨)</option>}
+          {t("소스")}{" "}
+          <select value={source} onChange={(e) => setSource(e.target.value)} aria-label={t("트리거 소스")}>
+            {!sourceProbed && <option value={source}>{source}{t(" (프로브 안 됨)")}</option>}
             {pins.map((n) => (
               <option key={n}>{n}</option>
             ))}
@@ -720,27 +721,27 @@ export function Waveform({
             ))}
             {decoders.map((d, di) => (
               <option key={d.id} value={`dec:${d.id}`}>
-                해독 {di + 1}: {DECODER_NAMES[d.type]} {d.pins.filter(Boolean).join("/")}
+                {t("해독 {n}: {name} {pins}", { n: di + 1, name: DECODER_NAMES[d.type], pins: d.pins.filter(Boolean).join("/") })}
               </option>
             ))}
           </select>
         </label>
         {!contentSource && (
           <label>
-            에지{" "}
-            <select value={edge} onChange={(e) => setEdge(e.target.value as EdgeKind)} aria-label="트리거 에지">
-              <option value="rising">상승 ↑</option>
-              <option value="falling">하강 ↓</option>
-              <option value="either">양쪽 ↕</option>
+            {t("에지")}{" "}
+            <select value={edge} onChange={(e) => setEdge(e.target.value as EdgeKind)} aria-label={t("트리거 에지")}>
+              <option value="rising">{t("상승 ↑")}</option>
+              <option value="falling">{t("하강 ↓")}</option>
+              <option value="either">{t("양쪽 ↕")}</option>
             </select>
           </label>
         )}
         <label>
-          모드{" "}
-          <select value={mode} onChange={(e) => setMode(e.target.value as Mode)} aria-label="트리거 모드">
-            <option value="auto">자동 (Auto)</option>
-            <option value="normal">일반 (Normal)</option>
-            <option value="single">단일 (Single)</option>
+          {t("모드")}{" "}
+          <select value={mode} onChange={(e) => setMode(e.target.value as Mode)} aria-label={t("트리거 모드")}>
+            <option value="auto">{t("자동 (Auto)")}</option>
+            <option value="normal">{t("일반 (Normal)")}</option>
+            <option value="single">{t("단일 (Single)")}</option>
           </select>
         </label>
         {contentDecoder ? (
@@ -753,37 +754,37 @@ export function Waveform({
                 data-mode={exact ? "exact" : "view"}
                 title={
                   exact
-                    ? "시뮬레이터가 모든 에지를 해독해 일치한 항목의 시작 사이클에 트리거합니다"
-                    : "화면이 프레임마다 실시간 기록을 해독합니다 (빠른 신호는 놓칠 수 있음)"
+                    ? t("시뮬레이터가 모든 에지를 해독해 일치한 항목의 시작 사이클에 트리거합니다")
+                    : t("화면이 프레임마다 실시간 기록을 해독합니다 (빠른 신호는 놓칠 수 있음)")
                 }
               >
-                {exact ? "정확(시뮬레이터)" : "화면 해독"}
+                {exact ? t("정확(시뮬레이터)") : t("화면 해독")}
               </span>
             )}
           </>
         ) : contentSource ? null : analogSource ? (
           <>
             <label>
-              레벨{" "}
+              {t("레벨")}{" "}
               <input
                 type="number"
                 step="any"
                 value={level}
                 onChange={(e) => e.target.value !== "" && setLevel(Number(e.target.value))}
-                aria-label="트리거 레벨 (V)"
+                aria-label={t("트리거 레벨 (V)")}
                 className="num"
               />{" "}
               V
             </label>
             <label>
-              히스테리시스{" "}
+              {t("히스테리시스")}{" "}
               <input
                 type="number"
                 min={0}
                 step="any"
                 value={hysteresis}
                 onChange={(e) => Number(e.target.value) >= 0 && setHysteresis(Number(e.target.value))}
-                aria-label="히스테리시스 (V)"
+                aria-label={t("히스테리시스 (V)")}
                 className="num"
               />{" "}
               V
@@ -791,11 +792,11 @@ export function Waveform({
           </>
         ) : (
           <label>
-            펄스 폭{" "}
-            <select value={widthCmp} onChange={(e) => setWidthCmp(e.target.value as "off" | "lt" | "gt")} aria-label="펄스 폭 조건">
-              <option value="off">조건 없음</option>
-              <option value="lt">보다 좁은 펄스 &lt;</option>
-              <option value="gt">보다 넓은 펄스 &gt;</option>
+            {t("펄스 폭")}{" "}
+            <select value={widthCmp} onChange={(e) => setWidthCmp(e.target.value as "off" | "lt" | "gt")} aria-label={t("펄스 폭 조건")}>
+              <option value="off">{t("조건 없음")}</option>
+              <option value="lt">{t("보다 좁은 펄스 <")}</option>
+              <option value="gt">{t("보다 넓은 펄스 >")}</option>
             </select>
             {widthCmp !== "off" && (
               <>
@@ -806,7 +807,7 @@ export function Waveform({
                   step="any"
                   value={widthUs}
                   onChange={(e) => Number(e.target.value) > 0 && setWidthUs(Number(e.target.value))}
-                  aria-label="펄스 폭 (µs)"
+                  aria-label={t("펄스 폭 (µs)")}
                   className="num"
                 />{" "}
                 µs
@@ -815,7 +816,7 @@ export function Waveform({
           </label>
         )}
         <label>
-          위치{" "}
+          {t("위치")}{" "}
           <input
             type="range"
             min={10}
@@ -823,33 +824,33 @@ export function Waveform({
             step={5}
             value={Math.round(pre * 100)}
             onChange={(e) => setPre(Number(e.target.value) / 100)}
-            aria-label="트리거 위치"
+            aria-label={t("트리거 위치")}
           />{" "}
           {Math.round(markerPre * 100)}%
         </label>
         <label>
-          <input type="checkbox" checked={pause} onChange={(e) => setPause(e.target.checked)} /> 트리거 시 일시정지
+          <input type="checkbox" checked={pause} onChange={(e) => setPause(e.target.checked)} /> {t("트리거 시 일시정지")}
         </label>
-        {mode === "single" && <button onClick={contentSource && !exact ? rearm : armTrigger}>다시 대기 (Arm)</button>}
+        {mode === "single" && <button onClick={contentSource && !exact ? rearm : armTrigger}>{t("다시 대기 (Arm)")}</button>}
         <label>
           <input
             type="checkbox"
             checked={cursors !== null}
             onChange={(e) => setCursors(e.target.checked ? { a: v.start + v.span * 0.25, b: v.start + v.span * 0.75 } : null)}
           />{" "}
-          커서
+          {t("커서")}
         </label>
-        {showCapture && view && <button onClick={() => setView(null)}>전체 보기</button>}
+        {showCapture && view && <button onClick={() => setView(null)}>{t("전체 보기")}</button>}
         <span className="scope-state" data-testid="scope-state" data-state={state}>
           {state === "nosource" || !sourceProbed
             ? STATE_TEXT.nosource
             : live
-              ? `${STATE_TEXT[state]}${state === "armed" ? " (자동: 실시간 표시)" : ""}`
+              ? `${STATE_TEXT[state]}${state === "armed" ? t(" (자동: 실시간 표시)") : ""}`
               : STATE_TEXT[state]}
         </span>
       </div>
       <div className="wave-controls scope-controls" data-testid="math-controls">
-        <b>수학</b>
+        <b>{t("수학")}</b>
         <button
           disabled={math.length >= MAX_MATH}
           onClick={() => {
@@ -857,9 +858,9 @@ export function Waveform({
             setMath((ms) => [...ms, newMath(id, [...analogNames, ...pins])].sort((p, q) => p.id - q.id));
           }}
         >
-          수학 채널 추가
+          {t("수학 채널 추가")}
         </button>
-        <span className="scope-view" role="group" aria-label="보기">
+        <span className="scope-view" role="group" aria-label={t("보기")}>
           {(["time", "spectrum", "split"] as SpectrumView[]).map((k) => (
             <button
               key={k}
@@ -867,11 +868,11 @@ export function Waveform({
               className={specView === k ? "on" : undefined}
               onClick={() => setSpectrum({ ...specCfg, view: k })}
             >
-              {k === "time" ? "시간" : k === "spectrum" ? "스펙트럼 (FFT)" : "시간 + 스펙트럼"}
+              {k === "time" ? t("시간") : k === "spectrum" ? t("스펙트럼 (FFT)") : t("시간 + 스펙트럼")}
             </button>
           ))}
         </span>
-        {math.length === 0 && <span className="hint">A±B·A×B·−A·k·A+c·이동 평균 채널을 만들고, 아무 채널의 스펙트럼을 봅니다.</span>}
+        {math.length === 0 && <span className="hint">{t("A±B·A×B·−A·k·A+c·이동 평균 채널을 만들고, 아무 채널의 스펙트럼을 봅니다.")}</span>}
       </div>
       {math.map((m) => (
         <MathControls
@@ -883,12 +884,12 @@ export function Waveform({
         />
       ))}
       <div className="wave-controls scope-controls">
-        <b>디코더</b>
+        <b>{t("디코더")}</b>
         <label>
-          추가{" "}
+          {t("추가")}{" "}
           <select
             value=""
-            aria-label="디코더 추가"
+            aria-label={t("디코더 추가")}
             onChange={(e) => {
               const type = e.target.value as DecoderType;
               if (!type) return;
@@ -906,13 +907,13 @@ export function Waveform({
           </select>
         </label>
         <label>
-          표시{" "}
-          <select value={fmt} onChange={(e) => setFmt(e.target.value as Format)} aria-label="표시 형식">
-            <option value="hex">16진수</option>
+          {t("표시")}{" "}
+          <select value={fmt} onChange={(e) => setFmt(e.target.value as Format)} aria-label={t("표시 형식")}>
+            <option value="hex">{t("16진수")}</option>
             <option value="ascii">ASCII</option>
           </select>
         </label>
-        {decoders.length === 0 && <span className="hint">UART·I2C·SPI·1-Wire·TM1637·WS2812·IR(NEC)을 파형 위에 풀어 보여 줍니다.</span>}
+        {decoders.length === 0 && <span className="hint">{t("UART·I2C·SPI·1-Wire·TM1637·WS2812·IR(NEC)을 파형 위에 풀어 보여 줍니다.")}</span>}
       </div>
       {decoders.map((d, di) => (
         <div key={d.id} className="wave-controls scope-controls decoder-cfg" data-testid={`decoder-${di}`}>
@@ -929,7 +930,7 @@ export function Waveform({
                   addPins([e.target.value]);
                 }}
               >
-                {k >= 2 && <option value="">없음</option>}
+                {k >= 2 && <option value="">{t("없음")}</option>}
                 {allPins.map((n) => (
                   <option key={n}>{n}</option>
                 ))}
@@ -939,22 +940,22 @@ export function Waveform({
           {d.type === "uart" && (
             <>
               <label>
-                보드레이트{" "}
+                {t("보드레이트")}{" "}
                 <input
                   type="number"
                   min={1}
                   value={d.baud}
                   onChange={(e) => Number(e.target.value) > 0 && updateDecoder(d.id, { baud: Number(e.target.value) })}
-                  aria-label="UART 보드레이트"
+                  aria-label={t("UART 보드레이트")}
                   className="num wide"
                 />
               </label>
               <label>
-                패리티{" "}
-                <select value={d.parity} onChange={(e) => updateDecoder(d.id, { parity: e.target.value as Parity })} aria-label="UART 패리티">
-                  <option value="none">없음 (8N1)</option>
-                  <option value="even">짝수</option>
-                  <option value="odd">홀수</option>
+                {t("패리티")}{" "}
+                <select value={d.parity} onChange={(e) => updateDecoder(d.id, { parity: e.target.value as Parity })} aria-label={t("UART 패리티")}>
+                  <option value="none">{t("없음 (8N1)")}</option>
+                  <option value="even">{t("짝수")}</option>
+                  <option value="odd">{t("홀수")}</option>
                 </select>
               </label>
             </>
@@ -962,8 +963,8 @@ export function Waveform({
           {d.type === "spi" && (
             <>
               <label>
-                모드{" "}
-                <select value={d.mode} onChange={(e) => updateDecoder(d.id, { mode: Number(e.target.value) })} aria-label="SPI 모드">
+                {t("모드")}{" "}
+                <select value={d.mode} onChange={(e) => updateDecoder(d.id, { mode: Number(e.target.value) })} aria-label={t("SPI 모드")}>
                   {[0, 1, 2, 3].map((m) => (
                     <option key={m} value={m}>
                       {m} (CPOL {m >> 1}, CPHA {m & 1})
@@ -972,33 +973,33 @@ export function Waveform({
                 </select>
               </label>
               <label>
-                <input type="checkbox" checked={d.lsbFirst} onChange={(e) => updateDecoder(d.id, { lsbFirst: e.target.checked })} /> LSB 먼저
+                <input type="checkbox" checked={d.lsbFirst} onChange={(e) => updateDecoder(d.id, { lsbFirst: e.target.checked })} /> {t("LSB 먼저")}
               </label>
             </>
           )}
-          <button aria-label={`디코더 ${di + 1} 제거`} onClick={() => setDecoders((ds) => ds.filter((x) => x.id !== d.id))}>
+          <button aria-label={t("디코더 {n} 제거", { n: di + 1 })} onClick={() => setDecoders((ds) => ds.filter((x) => x.id !== d.id))}>
             ×
           </button>
-          <span className="dim">{decoded[di].length}개</span>
+          <span className="dim">{t("{n}개", { n: decoded[di].length })}</span>
         </div>
       ))}
       {active && (
         <>
           <div className="scope-body" style={specView === "spectrum" ? { display: "none" } : undefined}>
             <div className="wave-labels" style={{ paddingTop: TOP }}>
-              {rows.map(({ name, ch, live: t }) => (
+              {rows.map(({ name, ch, live: liveTrace }) => (
                 <div key={name} className="wave-label" data-probe={name} style={{ height: ROW }}>
                   <b className={name === source ? "trig-src" : undefined}>{name}</b>
                   {synth.has(name) && (
-                    <span className="synth" title="USART·I2C·SPI가 옮긴 바이트로 만든 파형 (GPIO는 비트 단위로 토글하지 않습니다)">
-                      합성
+                    <span className="synth" title={t("USART·I2C·SPI가 옮긴 바이트로 만든 파형 (GPIO는 비트 단위로 토글하지 않습니다)")}>
+                      {t("합성")}
                     </span>
                   )}
-                  <button aria-label={`${name} 제거`} onClick={() => setPins((p) => p.filter((q) => q !== name))}>
+                  <button aria-label={t("{name} 제거", { name })} onClick={() => setPins((p) => p.filter((q) => q !== name))}>
                     ×
                   </button>
                   <div className="dim" data-testid={`probe-${name}`}>
-                    {rowText(ch, t, v, now, windowNs)}
+                    {rowText(ch, liveTrace, v, now, windowNs)}
                   </div>
                 </div>
               ))}
@@ -1011,14 +1012,14 @@ export function Waveform({
                 <div key={name} className="wave-label analog-label" data-analog={cfg.spec} style={{ height: AROW }}>
                   <div>
                     <b className={name === source ? "trig-src" : undefined}>{name}</b>
-                    <button aria-label={`${name} 제거`} onClick={() => setAnalog((a) => a.filter((q) => q.spec !== cfg.spec))}>
+                    <button aria-label={t("{name} 제거", { name })} onClick={() => setAnalog((a) => a.filter((q) => q.spec !== cfg.spec))}>
                       ×
                     </button>
                   </div>
                   <div>
                     <select
                       value={cfg.vdiv}
-                      aria-label={`${name} V/눈금`}
+                      aria-label={t("{name} V/눈금", { name })}
                       onChange={(e) => setAnalog((a) => a.map((q) => (q.spec === cfg.spec ? { ...q, vdiv: Number(e.target.value) } : q)))}
                     >
                       {VOLTS_DIV.map((vd) => (
@@ -1029,13 +1030,13 @@ export function Waveform({
                     </select>
                   </div>
                   <div>
-                    중앙{" "}
+                    {t("중앙")}{" "}
                     <input
                       type="number"
                       step="any"
                       className="num"
                       value={cfg.offset}
-                      aria-label={`${name} 오프셋 (V)`}
+                      aria-label={t("{name} 오프셋 (V)", { name })}
                       onChange={(e) =>
                         e.target.value !== "" &&
                         setAnalog((a) => a.map((q) => (q.spec === cfg.spec ? { ...q, offset: Number(e.target.value) } : q)))
@@ -1043,7 +1044,7 @@ export function Waveform({
                     />{" "}
                     V
                   </div>
-                  <div className="dim">{astats[i] ? `평균 ${fmtVolts(astats[i]!.mean)}` : "—"}</div>
+                  <div className="dim">{astats[i] ? t("평균 {v}", { v: fmtVolts(astats[i]!.mean) }) : "—"}</div>
                 </div>
               ))}
               {mrows.map(({ cfg: m, name, stats }) => (
@@ -1052,7 +1053,7 @@ export function Waveform({
                     <b>{name}</b> <span className="dim">{mathLabel(m)}</span>
                   </div>
                   <div>
-                    <select value={m.vdiv} aria-label={`${name} V/눈금`} onChange={(e) => updateMath(m.id, { vdiv: Number(e.target.value) })}>
+                    <select value={m.vdiv} aria-label={t("{name} V/눈금", { name })} onChange={(e) => updateMath(m.id, { vdiv: Number(e.target.value) })}>
                       {VOLTS_DIV.map((vd) => (
                         <option key={vd} value={vd}>
                           {fmtVolts(vd)}/div
@@ -1061,18 +1062,18 @@ export function Waveform({
                     </select>
                   </div>
                   <div>
-                    중앙{" "}
+                    {t("중앙")}{" "}
                     <input
                       type="number"
                       step="any"
                       className="num"
                       value={m.offset}
-                      aria-label={`${name} 오프셋 (V)`}
+                      aria-label={t("{name} 오프셋 (V)", { name })}
                       onChange={(e) => e.target.value !== "" && updateMath(m.id, { offset: Number(e.target.value) })}
                     />{" "}
                     V
                   </div>
-                  <div className="dim">{stats ? `평균 ${fmtVolts(stats.mean)}` : "—"}</div>
+                  <div className="dim">{stats ? t("평균 {v}", { v: fmtVolts(stats.mean) }) : "—"}</div>
                 </div>
               ))}
             </div>
@@ -1156,7 +1157,7 @@ export function Waveform({
                     {zero > y0 && zero < y0 + AROW && <line className="azero" x1={0} x2={W} y1={zero} y2={zero} />}
                     {shown && r.from > v.start && (
                       <rect className="scope-invalid" x={0} width={Math.max(0, Math.min(W, x(r.from)))} y={y0 + 2} height={AROW - 4}>
-                        <title>{m.op === "avg" ? "이동 평균의 창이 아직 차지 않은 구간" : "소스가 기록되지 않은 구간"}</title>
+                        <title>{m.op === "avg" ? t("이동 평균의 창이 아직 차지 않은 구간") : t("소스가 기록되지 않은 구간")}</title>
                       </rect>
                     )}
                     <polyline points={points} />
@@ -1165,7 +1166,7 @@ export function Waveform({
               })}
               {!showCapture && !live && (
                 <text x={W / 2} y={TOP + plotH / 2} className="scope-wait" textAnchor="middle">
-                  트리거 대기 중…
+                  {t("트리거 대기 중…")}
                 </text>
               )}
               {/* Trigger marker: T at t = 0, drag to move the trigger position. */}
@@ -1173,7 +1174,7 @@ export function Waveform({
                 <g className={`trig-marker${showCapture && dragPre === null ? "" : " pending"}`} transform={`translate(${markerX},0)`}>
                   <line y1={TOP} y2={TOP + plotH} />
                   <path d="M -6 0 L 6 0 L 0 10 Z" data-drag="trigger" data-testid="trigger-marker">
-                    <title>트리거 (t = 0) — 끌어서 위치 변경</title>
+                    <title>{t("트리거 (t = 0) — 끌어서 위치 변경")}</title>
                   </path>
                   <text y={9} x={8}>
                     T
@@ -1190,7 +1191,7 @@ export function Waveform({
           </div>
           {truncated && (
             <div className="scope-note" data-testid="scope-truncated">
-              에지가 너무 많아 버퍼(핀당 {CAPTURE_EDGES.toLocaleString()}개)를 넘었습니다 — 빗금 구간은 기록되지 않았습니다. 시간/눈금을 줄이세요.
+              {t("에지가 너무 많아 버퍼(핀당 {n}개)를 넘었습니다 — 빗금 구간은 기록되지 않았습니다. 시간/눈금을 줄이세요.", { n: CAPTURE_EDGES.toLocaleString() })}
             </div>
           )}
           <Measurements stats={sourceStats} source={measured} cursors={cursors} live={!showCapture} />
@@ -1248,7 +1249,7 @@ function Lane({
   if (shown.length > 3000) {
     return (
       <text x={4} y={y + LANE / 2 + 4} className="lane-dense" data-testid={testId}>
-        {shown.length}개 — 확대하면 보입니다
+        {t("{n}개 — 확대하면 보입니다", { n: shown.length })}
       </text>
     );
   }
@@ -1304,7 +1305,7 @@ function DecodedTable({ index, cfg, anns, fmt }: { index: number; cfg: DecoderCf
     <div className="decode-table">
       <table data-testid={`decode-table-${index}`}>
         <caption>
-          {DECODER_NAMES[cfg.type]} {cfg.pins.filter(Boolean).join("/")} — {anns.length}개{errors > 0 && <span className="err"> · 오류 {errors}</span>}
+          {DECODER_NAMES[cfg.type]} {cfg.pins.filter(Boolean).join("/")} — {t("{n}개", { n: anns.length })}{errors > 0 && <span className="err">{t(" · 오류 {n}", { n: errors })}</span>}
           {cfg.type === "uart" && anns.length > 0 && (
             <span className="decode-text" data-testid={`decode-text-${index}`}>
               {" "}
@@ -1314,19 +1315,19 @@ function DecodedTable({ index, cfg, anns, fmt }: { index: number; cfg: DecoderCf
           {shown && (
             <span className="decode-text" data-testid={`decode-display-${index}`} data-text={shown.text}>
               {" "}
-              표시 “{shown.text}”
+              {t("표시 “{text}”", { text: shown.text })}
             </span>
           )}
           {ir && (
             <span className="decode-text" data-testid={`decode-ir-${index}`} data-addr={ir.addr} data-cmd={ir.cmd}>
               {" "}
-              마지막 주소 {fmtByte(ir.addr, "hex")} · 명령 {fmtByte(ir.cmd, "hex")}
+              {t("마지막 주소 {addr} · 명령 {cmd}", { addr: fmtByte(ir.addr, "hex"), cmd: fmtByte(ir.cmd, "hex") })}
             </span>
           )}
           {frame && frame.length > 0 && (
             <span className="decode-text" data-testid={`decode-frame-${index}`} data-colors={frame.map(fmtColor).join(" ")}>
               {" "}
-              마지막 프레임 {frame.length}픽셀{" "}
+              {t("마지막 프레임 {n}픽셀", { n: frame.length })}{" "}
               {frame.slice(0, 64).map((c, k) => (
                 <span key={k} className="swatch" style={{ background: fmtColor(c) }} title={`#${k} ${fmtColor(c)}`} />
               ))}
@@ -1335,10 +1336,10 @@ function DecodedTable({ index, cfg, anns, fmt }: { index: number; cfg: DecoderCf
         </caption>
         <thead>
           <tr>
-            <th>시각</th>
-            <th>종류</th>
-            <th>값</th>
-            <th>오류</th>
+            <th>{t("시각")}</th>
+            <th>{t("종류")}</th>
+            <th>{t("값")}</th>
+            <th>{t("오류")}</th>
           </tr>
         </thead>
         <tbody>
@@ -1363,7 +1364,7 @@ function DecodedTable({ index, cfg, anns, fmt }: { index: number; cfg: DecoderCf
           ))}
         </tbody>
       </table>
-      {anns.length > TABLE_ROWS && <div className="dim">처음 {TABLE_ROWS}개만 표시합니다.</div>}
+      {anns.length > TABLE_ROWS && <div className="dim">{t("처음 {n}개만 표시합니다.", { n: TABLE_ROWS })}</div>}
     </div>
   );
 }
@@ -1376,8 +1377,8 @@ function ContentControls({ cfg, type, valid, onChange }: { cfg: ContentCfg; type
   return (
     <>
       <label>
-        조건{" "}
-        <select value={kind} onChange={(e) => set({ kind: e.target.value as ContentCfg["kind"] })} aria-label="해독 트리거 조건">
+        {t("조건")}{" "}
+        <select value={kind} onChange={(e) => set({ kind: e.target.value as ContentCfg["kind"] })} aria-label={t("해독 트리거 조건")}>
           {kinds.map((k) => (
             <option key={k} value={k}>
               {CONTENT_KIND_TEXT[k]}
@@ -1388,62 +1389,62 @@ function ContentControls({ cfg, type, valid, onChange }: { cfg: ContentCfg; type
       {kind === "pixel" ? (
         <>
           <label>
-            번호{" "}
+            {t("번호")}{" "}
             <input
               type="number"
               min={0}
               step={1}
               className="num"
               value={cfg.index}
-              aria-label="해독 트리거 픽셀 번호"
+              aria-label={t("해독 트리거 픽셀 번호")}
               onChange={(e) => Number.isInteger(Number(e.target.value)) && Number(e.target.value) >= 0 && set({ index: Number(e.target.value) })}
             />
           </label>
           <label>
-            색{" "}
+            {t("색")}{" "}
             <input
               className="num wide"
               value={cfg.color}
-              placeholder="아무 색"
-              aria-label="해독 트리거 픽셀 색"
+              placeholder={t("아무 색")}
+              aria-label={t("해독 트리거 픽셀 색")}
               onChange={(e) => set({ color: e.target.value })}
             />
           </label>
         </>
       ) : (
         <label>
-          {kind === "text" ? "글자" : kind === "address" ? "주소" : kind === "nec" ? "명령" : "값"}{" "}
+          {kind === "text" ? t("글자") : kind === "address" ? t("주소") : kind === "nec" ? t("명령") : t("값")}{" "}
           <input
             className="num wide"
             value={cfg.text}
             placeholder={kind === "text" ? "OK\\r\\n" : "0x41"}
-            aria-label="해독 트리거 값"
+            aria-label={t("해독 트리거 값")}
             onChange={(e) => set({ text: e.target.value })}
           />
         </label>
       )}
       {kind === "nec" && (
         <label>
-          주소{" "}
+          {t("주소")}{" "}
           <input
             className="num wide"
             value={cfg.addr}
-            placeholder="아무 주소"
-            aria-label="해독 트리거 IR 주소"
+            placeholder={t("아무 주소")}
+            aria-label={t("해독 트리거 IR 주소")}
             onChange={(e) => set({ addr: e.target.value })}
           />
         </label>
       )}
       {kind === "address" && (
-        <select value={cfg.rw} onChange={(e) => set({ rw: e.target.value as ContentCfg["rw"] })} aria-label="해독 트리거 R/W">
+        <select value={cfg.rw} onChange={(e) => set({ rw: e.target.value as ContentCfg["rw"] })} aria-label={t("해독 트리거 R/W")}>
           <option value="any">R/W</option>
-          <option value="W">W (쓰기)</option>
-          <option value="R">R (읽기)</option>
+          <option value="W">{t("W (쓰기)")}</option>
+          <option value="R">{t("R (읽기)")}</option>
         </select>
       )}
       {!valid && (
         <span className="err" data-testid="content-invalid">
-          값을 읽을 수 없습니다 (예: 0x41, 'A', 65{kind === "pixel" ? ", #FF8000" : ""})
+          {t("값을 읽을 수 없습니다 (예: 0x41, 'A', 65{more})", { more: kind === "pixel" ? ", #FF8000" : "" })}
         </span>
       )}
     </>
@@ -1457,10 +1458,10 @@ function AnalogTable({ rows, live }: { rows: { spec: string; name: string; stats
       <table>
         <thead>
           <tr>
-            <th>아날로그 측정{live ? " (실시간)" : " (캡처)"}</th>
-            <th>최소</th>
-            <th>최대</th>
-            <th>평균</th>
+            <th>{t("아날로그 측정")}{live ? t(" (실시간)") : t(" (캡처)")}</th>
+            <th>{t("최소")}</th>
+            <th>{t("최대")}</th>
+            <th>{t("평균")}</th>
             <th>Vpp</th>
             <th>RMS</th>
           </tr>
@@ -1628,15 +1629,15 @@ const rowHz = (f: number) =>
   f >= 1e6 ? `${(f / 1e6).toFixed(3)} MHz` : f >= 1000 ? `${(f / 1000).toFixed(2)} kHz` : `${f.toFixed(1)} Hz`;
 
 /** Frequency and duty of a row over what is shown. */
-function rowText(ch: CaptureChannel | undefined, t: Trace | undefined, v: View, now: number, windowNs: number) {
+function rowText(ch: CaptureChannel | undefined, trace: Trace | undefined, v: View, now: number, windowNs: number) {
   let m: PulseStats | undefined;
   if (ch) m = measurePulses(ch, v.start, v.start + v.span);
-  else if (t) m = measurePulses(liveNs(t, now), -windowNs, 0);
+  else if (trace) m = measurePulses(liveNs(trace, now), -windowNs, 0);
   if (!m) return "—";
   return (
     (m.freq !== undefined ? `${rowHz(m.freq)} · ` : "") +
     (m.duty !== undefined ? `${(m.duty * 100).toFixed(0)}% H` : "—") +
-    (!ch && t?.dense ? " · 너무 빠름" : "")
+    (!ch && trace?.dense ? t(" · 너무 빠름") : "")
   );
 }
 
@@ -1697,7 +1698,7 @@ function WidthCell({ w, id }: { w?: Widths; id: string }) {
   if (!w) return <td data-testid={id}>—</td>;
   return (
     <td data-testid={id} data-min={w.min} data-max={w.max} data-last={w.last}>
-      {fmtTime(w.last)} <span className="dim">(최소 {fmtTime(w.min)} · 최대 {fmtTime(w.max)} · {w.count}개)</span>
+      {fmtTime(w.last)} <span className="dim">{t("(최소 {min} · 최대 {max} · {n}개)", { min: fmtTime(w.min), max: fmtTime(w.max), n: w.count })}</span>
     </td>
   );
 }
@@ -1719,19 +1720,19 @@ function Measurements({
       <table>
         <tbody>
           <tr>
-            <th>{source} 측정{live ? " (실시간)" : " (캡처)"}</th>
+            <th>{t("{source} 측정", { source })}{live ? t(" (실시간)") : t(" (캡처)")}</th>
             <td>
-              주파수 <b data-testid="scope-freq" data-hz={stats?.freq}>{stats?.freq !== undefined ? fmtHz(stats.freq) : "—"}</b>
+              {t("주파수")} <b data-testid="scope-freq" data-hz={stats?.freq}>{stats?.freq !== undefined ? fmtHz(stats.freq) : "—"}</b>
             </td>
             <td>
-              주기 <b data-testid="scope-period" data-ns={stats?.period}>{stats?.period !== undefined ? fmtTime(stats.period) : "—"}</b>
+              {t("주기")} <b data-testid="scope-period" data-ns={stats?.period}>{stats?.period !== undefined ? fmtTime(stats.period) : "—"}</b>
             </td>
             <td>
-              듀티 <b data-testid="scope-duty" data-duty={stats?.duty}>{stats?.duty !== undefined ? `${(stats.duty * 100).toFixed(1)}%` : "—"}</b>
+              {t("듀티")} <b data-testid="scope-duty" data-duty={stats?.duty}>{stats?.duty !== undefined ? `${(stats.duty * 100).toFixed(1)}%` : "—"}</b>
             </td>
             {cursors && (
               <>
-                <th>커서</th>
+                <th>{t("커서")}</th>
                 <td data-testid="cursor-dt" data-ns={dt}>
                   Δt <b>{fmtTime(dt)}</b>
                 </td>
@@ -1740,9 +1741,9 @@ function Measurements({
             )}
           </tr>
           <tr>
-            <th>H 폭</th>
+            <th>{t("H 폭")}</th>
             <WidthCell w={stats?.high} id="scope-high" />
-            <th>L 폭</th>
+            <th>{t("L 폭")}</th>
             <WidthCell w={stats?.low} id="scope-low" />
             {cursors && (
               <td colSpan={3} className="dim">
@@ -1763,7 +1764,7 @@ const OP_TEXT: Record<MathOp, string> = {
   mul: "A × B",
   neg: "−A",
   scale: "k·A + c",
-  avg: "이동 평균 (A)",
+  avg: t("이동 평균 (A)"),
 };
 
 const fmtNum = (v: number) => String(Number(v.toPrecision(4)));
@@ -1782,7 +1783,7 @@ export function mathLabel(m: MathCfg): string {
     case "scale":
       return `${fmtNum(m.gain)}·${m.a} ${m.bias < 0 ? "−" : "+"} ${fmtNum(Math.abs(m.bias))} V`;
     case "avg":
-      return `평균 ${fmtTime(m.windowUs * 1e3)} (${m.a})`;
+      return t("평균 {time} ({a})", { time: fmtTime(m.windowUs * 1e3), a: m.a });
   }
 }
 
@@ -1791,7 +1792,7 @@ function MathControls({ m, sources, onChange, onRemove }: { m: MathCfg; sources:
   const name = `M${m.id}`;
   const pick = (value: string, label: string, set: (v: string) => void) => (
     <select value={value} aria-label={label} onChange={(e) => set(e.target.value)}>
-      {!sources.includes(value) && <option value={value}>{value || "—"} (없음)</option>}
+      {!sources.includes(value) && <option value={value}>{value || "—"}{t(" (없음)")}</option>}
       {sources.map((n) => (
         <option key={n} value={n}>
           {n.startsWith("V(") || n.startsWith("M") ? n : `${n} (0/3.3 V)`}
@@ -1803,8 +1804,8 @@ function MathControls({ m, sources, onChange, onRemove }: { m: MathCfg; sources:
     <div className="wave-controls scope-controls math-cfg" data-testid={`math-${m.id}`}>
       <b>{name}</b>
       <label>
-        연산{" "}
-        <select value={m.op} aria-label={`${name} 연산`} onChange={(e) => onChange({ op: e.target.value as MathOp })}>
+        {t("연산")}{" "}
+        <select value={m.op} aria-label={t("{name} 연산", { name })} onChange={(e) => onChange({ op: e.target.value as MathOp })}>
           {MATH_OPS.map((op) => (
             <option key={op} value={op}>
               {OP_TEXT[op]}
@@ -1812,8 +1813,8 @@ function MathControls({ m, sources, onChange, onRemove }: { m: MathCfg; sources:
           ))}
         </select>
       </label>
-      <label>A {pick(m.a, `${name} 소스 A`, (a) => onChange({ a }))}</label>
-      {BINARY.includes(m.op) && <label>B {pick(m.b, `${name} 소스 B`, (b) => onChange({ b }))}</label>}
+      <label>A {pick(m.a, t("{name} 소스 A", { name }), (a) => onChange({ a }))}</label>
+      {BINARY.includes(m.op) && <label>B {pick(m.b, t("{name} 소스 B", { name }), (b) => onChange({ b }))}</label>}
       {m.op === "scale" && (
         <>
           <label>
@@ -1823,7 +1824,7 @@ function MathControls({ m, sources, onChange, onRemove }: { m: MathCfg; sources:
               step="any"
               className="num"
               value={m.gain}
-              aria-label={`${name} 배율 k`}
+              aria-label={t("{name} 배율 k", { name })}
               onChange={(e) => e.target.value !== "" && Number.isFinite(Number(e.target.value)) && onChange({ gain: Number(e.target.value) })}
             />
           </label>
@@ -1834,7 +1835,7 @@ function MathControls({ m, sources, onChange, onRemove }: { m: MathCfg; sources:
               step="any"
               className="num"
               value={m.bias}
-              aria-label={`${name} 더할 값 c (V)`}
+              aria-label={t("{name} 더할 값 c (V)", { name })}
               onChange={(e) => e.target.value !== "" && Number.isFinite(Number(e.target.value)) && onChange({ bias: Number(e.target.value) })}
             />{" "}
             V
@@ -1843,20 +1844,20 @@ function MathControls({ m, sources, onChange, onRemove }: { m: MathCfg; sources:
       )}
       {m.op === "avg" && (
         <label>
-          창{" "}
+          {t("창")}{" "}
           <input
             type="number"
             min={0.001}
             step="any"
             className="num wide"
             value={m.windowUs}
-            aria-label={`${name} 평균 창 (µs)`}
+            aria-label={t("{name} 평균 창 (µs)", { name })}
             onChange={(e) => Number(e.target.value) > 0 && onChange({ windowUs: Number(e.target.value) })}
           />{" "}
           µs
         </label>
       )}
-      <button aria-label={`${name} 제거`} onClick={onRemove}>
+      <button aria-label={t("{name} 제거", { name })} onClick={onRemove}>
         ×
       </button>
     </div>

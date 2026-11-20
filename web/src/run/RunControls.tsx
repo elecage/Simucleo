@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Runner } from "../sim/useRunner";
 import { usePerf } from "../sim/perfStore";
 import { formatRatio } from "../sim/perf";
+import { t } from "../i18n";
 
 export interface Example {
   name: string;
@@ -17,10 +18,10 @@ const SPEEDS: [string, number][] = [
   ["×0.01", 0.01],
   ["×0.1", 0.1],
   ["×0.5", 0.5],
-  ["×1 실시간", 1],
+  [t("×1 실시간"), 1],
   ["×2", 2],
   ["×10", 10],
-  ["최대", Infinity],
+  [t("최대"), Infinity],
 ];
 
 /** Example firmware bundled with the site (built in CI). */
@@ -47,7 +48,7 @@ export function RunControls({
   /** Firmware loaded here (an upload, an example without wiring): newer than any load still on its way. */
   onUserLoad?: () => void;
 }) {
-  const [speedLabel, setSpeedLabel] = useState("×1 실시간");
+  const [speedLabel, setSpeedLabel] = useState(t("×1 실시간"));
   const f = runner.frame;
   // What the screen shows (M31): the slower of the worker's pace and the page's.
   const shown = usePerf().ratio;
@@ -68,7 +69,7 @@ export function RunControls({
   return (
     <div className="run-controls">
       <label className="file-btn">
-        ELF 업로드
+        {t("ELF 업로드")}
         <input
           type="file"
           accept=".elf"
@@ -86,32 +87,32 @@ export function RunControls({
       </label>
       {examples.length > 0 && (
         <select
-          aria-label="예제 펌웨어"
+          aria-label={t("예제 펌웨어")}
           value=""
           onChange={(e) => loadExample(e.target.value)}
-          title="CubeMX HAL 등으로 만든 예제 펌웨어"
+          title={t("CubeMX HAL 등으로 만든 예제 펌웨어")}
         >
-          <option value="">예제 불러오기…</option>
+          <option value="">{t("예제 불러오기…")}</option>
           {examples.map((ex) => (
             <option key={ex.file} value={ex.file} title={ex.description}>
               {ex.name}
-              {ex.project ? " (배선 포함)" : ""}
+              {ex.project ? t(" (배선 포함)") : ""}
             </option>
           ))}
         </select>
       )}
       {runner.running ? (
-        <button onClick={() => runner.pause()}>⏸ 일시정지</button>
+        <button onClick={() => runner.pause()}>{t("⏸ 일시정지")}</button>
       ) : (
         <button onClick={runner.run} disabled={!loaded || !!f?.stopped}>
-          ▶ 실행
+          {t("▶ 실행")}
         </button>
       )}
-      <button onClick={runner.reset} disabled={!loaded} title="B2 RESET 버튼과 같습니다">
-        ⟲ 리셋
+      <button onClick={runner.reset} disabled={!loaded} title={t("B2 RESET 버튼과 같습니다")}>
+        {t("⟲ 리셋")}
       </button>
       <select
-        aria-label="실행 속도"
+        aria-label={t("실행 속도")}
         value={speedLabel}
         onChange={(e) => {
           setSpeedLabel(e.target.value);
@@ -124,13 +125,13 @@ export function RunControls({
       </select>
       <span className="status" data-testid="run-status">
         {!runner.ready
-          ? "시뮬레이터 로딩 중…"
+          ? t("시뮬레이터 로딩 중…")
           : runner.loadError
-            ? `로드 실패: ${runner.loadError}`
+            ? t("로드 실패: {error}", { error: runner.loadError })
             : loaded && f
               ? `${runner.firmware} · ${(f.timeMs / 1000).toFixed(3)} s · ${(f.clockHz / 1e6).toFixed(1)} MHz` +
-                (runner.running ? ` · 실제 ${formatRatio(shown ?? runner.speed)}` : "")
-              : "펌웨어(ELF)를 올리거나 예제를 고르세요"}
+                (runner.running ? t(" · 실제 {ratio}", { ratio: formatRatio(shown ?? runner.speed) }) : "")
+              : t("펌웨어(ELF)를 올리거나 예제를 고르세요")}
       </span>
     </div>
   );

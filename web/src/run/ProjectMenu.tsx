@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { download, exportSvg, serialize, svgToPng, toBase64 } from "../editor/project";
 import type { Project } from "../editor/model";
 import type { Runner } from "../sim/useRunner";
+import { t } from "../i18n";
 
 interface Props {
   project: Project;
@@ -50,8 +51,8 @@ export function ProjectMenu({ project, name, runner, onNew, onOpenText }: Props)
 
   return (
     <div className="project-menu">
-      <button onClick={onNew} title="빈 보드와 브레드보드로 시작">새로</button>
-      <button onClick={() => fileRef.current?.click()} title=".simucleo.json 프로젝트 열기">열기</button>
+      <button onClick={onNew} title={t("빈 보드와 브레드보드로 시작")}>{t("새로")}</button>
+      <button onClick={() => fileRef.current?.click()} title={t(".simucleo.json 프로젝트 열기")}>{t("열기")}</button>
       <input
         ref={fileRef}
         type="file"
@@ -64,12 +65,12 @@ export function ProjectMenu({ project, name, runner, onNew, onOpenText }: Props)
           e.target.value = "";
         }}
       />
-      <button onClick={save} title="배선과 부품 속성(선택: ELF 포함)을 파일로 저장">저장</button>
-      <label className="check" title="저장할 때 불러온 ELF를 파일에 넣습니다">
-        <input type="checkbox" checked={withElf} onChange={(e) => setWithElf(e.target.checked)} /> ELF 포함
+      <button onClick={save} title={t("배선과 부품 속성(선택: ELF 포함)을 파일로 저장")}>{t("저장")}</button>
+      <label className="check" title={t("저장할 때 불러온 ELF를 파일에 넣습니다")}>
+        <input type="checkbox" checked={withElf} onChange={(e) => setWithElf(e.target.checked)} /> {t("ELF 포함")}
       </label>
-      <button onClick={saveSvg} title="보고 있는 배선도나 회로도를 SVG 그림으로 저장">SVG</button>
-      <button onClick={savePng} title="보고 있는 배선도나 회로도를 PNG 그림으로 저장 (2배 해상도)">PNG</button>
+      <button onClick={saveSvg} title={t("보고 있는 배선도나 회로도를 SVG 그림으로 저장")}>SVG</button>
+      <button onClick={savePng} title={t("보고 있는 배선도나 회로도를 PNG 그림으로 저장 (2배 해상도)")}>PNG</button>
     </div>
   );
 }

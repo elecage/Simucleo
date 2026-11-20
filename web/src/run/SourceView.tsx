@@ -9,6 +9,7 @@ import type { SourceUpload } from "../upload/useSourceUpload";
 import type { Attached } from "../upload/attach";
 import { UploadBar } from "../upload/UploadBar";
 import { countRender } from "../sim/renderCount";
+import { t } from "../i18n";
 
 const base = "./";
 
@@ -59,7 +60,7 @@ function ValueTree({
       {editing ? (
         <input
           className="var-edit"
-          aria-label={`${path} 값`}
+          aria-label={t("{path} 값", { path: String(path) })}
           autoFocus
           defaultValue={initial}
           onKeyDown={(e) => {
@@ -74,7 +75,7 @@ function ValueTree({
         <span
           className={`var-value${canEdit ? " editable" : ""}`}
           data-var={v.name}
-          title={canEdit ? "두 번 클릭: 값 바꾸기" : undefined}
+          title={canEdit ? t("두 번 클릭: 값 바꾸기") : undefined}
           onDoubleClick={canEdit ? () => setEditing(true) : undefined}
         >
           {v.value}
@@ -104,28 +105,28 @@ function ValueTree({
 }
 
 const TASK_STATE: Record<string, string> = {
-  running: "실행 중",
-  ready: "준비",
-  blocked: "대기",
-  suspended: "일시중단",
-  deleted: "삭제됨",
+  running: t("실행 중"),
+  ready: t("준비"),
+  blocked: t("대기"),
+  suspended: t("일시중단"),
+  deleted: t("삭제됨"),
 };
 
-const KIND_TEXT = { write: "쓰기", read: "읽기", access: "읽기·쓰기" } as const;
+const KIND_TEXT: Record<WatchpointSpec["kind"], string> = { write: t("쓰기"), read: t("읽기"), access: t("읽기·쓰기") };
 
 /** Why execution paused, for the status line. */
 function pauseText(reason: string): string {
   const fixed: Record<string, string> = {
-    breakpoint: "중단점",
-    done: "스텝",
-    pause: "일시정지",
-    limit: "스텝이 너무 길어 멈춤",
-    trigger: "오실로스코프 트리거",
+    breakpoint: t("중단점"),
+    done: t("스텝"),
+    pause: t("일시정지"),
+    limit: t("스텝이 너무 길어 멈춤"),
+    trigger: t("오실로스코프 트리거"),
   };
   if (fixed[reason]) return fixed[reason];
   // "watchpoint write 0x20000010"
   const w = /^watchpoint (write|read) (0x[0-9a-f]+)$/.exec(reason);
-  if (w) return `감시점 — ${w[2]}에 ${w[1] === "write" ? "쓰기" : "읽기"}`;
+  if (w) return t("감시점 — {addr}에 {kind}", { addr: w[2], kind: w[1] === "write" ? t("쓰기") : t("읽기") });
   return reason;
 }
 
@@ -308,7 +309,7 @@ export function SourceView({
       <div className="source-empty">
         {bar}
         <p className="hint">
-          펌웨어를 불러오면 소스가 보입니다. STM32CubeIDE 프로젝트 폴더나 그 zip을 올리면 ELF와 소스를 한꺼번에 불러옵니다(앱 어디에나 끌어다 놓아도 됩니다).
+          {t("펌웨어를 불러오면 소스가 보입니다. STM32CubeIDE 프로젝트 폴더나 그 zip을 올리면 ELF와 소스를 한꺼번에 불러옵니다(앱 어디에나 끌어다 놓아도 됩니다).")}
         </p>
       </div>
     );
@@ -316,7 +317,7 @@ export function SourceView({
     return (
       <div className="source-empty">
         {bar}
-        <p className="hint">이 펌웨어에는 디버그 정보(DWARF)가 없습니다. <code>-g</code>로 빌드하세요.</p>
+        <p className="hint">{t("이 펌웨어에는 디버그 정보(DWARF)가 없습니다. ")}<code>-g</code>{t("로 빌드하세요.")}</p>
       </div>
     );
 
@@ -328,33 +329,33 @@ export function SourceView({
       <div className="source-main">
         {bar}
         <div className="source-bar">
-          <select aria-label="소스 파일" value={fileIdx ?? ""} onChange={(e) => setFileIdx(Number(e.target.value))}>
+          <select aria-label={t("소스 파일")} value={fileIdx ?? ""} onChange={(e) => setFileIdx(Number(e.target.value))}>
             {[...withSource, ...files.filter((f) => !sourceKey(f.path))].map((f) => (
               <option key={f.index} value={f.index}>
                 {label(f.path)}
-                {sourceKey(f.path) ? "" : " (소스 없음)"}
+                {sourceKey(f.path) ? "" : t(" (소스 없음)")}
               </option>
             ))}
           </select>
-          <button onClick={() => runner.run()} disabled={running} title="다음 중단점까지 실행">
-            ▶ 계속
+          <button onClick={() => runner.run()} disabled={running} title={t("다음 중단점까지 실행")}>
+            {t("▶ 계속")}
           </button>
-          <button onClick={() => runner.step("over")} disabled={running} title="다음 줄로 (함수 호출은 끝까지 실행)">
-            ⤼ 한 줄
+          <button onClick={() => runner.step("over")} disabled={running} title={t("다음 줄로 (함수 호출은 끝까지 실행)")}>
+            {t("⤼ 한 줄")}
           </button>
-          <button onClick={() => runner.step("into")} disabled={running} title="다음 줄로 (함수 안으로)">
-            ↘ 들어가기
+          <button onClick={() => runner.step("into")} disabled={running} title={t("다음 줄로 (함수 안으로)")}>
+            {t("↘ 들어가기")}
           </button>
-          <button onClick={() => runner.step("out")} disabled={running} title="이 함수가 끝날 때까지">
-            ↗ 나오기
+          <button onClick={() => runner.step("out")} disabled={running} title={t("이 함수가 끝날 때까지")}>
+            {t("↗ 나오기")}
           </button>
-          <button onClick={() => runner.step("instruction")} disabled={running} title="기계어 명령 하나">
-            명령 1개
+          <button onClick={() => runner.step("instruction")} disabled={running} title={t("기계어 명령 하나")}>
+            {t("명령 1개")}
           </button>
           <label className="asm-toggle">
-            <input type="checkbox" checked={showAsm} onChange={(e) => setShowAsm(e.target.checked)} /> 기계어
+            <input type="checkbox" checked={showAsm} onChange={(e) => setShowAsm(e.target.checked)} /> {t("기계어")}
           </label>
-          <button onClick={() => upload.current?.click()}>소스 추가…</button>
+          <button onClick={() => upload.current?.click()}>{t("소스 추가…")}</button>
           <input
             ref={upload}
             type="file"
@@ -370,7 +371,7 @@ export function SourceView({
             }}
           />
           <span className="hint" data-testid="debug-status">
-            {running ? "실행 중 — 중단점에서 멈춥니다" : paused ? `멈춤: ${pauseText(pause.reason)}` : ""}
+            {running ? t("실행 중 — 중단점에서 멈춥니다") : paused ? t("멈춤: {reason}", { reason: pauseText(pause.reason) }) : ""}
           </span>
         </div>
         <div className="source-code" ref={codeRef}>
@@ -388,7 +389,7 @@ export function SourceView({
                     className={`gutter${placed.has(n) ? " bp" : ""}${conditional.has(n) ? " cond" : ""}`}
                     onClick={() => toggle(n)}
                     data-testid={`gutter-${n}`}
-                    title={code ? "클릭: 중단점" : ""}
+                    title={code ? t("클릭: 중단점") : ""}
                   >
                     {n}
                   </span>
@@ -398,7 +399,7 @@ export function SourceView({
             })
           ) : (
             <p className="hint">
-              {current ? `${current.path}의 소스가 없습니다. ‘소스 추가…’로 파일을 넣거나 ‘📁 프로젝트 폴더·zip 올리기’로 프로젝트를 올리면 보입니다.` : ""}
+              {current ? t("{path}의 소스가 없습니다. ‘소스 추가…’로 파일을 넣거나 ‘📁 프로젝트 폴더·zip 올리기’로 프로젝트를 올리면 보입니다.", { path: current.path }) : ""}
             </p>
           )}
         </div>
@@ -426,13 +427,13 @@ export function SourceView({
                 );
               })
             ) : (
-              <p className="hint">멈추면 현재 위치의 기계어가 보입니다.</p>
+              <p className="hint">{t("멈추면 현재 위치의 기계어가 보입니다.")}</p>
             )}
           </div>
         )}
       </div>
       <aside className="debug-side">
-        <h4>감시식</h4>
+        <h4>{t("감시식")}</h4>
         <form
           className="watch-add"
           onSubmit={(e) => {
@@ -443,12 +444,12 @@ export function SourceView({
           }}
         >
           <input
-            aria-label="감시식"
-            placeholder="예: count * 2, buf[i], htim2.Instance->CNT"
+            aria-label={t("감시식")}
+            placeholder={t("예: count * 2, buf[i], htim2.Instance->CNT")}
             value={newWatch}
             onChange={(e) => setNewWatch(e.target.value)}
           />
-          <button type="submit">추가</button>
+          <button type="submit">{t("추가")}</button>
         </form>
         <ul className="vars watches" data-testid="watches">
           {watches.map((x, i) => {
@@ -457,7 +458,7 @@ export function SourceView({
               <li key={x} className="watch">
                 <button
                   className="watch-del"
-                  title="감시식 지우기"
+                  title={t("감시식 지우기")}
                   onClick={() => setWatches((w) => w.filter((y) => y !== x))}
                 >
                   ×
@@ -480,7 +481,7 @@ export function SourceView({
             );
           })}
         </ul>
-        <h4>감시점 (메모리 접근)</h4>
+        <h4>{t("감시점 (메모리 접근)")}</h4>
         <form
           className="watch-add"
           onSubmit={(e) => {
@@ -492,21 +493,21 @@ export function SourceView({
           }}
         >
           <input
-            aria-label="감시점 식"
-            placeholder="예: current, buf[3], htim2.Instance->CNT"
+            aria-label={t("감시점 식")}
+            placeholder={t("예: current, buf[3], htim2.Instance->CNT")}
             value={newWp.expr}
             onChange={(e) => setNewWp((w) => ({ ...w, expr: e.target.value }))}
           />
           <select
-            aria-label="감시점 종류"
+            aria-label={t("감시점 종류")}
             value={newWp.kind}
             onChange={(e) => setNewWp((w) => ({ ...w, kind: e.target.value as WatchpointSpec["kind"] }))}
           >
-            <option value="write">쓰기</option>
-            <option value="read">읽기</option>
-            <option value="access">읽기·쓰기</option>
+            <option value="write">{t("쓰기")}</option>
+            <option value="read">{t("읽기")}</option>
+            <option value="access">{t("읽기·쓰기")}</option>
           </select>
-          <button type="submit">추가</button>
+          <button type="submit">{t("추가")}</button>
         </form>
         <ul className="bp-list" data-testid="watchpoints">
           {watchpoints.map((w, i) => {
@@ -515,7 +516,7 @@ export function SourceView({
               <li key={`${w.expr}:${w.kind}`}>
                 <button
                   className="watch-del"
-                  title="감시점 지우기"
+                  title={t("감시점 지우기")}
                   onClick={() => setWatchpoints((l) => l.filter((x) => x !== w))}
                 >
                   ×
@@ -526,29 +527,29 @@ export function SourceView({
                   <span className="watch-error">{p.error}</span>
                 ) : p ? (
                   <span className="var-type">
-                    0x{p.addr.toString(16).padStart(8, "0")} · {p.len}바이트
+                    0x{p.addr.toString(16).padStart(8, "0")} · {t("{n}바이트", { n: p.len })}
                   </span>
                 ) : null}
               </li>
             );
           })}
         </ul>
-        <h4>중단점</h4>
+        <h4>{t("중단점")}</h4>
         <ul className="bp-list" data-testid="breakpoints">
           {wanted.map((b) => {
             const f = files.find((x) => x.index === b.file);
             const at = `${f ? baseName(f.path) : "?"}:${b.line}`;
             return (
               <li key={`${b.file}:${b.line}`}>
-                <button className="watch-del" title="중단점 지우기" onClick={() => setWanted((w) => w.filter((x) => x !== b))}>
+                <button className="watch-del" title={t("중단점 지우기")} onClick={() => setWanted((w) => w.filter((x) => x !== b))}>
                   ×
                 </button>
                 <span className="bp-at" onClick={() => setFileIdx(b.file)}>
                   {at}
                 </span>
                 <input
-                  aria-label={`${at} 조건`}
-                  placeholder="조건 (예: i == 3)"
+                  aria-label={t("{at} 조건", { at })}
+                  placeholder={t("조건 (예: i == 3)")}
                   defaultValue={b.condition ?? ""}
                   onBlur={(e) => setCondition(b, e.target.value)}
                   onKeyDown={(e) => {
@@ -559,21 +560,21 @@ export function SourceView({
             );
           })}
         </ul>
-        {wanted.length === 0 && <p className="hint">줄 번호를 클릭하면 중단점이 생깁니다. 조건을 적으면 그 식이 참일 때만 멈춥니다.</p>}
+        {wanted.length === 0 && <p className="hint">{t("줄 번호를 클릭하면 중단점이 생깁니다. 조건을 적으면 그 식이 참일 때만 멈춥니다.")}</p>}
         {editError && paused && (
           <p className="edit-error" data-testid="edit-error">
             {editError}
           </p>
         )}
-        <h4>호출 스택</h4>
+        <h4>{t("호출 스택")}</h4>
         {paused && skipped && frame > 0 && (
           <p className="hint" data-testid="frame-skipped">
-            {skipped}에서 멈췄지만 그 소스가 없어, 그것을 부른 곳을 보여 줍니다.
+            {t("{fn}에서 멈췄지만 그 소스가 없어, 그것을 부른 곳을 보여 줍니다.", { fn: skipped })}
           </p>
         )}
         {paused && tasks.length > 0 && (
           <select
-            aria-label="태스크"
+            aria-label={t("태스크")}
             className="task-select"
             value={task ?? ""}
             onChange={(e) => {
@@ -584,7 +585,7 @@ export function SourceView({
               requestDebugState(0, fileIdx ?? -1);
             }}
           >
-            <option value="">실행 중인 코드</option>
+            <option value="">{t("실행 중인 코드")}</option>
             {tasks.map((t) => (
               <option key={t.tcb} value={t.tcb}>
                 {t.name} ({TASK_STATE[t.state] ?? t.state})
@@ -608,19 +609,19 @@ export function SourceView({
             </li>
           ))}
         </ol>
-        <h4>지역 변수</h4>
+        <h4>{t("지역 변수")}</h4>
         <ul className="vars" data-testid="locals">
           {(paused ? (debugState!.locals ?? []) : []).map((v, i) => (
             <ValueTree key={i} v={v} path={v.name} onEdit={edit} />
           ))}
         </ul>
-        <h4>전역 변수 (이 파일)</h4>
+        <h4>{t("전역 변수 (이 파일)")}</h4>
         <ul className="vars" data-testid="globals">
           {(paused ? (debugState!.globals ?? []) : []).map((v, i) => (
             <ValueTree key={i} v={v} path={v.name} onEdit={edit} />
           ))}
         </ul>
-        {!paused && <p className="hint">중단점을 걸고 실행하거나 일시정지 후 스텝하면 변수가 보입니다.</p>}
+        {!paused && <p className="hint">{t("중단점을 걸고 실행하거나 일시정지 후 스텝하면 변수가 보입니다.")}</p>}
       </aside>
     </div>
   );

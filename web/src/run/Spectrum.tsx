@@ -7,6 +7,7 @@ import type { Wave } from "./math";
 import { fmtHz, fmtTime, fmtVolts } from "./scope";
 import type { SpectrumCfg } from "./scopeSettings";
 import { FFT_SIZES, WINDOWS, analyze, dbv, peaks, resample, spectrum, type WindowKind } from "./spectrum";
+import { t } from "../i18n";
 
 const H = 220;
 const LEFT = 52;
@@ -14,7 +15,7 @@ const BOTTOM = 20;
 const TOPM = 8;
 const DB_RANGE = 100;
 
-const WINDOW_TEXT: Record<WindowKind, string> = { rect: "사각 (Rectangular)", hann: "Hann", hamming: "Hamming", blackman: "Blackman" };
+const WINDOW_TEXT: Record<WindowKind, string> = { rect: t("사각 (Rectangular)"), hann: "Hann", hamming: "Hamming", blackman: "Blackman" };
 
 /** "−12.3 dBV" */
 const fmtDb = (db: number) => `${db < 0 ? "−" : ""}${Math.abs(db).toFixed(1)} dBV`;
@@ -150,11 +151,11 @@ export function SpectrumPanel({
   return (
     <div className="spectrum" data-testid="spectrum">
       <div className="wave-controls scope-controls">
-        <b>스펙트럼</b>
+        <b>{t("스펙트럼")}</b>
         <label>
-          소스{" "}
-          <select value={sourceName} onChange={(e) => set({ source: e.target.value })} aria-label="스펙트럼 소스">
-            {!sources.some(([v]) => v === sourceName) && <option value={sourceName}>{sourceName || "—"} (없음)</option>}
+          {t("소스")}{" "}
+          <select value={sourceName} onChange={(e) => set({ source: e.target.value })} aria-label={t("스펙트럼 소스")}>
+            {!sources.some(([v]) => v === sourceName) && <option value={sourceName}>{sourceName || "—"}{t(" (없음)")}</option>}
             {sources.map(([v, label]) => (
               <option key={v} value={v}>
                 {label}
@@ -163,8 +164,8 @@ export function SpectrumPanel({
           </select>
         </label>
         <label>
-          창 함수{" "}
-          <select value={cfg.window} onChange={(e) => set({ window: e.target.value as WindowKind })} aria-label="창 함수">
+          {t("창 함수")}{" "}
+          <select value={cfg.window} onChange={(e) => set({ window: e.target.value as WindowKind })} aria-label={t("창 함수")}>
             {WINDOWS.map((w) => (
               <option key={w} value={w}>
                 {WINDOW_TEXT[w]}
@@ -173,8 +174,8 @@ export function SpectrumPanel({
           </select>
         </label>
         <label>
-          점 수{" "}
-          <select value={cfg.n} onChange={(e) => set({ n: Number(e.target.value) })} aria-label="FFT 점 수">
+          {t("점 수")}{" "}
+          <select value={cfg.n} onChange={(e) => set({ n: Number(e.target.value) })} aria-label={t("FFT 점 수")}>
             {FFT_SIZES.map((n) => (
               <option key={n} value={n}>
                 {n}
@@ -183,26 +184,26 @@ export function SpectrumPanel({
           </select>
         </label>
         <label>
-          크기{" "}
-          <select value={cfg.db ? "db" : "lin"} onChange={(e) => set({ db: e.target.value === "db" })} aria-label="크기 단위">
+          {t("크기")}{" "}
+          <select value={cfg.db ? "db" : "lin"} onChange={(e) => set({ db: e.target.value === "db" })} aria-label={t("크기 단위")}>
             <option value="db">dBV</option>
-            <option value="lin">선형 (V RMS)</option>
+            <option value="lin">{t("선형 (V RMS)")}</option>
           </select>
         </label>
         <label>
-          주파수축{" "}
-          <select value={cfg.logFreq ? "log" : "lin"} onChange={(e) => set({ logFreq: e.target.value === "log" })} aria-label="주파수축">
-            <option value="lin">선형</option>
-            <option value="log">로그</option>
+          {t("주파수축")}{" "}
+          <select value={cfg.logFreq ? "log" : "lin"} onChange={(e) => set({ logFreq: e.target.value === "log" })} aria-label={t("주파수축")}>
+            <option value="lin">{t("선형")}</option>
+            <option value="log">{t("로그")}</option>
           </select>
         </label>
         {!cfg.logFreq && (
           <label>
-            <input type="checkbox" checked={cfg.fit} onChange={(e) => set({ fit: e.target.checked })} /> 기본파 ×12까지
+            <input type="checkbox" checked={cfg.fit} onChange={(e) => set({ fit: e.target.checked })} /> {t("기본파 ×12까지")}
           </label>
         )}
         <label>
-          피크{" "}
+          {t("피크")}{" "}
           <input
             type="number"
             min={0}
@@ -210,7 +211,7 @@ export function SpectrumPanel({
             step={1}
             className="num"
             value={cfg.peaks}
-            aria-label="피크 표시 개수"
+            aria-label={t("피크 표시 개수")}
             onChange={(e) => {
               const v = Number(e.target.value);
               if (Number.isInteger(v) && v >= 0 && v <= 20) set({ peaks: v });
@@ -218,13 +219,13 @@ export function SpectrumPanel({
           />
         </label>
         <label>
-          구간{" "}
-          <select value={cfg.range} onChange={(e) => set({ range: e.target.value as SpectrumCfg["range"] })} aria-label="스펙트럼 구간">
-            <option value="view">보이는 구간</option>
-            <option value="cursors">커서 A–B</option>
+          {t("구간")}{" "}
+          <select value={cfg.range} onChange={(e) => set({ range: e.target.value as SpectrumCfg["range"] })} aria-label={t("스펙트럼 구간")}>
+            <option value="view">{t("보이는 구간")}</option>
+            <option value="cursors">{t("커서 A–B")}</option>
           </select>
         </label>
-        {cfg.range === "cursors" && !hasCursors && <span className="hint">커서를 켜면 A–B 구간을 봅니다 (지금은 보이는 구간)</span>}
+        {cfg.range === "cursors" && !hasCursors && <span className="hint">{t("커서를 켜면 A–B 구간을 봅니다 (지금은 보이는 구간)")}</span>}
         {sp && (
           <span className="dim" data-testid="fft-info" data-fs={sp.fs} data-df={sp.df} data-n={sp.n} data-span={span}>
             {fmtTime(span)} · N {sp.n} · fs {fmtHz(sp.fs)} · Δf {fmtHz(sp.df)}
@@ -238,7 +239,7 @@ export function SpectrumPanel({
         viewBox={`0 0 ${width} ${H}`}
         tabIndex={0}
         role="img"
-        aria-label={`${sourceName} 스펙트럼 그림 — 화살표·Home·End로 읽기 선 이동, P는 다음 피크`}
+        aria-label={t("{name} 스펙트럼 그림 — 화살표·Home·End로 읽기 선 이동, P는 다음 피크", { name: sourceName })}
         data-testid="spectrum-plot"
         onPointerMove={onMove}
         onPointerLeave={() => setCursorBin(null)}
@@ -270,7 +271,7 @@ export function SpectrumPanel({
         </g>
         {!sp && (
           <text x={LEFT + plotW / 2} y={TOPM + plotH / 2} className="scope-wait" textAnchor="middle">
-            {wave ? "구간이 없습니다" : "소스 채널이 없습니다 — 핀·아날로그·수학 채널을 고르세요"}
+            {wave ? t("구간이 없습니다") : t("소스 채널이 없습니다 — 핀·아날로그·수학 채널을 고르세요")}
           </text>
         )}
         <polyline className="spectrum-trace" points={points} />
@@ -302,9 +303,9 @@ export function SpectrumPanel({
           <table>
             <tbody>
               <tr>
-                <th>{sourceName} 스펙트럼</th>
+                <th>{t("{name} 스펙트럼", { name: sourceName })}</th>
                 <td>
-                  기본파{" "}
+                  {t("기본파")}{" "}
                   <b data-testid="fft-fund" data-hz={fund?.freq} data-vrms={fund?.vrms}>
                     {fund ? `${fmtHz(fund.freq)} · ${fmtLevel(fund.vrms, cfg.db)}` : "—"}
                   </b>
@@ -313,13 +314,13 @@ export function SpectrumPanel({
                   DC <b data-testid="fft-dc" data-v={stats.dc}>{fmtVolts(stats.dc)}</b>
                 </td>
                 <td>
-                  THD (2–10차){" "}
+                  {t("THD (2–10차)")}{" "}
                   <b data-testid="fft-thd" data-ratio={stats.thd}>
                     {stats.thd !== undefined ? `${(stats.thd * 100).toFixed(2)} %` : "—"}
                   </b>
                 </td>
-                <td title="기본파 전력 ÷ (기본파와 2–10차 고조파를 뺀 나머지 AC 전력)">
-                  SNR (추정){" "}
+                <td title={t("기본파 전력 ÷ (기본파와 2–10차 고조파를 뺀 나머지 AC 전력)")}>
+                  {t("SNR (추정)")}{" "}
                   <b data-testid="fft-snr" data-db={stats.snr}>
                     {stats.snr === undefined ? "—" : Number.isFinite(stats.snr) ? `${stats.snr.toFixed(1)} dB` : "∞"}
                   </b>
@@ -333,21 +334,21 @@ export function SpectrumPanel({
           <table data-testid="fft-harmonics">
             <thead>
               <tr>
-                <th>고조파</th>
+                <th>{t("고조파")}</th>
                 {stats.harmonics.map((h) => (
-                  <th key={h.order}>{h.order}차</th>
+                  <th key={h.order}>{t("{n}차", { n: h.order })}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               <tr>
-                <th>주파수</th>
+                <th>{t("주파수")}</th>
                 {stats.harmonics.map((h) => (
                   <td key={h.order}>{fmtHz(h.freq)}</td>
                 ))}
               </tr>
               <tr>
-                <th>기본파 대비</th>
+                <th>{t("기본파 대비")}</th>
                 {stats.harmonics.map((h) => (
                   <td key={h.order} data-testid={`fft-h${h.order}`} data-order={h.order} data-dbc={h.dbc} data-vrms={h.vrms} data-hz={h.freq}>
                     {h.order === 1 ? "0 dB" : `${h.dbc.toFixed(1)} dB`}
@@ -360,10 +361,10 @@ export function SpectrumPanel({
             <table data-testid="fft-peaks">
               <thead>
                 <tr>
-                  <th>피크</th>
-                  <th>주파수</th>
-                  <th>크기</th>
-                  {f0 !== undefined && <th>÷ 기본파</th>}
+                  <th>{t("피크")}</th>
+                  <th>{t("주파수")}</th>
+                  <th>{t("크기")}</th>
+                  {f0 !== undefined && <th>{t("÷ 기본파")}</th>}
                 </tr>
               </thead>
               <tbody>

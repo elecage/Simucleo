@@ -11,7 +11,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { adcChannel, afMacro, afNumber, boardNames, IO_PINS, PACKAGE_PINS, pinFromIoc, pinsFor, signalChoices } from "../src/cube/mcu.ts";
 import { computeClock, defaultClock, latencyFor } from "../src/cube/clock.ts";
-import { assignPin, clone, emptyConfig, hasErrors, labelMacro, nucleoDefaults, pwmInfo, validate, type CubeConfig } from "../src/cube/config.ts";
+import { assignPin, clone, disablePeripheralWithPins, emptyConfig, enablePeripheralWithPins, hasErrors, labelMacro, nucleoDefaults, pwmInfo, validate, type CubeConfig } from "../src/cube/config.ts";
+import { diffLines, diffStats, foldDiff } from "../src/cube/diff.ts";
+import { wiringCheck } from "../src/cube/wiring.ts";
 import { generate, halModules, mainC, mspC, itC } from "../src/cube/codegen.ts";
 import { editsOutsideRegions, mergeUserCode, ORPHAN_REGION, regions, setRegion } from "../src/cube/usercode.ts";
 import { exportIoc, parseIoc, parseProperties, writeProperties } from "../src/cube/ioc.ts";
@@ -536,4 +538,69 @@ test("the cube template compiles against the project's headers (no hal-common) a
   assert.ok(lh.includes("/sdk/lib/obj/stm32f4xx_it.o") && lh.includes("/sdk/lib/obj/clock_config.o"));
   for (const o of ["stm32f4xx_it.o", "stm32f4xx_hal_msp.o", "clock_config.o", "syscalls.o"]) assert.ok(!lc.includes(`/sdk/lib/obj/${o}`), o);
   assert.ok(lc.includes("/sdk/lib/obj/startup_stm32f401xe.o") && lc.includes("/sdk/lib/obj/system_stm32f4xx.o"));
+});
+
+// ------------------------------------------------------------------ UI helpers (pure)
+
+test("switching a peripheral on from its form gives it pins (the usual ones, else free ones); off frees them", () => {
+  let c = enablePeripheralWithPins(emptyConfig(), "USART2");
+  assert.equal(c.pins.PA2?.signal, "USART2_TX");
+  assert.equal(c.pins.PA3?.signal, "USART2_RX");
+  // PA5 is LD2: SPI1's SCK goes to PB3 instead.
+  c = enablePeripheralWithPins(nucleoDefaults(), "SPI1");
+  assert.equal(c.pins.PA5.signal, "GPIO_Output");
+  assert.equal(c.pins.PB3?.signal, "SPI1_SCK");
+  assert.equal(c.pins.PA6?.signal, "SPI1_MISO");
+  assert.deepEqual(validate(c).filter((i) => i.severity === "error"), []);
+  c = disablePeripheralWithPins(c, "SPI1");
+  assert.equal(c.spi.SPI1, undefined);
+  assert.ok(!Object.values(c.pins).some((v) => v.signal.startsWith("SPI1_")));
+  c = enablePeripheralWithPins(c, "TIM3");
+  assert.deepEqual(c.tim.TIM3?.channels, [null, null, null, null]);
+});
+
+test("the generation preview's line diff: changes with folded context", () => {
+  const a = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n");
+  const b = a.replace("line 10", "line ten").replace("line 20\n", "");
+  const d = diffLines(a, b);
+  assert.deepEqual(diffStats(d), { added: 1, removed: 2 });
+  assert.deepEqual(
+    d.filter((l) => l.kind !== "same"),
+    [
+      { kind: "del", text: "line 10", a: 11 },
+      { kind: "add", text: "line ten", b: 11 },
+      { kind: "del", text: "line 20", a: 21 },
+    ],
+  );
+  const f = foldDiff(d, 2);
+  assert.ok(f.some((l) => l.kind === "skip"));
+  assert.deepEqual(diffLines("x", "x"), [{ kind: "same", text: "x", a: 1, b: 1 }]);
+  // Changing the baud rate: one line out, one in.
+  const c = nucleoDefaults();
+  c.usart.USART2!.baud = 9600;
+  assert.deepEqual(diffStats(diffLines(mainC(nucleoDefaults()), mainC(c))), { added: 1, removed: 1 });
+});
+
+test("배선 대조: parts on pins that are not configured, or configured the wrong way", () => {
+  const led = { part: "led1", kind: "led-5mm", pin: "A", name: "LED" };
+  const btn = { part: "sw1", kind: "tact-switch", pin: "1", name: "버튼" };
+  const pot = { part: "pot1", kind: "potentiometer", pin: "W", name: "가변저항" };
+  const c = nucleoDefaults();
+  const msg = wiringCheck(c, {
+    PB3: [{ part: "r1", kind: "resistor", pin: "1", name: "저항" }, led],
+    PA5: [led],
+    PC13: [btn],
+    PA13: [led],
+  }).map((i) => `${i.pin}:${i.message}`);
+  assert.ok(msg.some((m) => m.startsWith("PB3:") && m.includes("설정되지 않았습니다") && m.includes("LED(led1.A)")), msg.join("\n"));
+  assert.ok(!msg.some((m) => m.startsWith("PA5:")), "LD2's pin is an output");
+  assert.ok(!msg.some((m) => m.startsWith("PC13:")), "B1 is an EXTI input");
+  assert.ok(!msg.some((m) => m.startsWith("PA13:")), "SWD pins are the board's");
+  const c2 = assignPin(assignPin(assignPin(c, "PA10", "GPIO_Output"), "PB0", "GPIO_Input"), "PB2", "GPIO_Input");
+  const m2 = wiringCheck(c2, { PA10: [btn], PB0: [pot], PB2: [pot], PA5: [btn] }).map((i) => `${i.pin}:${i.message}`);
+  assert.ok(m2.some((m) => m.startsWith("PA10:") && m.includes("GPIO_Input 또는 GPXTI10")), m2.join("\n"));
+  assert.ok(m2.some((m) => m.startsWith("PB0:") && m.includes("ADC1_IN8")), m2.join("\n"));
+  assert.ok(m2.some((m) => m.startsWith("PB2:") && m.includes("ADC 입력이 없습니다")), m2.join("\n"));
+  assert.ok(m2.some((m) => m.startsWith("PA5:") && m.includes("버튼")), m2.join("\n"));
+  assert.deepEqual(wiringCheck(assignPin(c, "PB3", "GPIO_Output"), { PB3: [led] }), []);
 });

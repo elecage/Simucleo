@@ -3,7 +3,7 @@
 // models and their parameters, NVIC. Plain data (JSON-able, stored in the
 // project as a .ioc text); every function here is pure and unit tested.
 import { computeClock, defaultClock, type ClockConfig, type ClockTree, busClock, timerClock } from "./clock.ts";
-import { adcChannel, afNumber, extiIrq, irqsOf, isIoPin, MCU, peripheralOf, portPin, signalSupported } from "./mcu.ts";
+import { adcChannel, afNumber, extiIrq, irqsOf, isIoPin, MCU, peripheralOf, pinsFor, portPin, signalSupported } from "./mcu.ts";
 
 export type Pull = "none" | "up" | "down";
 export type Speed = "low" | "medium" | "high" | "very_high";
@@ -142,7 +142,7 @@ export function emptyConfig(name = "simucleo"): CubeConfig {
     projectName: name,
     drivers: "",
     pins: { PA13: { signal: "SYS_JTMS-SWDIO", label: "TMS" }, PA14: { signal: "SYS_JTCK-SWCLK", label: "TCK" } },
-    clock: defaultClock(),
+    clock: { ...defaultClock(), hse: "off" },
     sys: { debug: "serial_wire" },
     usart: {},
     i2c: {},
@@ -167,6 +167,7 @@ export function nucleoDefaults(name = "simucleo"): CubeConfig {
     PA14: { signal: "SYS_JTCK-SWCLK", label: "TCK" },
   };
   c.usart.USART2 = defaultUart();
+  c.clock.hse = "bypass";
   c.nvic.EXTI15_10 = { enabled: true, preempt: 0, sub: 0 };
   return c;
 }
@@ -426,4 +427,44 @@ export function pwmInfo(c: CubeConfig, t: TimName, ch: number, tree = computeClo
   const hz = timerClock(tree, t) / (v.prescaler + 1) / ((v.period + 1) * (center ? 2 : 1));
   const duty = Math.min(1, chan.pulse / (v.period + 1));
   return { hz, duty: chan.pwmMode === 1 ? duty : 1 - duty };
+}
+
+// ------------------------------------------------------------------ whole peripherals
+
+/** Where a peripheral's pins go when it is switched on from its form (the Nucleo's usual ones first). */
+export const DEFAULT_PINS: Record<string, [string, string][]> = {
+  USART1: [["USART1_TX", "PA9"], ["USART1_RX", "PA10"]],
+  USART2: [["USART2_TX", "PA2"], ["USART2_RX", "PA3"]],
+  USART6: [["USART6_TX", "PC6"], ["USART6_RX", "PC7"]],
+  I2C1: [["I2C1_SCL", "PB8"], ["I2C1_SDA", "PB9"]],
+  I2C2: [["I2C2_SCL", "PB10"], ["I2C2_SDA", "PB3"]],
+  I2C3: [["I2C3_SCL", "PA8"], ["I2C3_SDA", "PC9"]],
+  SPI1: [["SPI1_SCK", "PA5"], ["SPI1_MISO", "PA6"], ["SPI1_MOSI", "PA7"]],
+  SPI2: [["SPI2_SCK", "PB13"], ["SPI2_MISO", "PB14"], ["SPI2_MOSI", "PB15"]],
+  SPI3: [["SPI3_SCK", "PC10"], ["SPI3_MISO", "PC11"], ["SPI3_MOSI", "PC12"]],
+};
+
+/**
+ * Switch a peripheral on as its form's checkbox does: USART/I2C/SPI get their
+ * pins (the usual one when free, else the first free pin with the signal); a
+ * timer starts as a time base; ADC1 needs its input pins chosen afterwards.
+ */
+export function enablePeripheralWithPins(c0: CubeConfig, p: string): CubeConfig {
+  let c = clone(c0);
+  enablePeripheral(c, p);
+  for (const [signal, usual] of DEFAULT_PINS[p] ?? []) {
+    if (Object.values(c.pins).some((v) => v.signal === signal)) continue;
+    const free = (pin: string) => !c.pins[pin];
+    const pin = free(usual) ? usual : (pinsFor(signal).find(free) ?? usual);
+    c = assignPin(c, pin, signal, c.pins[pin]?.label);
+  }
+  return c;
+}
+
+/** Switch a peripheral off and free its pins. */
+export function disablePeripheralWithPins(c0: CubeConfig, p: string): CubeConfig {
+  const c = clone(c0);
+  for (const [pin, v] of Object.entries(c.pins)) if (peripheralOf(v.signal) === p) delete c.pins[pin];
+  disablePeripheral(c, p);
+  return c;
 }

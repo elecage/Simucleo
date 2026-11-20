@@ -40,6 +40,7 @@ import { decodeShare, findFragment, type Received } from "./share/link";
 import { elfKey, type Attached } from "./upload/attach";
 import { lessonStarter, type CodeProject } from "./code/project";
 import { PROJECT_ROOT } from "./code/sdk";
+import type { WiredPart, WiredPins } from "./cube/wiring";
 
 const WIRE_COLORS = ["#e53935", "#1e88e5", "#43a047", "#fdd835", "#fb8c00", "#8e24aa", "#212121"];
 const CATEGORY_LABEL: Record<string, string> = {
@@ -578,6 +579,37 @@ export function App() {
     return out.sort();
   }, [netlist, project.parts]);
 
+  // M36: for the configuration tool's wiring check, the parts on each MCU
+  // pin's net, and behind a series resistor on it (an LED with its resistor).
+  const wiredPins = useMemo<WiredPins>(() => {
+    const kindOf = (id: string) => project.parts.find((q) => q.id === id)?.kind ?? "";
+    const netByKey = new Map<string, PinRef[]>();
+    for (const net of netlist.nets) for (const p of net.pins) netByKey.set(pinKey(p), net.pins);
+    const out: WiredPins = {};
+    for (const net of netlist.nets) {
+      const mcu = [...new Set(net.pins.filter((p) => kindOf(p.part) === "nucleo-f401re").map((p) => nucleoSignal(p.pin) ?? ""))].filter((s) => /^P[A-H]\d+$/.test(s));
+      if (!mcu.length) continue;
+      const parts: WiredPart[] = [];
+      const add = (p: PinRef) => {
+        const kind = kindOf(p.part);
+        if (!kind || kind === "nucleo-f401re" || kind.startsWith("breadboard") || parts.some((x) => x.part === p.part && x.pin === p.pin)) return;
+        parts.push({ part: p.part, kind, pin: p.pin, name: PART_BY_KIND[kind]?.name ?? kind });
+      };
+      for (const p of net.pins) {
+        add(p);
+        if (kindOf(p.part) !== "resistor") continue;
+        for (const other of PART_BY_KIND.resistor?.pins ?? []) {
+          if (other.id === p.pin) continue;
+          const behind = netByKey.get(pinKey({ part: p.part, pin: other.id })) ?? [];
+          if (behind.some((q) => kindOf(q.part) === "nucleo-f401re")) continue;
+          for (const q of behind) if (q.part !== p.part) add(q);
+        }
+      }
+      for (const m of mcu) out[m] = [...(out[m] ?? []), ...parts];
+    }
+    return out;
+  }, [netlist, project.parts]);
+
   const taken = () => new Set([...project.parts.map((p) => p.id), ...project.wires.map((w) => w.id)]);
 
   // ------------------------------------------------ wiring on the schematic
@@ -931,7 +963,7 @@ export function App() {
         onScope={onScope}
         status={<PwaStatus extra={<PerfStatus runner={runner} />} />}
         upload={sourceUpload}
-        code={{ code: project.code, onCode, examples, codeSeq, autoBuild, onAutoBuilt: () => setAutoBuild(false), restored: restoredDone && !fwPending }}
+        code={{ code: project.code, onCode, examples, codeSeq, autoBuild, onAutoBuilt: () => setAutoBuild(false), restored: restoredDone && !fwPending, wired: wiredPins }}
         codeSources={codeSources}
         codeTabSeq={codeTabSeq}
       />

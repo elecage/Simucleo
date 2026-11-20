@@ -217,6 +217,14 @@ export function Canvas({
 
   // Latest values for timers and native listeners.
   const projectRef = useRef(project);
+  /**
+   * Values sent on (onPropChange) that the project given to this render
+   * may not have yet: a wheel notch right after a send read the part's
+   * props before the parent re-rendered and lost the one before it. A new
+   * project carries what was sent before it.
+   */
+  const sentProps = useRef(new Map<string, PropValues>());
+  if (projectRef.current !== project) sentProps.current.clear();
   projectRef.current = project;
   const onPropChangeRef = useRef(onPropChange);
   onPropChangeRef.current = onPropChange;
@@ -232,8 +240,10 @@ export function Canvas({
     sendTimer.current = null;
     lastSent.current = performance.now();
     if (unsent.current.size === 0) return;
-    for (const [part, values] of unsent.current)
+    for (const [part, values] of unsent.current) {
+      sentProps.current.set(part, { ...sentProps.current.get(part), ...values });
       for (const [k, v] of Object.entries(values)) onPropChangeRef.current?.(part, k, v);
+    }
     unsent.current.clear();
     setOverlay({});
   }, []);
@@ -255,7 +265,7 @@ export function Canvas({
   const propsOf = useCallback((id: string) => {
     const part = projectRef.current.parts.find((p) => p.id === id);
     const def = part && PART_BY_KIND[part.kind];
-    return { ...def?.props, ...part?.props, ...unsent.current.get(id) };
+    return { ...def?.props, ...part?.props, ...sentProps.current.get(id), ...unsent.current.get(id) };
   }, []);
 
   // Control sessions, by `part|control`. Timed ones tick until done.

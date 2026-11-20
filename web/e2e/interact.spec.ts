@@ -101,6 +101,17 @@ test("turning the pot knob by hand sets the ADC reading; the wheel turns it too"
   await expect(page.getByLabel("position")).toHaveValue("0.1");
   await expect(consoleOut(page)).toContainText(/pot  (409|410)/, { timeout: 5000 });
   expect(await transform(page, "pot")).toBe(placed);
+
+  // Five more in one go, with no redraw between them (a fast wheel on a
+  // busy machine): each counts — one right after a send read the props
+  // from before it and the notch before it was lost.
+  await page.waitForTimeout(300);
+  await page.locator("[data-id=pot] [data-drag=knob]").evaluate((knob) => {
+    const r = knob.getBoundingClientRect();
+    for (let i = 0; i < 5; i++)
+      knob.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }));
+  });
+  await expect(page.getByLabel("position")).toHaveValue("0.2");
 });
 
 test("touching the TMP36 warms it over a few seconds; released it cools back", async ({ page }) => {

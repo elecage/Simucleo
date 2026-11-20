@@ -342,15 +342,16 @@ test("service worker: SKIP_WAITING only on request; GET_STATUS answers", async (
   assert.equal((replies[1] as { ready: boolean }).ready, false);
 });
 
-test("service worker: cache first for precached files, network first for pages, the rest untouched", async () => {
+test("service worker: cache first for precached files and pages, the rest untouched", async () => {
   const sw = loadSw(FILES);
   await sw.fire("install");
   sw.net["examples/hal-blinky.elf"] = "elf from a newer deploy";
   assert.equal(await sw.get("examples/hal-blinky.elf?x=1"), "elf");
 
-  // Navigation online: the network's page; offline: the cached index.html.
+  // Navigation: this version's page even when a newer deploy is online, so
+  // the page never runs against the older cached examples and lessons.
   sw.net["index.html"] = "<html>v2</html>";
-  assert.equal(await sw.get("", { mode: "navigate" }), "<html>v2</html>");
+  assert.equal(await sw.get("", { mode: "navigate" }), "<html>v1</html>");
   sw.state.online = false;
   assert.equal(await sw.get("?lesson=led-blink", { mode: "navigate" }), "<html>v1</html>");
   assert.equal(await sw.get("examples/hal-blinky.elf"), "elf");

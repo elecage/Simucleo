@@ -8,8 +8,11 @@
  * (A change to this file alone keeps the version and its cache.)
  *
  * - Precached files (hashed JS/CSS/WASM, examples, icons): cache first.
- * - Page loads (navigations): network first, the cached index.html when
- *   the network fails or takes longer than NAV_TIMEOUT_MS.
+ * - Page loads (navigations): the index.html of this version's cache, so the
+ *   page always belongs to the same release as the examples, lessons and
+ *   firmware it loads from the cache (a new deploy's page reaches the user
+ *   only with its own files, when the update is accepted). The network
+ *   only when the cache has no page (never once installed).
  * - Everything else (other sites, POSTs, files not in the list) is left
  *   alone. User files (uploaded ELFs, projects, autosave, SD card) live
  *   in IndexedDB/localStorage and never go through here.
@@ -20,7 +23,6 @@ const PRECACHE = /*__PRECACHE__*/[];
 const VERSION = "__VERSION__";
 const PREFIX = "simucleo-";
 const CACHE = PREFIX + VERSION;
-const NAV_TIMEOUT_MS = 4000;
 const PARALLEL = 6;
 const SRI_HEADER = "x-simucleo-integrity";
 
@@ -113,20 +115,7 @@ async function fromCache(url) {
 }
 
 async function navigate(request) {
-  const network = fetch(request);
-  network.catch(() => {}); // a late failure after the timeout is not an error
-  let timer;
-  const timeout = new Promise((resolve) => (timer = setTimeout(resolve, NAV_TIMEOUT_MS, null)));
-  try {
-    const res = await Promise.race([network, timeout]);
-    if (res) return res;
-  } catch {
-    // offline: the cached page below
-  } finally {
-    clearTimeout(timer);
-  }
-  const cached = await fromCache("index.html");
-  return cached || network;
+  return (await fromCache("index.html")) || fetch(request);
 }
 
 async function cacheFirst(request, url) {

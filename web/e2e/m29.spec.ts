@@ -94,10 +94,15 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
-async function serveDist(swOverride: { body: string | null }) {
+async function serveDist(swOverride: { body: string | null; html?: string | null }) {
   const dist = fileURLToPath(new URL("../dist/", import.meta.url));
   const server = createServer((req, res) => {
     const path = decodeURIComponent(new URL(req.url!, "http://x").pathname).replace(/^\/+/, "") || "index.html";
+    if (path === "index.html" && swOverride.html) {
+      res.writeHead(200, { "content-type": MIME[".html"], "cache-control": "no-cache" });
+      res.end(swOverride.html);
+      return;
+    }
     if (path === "sw.js" && swOverride.body !== null) {
       res.writeHead(200, { "content-type": MIME[".js"], "cache-control": "no-cache" });
       res.end(swOverride.body);
@@ -159,6 +164,30 @@ test("a new version waits for the banner; a running simulation is asked first", 
     await expect(page.getByTestId("update-banner")).toHaveCount(0);
     // The old version's cache is gone.
     expect(await page.evaluate(() => caches.keys())).toEqual([`${oldVersion}-next`]);
+  } finally {
+    server.close();
+  }
+});
+
+// A new deploy's page must not run against the files of the version in
+// control (its examples and lessons stay those of the cache until the update
+// is accepted): page loads come from the same cache as everything else.
+test("a reload before the update is accepted keeps the page of the version in control", async ({ page }) => {
+  const swOverride: { body: string | null; html?: string | null } = { body: null };
+  const { url, server, sw } = await serveDist(swOverride);
+  try {
+    await firstVisit(page, url);
+    const html = readFileSync(fileURLToPath(new URL("../dist/index.html", import.meta.url)), "utf8");
+    // The next deploy: a new worker and a page that tells itself apart.
+    swOverride.body = sw.replace(/const VERSION = "([0-9a-f]+)"/, 'const VERSION = "$1-next"');
+    swOverride.html = html.replace("<head>", '<head><meta name="release" content="next">');
+    expect(swOverride.html).not.toBe(html);
+    await page.evaluate(() => navigator.serviceWorker.getRegistration().then((r) => r!.update()));
+    await expect(page.getByTestId("update-banner")).toContainText("새 버전이 있습니다", { timeout: 60_000 });
+    await page.reload();
+    await expect(status(page)).toContainText("예제를");
+    expect(await page.locator('meta[name="release"]').count()).toBe(0);
+    expect(await hasWaiting(page)).toBe(true);
   } finally {
     server.close();
   }

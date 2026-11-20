@@ -4,6 +4,7 @@
 // project as a .ioc text); every function here is pure and unit tested.
 import { computeClock, defaultClock, type ClockConfig, type ClockTree, busClock, timerClock } from "./clock.ts";
 import { adcChannel, afNumber, extiIrq, irqsOf, isIoPin, MCU, peripheralOf, pinsFor, portPin, signalSupported } from "./mcu.ts";
+import { t } from "../i18n/index.ts";
 
 export type Pull = "none" | "up" | "down";
 export type Speed = "low" | "medium" | "high" | "very_high";
@@ -308,106 +309,106 @@ export function validate(c: CubeConfig, tree: ClockTree = computeClock(c.clock))
   const labels = new Map<string, string>();
   for (const [pin, v] of Object.entries(c.pins)) {
     if (!isIoPin(pin)) {
-      err(pin, `${pin}: STM32F401RETx(LQFP64)에 없는 핀입니다.`);
+      err(pin, t("{pin}: STM32F401RETx(LQFP64)에 없는 핀입니다.", { pin }));
       continue;
     }
     const s = v.signal;
     const generic = /^GPIO_(Input|Output|Analog)$/.test(s);
     const exti = /^GPXTI(\d+)$/.exec(s);
     const adc = /^ADC1_IN(\d+)$/.exec(s);
-    if (exti && Number(exti[1]) !== portPin(pin).pin) err(pin, `${pin}: EXTI 줄 ${exti[1]}은(는) ${pin}에 없습니다(핀 번호와 같은 줄만 됨).`);
-    else if (adc && adcChannel(pin) !== Number(adc[1])) err(pin, `${pin}: ${s}은(는) 이 핀에 없습니다${adcChannel(pin) === null ? "(아날로그 입력이 없는 핀)" : `(이 핀은 ADC1_IN${adcChannel(pin)})`}.`);
-    else if (!generic && !exti && !adc && afNumber(pin, s) === null && !isFixedSignal(pin, s)) err(pin, `${pin}: ${s}은(는) 이 핀의 대체 기능(AF)에 없습니다.`);
-    else if (!signalSupported(s)) warn(pin, `${pin}: ${s}의 코드는 아직 만들지 않습니다(설정만 저장).`);
+    if (exti && Number(exti[1]) !== portPin(pin).pin) err(pin, t("{pin}: EXTI 줄 {line}은(는) {pin}에 없습니다(핀 번호와 같은 줄만 됨).", { pin, line: exti[1] }));
+    else if (adc && adcChannel(pin) !== Number(adc[1])) err(pin, t("{pin}: {signal}은(는) 이 핀에 없습니다{why}.", { pin, signal: s, why: adcChannel(pin) === null ? t("(아날로그 입력이 없는 핀)") : t("(이 핀은 ADC1_IN{ch})", { ch: adcChannel(pin) ?? "" }) }));
+    else if (!generic && !exti && !adc && afNumber(pin, s) === null && !isFixedSignal(pin, s)) err(pin, t("{pin}: {signal}은(는) 이 핀의 대체 기능(AF)에 없습니다.", { pin, signal: s }));
+    else if (!signalSupported(s)) warn(pin, t("{pin}: {signal}의 코드는 아직 만들지 않습니다(설정만 저장).", { pin, signal: s }));
     if (!generic) bySignal.set(s, [...(bySignal.get(s) ?? []), pin]);
     if (v.label) {
       const m = labelMacro(v.label);
-      if (!/^[A-Za-z_]\w*$/.test(m)) err(pin, `${pin}: 라벨 '${v.label}'은(는) C 이름으로 쓸 수 없습니다.`);
-      else if (labels.has(m)) err(pin, `${pin}: 라벨 '${m}'을(를) ${labels.get(m)}도 씁니다.`);
+      if (!/^[A-Za-z_]\w*$/.test(m)) err(pin, t("{pin}: 라벨 '{label}'은(는) C 이름으로 쓸 수 없습니다.", { pin, label: v.label }));
+      else if (labels.has(m)) err(pin, t("{pin}: 라벨 '{label}'을(를) {other}도 씁니다.", { pin, label: m, other: labels.get(m) ?? "" }));
       else labels.set(m, pin);
     }
   }
-  for (const [s, pins] of bySignal) if (pins.length > 1) err(pins.join(", "), `${s}을(를) 두 핀(${pins.join(", ")})에 두었습니다. 신호 하나는 한 핀에만.`);
+  for (const [s, pins] of bySignal) if (pins.length > 1) err(pins.join(", "), t("{signal}을(를) 두 핀({pins})에 두었습니다. 신호 하나는 한 핀에만.", { signal: s, pins: pins.join(", ") }));
   // EXTI lines are shared by all ports: PA0 and PB0 cannot both be EXTI0.
   const extiLines = new Map<number, string[]>();
   for (const [pin, v] of Object.entries(c.pins)) if (/^GPXTI/.test(v.signal)) extiLines.set(portPin(pin).pin, [...(extiLines.get(portPin(pin).pin) ?? []), pin]);
-  for (const [line, pins] of extiLines) if (pins.length > 1) err(pins.join(", "), `EXTI 줄 ${line}을(를) ${pins.join(", ")}가 함께 쓸 수 없습니다(포트마다 줄 하나).`);
+  for (const [line, pins] of extiLines) if (pins.length > 1) err(pins.join(", "), t("EXTI 줄 {line}을(를) {pins}가 함께 쓸 수 없습니다(포트마다 줄 하나).", { line, pins: pins.join(", ") }));
   if (c.sys.debug === "serial_wire") {
     for (const [pin, s] of [["PA13", "SYS_JTMS-SWDIO"], ["PA14", "SYS_JTCK-SWCLK"]])
-      if (c.pins[pin]?.signal !== s) warn(pin, `${pin}을(를) 다른 용도로 쓰면 SWD 디버깅(ST-LINK)이 끊깁니다.`);
+      if (c.pins[pin]?.signal !== s) warn(pin, t("{pin}을(를) 다른 용도로 쓰면 SWD 디버깅(ST-LINK)이 끊깁니다.", { pin }));
   }
-  if (c.pins.PA2 && c.pins.PA2.signal !== "USART2_TX") warn("PA2", "PA2는 ST-LINK 가상 COM(USART2_TX)에 이어져 있습니다. 콘솔이 나오지 않습니다.");
-  if (c.pins.PA3 && c.pins.PA3.signal !== "USART2_RX") warn("PA3", "PA3은 ST-LINK 가상 COM(USART2_RX)에 이어져 있습니다.");
+  if (c.pins.PA2 && c.pins.PA2.signal !== "USART2_TX") warn("PA2", t("PA2는 ST-LINK 가상 COM(USART2_TX)에 이어져 있습니다. 콘솔이 나오지 않습니다."));
+  if (c.pins.PA3 && c.pins.PA3.signal !== "USART2_RX") warn("PA3", t("PA3은 ST-LINK 가상 COM(USART2_RX)에 이어져 있습니다."));
 
   // Peripherals: their pins, parameters, clocks.
   for (const p of peripherals(c)) {
-    for (const s of requiredSignals(c, p)) if (!bySignal.has(s)) err(p, `${p}: ${s} 핀이 정해지지 않았습니다.`);
+    for (const s of requiredSignals(c, p)) if (!bySignal.has(s)) err(p, t("{periph}: {signal} 핀이 정해지지 않았습니다.", { periph: p, signal: s }));
   }
   for (const u of USARTS) {
     const v = c.usart[u];
     if (!v) continue;
-    if (!(v.baud >= 300 && v.baud <= 10_500_000)) err(u, `${u}: 보레이트 ${v.baud}은(는) 쓸 수 없습니다.`);
+    if (!(v.baud >= 300 && v.baud <= 10_500_000)) err(u, t("{periph}: 보레이트 {baud}은(는) 쓸 수 없습니다.", { periph: u, baud: v.baud }));
     else {
       const f = busClock(tree, u);
       const div = f / (16 * v.baud);
-      if (div < 1) err(u, `${u}: ${v.baud} bps는 이 버스 클럭(${(f / 1e6).toFixed(1)} MHz)으로 낼 수 없습니다.`);
+      if (div < 1) err(u, t("{periph}: {baud} bps는 이 버스 클럭({mhz} MHz)으로 낼 수 없습니다.", { periph: u, baud: v.baud, mhz: (f / 1e6).toFixed(1) }));
       else {
         const real = f / (16 * (Math.round(div * 16) / 16));
         const e = Math.abs(real - v.baud) / v.baud;
-        if (e > 0.02) warn(u, `${u}: 실제 보레이트 ${Math.round(real)} bps, 오차 ${(e * 100).toFixed(1)}%.`);
+        if (e > 0.02) warn(u, t("{periph}: 실제 보레이트 {baud} bps, 오차 {err}%.", { periph: u, baud: Math.round(real), err: (e * 100).toFixed(1) }));
       }
     }
-    if (v.wordLength === 8 && v.parity !== "none") warn(u, `${u}: 8비트에 패리티를 켜면 데이터는 7비트입니다(CubeMX의 Word Length는 패리티를 포함).`);
+    if (v.wordLength === 8 && v.parity !== "none") warn(u, t("{periph}: 8비트에 패리티를 켜면 데이터는 7비트입니다(CubeMX의 Word Length는 패리티를 포함).", { periph: u }));
   }
   for (const i of I2CS) {
     const v = c.i2c[i];
     if (!v) continue;
-    if (!(v.speed > 0 && v.speed <= 400000)) err(i, `${i}: 속도 ${v.speed} Hz: 1–400000이어야 합니다.`);
-    if (tree.pclk1 < (v.speed > 100000 ? 4_000_000 : 2_000_000)) err(i, `${i}: APB1(${(tree.pclk1 / 1e6).toFixed(1)} MHz)이 너무 느립니다(표준 2 MHz, 빠른 4 MHz 이상).`);
-    if (v.ownAddress < 0 || v.ownAddress > 0x7f) err(i, `${i}: 자기 주소는 0–127이어야 합니다.`);
+    if (!(v.speed > 0 && v.speed <= 400000)) err(i, t("{periph}: 속도 {hz} Hz: 1–400000이어야 합니다.", { periph: i, hz: v.speed }));
+    if (tree.pclk1 < (v.speed > 100000 ? 4_000_000 : 2_000_000)) err(i, t("{periph}: APB1({mhz} MHz)이 너무 느립니다(표준 2 MHz, 빠른 4 MHz 이상).", { periph: i, mhz: (tree.pclk1 / 1e6).toFixed(1) }));
+    if (v.ownAddress < 0 || v.ownAddress > 0x7f) err(i, t("{periph}: 자기 주소는 0–127이어야 합니다.", { periph: i }));
   }
   for (const s of SPIS) {
     const v = c.spi[s];
     if (!v) continue;
-    if (!SPI_PRESCALERS.includes(v.prescaler)) err(s, `${s}: 분주 ${v.prescaler}: 2–256의 2의 거듭제곱이어야 합니다.`);
-    if (busClock(tree, s) / v.prescaler > 42_000_000) err(s, `${s}: SCK ${(busClock(tree, s) / v.prescaler / 1e6).toFixed(1)} MHz: 최대 42 MHz입니다.`);
+    if (!SPI_PRESCALERS.includes(v.prescaler)) err(s, t("{periph}: 분주 {div}: 2–256의 2의 거듭제곱이어야 합니다.", { periph: s, div: v.prescaler }));
+    if (busClock(tree, s) / v.prescaler > 42_000_000) err(s, t("{periph}: SCK {mhz} MHz: 최대 42 MHz입니다.", { periph: s, mhz: (busClock(tree, s) / v.prescaler / 1e6).toFixed(1) }));
   }
-  for (const t of TIMS) {
-    const v = c.tim[t];
+  for (const tm of TIMS) {
+    const v = c.tim[tm];
     if (!v) continue;
-    const max = tim32(t) ? 4294967295 : 65535;
-    if (!(Number.isInteger(v.prescaler) && v.prescaler >= 0 && v.prescaler <= 65535)) err(t, `${t}: 분주(Prescaler) ${v.prescaler}: 0–65535여야 합니다.`);
-    if (!(Number.isInteger(v.period) && v.period >= 0 && v.period <= max)) err(t, `${t}: 주기(Period) ${v.period}: 0–${max}이어야 합니다.`);
-    if ((t === "TIM9" || t === "TIM10" || t === "TIM11") && v.counterMode !== "up") err(t, `${t}: 이 타이머는 위로 세기만 됩니다.`);
+    const max = tim32(tm) ? 4294967295 : 65535;
+    if (!(Number.isInteger(v.prescaler) && v.prescaler >= 0 && v.prescaler <= 65535)) err(tm, t("{periph}: 분주(Prescaler) {div}: 0–65535여야 합니다.", { periph: tm, div: v.prescaler }));
+    if (!(Number.isInteger(v.period) && v.period >= 0 && v.period <= max)) err(tm, t("{periph}: 주기(Period) {period}: 0–{max}이어야 합니다.", { periph: tm, period: v.period, max }));
+    if ((tm === "TIM9" || tm === "TIM10" || tm === "TIM11") && v.counterMode !== "up") err(tm, t("{periph}: 이 타이머는 위로 세기만 됩니다.", { periph: tm }));
     v.channels.forEach((ch, i) => {
       if (!ch) return;
-      if (ch.pulse > v.period + 1) warn(t, `${t} CH${i + 1}: 펄스 ${ch.pulse}가 주기 ${v.period}보다 커서 늘 켜져 있습니다.`);
-      if (!Object.values(c.pins).some((p) => p.signal === `${t}_CH${i + 1}`)) err(t, `${t} CH${i + 1}: PWM 출력 핀이 정해지지 않았습니다.`);
+      if (ch.pulse > v.period + 1) warn(tm, t("{periph} CH{ch}: 펄스 {pulse}가 주기 {period}보다 커서 늘 켜져 있습니다.", { periph: tm, ch: i + 1, pulse: ch.pulse, period: v.period }));
+      if (!Object.values(c.pins).some((p) => p.signal === `${tm}_CH${i + 1}`)) err(tm, t("{periph} CH{ch}: PWM 출력 핀이 정해지지 않았습니다.", { periph: tm, ch: i + 1 }));
     });
   }
   const adc = c.adc.ADC1;
   if (adc) {
-    if (!adc.ranks.length) err("ADC1", "ADC1: 변환할 채널이 없습니다. ADC1_INx 핀을 정하세요.");
-    if (adc.ranks.length > 1 && !adc.scan) err("ADC1", "ADC1: 채널이 둘 이상이면 스캔 모드를 켜야 합니다.");
-    if (adc.ranks.length > 16) err("ADC1", "ADC1: 일반 변환은 16개까지입니다.");
+    if (!adc.ranks.length) err("ADC1", t("ADC1: 변환할 채널이 없습니다. ADC1_INx 핀을 정하세요."));
+    if (adc.ranks.length > 1 && !adc.scan) err("ADC1", t("ADC1: 채널이 둘 이상이면 스캔 모드를 켜야 합니다."));
+    if (adc.ranks.length > 16) err("ADC1", t("ADC1: 일반 변환은 16개까지입니다."));
     for (const r of adc.ranks) {
-      if (!SAMPLING.includes(r.sampling)) err("ADC1", `ADC1 IN${r.channel}: 샘플링 ${r.sampling} 사이클은 고를 수 없습니다.`);
+      if (!SAMPLING.includes(r.sampling)) err("ADC1", t("ADC1 IN{ch}: 샘플링 {cycles} 사이클은 고를 수 없습니다.", { ch: r.channel, cycles: r.sampling }));
       const pin = Object.entries(c.pins).find(([, v]) => v.signal === `ADC1_IN${r.channel}`);
-      if (!pin) err("ADC1", `ADC1: IN${r.channel}을(를) 변환하는데 그 핀이 ADC1_IN${r.channel}로 설정되지 않았습니다.`);
+      if (!pin) err("ADC1", t("ADC1: IN{ch}을(를) 변환하는데 그 핀이 ADC1_IN{ch}로 설정되지 않았습니다.", { ch: r.channel }));
     }
     const adcClk = tree.pclk2 / 4;
-    if (adcClk > 36_000_000) err("ADC1", `ADC1: ADC 클럭 ${(adcClk / 1e6).toFixed(1)} MHz(PCLK2 ÷ 4): 최대 36 MHz입니다.`);
+    if (adcClk > 36_000_000) err("ADC1", t("ADC1: ADC 클럭 {mhz} MHz(PCLK2 ÷ 4): 최대 36 MHz입니다.", { mhz: (adcClk / 1e6).toFixed(1) }));
   }
   for (const [irq, n] of Object.entries(c.nvic)) {
     if (!n.enabled) continue;
-    if (!usedIrqs(c).includes(irq)) warn(irq, `NVIC ${irq}_IRQn: 켜져 있지만 이 설정에서 쓰는 주변장치가 없습니다(코드를 만들지 않음).`);
-    if (n.preempt < 0 || n.preempt > 15) err(irq, `NVIC ${irq}_IRQn: 선점 우선순위 ${n.preempt}: 0–15여야 합니다.`);
-    if (n.sub !== 0) err(irq, `NVIC ${irq}_IRQn: 우선순위 그룹 4에서는 서브 우선순위가 0뿐입니다.`);
+    if (!usedIrqs(c).includes(irq)) warn(irq, t("NVIC {irq}_IRQn: 켜져 있지만 이 설정에서 쓰는 주변장치가 없습니다(코드를 만들지 않음).", { irq }));
+    if (n.preempt < 0 || n.preempt > 15) err(irq, t("NVIC {irq}_IRQn: 선점 우선순위 {prio}: 0–15여야 합니다.", { irq, prio: n.preempt }));
+    if (n.sub !== 0) err(irq, t("NVIC {irq}_IRQn: 우선순위 그룹 4에서는 서브 우선순위가 0뿐입니다.", { irq }));
   }
   for (const i of tree.issues) out.push({ severity: i.severity, where: "RCC", message: i.message });
   if ((c.clock.hse !== "off") !== (c.pins.PH0?.signal === "RCC_OSC_IN")) {
-    if (c.clock.hse !== "off") err("PH0", "HSE를 켰는데 PH0이 RCC_OSC_IN이 아닙니다.");
-    else warn("PH0", "PH0이 RCC_OSC_IN인데 HSE가 꺼져 있습니다.");
+    if (c.clock.hse !== "off") err("PH0", t("HSE를 켰는데 PH0이 RCC_OSC_IN이 아닙니다."));
+    else warn("PH0", t("PH0이 RCC_OSC_IN인데 HSE가 꺼져 있습니다."));
   }
   void timerClock;
   return out;

@@ -1,6 +1,7 @@
 // The clock tree of the STM32F401 (RM0368 §6, DS10086 §6.3) for the
 // configuration tool (M36): sources, PLL, bus prescalers, the frequencies
 // they give and the limits CubeMX checks. Pure; unit tested.
+import { t } from "../i18n/index.ts";
 
 export const HSI_HZ = 16_000_000;
 /** The Nucleo's HSE: the ST-LINK's 8 MHz MCO on PH0 (no crystal fitted at X3). */
@@ -102,32 +103,32 @@ export function computeClock(c: ClockConfig): ClockTree {
 
   const pllUsed = c.pllOn;
   if ((c.sysclk === "HSE" || (pllUsed && c.pllSource === "HSE")) && c.hse === "off")
-    issues.push({ node: "hse", severity: "error", message: "HSE를 쓰는데 HSE가 꺼져 있습니다. RCC에서 HSE를 바이패스(BYPASS Clock Source)로 켜세요." });
+    issues.push({ node: "hse", severity: "error", message: t("HSE를 쓰는데 HSE가 꺼져 있습니다. RCC에서 HSE를 바이패스(BYPASS Clock Source)로 켜세요.") });
   if (c.hse === "crystal")
-    issues.push({ node: "hse", severity: "warning", message: "Nucleo-F401RE에는 HSE 크리스털(X3)이 없습니다. 크리스털로 설정하면 HSE가 준비되지 않아 Error_Handler()로 갑니다. ST-LINK의 8 MHz를 쓰려면 바이패스로 하세요." });
-  if (c.sysclk === "PLL" && !c.pllOn) issues.push({ node: "sysclk", severity: "error", message: "SYSCLK을 PLL에서 받는데 PLL이 꺼져 있습니다." });
+    issues.push({ node: "hse", severity: "warning", message: t("Nucleo-F401RE에는 HSE 크리스털(X3)이 없습니다. 크리스털로 설정하면 HSE가 준비되지 않아 Error_Handler()로 갑니다. ST-LINK의 8 MHz를 쓰려면 바이패스로 하세요.") });
+  if (c.sysclk === "PLL" && !c.pllOn) issues.push({ node: "sysclk", severity: "error", message: t("SYSCLK을 PLL에서 받는데 PLL이 꺼져 있습니다.") });
   if (pllUsed) {
-    if (c.pllM < 2 || c.pllM > 63) issues.push({ node: "pllM", severity: "error", message: `PLLM ${c.pllM}: 2–63이어야 합니다.` });
-    if (c.pllN < 50 || c.pllN > 432) issues.push({ node: "pllN", severity: "error", message: `PLLN ${c.pllN}: 50–432이어야 합니다.` });
-    if (!PLLP_VALUES.includes(c.pllP)) issues.push({ node: "pllP", severity: "error", message: `PLLP ${c.pllP}: 2, 4, 6, 8 중 하나여야 합니다.` });
-    if (c.pllQ < 2 || c.pllQ > 15) issues.push({ node: "pllQ", severity: "error", message: `PLLQ ${c.pllQ}: 2–15여야 합니다.` });
+    if (c.pllM < 2 || c.pllM > 63) issues.push({ node: "pllM", severity: "error", message: t("PLLM {v}: 2–63이어야 합니다.", { v: c.pllM }) });
+    if (c.pllN < 50 || c.pllN > 432) issues.push({ node: "pllN", severity: "error", message: t("PLLN {v}: 50–432이어야 합니다.", { v: c.pllN }) });
+    if (!PLLP_VALUES.includes(c.pllP)) issues.push({ node: "pllP", severity: "error", message: t("PLLP {v}: 2, 4, 6, 8 중 하나여야 합니다.", { v: c.pllP }) });
+    if (c.pllQ < 2 || c.pllQ > 15) issues.push({ node: "pllQ", severity: "error", message: t("PLLQ {v}: 2–15여야 합니다.", { v: c.pllQ }) });
     if (vcoIn < VCO_IN[0] || vcoIn > VCO_IN[1])
-      issues.push({ node: "vcoIn", severity: "error", message: `PLL 입력(VCO 입력) ${mhz(vcoIn)}: 0.95–2.1 MHz여야 합니다(2 MHz 권장). PLLM을 바꾸세요.` });
+      issues.push({ node: "vcoIn", severity: "error", message: t("PLL 입력(VCO 입력) {f}: 0.95–2.1 MHz여야 합니다(2 MHz 권장). PLLM을 바꾸세요.", { f: mhz(vcoIn) }) });
     if (vcoOut < VCO_OUT[0] || vcoOut > VCO_OUT[1])
-      issues.push({ node: "vcoOut", severity: "error", message: `VCO 출력 ${mhz(vcoOut)}: 192–432 MHz여야 합니다. PLLN을 바꾸세요.` });
+      issues.push({ node: "vcoOut", severity: "error", message: t("VCO 출력 {f}: 192–432 MHz여야 합니다. PLLN을 바꾸세요.", { f: mhz(vcoOut) }) });
     if (c.usb48 && Math.abs(pllQ - 48_000_000) > 1)
-      issues.push({ node: "usb", severity: "error", message: `USB용 48 MHz(PLLQ 출력)가 ${mhz(pllQ)}입니다. PLLQ를 바꾸세요(예: VCO 336 MHz ÷ 7).` });
+      issues.push({ node: "usb", severity: "error", message: t("USB용 48 MHz(PLLQ 출력)가 {f}입니다. PLLQ를 바꾸세요(예: VCO 336 MHz ÷ 7).", { f: mhz(pllQ) }) });
     else if (pllQ > 48_000_000 + 1)
-      issues.push({ node: "pllQ", severity: "warning", message: `PLLQ 출력 ${mhz(pllQ)}이 48 MHz를 넘습니다(USB·SDIO가 쓰면 안 됨).` });
+      issues.push({ node: "pllQ", severity: "warning", message: t("PLLQ 출력 {f}이 48 MHz를 넘습니다(USB·SDIO가 쓰면 안 됨).", { f: mhz(pllQ) }) });
   }
-  if (sysclk > MAX_SYSCLK) issues.push({ node: "sysclk", severity: "error", message: `SYSCLK ${mhz(sysclk)}: STM32F401은 최대 84 MHz입니다.` });
-  if (hclk > MAX_SYSCLK) issues.push({ node: "hclk", severity: "error", message: `HCLK ${mhz(hclk)}: 최대 84 MHz입니다.` });
-  if (c.vos === 3 && hclk > 60_000_000) issues.push({ node: "hclk", severity: "error", message: `전압 스케일 3에서는 HCLK가 60 MHz까지입니다(지금 ${mhz(hclk)}). 스케일 2로 하세요.` });
-  if (pclk1 > MAX_APB1) issues.push({ node: "apb1", severity: "error", message: `APB1 ${mhz(pclk1)}: 최대 42 MHz입니다. APB1 분주를 키우세요.` });
-  if (pclk2 > MAX_APB2) issues.push({ node: "apb2", severity: "error", message: `APB2 ${mhz(pclk2)}: 최대 84 MHz입니다.` });
+  if (sysclk > MAX_SYSCLK) issues.push({ node: "sysclk", severity: "error", message: t("SYSCLK {f}: STM32F401은 최대 84 MHz입니다.", { f: mhz(sysclk) }) });
+  if (hclk > MAX_SYSCLK) issues.push({ node: "hclk", severity: "error", message: t("HCLK {f}: 최대 84 MHz입니다.", { f: mhz(hclk) }) });
+  if (c.vos === 3 && hclk > 60_000_000) issues.push({ node: "hclk", severity: "error", message: t("전압 스케일 3에서는 HCLK가 60 MHz까지입니다(지금 {f}). 스케일 2로 하세요.", { f: mhz(hclk) }) });
+  if (pclk1 > MAX_APB1) issues.push({ node: "apb1", severity: "error", message: t("APB1 {f}: 최대 42 MHz입니다. APB1 분주를 키우세요.", { f: mhz(pclk1) }) });
+  if (pclk2 > MAX_APB2) issues.push({ node: "apb2", severity: "error", message: t("APB2 {f}: 최대 84 MHz입니다.", { f: mhz(pclk2) }) });
   if (latency < minLatency)
-    issues.push({ node: "latency", severity: "error", message: `플래시 대기 ${latency}: HCLK ${mhz(hclk)}에는 ${minLatency} 이상이 필요합니다.` });
-  if (latency > 7) issues.push({ node: "latency", severity: "error", message: `플래시 대기 ${latency}: 0–7이어야 합니다.` });
+    issues.push({ node: "latency", severity: "error", message: t("플래시 대기 {ws}: HCLK {f}에는 {min} 이상이 필요합니다.", { ws: latency, f: mhz(hclk), min: minLatency }) });
+  if (latency > 7) issues.push({ node: "latency", severity: "error", message: t("플래시 대기 {ws}: 0–7이어야 합니다.", { ws: latency }) });
 
   return {
     hsi: HSI_HZ,

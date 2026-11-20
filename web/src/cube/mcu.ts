@@ -4,6 +4,7 @@
 // models), the ADC1 inputs and the names CubeMX writes into a .ioc file.
 // Pure data and lookups; unit tested in test/m36.test.ts.
 import { nucleoHeaders } from "../parts/nucleo-pins.ts";
+import { t } from "../i18n/index.ts";
 
 export const MCU = {
   userName: "STM32F401RETx",
@@ -227,13 +228,13 @@ export function boardNames(pin: string): string[] {
 
 /** What the Nucleo board itself connects to a pin. */
 export const ONBOARD: Record<string, string> = {
-  PA5: "LD2 (초록 LED)",
-  PC13: "B1 (파란 버튼)",
-  PA2: "USART2_TX → ST-LINK 가상 COM",
-  PA3: "USART2_RX → ST-LINK 가상 COM",
+  PA5: t("LD2 (초록 LED)"),
+  PC13: t("B1 (파란 버튼)"),
+  PA2: t("USART2_TX → ST-LINK 가상 COM"),
+  PA3: t("USART2_RX → ST-LINK 가상 COM"),
   PA13: "SWDIO (ST-LINK)",
   PA14: "SWCLK (ST-LINK)",
-  PH0: "ST-LINK MCO 8 MHz (HSE 바이패스)",
+  PH0: t("ST-LINK MCO 8 MHz (HSE 바이패스)"),
   PH1: "OSC_OUT",
   PC14: "LSE 32.768 kHz (X2)",
   PC15: "LSE 32.768 kHz (X2)",

@@ -13,6 +13,7 @@ import { exportIoc, parseIoc } from "./ioc.ts";
 import { DEFAULT_PACK, packById, PACK_PROJECT_FILES } from "./packs.ts";
 import { editsOutsideRegions, mergeUserCode, setRegion } from "./usercode.ts";
 import { writeZipAsync } from "./zipwrite.ts";
+import { t } from "../i18n/index.ts";
 
 export interface PackFile {
   /** Project path: `Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h`, `Core/Startup/…`. */
@@ -104,7 +105,7 @@ export function applyRegeneration(project: CodeProject, c0: CubeConfig, plan = p
 
 /** The configuration of a cube project (from its .ioc). */
 export function projectConfig(p: CodeProject): { config: CubeConfig; warnings: string[] } {
-  if (!p.ioc) return { config: { ...parseIoc("").config, drivers: p.drivers ?? DEFAULT_PACK.id }, warnings: ["프로젝트에 .ioc가 없습니다."] };
+  if (!p.ioc) return { config: { ...parseIoc("").config, drivers: p.drivers ?? DEFAULT_PACK.id }, warnings: [t("프로젝트에 .ioc가 없습니다.")] };
   const r = parseIoc(p.ioc);
   if (p.drivers) r.config.drivers = p.drivers;
   return r;
@@ -311,8 +312,8 @@ const SKIP = /(^|\/)(Debug|Release|\.settings|\.metadata|\.git|build)\//i;
 export function importCubeProject(files: ImportedFile[], decode: (b: Uint8Array) => string | null): ImportResult {
   const warnings: string[] = [];
   const iocs = files.filter((f) => f.path.toLowerCase().endsWith(".ioc") && !SKIP.test(f.path)).sort((a, b) => a.path.split("/").length - b.path.split("/").length);
-  if (!iocs.length) throw new Error("이 폴더(zip)에 .ioc 파일이 없습니다. CubeMX/CubeIDE 프로젝트의 폴더를 고르세요.");
-  if (iocs.length > 1) warnings.push(`.ioc가 ${iocs.length}개 있어 ${iocs[0].path}을(를) 씁니다.`);
+  if (!iocs.length) throw new Error(t("이 폴더(zip)에 .ioc 파일이 없습니다. CubeMX/CubeIDE 프로젝트의 폴더를 고르세요."));
+  if (iocs.length > 1) warnings.push(t(".ioc가 {n}개 있어 {path}을(를) 씁니다.", { n: iocs.length, path: iocs[0].path }));
   const ioc = iocs[0];
   const root = ioc.path.includes("/") ? ioc.path.slice(0, ioc.path.lastIndexOf("/") + 1) : "";
   const iocText = decode(ioc.data) ?? "";
@@ -330,21 +331,21 @@ export function importCubeProject(files: ImportedFile[], decode: (b: Uint8Array)
     }
     if (!/\.(c|h)$/.test(rel)) continue;
     if (!/^[A-Za-z0-9_][A-Za-z0-9_./-]*$/.test(rel)) {
-      warnings.push(`${rel}: 파일 이름에 쓸 수 없는 글자가 있어 건너뜁니다.`);
+      warnings.push(t("{path}: 파일 이름에 쓸 수 없는 글자가 있어 건너뜁니다.", { path: rel }));
       continue;
     }
     const text = decode(f.data);
     if (text === null) {
-      warnings.push(`${rel}: 텍스트 파일이 아니라 건너뜁니다.`);
+      warnings.push(t("{path}: 텍스트 파일이 아니라 건너뜁니다.", { path: rel }));
       continue;
     }
     sources.push({ path: rel, text });
   }
-  if (skippedPack) warnings.push(`시작 코드·SystemInit(Core/Startup, system_stm32f4xx.c)은 고른 STM32CubeF4 묶음의 것을 씁니다.`);
+  if (skippedPack) warnings.push(t("시작 코드·SystemInit(Core/Startup, system_stm32f4xx.c)은 고른 STM32CubeF4 묶음의 것을 씁니다."));
   const cfg = parsed.config;
   cfg.projectName = safeProjectName(root.replace(/\/$/, "").split("/").pop() || cfg.projectName);
   if (!sources.some((s) => s.path === MAIN_C)) {
-    warnings.push("Core/Src/main.c가 없어 설정에서 새로 만듭니다.");
+    warnings.push(t("Core/Src/main.c가 없어 설정에서 새로 만듭니다."));
   }
   // Fill in what the project lacks from the configuration (generated files, syscalls).
   let project: CodeProject = { template: "cube", files: sortFiles(sources), active: MAIN_C, ioc: exportIoc(cfg), drivers: cfg.drivers || packById(undefined).id };

@@ -4,6 +4,7 @@ import init, { Simulator, version } from "../wasm/pkg/simucleo_wasm.js";
 import type { FrameMsg, FromWorker, SimFrame, ToWorker } from "./protocol";
 import type { SwvSettings } from "../run/swv";
 import { batchDue, batchHz, RatioMeter } from "./perf";
+import { attachTftPixels, tftPosted } from "./tftStore";
 
 const FRAME_MS = 16; // ~60 Hz display updates
 const WORK_BUDGET_MS = 12; // wall time we allow ourselves per frame
@@ -37,11 +38,11 @@ let batch: FrameMsg[] = [];
 let lastBatch = 0;
 let inFlight = false;
 
-const post = (m: FromWorker) => (self as unknown as Worker).postMessage(m);
+const post = (m: FromWorker, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(m, transfer);
 
 function flush() {
   if (!batch.length) return;
-  post({ type: "frames", frames: batch, speed: achieved, work: workShare });
+  post({ type: "frames", frames: batch, speed: achieved, work: workShare }, tftPosted());
   batch = [];
   lastBatch = performance.now();
   inFlight = true;
@@ -51,11 +52,14 @@ function flush() {
 function sendFrame(now = true) {
   if (!sim) return;
   const frame = JSON.parse(sim.frame()) as SimFrame;
+  // M35: a TFT display's pixels only when its picture changed.
+  const s = sim;
+  attachTftPixels(frame, (id) => s.tftPixels(id));
   const m: FrameMsg = { frame, console: sim.takeConsole(), running, epoch, triggerGen };
   if (swvSettings) m.swv = JSON.parse(sim.swvTake());
   const hz = batchHz(uiHz, speedCap);
   if (hz === null) {
-    post({ type: "frame", ...m, speed: achieved, work: workShare });
+    post({ type: "frame", ...m, speed: achieved, work: workShare }, tftPosted());
     return;
   }
   batch.push(m);

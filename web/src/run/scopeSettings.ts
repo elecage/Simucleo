@@ -7,17 +7,19 @@ import { BINARY, MATH_OPS, type MathOp } from "./math.ts";
 import { TIMEBASE_NS } from "./scope.ts";
 import { FFT_SIZES, WINDOWS, type WindowKind } from "./spectrum.ts";
 
-export type DecoderType = "uart" | "i2c" | "spi" | "onewire" | "tm1637" | "ws2812" | "nec";
+export type DecoderType = "uart" | "i2c" | "spi" | "onewire" | "tm1637" | "ws2812" | "nec" | "can";
 
-export const DECODER_TYPES: DecoderType[] = ["uart", "i2c", "spi", "onewire", "tm1637", "ws2812", "nec"];
+export const DECODER_TYPES: DecoderType[] = ["uart", "i2c", "spi", "onewire", "tm1637", "ws2812", "nec", "can"];
 
 export interface DecoderCfg {
   /** Numbers the decoder within the view (a content trigger names it). */
   id: number;
   type: DecoderType;
   /** UART: [line]; I2C: [SCL, SDA]; SPI: [SCK, MOSI, MISO, CS] ("" = none);
-   * 1-Wire: [DQ]; TM1637: [CLK, DIO]; WS2812: [DIN]; NEC: [OUT] (the IR receiver's). */
+   * 1-Wire: [DQ]; TM1637: [CLK, DIO]; WS2812: [DIN]; NEC: [OUT] (the IR receiver's);
+   * CAN: [a CAN module's "can1.CANH" or "can1.CANL": its bus]. */
   pins: string[];
+  /** UART baud rate; CAN bit rate. */
   baud: number;
   parity: Parity;
   /** SPI mode 0–3 (CPOL·2 + CPHA) and bit order. */
@@ -34,6 +36,7 @@ export const DECODER_PINS: Record<DecoderType, string[]> = {
   tm1637: ["PA10", "PB3"],
   ws2812: ["PB4"],
   nec: ["PB3"],
+  can: ["can1.CANH"],
 };
 export const PIN_ROLES: Record<DecoderType, string[]> = {
   uart: ["TX/RX"],
@@ -43,6 +46,7 @@ export const PIN_ROLES: Record<DecoderType, string[]> = {
   tm1637: ["CLK", "DIO"],
   ws2812: ["DIN"],
   nec: ["OUT"],
+  can: ["CANH/CANL"],
 };
 export const DECODER_NAMES: Record<DecoderType, string> = {
   uart: "UART",
@@ -52,6 +56,7 @@ export const DECODER_NAMES: Record<DecoderType, string> = {
   tm1637: "TM1637",
   ws2812: "WS2812",
   nec: "IR (NEC)",
+  can: "CAN",
 };
 
 export interface AnalogCfg {
@@ -215,7 +220,7 @@ export function defaultScope(): ScopeSettings {
 
 /** A new decoder of `type` with its default pins and settings. */
 export function newDecoder(id: number, type: DecoderType): DecoderCfg {
-  return { id, type, pins: [...DECODER_PINS[type]], baud: 115200, parity: "none", mode: 0, lsbFirst: false };
+  return { id, type, pins: [...DECODER_PINS[type]], baud: type === "can" ? 125000 : 115200, parity: "none", mode: 0, lsbFirst: false };
 }
 
 /** The content kinds a decoder offers. */
@@ -224,6 +229,7 @@ export function contentKinds(type: DecoderType): ContentMatch["kind"][] {
     case "uart":
       return ["byte", "text"];
     case "i2c":
+    case "can":
       return ["address", "byte"];
     case "ws2812":
       return ["pixel"];
@@ -245,8 +251,9 @@ export function contentMatch(c: ContentCfg, type: DecoderType): ContentMatch | n
       return v === null || v > 0xffff ? null : { kind, value: v };
     }
     case "address": {
+      // An I2C address, or a CAN identifier (up to 29 bits).
       const v = parseNumber(c.text);
-      return v === null || v > 0x7f ? null : { kind, addr: v, rw: c.rw };
+      return v === null || v > (type === "can" ? 0x1fffffff : 0x7f) ? null : { kind, addr: v, rw: c.rw };
     }
     case "pixel": {
       if (!Number.isInteger(c.index) || c.index < 0) return null;
@@ -276,6 +283,9 @@ export function exactContent(type: DecoderType, m: ContentMatch): boolean {
 // ----------------------------------------------------------- loading
 
 const PIN = /^P[A-H]\d{1,2}$/;
+/** A part's pin probed as a line (M35: a CAN module's bus). */
+const LINE_PIN = /^[\w-]+\.CAN[HL]$/;
+const probeable = (p: string) => PIN.test(p) || LINE_PIN.test(p);
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
 const num = (x: unknown, d: number, ok: (v: number) => boolean = () => true) =>
   typeof x === "number" && Number.isFinite(x) && ok(x) ? x : d;
@@ -291,7 +301,7 @@ const str = (x: unknown, d: string) => (typeof x === "string" ? x : d);
 export function sanitizeScope(raw: unknown): ScopeSettings | undefined {
   if (!isObj(raw)) return undefined;
   const d = defaultScope();
-  const pins = Array.isArray(raw.pins) ? [...new Set(raw.pins.filter((p): p is string => typeof p === "string" && PIN.test(p)))] : d.pins;
+  const pins = Array.isArray(raw.pins) ? [...new Set(raw.pins.filter((p): p is string => typeof p === "string" && probeable(p)))] : d.pins;
   const analog: AnalogCfg[] = [];
   for (const a of Array.isArray(raw.analog) ? raw.analog : []) {
     if (!isObj(a) || typeof a.spec !== "string" || !a.spec || analog.some((q) => q.spec === a.spec)) continue;
@@ -305,7 +315,7 @@ export function sanitizeScope(raw: unknown): ScopeSettings | undefined {
     const given = Array.isArray(x.pins) ? x.pins : [];
     const dp = Array.from({ length: n }, (_, k) => {
       const p = given[k];
-      return typeof p === "string" && (PIN.test(p) || (p === "" && k >= 2)) ? p : DECODER_PINS[type][k];
+      return typeof p === "string" && (probeable(p) || (p === "" && k >= 2)) ? p : DECODER_PINS[type][k];
     });
     let id = num(x.id, 0, (v) => Number.isInteger(v) && v > 0);
     if (!id || decoders.some((q) => q.id === id)) id = Math.max(0, ...decoders.map((q) => q.id)) + 1;
@@ -313,7 +323,7 @@ export function sanitizeScope(raw: unknown): ScopeSettings | undefined {
       id,
       type,
       pins: dp,
-      baud: num(x.baud, 115200, (v) => v > 0),
+      baud: num(x.baud, type === "can" ? 125000 : 115200, (v) => v > 0),
       parity: pick(x.parity, ["none", "even", "odd"] as const, "none"),
       mode: num(x.mode, 0, (v) => [0, 1, 2, 3].includes(v)),
       lsbFirst: x.lsbFirst === true,

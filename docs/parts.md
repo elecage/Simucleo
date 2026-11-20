@@ -150,6 +150,64 @@ L298N의 12 V는 코일에 정격 전류 0.4 A(단위 1.0)를 흘린다. A4988�
 전류 방향대로 한쪽이 VMOT, 다른 쪽이 GND다(초퍼의 PWM은 모델링하지 않음). 3상 브리지에서 두 스위치가 다 꺼진 순간이 PWM 주기
 안(데드타임, 한쪽만 초핑하는 오프 시간)이면 다이오드로 전류가 이어지는 쪽 레일에 붙는다.
 
+## RFID 리더 RC522 (M35) ✅
+
+| 부품 | 프로토콜 / 모델 | 필요한 MCU 기능 | 비고 |
+|---|---|---|---|
+| **RC522 RFID 리더** (NXP MFRC522, 13.56 MHz, ISO 14443 A) | SPI 모드 0: SDA(NSS) Low 뒤 첫 바이트가 주소(비트 7 = 읽기, 주소는 비트 6–1). 쓰기는 이어지는 바이트가 같은 레지스터로(FIFO 연속 쓰기), 읽기는 이어지는 바이트가 다음 주소이고 답은 한 바이트 늦게, 0x00으로 끝. 레지스터: CommandReg(Idle, Mem, GenerateRandomID, CalcCRC, Transmit, Receive, Transceive, MFAuthent, SoftReset), FIFODataReg/FIFOLevelReg(64바이트, FlushBuffer, BufferOvfl), ComIrqReg/DivIrqReg(Set1/Set2), ComIEnReg/DivIEnReg, ErrorReg, Status1/2(MFCrypto1On, ModemState), ControlReg(RxLastBits, TStart/StopNow), BitFramingReg(StartSend, TxLastBits), CollReg, ModeReg(CRC 프리셋), Tx/RxModeReg(TxCRCEn/RxCRCEn), TxControlReg(안테나), TxASKReg(100 % ASK), TModeReg/TPrescaler/TReload/TCounterVal(타이머), CRCResultReg, VersionReg 0x92 | 하드웨어 SPI(SPI1) + GPIO(SDA, RST) | 공중 시간 106 kbit/s(바이트당 9비트)와 카드의 프레임 지연, MIFARE WRITE의 EEPROM 쓰기 2.5 ms. 타이머: f = 13.56 MHz / (2·TPrescaler + 1), TAuto면 송신이 끝날 때 시작해 카드의 첫 비트에 멈춤 — 카드가 없으면 (TReload + 1) 틱 뒤 TimerIRq(라이브러리 설정 25 ms). IRQ 핀은 오픈 드레인(IRqInv: Low = 요청, DivIEnReg IRQPushPull이면 푸시풀). RST(NRSTPD) Low면 하드 파워다운(레지스터 리셋, MISO 놓음, 안테나 꺼짐), 모듈에 10 kΩ 풀업. 3.3V에 3.6 V 넘게(5 V) 이으면 경고. 안테나가 꺼지면(TxControlReg, SoftReset, PowerDown) 카드도 전원을 잃고 IDLE부터 |
+| **RFID 카드·태그** (속성 `card`: 0 없음, 1 카드 A, 2 카드 B, 3 키 태그, 4 NFC 스티커) | ISO 14443-3 상태(IDLE, READY, ACTIVE, HALT, READY*/ACTIVE*): REQA(7비트 0x26)·WUPA(0x52) → ATQA, 캐스케이드 레벨별 ANTICOLLISION(NVB 0x20 → UID + BCC)과 SELECT(NVB 0x70 + CRC_A → SAK), HLTA. 상태에 맞지 않는 프레임이면 조용히 IDLE(HALT에서 깨어났으면 HALT)로 — 그래서 HALT 없이 REQA를 다시 보내면 한 번은 답이 없다(실제 카드와 같음) | — | MIFARE Classic 1K(4바이트 UID, ATQA 04 00, SAK 08, 섹터 트레일러 키 FF…FF, 접근 비트 FF 07 80 69): MFAuthent는 키 A/B가 트레일러와 같고 UID가 맞으면 MFCrypto1On을 켠다 — **Crypto1 암호 자체는 흉내내지 않는다**(평문 프레임을 주고받되 리더의 MFCrypto1On과 카드의 인증 상태가 다르면 카드가 알아듣지 못함: StopCrypto1을 잊으면 다음 카드가 안 읽힌다). READ(16바이트 + CRC_A, 트레일러의 키 A는 0으로), 두 단계 WRITE(4비트 ACK 0xA), 접근 조건 검사(데이터 블록·트레일러, 읽을 수 있는 키 B로는 인증해도 접근 거부, 블록 0 쓰기 금지, 잘못된 접근 비트면 섹터 잠김) → NAK 0x4, CRC 오류 → NAK 0x5. Ultralight(7바이트 UID 두 캐스케이드, ATQA 44 00, SAK 00): READ 4페이지, WRITE(0xA2), COMPATIBILITY WRITE, 잠금·OTP 비트. 카드를 내려놓아도 메모리는 남는다. 값 블록 명령·여러 카드 충돌·RxAlign·SPI 모드 검사는 미구현. 카드를 끌어 안테나에 놓거나 클릭 |
+
+예제: `hal-rfid-rc522`(REQA로 카드를 찾아 UID 출력, 키 태그면 녹색 LED와 방문 횟수를 블록 5에 쓰기, 아니면 빨간 LED, Classic 블록 4·Ultralight 페이지 4–7 읽기, HALT 뒤 WUPA로 카드가 그대로 있는지 확인).
+
+## 컬러 SPI TFT: ST7735S · ILI9341 (M35) ✅
+
+| 부품 | 프로토콜 / 모델 | 필요한 MCU 기능 | 비고 |
+|---|---|---|---|
+| **컬러 TFT 1.8인치** (ST7735S, 128×160, 빨간 기판) | 4선 SPI: CS Low 동안 SCK 상승 에지에 SDA를 MSB부터, A0(D/C)이 8번째 비트에서 Low면 명령·High면 파라미터/픽셀. 핀 VCC·GND·CS·RESET·A0·SDA·SCK·LED | **하드웨어 SPI**(SPI1: D13 SCK, D11 MOSI) 또는 GPIO **비트뱅잉**, CS·RESET·A0은 GPIO | `simucleo_circuit::tft`. 프레임 메모리 18비트/픽셀. 전원·RESET 뒤: 잠자기, 화면 꺼짐, 메모리는 무작위 잡음(지우지 않으면 DISPON 때 보임). SWRESET(0x01)·RESET 핀은 레지스터만 초기화하고 5 ms 동안 명령 무시, 리셋 뒤 120 ms 전의 SLPOUT도 무시(경고). SLPIN/SLPOUT(0x10/0x11, 뒤 5 ms), DISPOFF/DISPON(0x28/0x29), INVOFF/INVON(0x20/0x21), IDMOFF/IDMON(0x38/0x39, 8색), COLMOD(0x3A: 0x03 12비트, 0x05 RGB565, 0x06 18비트), MADCTL(0x36: MY·MX 뒤집기, MV 행·열 바꿈, BGR), CASET/RASET(0x2A/0x2B) 창, RAMWR(0x2C)는 창 안을 왼→오, 위→아래로 채우고 끝나면 처음으로. 창이 메모리를 넘거나 시작 > 끝이면 경고. 패널은 MADCTL 0일 때 180° 돌아가 붙어 있음(드라이버는 MY·MX = 0xC0). `tab`: black(128×160, RGB), red(BGR), green(132×162 메모리, 패널이 2열·1행 안쪽 — 오프셋을 안 주면 가장자리에 잡음 줄). 그 밖의 명령(프레임 속도·전원·감마)은 파라미터만 받음 |
+| **컬러 TFT 2.4/2.8인치** (ILI9341, 240×320) | 같은 명령 계열, 핀 VCC·GND·CS·RESET·DC·SDI(MOSI)·SCK·LED·SDO(MISO) | 하드웨어 SPI(MISO D12로 읽기) 또는 비트뱅잉 | COLMOD 0x55/0x66, 0x3C(쓰던 자리에서 이어 쓰기). SDO로 읽기(첫 바이트는 더미): 0x04, 0x09 상태, 0x0A 전원 모드(켜진 뒤 0x9C), 0x0B MADCTL, 0x0C COLMOD, 0xD3 ID4(0x00 0x93 0x41), 0xDA–0xDC, RAMRD 0x2E(픽셀당 R·G·B). 패널이 좌우로 뒤집혀 붙어 있고 BGR(드라이버는 MADCTL 0x48) |
+
+**화면과 성능.** 화면은 부품 안의 `<canvas>`에 픽셀 그대로(확대는 pixelated) 그린다. 프레임 JSON에는 상태(`tft`: 크기, `version`,
+켜짐, 백라이트, 반전, MADCTL, COLMOD)만 있고, 그림이 바뀐 프레임에서만 워커가 `Simulator.tftPixels(id)`로 RGB565 바이트(240×320이면
+150 KB)를 받아 ArrayBuffer로 넘긴다(복사 없이 transfer, 배치 안의 이전 그림은 버림). `version`은 모든 디스플레이와 리셋을 통틀어
+고유해서 바뀌었는지만 보면 된다. **LED**(백라이트)는 프레임 동안 High였던 비율만큼 밝다(PWM 밝기 조절); 연결하지 않으면 화면이
+거의 안 보이고 경고, RESET을 연결하지 않으면 리셋 상태에 머물고 경고. 그림이 켜지는 조건: VCC ≥ 2.8 V, RESET High, SLPOUT, DISPON.
+근사: 비트뱅잉으로는 SDO 읽기를 하지 않고(하드웨어 SPI만), LED 핀이 끌어가는 전류, 수직 스크롤(0x33/0x37)·부분 모드(0x30)·감마는 모델링하지 않는다.
+
+예제: `hal-tft-st7735`(SPI1 10.5 MHz, 하드웨어 리셋 → SWRESET → SLPOUT → COLMOD 16비트 → MADCTL 0xC0 → DISPON, 색 막대·5×7 글꼴
+글자·카운터·튀는 상자, B1로 INVON/INVOFF).
+
+
+## 열전대 앰프: MAX6675 · MAX31855K (M35) ✅
+
+| 부품 | 프로토콜 / 모델 | 필요한 MCU 기능 | 비고 |
+|---|---|---|---|
+| **MAX6675** K형 열전대 모듈 (`max6675`, 핀 VCC·GND·SCK·CS·SO) | 읽기 전용 SPI 16비트: CS 하강에 D15가 SO로, SCK 하강 에지마다 다음 비트(모드 0, 최대 4.3 MHz). D15 0, D14–D3 온도(0.25 °C, 0–1023.75 °C, 0 °C 아래는 0), D2 열전대 열림, D1 0, D0 하이 임피던스. 변환 최대 220 ms | 하드웨어 SPI(2선 또는 **RX 전용** 마스터, SCK·MISO) 또는 GPIO 비트뱅잉 | 열전대 전압 = NIST ITS-90 K형 다항식 E(끝) − E(모듈), 칩은 41 µV/°C 직선 + 칩 온도로 환산(400 °C 위에서 높게 읽음). 모듈의 T−는 GND에 묶여 있어 GND 단락은 그대로 읽히고, 열림·VCC 단락은 D2와 풀스케일 |
+| **MAX31855K** 브레이크아웃 (`max31855`, 핀 VIN·3Vo·GND·DO·CS·CLK) | 32비트: D31–D18 열전대(부호 14비트, 0.25 °C), D16 고장, D15–D4 냉접점(부호 12비트, 0.0625 °C), D2 SCV, D1 SCG, D0 OC. 최대 5 MHz, 변환 최대 100 ms | 위와 같음(앞 16비트만 읽어도 됨) | 41.276 µV/°C 직선이라 NIST 표와의 비선형 오차가 보인다(−100 °C가 약 −85 °C). 고장이면 ADC 포화값(열림·VCC 단락 +2047.75, GND 단락 −2048)과 고장 비트. 3Vo는 VIN이 3 V 이상일 때 3.3 V 출력 |
+
+- **변환과 CS**: CS를 Low로 하면 진행 중인 변환이 멈추고 마지막으로 끝난 결과가 나온다. CS가 High로 올라가면 새 변환이
+  시작된다. 변환 시간보다 자주 읽으면 값이 그대로 멈춰 있고 경고("read 100 ms after CS went high — …")가 뜬다(비트를 하나라도
+  클럭해야 읽기로 친다 — 전원 직후 CS가 떠 있는 것은 아님).
+- **클럭과 모드**: 하드웨어 SPI는 바이트마다 SCK 주파수와 CPOL·CPHA를 회로에 넘긴다. SO는 하강 에지 뒤 1/(2·최대 클럭)만큼 늦게
+  바뀐다고 보고, MCU가 샘플하는 순간 아직 바뀌지 않은 비트는 한 칸 늦게 읽힌다: 84 MHz/16 = 5.25 MHz면 두 칩 모두 비트가 밀려
+  엉터리 값과 경고. 모드 1·2는 느린 클럭에서 맞게 읽히고, 모드 3은 첫 비트를 잃는다(값이 두 배) — 실제 칩과 같다.
+- **SPI RX 전용**(RM0368 RXONLY): SPE를 켜는 순간부터 끌 때까지 프레임을 연달아 클럭하고 MOSI 없이 MISO만 받는다. HAL의
+  `SPI_DIRECTION_2LINES_RXONLY` + `HAL_SPI_Receive`가 그대로 동작한다.
+- **입력**: `temp`(열전대 끝, −200–1350 °C 슬라이더), `ambient`(모듈 = 냉접점), `unplugged`, `short`(none·gnd·vcc), `reversed`
+  (극성 반대: 끝이 뜨거워질수록 내려감). 끝 옆의 🔥를 누르고 있으면 라이터(800 °C를 향해 τ 3 s), 🧊는 얼음물(0 °C, τ 2 s), 떼면
+  `ambient`로 식는다. 나사 단자를 누르면 열전대가 빠진다(열림). 부품 위에 다음 읽기가 줄 워드(16진)와 그 해석을 보여 준다.
+
+예제: `hal-thermocouple` — 두 모듈을 SPI1 RX 전용(16비트 프레임, 2.625 MHz)으로 250 ms마다 읽어 °C와 고장을 출력하고,
+MAX31855 값으로 D7 "히터" LED를 100–105 °C 히스테리시스로 켜고 끈다. B1을 누르면 같은 핀을 GPIO 비트뱅잉으로 읽는다.
+
+
+## CAN 버스 모듈 — MCP2515 + TJA1050 (M35) ✅
+
+| 부품 | 프로토콜 / 모델 | 필요한 MCU 기능 | 비고 |
+|---|---|---|---|
+| **CAN 버스 모듈** (`can-mcp2515`: MCP2515 + TJA1050, 8 MHz 크리스털) | SPI(모드 0,0): RESET 0xC0, READ 0x03, WRITE 0x02, READ RX BUFFER 0x90/0x92/0x94/0x96(CS가 오르면 RXnIF 지움), LOAD TX BUFFER 0x40–0x45, RTS 0x81–0x87, READ STATUS 0xA0, RX STATUS 0xB0, BIT MODIFY 0x05(비트 수정이 되는 레지스터만, 나머지는 마스크 0xFF). 레지스터 맵: CANCTRL/CANSTAT(모드 설정·정상·루프백·수신 전용·슬립, ABAT, OSM, ICOD), CNF1–3(비트레이트 = 1 / (2·(BRP+1)/f_osc × (1 + PRSEG+1 + PHSEG1+1 + PHSEG2+1)), BTLMODE 0이면 PS2 = max(PS1, 2)), TXBnCTRL/SIDH/SIDL/EID/DLC/D0–7(TXP 우선순위), RXB0/RXB1(RXM 00 필터·01 표준만·10 확장만·11 전부, BUKT 롤오버, FILHIT, RXRTR), 마스크 RXM0–1·필터 RXF0–5(확장 ID 29비트, 표준 프레임은 EID 비트가 데이터 0–1바이트를 거름), CANINTE/CANINTF와 INT 핀(푸시풀, Low = 켜진 플래그), EFLG(EWARN·RXWAR·TXWAR·RXEP·TXEP·TXBO·RX0OVR·RX1OVR), TEC/REC | 하드웨어 SPI + CS GPIO, INT는 GPIO 입력(폴링이나 EXTI) | 필터·마스크·CNF는 설정 모드에서만 써진다(아니면 무시 — 흔한 실수). 버스: CANH끼리·CANL끼리 이은 모듈들이 한 버스. 버스가 비면(인터미션 3비트 뒤) 기다리던 노드들이 동시에 시작해 ID로 중재(진 쪽 MLOA, 나중에 재시도); 프레임은 비트 단위(스터프 비트, CRC-15)로 만들어 송신 노드의 비트 시간만큼 걸리고, 끝날 때 결과를 적용(수신 노드는 마스크·필터대로 RXB0/RXB1, 넘치면 RXnOVR). ACK는 같은 비트레이트(±1 %)의 정상 모드 노드가 준다. ACK 없음(노드 혼자, 종단 저항 없음 — J1 점퍼가 하나도 없음): ACK 오류 + 오류 플래그, TXERR·MERRF, TEC +8, 재전송(OSM이면 한 번만); 에러 패시브(TEC ≥ 128)에서 ACK만 없으면 TEC는 128에 머문다(ISO 11898). 비트레이트가 다른 에러 액티브 노드는 프레임을 오류 플래그로 깨뜨리고(송신 TEC +8, 수신 REC +1) — 그래서 버스 오프(TEC > 255, 128 × 11 리세시브 비트 뒤 자동 복귀)까지 간다. VCC 4.5 V 미만이면 TJA1050이 버스에 닿지 못함(경고, 송신은 비트 오류). CANH↔CANL 바꿔 연결·CANH와 CANL 단락·종단 없음·종단 셋 이상은 경고. 모듈 위에 모드·비트레이트·TEC/REC·에러 상태·보낸/받은 수, INT LED. 파형 창: `can1.CANH`/`can1.CANL`을 디지털 프로브로 추가하면 그 버스의 차동 신호(High = 리세시브, 트랜시버의 RXD처럼)가 비트 에지 그대로 보이고, **CAN** 디코더(`decodeCan`, 비트레이트 선택)가 SOF·ID(11/29비트, RTR)·DLC·데이터·CRC(검사)·ACK·EOF와 스터프·형식 오류를 풀며, 해독 트리거는 ID(`주소`, R = 리모트 프레임)나 데이터 바이트로 건다(시뮬레이터 안의 같은 디코더 `crates/wasm/src/decode.rs`, 패리티 검사). 아날로그 채널로 CANH/CANL을 보면 바이어스 2.5 V와 120 Ω 종단만 보인다(비트 단위 전압은 그리지 않음). 웨이크업 필터·CLKOUT·RXnBF/TXnRTS 핀·SOF 출력·발진기 시작 시간은 미구현 |
+
+예제: `hal-can-mcp2515` — 모듈 두 개가 SPI1(CS D10·D9, INT D2·D8)에, 125 kbit/s. 노드 A가 100 ms마다 ID 0x123 카운터, 노드 B가 500 ms마다 확장 ID 0x18FF1234를 보내고, 받은 프레임을 USART2로 찍는다. B1을 누르면 노드 B가 250 kbit/s ↔ 125 kbit/s: 다른 비트레이트면 ACK가 없고 TEC가 올라 에러 패시브·버스 오프가 콘솔에 나온다.
+
 ## 후속 후보
 
 MPU-6050 FIFO·인터럽트, UART 핀 수준 파형(지금은 바이트 단위라 TX 핀을 프로브해도 프레임이 보이지 않음), USB-UART 모듈, 2·4채널 릴레이, HC-05 마스터 모드(두 모듈끼리 연결), DS18B20 기생 전원, TM1637 키 스캔(0x42 읽기), BMP280 IIR 필터·SPI 모드·BME280(습도), 74HC165(병렬 입력 시프트 레지스터), 5 V로 동작하는 595의 출력 전압(지금은 3.3 V로 계산). 모터: 센서리스(역기전력 영점) BLDC, 중앙 정렬 PWM(TIM1 CMS)과 반복 카운터, ESC의 BEC 출력·캘리브레이션·소리, 스테퍼 공진을 보여 주는 토크–속도 곡선, TMC2208 같은 UART 설정 드라이버, 엔코더가 달린 DC 모터(PID).

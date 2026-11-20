@@ -8,6 +8,8 @@
 
 ![PWM으로 RGB LED와 LD2 밝기 제어](docs/images/m3-pwm-rgb.png)
 
+> **M35: 부품 추가.** 컬러 TFT(ST7735S·ILI9341), RC522 RFID 리더와 카드, MCP2515 CAN 모듈(모듈끼리 CAN 버스, 오실로스코프 CAN 해독), K형 열전대(MAX6675·MAX31855). 예제 hal-tft-st7735, hal-rfid-rc522, hal-can-mcp2515, hal-thermocouple([부품 목록](docs/parts.md)).
+>
 > **SWV(Serial Wire Viewer).** 아래 탭의 **SWV**에서 STM32CubeIDE처럼 프로그램을 멈추지 않고 들여다본다. `ITM_SendChar`로 보낸 글자(ITM 콘솔), 변수 값의 변화(데이터 추적 그래프, DWT 비교기), 함수별 CPU 시간(PC 샘플링 통계 프로파일), 인터럽트 횟수·처리 시간·타임라인(예외 추적)을 보여 준다. 예제 hal-swv-trace([SWV로 프로그램을 멈추지 않고 들여다보기](docs/swv.md)).
 >
 > **M34: English UI.** 툴바의 언어 메뉴에서 **English**를 고르면 메뉴·안내·부품·설정 도구·채점 힌트와 레슨 38개 전체가 영어로 바뀐다(브라우저가 한국어가 아니면 처음부터 영어). The whole interface and all 38 lessons are available in English — pick **English** in the toolbar, or open the site with `?lang=en` ([영어 UI와 번역](docs/i18n.md)).

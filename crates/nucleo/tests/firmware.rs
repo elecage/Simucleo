@@ -3561,3 +3561,454 @@ fn swv_trace_itm_data_exceptions_and_profile() {
     board.run_for_ns(150e6);
     assert!(!board.swv_take().itm.is_empty());
 }
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-rfid-rc522"]
+fn rc522_reads_the_uid_and_blocks_of_the_card_placed_on_it() {
+    let n = "nucleo";
+    let mut signals = m19_signals();
+    signals.insert("D9".into(), "PC7".into());
+    let mut circuit = m19_circuit(
+        serde_json::json!([
+            {"id": "rfid", "kind": "rfid-rc522", "props": {"card": 0}},
+            {"id": "rg", "kind": "resistor", "props": {"ohms": "220"}},
+            {"id": "green", "kind": "led-5mm", "props": {"color": "green"}},
+            {"id": "rr", "kind": "resistor", "props": {"ohms": "220"}},
+            {"id": "red", "kind": "led-5mm", "props": {"color": "red"}}
+        ]),
+        &[
+            ((n, "3V3"), ("rfid", "3V3")),
+            (("rfid", "GND"), (n, "GND")),
+            ((n, "D13"), ("rfid", "SCK")),
+            ((n, "D12"), ("rfid", "MISO")),
+            ((n, "D11"), ("rfid", "MOSI")),
+            ((n, "D10"), ("rfid", "SDA")),
+            ((n, "D9"), ("rfid", "RST")),
+            ((n, "D7"), ("rg", "1")),
+            (("rg", "2"), ("green", "A")),
+            (("green", "K"), (n, "GND")),
+            ((n, "D6"), ("rr", "1")),
+            (("rr", "2"), ("red", "A")),
+            (("red", "K"), (n, "GND")),
+        ],
+    );
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-rfid-rc522", "hal-rfid-rc522"))
+        .unwrap();
+    board.set_circuit(&circuit, &simucleo_nucleo::BusCatalog::default(), &signals);
+    board.run_for_ns(300e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("MFRC522 version 0x92 (v2.0)"), "{text}");
+    assert!(text.contains("Place a card"), "{text}");
+    assert!(!text.contains("UID"), "{text}");
+    let mut place = |board: &mut Nucleo, card: u32| {
+        set_part_props(
+            board,
+            &mut circuit,
+            "rfid",
+            serde_json::json!({ "card": card }),
+            &signals,
+        );
+        board.run_for_ns(350e6);
+        // The LEDs as they are at the end (frames average over their time).
+        board.circuit_frame(0.0);
+        board.run_for_ns(50e6);
+        console_text(board)
+    };
+    let lit = |board: &mut Nucleo, id: &str| {
+        part_visual(&board.circuit_frame(0.0), id).brightness[0] > 0.3
+    };
+    // The key fob: allowed; its visits counter goes up on each placing.
+    let text = place(&mut board, 3);
+    assert!(
+        text.contains("UID: C1 9A 6E 22  (ATQA 04 00, SAK 08, MIFARE Classic 1K)"),
+        "{text}"
+    );
+    assert!(text.contains("access granted"), "{text}");
+    assert!(text.contains("block 4: 'Fob: staff #42..'"), "{text}");
+    assert!(text.contains("visits: 1 (write block 5: OK)"), "{text}");
+    assert!(lit(&mut board, "green") && !lit(&mut board, "red"));
+    let text = place(&mut board, 0);
+    assert!(text.contains("card removed"), "{text}");
+    assert!(!lit(&mut board, "green"));
+    let text = place(&mut board, 3);
+    assert!(text.contains("visits: 2 (write block 5: OK)"), "{text}");
+    // Swapping straight to another card: the fob leaves, card A arrives.
+    let text = place(&mut board, 1);
+    assert!(text.contains("card removed"), "{text}");
+    assert!(text.contains("UID: 7A 3B 1C 9D"), "{text}");
+    assert!(text.contains("access denied"), "{text}");
+    assert!(text.contains("block 4: 'Card A: guest...'"), "{text}");
+    assert!(!text.contains("visits"), "{text}");
+    assert!(lit(&mut board, "red") && !lit(&mut board, "green"));
+    // The Ultralight sticker: 7-byte UID over two cascade levels.
+    let text = place(&mut board, 4);
+    assert!(
+        text.contains("UID: 04 A1 B2 C3 D4 E5 80  (ATQA 44 00, SAK 00, MIFARE Ultralight)"),
+        "{text}"
+    );
+    assert!(text.contains("pages 4-7: 'Sticker: hello R'"), "{text}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+// ------------------------------------------------- M35: colour TFT (ST7735S)
+
+/// The hal-tft-st7735 example's wiring as the web loads it.
+fn tft_example() -> (
+    simucleo_nucleo::Circuit,
+    std::collections::HashMap<String, String>,
+) {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../web/examples/hal-tft-st7735.simucleo.json"
+    );
+    let project: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let signals = [
+        ("5V", "5V"),
+        ("GND_D", "GND"),
+        ("D7", "PA8"),
+        ("D8", "PA9"),
+        ("D9", "PC7"),
+        ("D10", "PB6"),
+        ("D11", "PA7"),
+        ("D13", "PA5"),
+    ]
+    .into_iter()
+    .map(|(a, b)| (a.to_string(), b.to_string()))
+    .collect();
+    (
+        serde_json::from_value(web_project::circuit(&project)).unwrap(),
+        signals,
+    )
+}
+
+/// RGB565 of screen pixel (x, y) of the 128×160 TFT `tft`.
+fn tft_px(board: &Nucleo, x: usize, y: usize) -> u16 {
+    let b = board.tft_pixels("tft").unwrap();
+    assert_eq!(b.len(), 128 * 160 * 2, "the display is dark");
+    u16::from_le_bytes([b[2 * (y * 128 + x)], b[2 * (y * 128 + x) + 1]])
+}
+
+/// Top-left corner of the orange bouncing box.
+fn tft_box(board: &Nucleo) -> Option<(usize, usize)> {
+    (82..160)
+        .flat_map(|y| (0..128).map(move |x| (x, y)))
+        .find(|&(x, y)| tft_px(board, x, y) == 0xFD20)
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-tft-st7735"]
+fn st7735_tft_shows_colour_bars_text_and_a_moving_box() {
+    use simucleo_nucleo::BusCatalog;
+    let (circuit, signals) = tft_example();
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-tft-st7735", "hal-tft-st7735"))
+        .unwrap();
+    board.set_circuit(&circuit, &BusCatalog::default(), &signals);
+    // Within the reset and SLPOUT waits the display is still dark.
+    board.run_for_ns(200e6);
+    let v = visual_of(&board.circuit_frame(0.2), "tft").tft.unwrap();
+    assert!(!v.lit && v.backlight > 0.5, "{v:?}");
+    board.run_for_ns(500e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("init done, drawing\r\n"), "{text}");
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+    let v = visual_of(&board.circuit_frame(0.5), "tft").tft.unwrap();
+    assert!(v.lit && v.backlight > 0.99 && !v.inverted, "{v:?}");
+    assert_eq!((v.madctl, v.colmod), (0xC0, 0x05));
+
+    // The colour bars, the title bar and its white text.
+    let bars = [
+        0xF800, 0x07E0, 0x001F, 0xFFE0, 0x07FF, 0xF81F, 0xFFFF, 0x8410,
+    ];
+    for (i, c) in bars.into_iter().enumerate() {
+        assert_eq!(tft_px(&board, 16 * i + 8, 30), c, "bar {i}");
+    }
+    assert_eq!(tft_px(&board, 1, 1), 0x000F);
+    let white = |board: &Nucleo, y0: usize, y1: usize| {
+        (y0..y1)
+            .flat_map(|y| (0..128).map(move |x| (x, y)))
+            .filter(|&(x, y)| tft_px(board, x, y) == 0xFFFF)
+            .count()
+    };
+    assert!(white(&board, 2, 12) > 50, "title text");
+    let digits = white(&board, 52, 68);
+    assert!(digits > 20, "counter digits");
+
+    // The box moves; the counter goes on.
+    let a = tft_box(&board).expect("box drawn");
+    let version = v.version;
+    board.run_for_ns(300e6);
+    let b = tft_box(&board).expect("box drawn");
+    assert_ne!(a, b);
+    let v = visual_of(&board.circuit_frame(0.3), "tft").tft.unwrap();
+    assert_ne!(v.version, version);
+    let text = console_text(&mut board);
+    assert!(text.contains("count 1 box"), "{text}");
+
+    // B1 inverts the colours (INVON): red shows cyan.
+    board.set_user_button(true);
+    board.run_for_ns(100e6);
+    board.set_user_button(false);
+    board.run_for_ns(50e6);
+    assert!(console_text(&mut board).contains("B1: colours inverted"));
+    let v = visual_of(&board.circuit_frame(0.15), "tft").tft.unwrap();
+    assert!(v.inverted);
+    assert_eq!(tft_px(&board, 8, 30), 0x07FF);
+}
+
+// ------------------------------------------- thermocouple amplifiers (M35)
+
+/// The last line of the console that starts with "MAX6675".
+fn last_reading(text: &str) -> String {
+    text.lines()
+        .rev()
+        .find(|l| l.starts_with("MAX6675"))
+        .unwrap_or_else(|| panic!("{text}"))
+        .to_string()
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-thermocouple"]
+fn thermocouples_on_spi_receive_only_and_bit_banged() {
+    let n = "nucleo";
+    let signals = m19_signals();
+    let mut circuit = m19_circuit(
+        serde_json::json!([
+            {"id": "k", "kind": "max6675", "props": {"temp": 25}},
+            {"id": "j", "kind": "max31855", "props": {"temp": 25}},
+            {"id": "r", "kind": "resistor", "props": {"ohms": "220"}},
+            {"id": "led", "kind": "led-5mm", "props": {"color": "red"}}
+        ]),
+        &[
+            ((n, "3V3"), ("k", "VCC")),
+            (("k", "GND"), (n, "GND")),
+            ((n, "PA5"), ("k", "SCK")),
+            ((n, "PA6"), ("k", "SO")),
+            ((n, "PB6"), ("k", "CS")),
+            ((n, "3V3"), ("j", "VIN")),
+            (("j", "GND"), (n, "GND")),
+            ((n, "PA5"), ("j", "CLK")),
+            ((n, "PA6"), ("j", "DO")),
+            ((n, "PC7"), ("j", "CS")),
+            ((n, "PA8"), ("r", "1")),
+            (("r", "2"), ("led", "A")),
+            (("led", "K"), (n, "GND")),
+        ],
+    );
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-thermocouple", "hal-thermocouple"))
+        .unwrap();
+    board.set_circuit(&circuit, &breadboard_catalog(), &signals);
+    board.run_for_ns(1000e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("SPI1 RX-only, 2.625 MHz"), "{text}");
+    assert_eq!(
+        last_reading(&text),
+        "MAX6675 25.00 C | MAX31855 25.00 C (cold 25.00 C) | heater on"
+    );
+    assert!(board.pin('A', 8), "heater LED on below 100 °C");
+    // A lighter under both probes: 200 °C. The chips' straight lines
+    // (41 and 41.276 µV/°C) read a little low.
+    let mut set = |board: &mut Nucleo, id: &str, props: serde_json::Value| {
+        set_part_props(board, &mut circuit, id, props, &signals);
+    };
+    set(&mut board, "k", serde_json::json!({"temp": 200}));
+    set(&mut board, "j", serde_json::json!({"temp": 200}));
+    board.run_for_ns(600e6);
+    assert_eq!(
+        last_reading(&console_text(&mut board)),
+        "MAX6675 199.00 C | MAX31855 198.00 C (cold 25.00 C) | heater off"
+    );
+    assert!(!board.pin('A', 8));
+    // The room warms up: the cold junction follows in 0.0625 °C steps.
+    set(
+        &mut board,
+        "j",
+        serde_json::json!({"ambient": 30.1, "temp": 30.1}),
+    );
+    board.run_for_ns(600e6);
+    assert_eq!(
+        last_reading(&console_text(&mut board)),
+        "MAX6675 199.00 C | MAX31855 30.00 C (cold 30.12 C) | heater on"
+    );
+    // Unplug the MAX31855's probe, short the MAX6675's to VCC.
+    set(&mut board, "j", serde_json::json!({"unplugged": 1}));
+    set(&mut board, "k", serde_json::json!({"short": "vcc"}));
+    board.run_for_ns(600e6);
+    assert_eq!(
+        last_reading(&console_text(&mut board)),
+        "MAX6675 OPEN | MAX31855 FAULT OC (open) (cold 30.12 C) | heater off"
+    );
+    assert!(!board.pin('A', 8), "no heating with a faulty probe");
+    set(
+        &mut board,
+        "j",
+        serde_json::json!({"unplugged": 0, "short": "gnd"}),
+    );
+    set(&mut board, "k", serde_json::json!({"short": "gnd"}));
+    board.run_for_ns(600e6);
+    // The MAX6675's T− is grounded anyway: it reads on.
+    assert_eq!(
+        last_reading(&console_text(&mut board)),
+        "MAX6675 199.00 C | MAX31855 FAULT SCG (short to GND) (cold 30.12 C) | heater off"
+    );
+    // B1: the same reads bit-banged on the GPIO pins, with the probe the
+    // wrong way round: it reads downwards.
+    set(
+        &mut board,
+        "j",
+        serde_json::json!({"short": "none", "reversed": 1, "temp": 130.1}),
+    );
+    board.set_user_button(true);
+    board.run_for_ns(300e6);
+    board.set_user_button(false);
+    board.run_for_ns(600e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("-- bit-banged --"), "{text}");
+    assert_eq!(
+        last_reading(&text),
+        "MAX6675 199.00 C | MAX31855 -69.75 C (cold 30.12 C) | heater on"
+    );
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}
+
+/// M35: two MCP2515 modules on SPI1 (CS D10/D9, INT D2/D8) with their
+/// CANH and CANL wired together; `term` on both (the J1 jumper).
+fn can_circuit(term: &str) -> simucleo_nucleo::Circuit {
+    let n = "nucleo";
+    let mut wires = Vec::new();
+    for (id, cs, int) in [("canA", "D10", "D2"), ("canB", "D9", "D8")] {
+        wires.extend([
+            wire_json((n, "5V"), (id, "VCC")),
+            wire_json((id, "GND"), (n, "GND")),
+            wire_json((n, "D13"), (id, "SCK")),
+            wire_json((n, "D12"), (id, "SO")),
+            wire_json((n, "D11"), (id, "SI")),
+            wire_json((n, cs), (id, "CS")),
+            wire_json((id, "INT"), (n, int)),
+        ]);
+    }
+    wires.push(wire_json(("canA", "CANH"), ("canB", "CANH")));
+    wires.push(wire_json(("canA", "CANL"), ("canB", "CANL")));
+    m8_circuit(
+        serde_json::json!([
+            {"id": "canA", "kind": "can-mcp2515", "props": {"term": term}},
+            {"id": "canB", "kind": "can-mcp2515", "props": {"term": term}}
+        ]),
+        wires,
+    )
+}
+
+fn can_board(term: &str) -> Nucleo {
+    use simucleo_nucleo::BusCatalog;
+    let mut signals = arduino_signals();
+    signals.insert("D13".into(), "PA5".into());
+    signals.insert("D9".into(), "PC7".into());
+    signals.insert("D8".into(), "PA9".into());
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-can-mcp2515", "hal-can-mcp2515"))
+        .unwrap();
+    board.set_circuit(&can_circuit(term), &BusCatalog::default(), &signals);
+    board
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-can-mcp2515"]
+fn can_frames_go_between_two_mcp2515_modules() {
+    let mut board = can_board("on");
+    board.set_line_probes(&["canA.CANH".into()]);
+    board.run_for_ns(650e6);
+    let text = console_text(&mut board);
+    assert!(
+        text.contains("node A normal mode, node B normal mode"),
+        "{text}"
+    );
+    // B gets A's counter every 100 ms, A gets B's extended frame.
+    for k in 0..5u16 {
+        let line = format!("B <- 0x123 [2] {:02X} {:02X}\r\n", k >> 8, k & 0xFF);
+        assert!(text.contains(&line), "{line} in {text}");
+    }
+    assert!(
+        text.contains("A <- 0x18FF1234 [4] B0 0B 00 00\r\n"),
+        "{text}"
+    );
+    assert!(!text.contains("TEC"), "{text}");
+    // The bus carried the frames bit by bit: 8 µs bits at 125 kbit/s.
+    let edges = board.take_line_edges();
+    assert!(edges.len() > 200, "{}", edges.len());
+    let min_gap = edges
+        .windows(2)
+        .map(|w| w[1].0 - w[0].0)
+        .fold(f64::INFINITY, f64::min);
+    assert!((min_gap - 8000.0).abs() < 1.0, "{min_gap}");
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
+    assert!(
+        board.circuit_warnings().is_empty(),
+        "{:?}",
+        board.circuit_warnings()
+    );
+
+    // B1: node B at 250 kbit/s — no ACK, the TECs climb, nothing received.
+    board.set_user_button(true);
+    board.run_for_ns(30e6);
+    board.set_user_button(false);
+    board.run_for_ns(400e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("B1: node B now at 250 kbit/s"), "{text}");
+    assert!(text.contains("A: TEC "), "{text}");
+    assert!(text.contains("TXERR (no ACK)"), "{text}");
+    assert!(
+        text.contains("BUS-OFF") || text.contains("error-passive"),
+        "{text}"
+    );
+    let after = text.split("250 kbit/s").nth(1).unwrap();
+    assert!(!after.contains("B <- 0x123"), "{after}");
+
+    // Back to 125 kbit/s: frames get through again.
+    board.set_user_button(true);
+    board.run_for_ns(30e6);
+    board.set_user_button(false);
+    board.run_for_ns(800e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("B1: node B now at 125 kbit/s"), "{text}");
+    let after = text.split("125 kbit/s").last().unwrap();
+    assert!(after.contains("B <- 0x123"), "{text}");
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-can-mcp2515"]
+fn can_bus_without_termination_gets_no_ack() {
+    let mut board = can_board("off");
+    board.run_for_ns(400e6);
+    let text = console_text(&mut board);
+    assert!(text.contains("TXERR (no ACK)"), "{text}");
+    assert!(!text.contains("B <- 0x123"), "{text}");
+    assert!(
+        board
+            .circuit_warnings()
+            .iter()
+            .any(|w| w.contains("no 120 Ω termination")),
+        "{:?}",
+        board.circuit_warnings()
+    );
+}

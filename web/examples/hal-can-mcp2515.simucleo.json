@@ -1,0 +1,428 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "CAN 버스: MCP2515 모듈 두 개 (SPI1)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "can1",
+      "kind": "can-mcp2515",
+      "x": 50,
+      "y": 4,
+      "props": {
+        "term": "on",
+        "osc": "8 MHz"
+      }
+    },
+    {
+      "id": "can2",
+      "kind": "can-mcp2515",
+      "x": 50,
+      "y": 18,
+      "props": {
+        "term": "on",
+        "osc": "8 MHz"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "D13"
+      },
+      "b": {
+        "part": "can1",
+        "pin": "SCK"
+      },
+      "color": "#8e24aa",
+      "points": [
+        {
+          "x": 20,
+          "y": -1
+        },
+        {
+          "x": 45,
+          "y": -1
+        },
+        {
+          "x": 45,
+          "y": 6
+        }
+      ]
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "can1",
+        "pin": "SCK"
+      },
+      "b": {
+        "part": "can2",
+        "pin": "SCK"
+      },
+      "color": "#8e24aa",
+      "points": [
+        {
+          "x": 49,
+          "y": 6
+        },
+        {
+          "x": 49,
+          "y": 20
+        }
+      ]
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D12"
+      },
+      "b": {
+        "part": "can1",
+        "pin": "SO"
+      },
+      "color": "#43a047",
+      "points": [
+        {
+          "x": 21,
+          "y": -2
+        },
+        {
+          "x": 44,
+          "y": -2
+        },
+        {
+          "x": 44,
+          "y": 8
+        }
+      ]
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "can1",
+        "pin": "SO"
+      },
+      "b": {
+        "part": "can2",
+        "pin": "SO"
+      },
+      "color": "#43a047",
+      "points": [
+        {
+          "x": 48,
+          "y": 8
+        },
+        {
+          "x": 48,
+          "y": 22
+        }
+      ]
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "D11"
+      },
+      "b": {
+        "part": "can1",
+        "pin": "SI"
+      },
+      "color": "#1e88e5",
+      "points": [
+        {
+          "x": 22,
+          "y": -3
+        },
+        {
+          "x": 43,
+          "y": -3
+        },
+        {
+          "x": 43,
+          "y": 7
+        }
+      ]
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "can1",
+        "pin": "SI"
+      },
+      "b": {
+        "part": "can2",
+        "pin": "SI"
+      },
+      "color": "#1e88e5",
+      "points": [
+        {
+          "x": 47,
+          "y": 7
+        },
+        {
+          "x": 47,
+          "y": 21
+        }
+      ]
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "nucleo",
+        "pin": "D10"
+      },
+      "b": {
+        "part": "can1",
+        "pin": "CS"
+      },
+      "color": "#fb8c00",
+      "points": [
+        {
+          "x": 23,
+          "y": -4
+        },
+        {
+          "x": 42,
+          "y": -4
+        },
+        {
+          "x": 42,
+          "y": 9
+        }
+      ]
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "nucleo",
+        "pin": "D9"
+      },
+      "b": {
+        "part": "can2",
+        "pin": "CS"
+      },
+      "color": "#fb8c00",
+      "points": [
+        {
+          "x": 24,
+          "y": -5
+        },
+        {
+          "x": 41,
+          "y": -5
+        },
+        {
+          "x": 41,
+          "y": 23
+        }
+      ]
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "can1",
+        "pin": "INT"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "D2"
+      },
+      "color": "#fdd835",
+      "points": [
+        {
+          "x": 40,
+          "y": 5
+        },
+        {
+          "x": 40,
+          "y": -6
+        },
+        {
+          "x": 31,
+          "y": -6
+        }
+      ]
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "can2",
+        "pin": "INT"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "D8"
+      },
+      "color": "#fdd835",
+      "points": [
+        {
+          "x": 39,
+          "y": 19
+        },
+        {
+          "x": 39,
+          "y": -7
+        },
+        {
+          "x": 25,
+          "y": -7
+        }
+      ]
+    },
+    {
+      "id": "w11",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "can2",
+        "pin": "VCC"
+      },
+      "color": "#e53935",
+      "points": [
+        {
+          "x": 23,
+          "y": 36
+        },
+        {
+          "x": 46,
+          "y": 36
+        },
+        {
+          "x": 46,
+          "y": 25
+        }
+      ]
+    },
+    {
+      "id": "w12",
+      "a": {
+        "part": "can2",
+        "pin": "VCC"
+      },
+      "b": {
+        "part": "can1",
+        "pin": "VCC"
+      },
+      "color": "#e53935",
+      "points": [
+        {
+          "x": 46,
+          "y": 25
+        },
+        {
+          "x": 46,
+          "y": 11
+        }
+      ]
+    },
+    {
+      "id": "w13",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "b": {
+        "part": "can2",
+        "pin": "GND"
+      },
+      "color": "#212121",
+      "points": [
+        {
+          "x": 24,
+          "y": 37
+        },
+        {
+          "x": 45,
+          "y": 37
+        },
+        {
+          "x": 45,
+          "y": 24
+        }
+      ]
+    },
+    {
+      "id": "w14",
+      "a": {
+        "part": "can2",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "can1",
+        "pin": "GND"
+      },
+      "color": "#212121",
+      "points": [
+        {
+          "x": 45,
+          "y": 24
+        },
+        {
+          "x": 45,
+          "y": 10
+        }
+      ]
+    },
+    {
+      "id": "w15",
+      "a": {
+        "part": "can1",
+        "pin": "CANH"
+      },
+      "b": {
+        "part": "can2",
+        "pin": "CANH"
+      },
+      "color": "#fdd835",
+      "points": [
+        {
+          "x": 67,
+          "y": 7
+        },
+        {
+          "x": 67,
+          "y": 21
+        }
+      ]
+    },
+    {
+      "id": "w16",
+      "a": {
+        "part": "can1",
+        "pin": "CANL"
+      },
+      "b": {
+        "part": "can2",
+        "pin": "CANL"
+      },
+      "color": "#43a047",
+      "points": [
+        {
+          "x": 69,
+          "y": 9
+        },
+        {
+          "x": 69,
+          "y": 23
+        }
+      ]
+    }
+  ],
+  "firmware": {
+    "name": "hal-can-mcp2515",
+    "example": "hal-can-mcp2515.elf"
+  }
+}

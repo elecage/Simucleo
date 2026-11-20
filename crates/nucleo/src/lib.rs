@@ -142,6 +142,14 @@ impl ExternalCircuit for CircuitLink {
     ) -> u8 {
         self.0.borrow_mut().spi(time, sck, mosi, miso, out)
     }
+
+    fn spi_clock(&mut self, sck: (u8, u8), hz: f64, cpol: bool, cpha: bool) {
+        self.0.borrow_mut().spi_clock(sck, hz, cpol, cpha)
+    }
+
+    fn spi_rx(&mut self, time: Cycles, sck: (u8, u8), miso: Option<(u8, u8)>) -> u8 {
+        self.0.borrow_mut().spi_rx(time, sck, miso)
+    }
 }
 
 pub struct Nucleo {
@@ -307,6 +315,11 @@ impl Nucleo {
                 .borrow_mut()
                 .set_clock(s.cycle, s.ns / 1e9, s.hz as f64);
         }
+    }
+
+    /// What the TFT display of part `id` shows (RGB565, little-endian).
+    pub fn tft_pixels(&self, id: &str) -> Option<Vec<u8>> {
+        self.circuit.borrow().tft_pixels(id)
     }
 
     /// The SD card of part `id` as a disk image.
@@ -641,6 +654,27 @@ impl Nucleo {
     /// `None` for a pin on no net).
     pub fn take_voltage_log(&mut self) -> Vec<(Cycles, Vec<Option<f64>>)> {
         self.circuit.borrow_mut().take_voltage_log()
+    }
+
+    /// M35: probe part pins as digital lines — a CAN module's CANH/CANL
+    /// shows its bus (high: recessive).
+    pub fn set_line_probes(&mut self, names: &[String]) {
+        self.circuit.borrow_mut().set_line_probes(names);
+    }
+
+    /// The line probes' levels now (`None`: nothing to show).
+    pub fn line_levels(&self) -> Vec<Option<bool>> {
+        self.circuit.borrow().line_levels()
+    }
+
+    /// Level changes of the line probes up to now: (ns, probe, level).
+    pub fn take_line_edges(&mut self) -> Vec<(f64, usize, bool)> {
+        let now = self.sys.cycles;
+        let mut e = self.circuit.borrow_mut().take_line_edges(now);
+        for x in &mut e {
+            x.0 *= 1e9;
+        }
+        e
     }
 
     /// The analog probes' voltages now.

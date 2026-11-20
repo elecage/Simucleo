@@ -46,7 +46,8 @@ pub enum WireEvent {
     /// One SPI frame (8 or 16 SCK periods) that ended at `end`.
     Spi {
         sck: Pin,
-        mosi: Pin,
+        /// MOSI; `None` for a receive-only master (RXONLY).
+        mosi: Option<Pin>,
         miso: Option<Pin>,
         start: Cycles,
         end: Cycles,
@@ -213,7 +214,9 @@ impl WireEvent {
                         } else {
                             (w, w + h, w + 2.0 * h)
                         };
-                        o.put(mosi, data_at, mo);
+                        if let Some(p) = mosi {
+                            o.put(p, data_at, mo);
+                        }
                         if let Some(m) = miso {
                             o.put(m, data_at, mi);
                         }
@@ -401,7 +404,7 @@ mod tests {
         (
             WireEvent::Spi {
                 sck,
-                mosi,
+                mosi: Some(mosi),
                 miso: Some(miso),
                 start: 0,
                 end: 1600, // 8 bits, 200 cycles each

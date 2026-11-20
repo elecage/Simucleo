@@ -7,8 +7,12 @@
 //! pin drives.
 
 pub mod devices;
+pub mod mcp2515;
 pub mod models;
 pub mod netlist;
+pub mod rc522;
 pub mod sim;
+pub mod tft;
+pub mod thermocouple;
 pub mod tier8;
 pub mod tier9;

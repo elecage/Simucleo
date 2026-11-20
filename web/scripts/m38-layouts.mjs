@@ -252,6 +252,14 @@ L["examples/hal-spi-sd-logger"] = (c) => {
   c.rails({ "bb1:bp": "3V3", "bb1:bn": "GND_P1", "bb1:tp": "5V", "bb1:tn": "GND_P1" });
 };
 
+L["examples/hal-thermocouple"] = (c) => {
+  c.bb("bb1", 42, 4);
+  c.ledCell("led", "r", "bb1", 22);
+  c.place("k", 80, 2);
+  c.place("j", 80, 13);
+  c.rails({ "bb1:bp": "3V3", "bb1:bn": "GND_P1" });
+};
+
 L["examples/hal-shift-register"] = (c) => {
   c.bb("bb1", 42, 4);
   c.bb("bb2", 78, 4);

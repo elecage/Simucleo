@@ -34,12 +34,15 @@ use crate::devices::{
     Mpu6050, NeoPixel, Relay, SdCard, Sonar, Ssd1306,
 };
 
+use crate::tft::{Tft, TftConfig};
+use crate::thermocouple::{ProbeFault, TcChip, Thermocouple, TC_VMIN};
 use crate::tier8::{Bmp280, Hc595, Pir, Tm1637, PIR_VMIN};
 use crate::tier9::{
     l298n_bridge, BipolarStepper, CoilDrive, Esc, EscState, HallBldc, PhaseBridge, PhaseDrive,
     StepDriver, BLDC_R, STEPPER_COIL_R, STEPPER_RATED,
 };
 
+use crate::mcp2515::{CanNet, CanPart, Chips, Mcp2515};
 use crate::netlist::{build_netlist, BusCatalog, Circuit, PartCatalog, PartInstance, PinRef, Wire};
 
 /// Simulated time in core clock cycles.
@@ -301,6 +304,31 @@ pub struct PartVisual {
     /// Motors and their drivers (M21).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub motor: Option<MotorView>,
+    /// Colour TFT display (M35): its state; the pixels come separately
+    /// ([`CircuitSim::tft_pixels`]) when `version` moves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tft: Option<TftView>,
+}
+
+/// What a colour TFT display shows (M35).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct TftView {
+    /// Panel size in pixels.
+    pub width: u16,
+    pub height: u16,
+    /// Changes whenever the picture does (unique across displays).
+    pub version: u64,
+    /// The panel shows the frame memory (powered, out of reset, SLPOUT,
+    /// DISPON).
+    pub lit: bool,
+    /// Backlight: the fraction of the frame the LED pin was high (PWM
+    /// dims it).
+    pub backlight: f64,
+    pub sleeping: bool,
+    pub display_on: bool,
+    pub inverted: bool,
+    pub madctl: u8,
+    pub colmod: u8,
 }
 
 /// What a motor or a motor driver shows (M21).
@@ -482,13 +510,24 @@ pub struct CircuitSim {
     voltage_log: Vec<(Cycles, Vec<Option<f64>>)>,
     /// Bus device parts and where their pins are.
     bus_parts: Vec<BusPart>,
+    /// M35: MCP2515 CAN modules, the buses between them, and the probed
+    /// part pins ("can1.CANH") that show a bus's bits.
+    can_parts: Vec<CanPart>,
+    can: CanNet,
+    can_probes: Vec<String>,
     /// Their state (display RAM, clock, …), by part id.
     devices: HashMap<String, Device>,
     spi_parts: Vec<SpiPart>,
+    /// Thermocouple modules (M35), read over SPI or bit-banged.
+    tc_parts: Vec<TcPart>,
+    /// SCK rate (Hz) and mode (CPOL, CPHA) of hardware SPI, by SCK pin.
+    spi_clocks: HashMap<(u8, u8), (f64, bool, bool)>,
     /// Single-wire parts (DHT, NeoPixel) and their data line.
     wire_parts: Vec<WirePart>,
     /// LED matrix drivers, whose CLK and CS edges are watched.
     matrix_parts: Vec<MatrixPart>,
+    /// Colour TFT displays (M35): serial lines, reset and backlight.
+    tft_parts: Vec<TftPart>,
     /// Lines devices pull low on their own: (part id, node).
     dev_outputs: Vec<(String, usize, usize)>,
     /// UART modules (HC-05) and where their pins are.
@@ -793,6 +832,32 @@ struct SpiPart {
     vmin: f64,
 }
 
+/// A colour TFT module (M35): its serial lines as nets (bit-banged or
+/// SPI), RESET and the backlight pin.
+#[derive(Debug, Clone)]
+struct TftPart {
+    id: String,
+    vcc: usize,
+    gnd: usize,
+    sck: usize,
+    mosi: usize,
+    cs: usize,
+    dc: usize,
+    res: usize,
+    led: usize,
+}
+
+/// A thermocouple module (M35): SO is a device output.
+#[derive(Debug, Clone)]
+struct TcPart {
+    id: String,
+    vcc: usize,
+    gnd: usize,
+    sck: usize,
+    cs: usize,
+    so: usize,
+}
+
 /// A part on an I2C bus.
 #[derive(Debug, Clone)]
 struct BusPart {
@@ -818,6 +883,9 @@ const SEGMENTS: [&str; 8] = ["a", "b", "c", "d", "e", "f", "g", "dp"];
 const I2C_HIGH: f64 = 0.7 * VDD;
 /// Lowest supply a bus module works from.
 const MODULE_VMIN: f64 = 2.0;
+/// Lowest VCC of a TFT module (its regulator and the controller's 2.8 V
+/// minimum).
+const TFT_VMIN: f64 = 2.8;
 /// 2026-01-01 00:00:00 UTC, until the UI gives the real time.
 const DEFAULT_WALL_CLOCK: f64 = 1_767_225_600.0;
 
@@ -868,9 +936,15 @@ impl CircuitSim {
             voltage_last: Vec::new(),
             voltage_log: Vec::new(),
             bus_parts: Vec::new(),
+            can_parts: Vec::new(),
+            can: CanNet::default(),
+            can_probes: Vec::new(),
             spi_parts: Vec::new(),
+            tc_parts: Vec::new(),
+            spi_clocks: HashMap::new(),
             wire_parts: Vec::new(),
             matrix_parts: Vec::new(),
+            tft_parts: Vec::new(),
             dev_outputs: Vec::new(),
             uart_parts: Vec::new(),
             relay_parts: Vec::new(),
@@ -955,8 +1029,13 @@ impl CircuitSim {
                 Device::Baro(x) => **x = Bmp280::new(x.address, x.temp, x.pressure),
                 // The shaft stays where it is; the clock starts again.
                 Device::Bldc(x) => x.rebase(0.0),
+                Device::Rfid(r) => r.power_cycle(),
+                Device::Tft(x) => **x = Tft::new(x.cfg),
+                Device::Tc(x) => **x = x.power_cycled(),
+                Device::Can(c) => c.power_cycle(),
             }
         }
+        self.can.reset_time();
         self.i2c_active.clear();
         // Simulated time starts again from 0 s: the motors keep where their
         // shafts are; the drivers start from home, the ESCs from scratch.
@@ -1202,8 +1281,11 @@ impl CircuitSim {
         let mut bad_values: Vec<String> = Vec::new();
         let mut bus_parts = Vec::new();
         let mut spi_parts = Vec::new();
+        let mut tc_parts = Vec::new();
+        let mut can_parts: Vec<CanPart> = Vec::new();
         let mut wire_parts = Vec::new();
         let mut matrix_parts = Vec::new();
+        let mut tft_parts = Vec::new();
         let mut dev_outputs = Vec::new();
         let mut uart_parts = Vec::new();
         let mut relay_parts = Vec::new();
@@ -2340,6 +2422,222 @@ impl CircuitSim {
                             .insert(p.id.clone(), Device::Matrix(Max7219::new(count)));
                     }
                 }
+                "rfid-rc522" => {
+                    // RC522 module (M35): SPI with SDA as NSS, IRQ an open-
+                    // drain output, RST (NRSTPD) with a 10 kΩ pull-up.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("3V3"), &mut map), node(pin("GND"), &mut map));
+                    let rst = node(pin("RST"), &mut map);
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: crate::rc522::VMIN,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    elements.push(Element::Resistor {
+                        a: vcc,
+                        b: rst,
+                        r: 10_000.0,
+                    });
+                    dev_outputs.push((p.id.clone(), node(pin("IRQ"), &mut map), 0));
+                    spi_parts.push(SpiPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        sck: node(pin("SCK"), &mut map),
+                        mosi: node(pin("MOSI"), &mut map),
+                        miso: Some(node(pin("MISO"), &mut map)),
+                        cs: node(pin("SDA"), &mut map),
+                        dc: None,
+                        res: Some(rst),
+                        vmin: crate::rc522::VMIN,
+                    });
+                    let card = prop_f64(p, "card", 0.0).clamp(0.0, 9.0) as usize;
+                    if !matches!(self.devices.get(&p.id), Some(Device::Rfid(_))) {
+                        self.devices
+                            .insert(p.id.clone(), Device::Rfid(Box::default()));
+                    }
+                    if let Some(Device::Rfid(r)) = self.devices.get_mut(&p.id) {
+                        r.set_card(card);
+                    }
+                }
+                "tft-st7735" | "tft-ili9341" => {
+                    // M35: channel 0 = supply, 1 = backlight (LED pin).
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 2);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let ili = p.kind == "tft-ili9341";
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    let (sda, dc) = if ili { ("SDI", "DC") } else { ("SDA", "A0") };
+                    let part = TftPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        sck: node(pin("SCK"), &mut map),
+                        mosi: node(pin(sda), &mut map),
+                        cs: node(pin("CS"), &mut map),
+                        dc: node(pin(dc), &mut map),
+                        res: node(pin("RESET"), &mut map),
+                        led: node(pin("LED"), &mut map),
+                    };
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: TFT_VMIN,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    elements.push(Element::Sense {
+                        a: part.led,
+                        b: gnd,
+                        threshold: 1.5,
+                        visual: vis,
+                        channel: 1,
+                    });
+                    spi_parts.push(SpiPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        sck: part.sck,
+                        mosi: part.mosi,
+                        miso: ili.then(|| node(pin("SDO"), &mut map)),
+                        cs: part.cs,
+                        dc: Some(part.dc),
+                        res: Some(part.res),
+                        vmin: TFT_VMIN,
+                    });
+                    tft_parts.push(part);
+                    let cfg = if ili {
+                        TftConfig::ili9341()
+                    } else {
+                        TftConfig::st7735(&prop_str(p, "tab", "black"))
+                    };
+                    if !matches!(self.devices.get(&p.id), Some(Device::Tft(t)) if t.cfg == cfg) {
+                        self.devices
+                            .insert(p.id.clone(), Device::Tft(Box::new(Tft::new(cfg))));
+                    }
+                }
+                "max6675" | "max31855" => {
+                    // Thermocouple module: MAX6675 VCC GND SCK CS SO,
+                    // MAX31855 (Adafruit style) VIN 3Vo GND DO CS CLK.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let chip = if p.kind == "max6675" {
+                        TcChip::Max6675
+                    } else {
+                        TcChip::Max31855
+                    };
+                    let [v, k, o] = match chip {
+                        TcChip::Max6675 => ["VCC", "SCK", "SO"],
+                        TcChip::Max31855 => ["VIN", "CLK", "DO"],
+                    };
+                    let (vcc, gnd) = (node(pin(v), &mut map), node(pin("GND"), &mut map));
+                    let (sck, cs, so) = (
+                        node(pin(k), &mut map),
+                        node(pin("CS"), &mut map),
+                        node(pin(o), &mut map),
+                    );
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: TC_VMIN,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    dev_outputs.push((p.id.clone(), so, 0));
+                    if chip == TcChip::Max31855 {
+                        dev_outputs.push((p.id.clone(), node(pin("3Vo"), &mut map), 1));
+                    }
+                    tc_parts.push(TcPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        sck,
+                        cs,
+                        so,
+                    });
+                    if !matches!(self.devices.get(&p.id), Some(Device::Tc(t)) if t.chip == chip) {
+                        let fresh = Box::new(Thermocouple::new(chip));
+                        self.devices.insert(p.id.clone(), Device::Tc(fresh));
+                    }
+                    if let Some(Device::Tc(t)) = self.devices.get_mut(&p.id) {
+                        t.hot = prop_f64(p, "temp", 25.0);
+                        t.cold = prop_f64(p, "ambient", 25.0);
+                        t.reversed = p.props.get("reversed").is_some_and(truthy);
+                        let unplugged = p.props.get("unplugged").is_some_and(truthy);
+                        t.fault = match prop_str(p, "short", "none").as_str() {
+                            _ if unplugged => ProbeFault::Open,
+                            "gnd" => ProbeFault::ShortGnd,
+                            "vcc" => ProbeFault::ShortVcc,
+                            _ => ProbeFault::None,
+                        };
+                    }
+                }
+                "can-mcp2515" => {
+                    // M35: MCP2515 + TJA1050 module. SPI on SCK/SI/SO/CS,
+                    // INT push-pull; the transceiver biases CANH and CANL
+                    // to VCC/2, the J1 jumper puts 120 Ω across them.
+                    let vis = add_visual(&p.id, VisualKind::Sensor, 1);
+                    let pin = |n: &str| PinRef::new(&p.id, n);
+                    let (vcc, gnd) = (node(pin("VCC"), &mut map), node(pin("GND"), &mut map));
+                    let (canh, canl) = (node(pin("CANH"), &mut map), node(pin("CANL"), &mut map));
+                    let cs = node(pin("CS"), &mut map);
+                    elements.push(Element::Sense {
+                        a: vcc,
+                        b: gnd,
+                        threshold: crate::mcp2515::CHIP_VMIN,
+                        visual: vis,
+                        channel: 0,
+                    });
+                    for line in [canh, canl] {
+                        for (a, b) in [(vcc, line), (line, gnd)] {
+                            elements.push(Element::Resistor { a, b, r: 50_000.0 });
+                        }
+                    }
+                    let term = p.props.get("term").is_none_or(truthy);
+                    if term {
+                        elements.push(Element::Resistor {
+                            a: canh,
+                            b: canl,
+                            r: 120.0,
+                        });
+                    }
+                    dev_outputs.push((p.id.clone(), node(pin("INT"), &mut map), 0));
+                    spi_parts.push(SpiPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        sck: node(pin("SCK"), &mut map),
+                        mosi: node(pin("SI"), &mut map),
+                        miso: Some(node(pin("SO"), &mut map)),
+                        cs,
+                        dc: None,
+                        res: None,
+                        vmin: crate::mcp2515::CHIP_VMIN,
+                    });
+                    can_parts.push(CanPart {
+                        id: p.id.clone(),
+                        vcc,
+                        gnd,
+                        cs,
+                        canh,
+                        canl,
+                        term,
+                    });
+                    let osc = if prop_str(p, "osc", "8").starts_with("16") {
+                        16e6
+                    } else {
+                        8e6
+                    };
+                    match self.devices.get_mut(&p.id) {
+                        Some(Device::Can(c)) => c.osc = osc,
+                        _ => {
+                            self.devices
+                                .insert(p.id.clone(), Device::Can(Box::new(Mcp2515::new(osc))));
+                        }
+                    }
+                }
                 "oled-ssd1306-spi" | "sd-card" => {
                     let vis = add_visual(&p.id, VisualKind::Sensor, 1);
                     let pin = |n: &str| PinRef::new(&p.id, n);
@@ -2542,6 +2840,7 @@ impl CircuitSim {
             .chain(tm_parts.iter().map(|b: &TmPart| b.id.as_str()))
             .chain(pir_parts.iter().map(|b: &PirPart| b.id.as_str()))
             .chain(bldc_parts.iter().map(|b: &BldcPart| b.id.as_str()))
+            .chain(tc_parts.iter().map(|b: &TcPart| b.id.as_str()))
             .chain(encoders)
             .collect();
         self.devices.retain(|id, _| ids.contains(id.as_str()));
@@ -2551,10 +2850,12 @@ impl CircuitSim {
         self.i2c_active.retain(|_, id| on_bus(id));
         self.bus_parts = bus_parts;
         self.spi_parts = spi_parts;
+        self.tc_parts = tc_parts;
         self.line_levels
             .retain(|id, _| wire_parts.iter().any(|w| &w.id == id));
         self.wire_parts = wire_parts;
         self.matrix_parts = matrix_parts;
+        self.tft_parts = tft_parts;
         self.dev_outputs = dev_outputs;
         self.uart_parts = uart_parts;
         self.relay_parts = relay_parts;
@@ -2567,6 +2868,12 @@ impl CircuitSim {
         link_warnings.extend(link_bldcs(&mut bldc_parts, &phase_bridges));
         self.warnings.extend(link_warnings.iter().cloned());
         self.value_warnings.extend(link_warnings);
+        let (buses, can_warnings) = crate::mcp2515::group_buses(&can_parts);
+        self.can.set_buses(buses);
+        self.can_parts = can_parts;
+        self.warnings.extend(can_warnings.iter().cloned());
+        self.value_warnings.extend(can_warnings);
+        self.can_logging();
         let ids: Vec<String> = stepper_parts.iter().map(|m| m.id.clone()).collect();
         self.steppers.retain(|id, _| ids.contains(id));
         let ids: Vec<String> = driver_parts.iter().map(|m| m.id.clone()).collect();
@@ -3036,10 +3343,12 @@ impl CircuitSim {
     /// may have changed.
     pub fn update(&mut self, time: Cycles, drives: &[Drive]) -> Option<Vec<Option<bool>>> {
         let first = self.current.is_none();
-        self.inputs_changed = false;
+        // (Input changes since the last call count too: a chip's output
+        // that moved with an SPI byte, such as the MCP2515's INT.)
         self.update_inner(time, drives);
         self.current.as_ref()?;
-        (first || self.inputs_changed).then(|| self.inputs_now.clone())
+        let changed = std::mem::take(&mut self.inputs_changed);
+        (first || changed).then(|| self.inputs_now.clone())
     }
 
     /// The solution for a drive key, from the cache or solved now.
@@ -3061,6 +3370,7 @@ impl CircuitSim {
     /// What the devices drive and where the relay contacts are, after the
     /// MCU's pins in the drive key.
     fn device_key(&mut self, now_s: f64) -> Vec<Drive> {
+        self.advance_can(now_s);
         let mut key = Vec::new();
         for (id, _, idx) in &self.dev_outputs {
             let out = self.devices.get_mut(id).and_then(|d| {
@@ -3223,9 +3533,13 @@ impl CircuitSim {
                 }
             }
         }
+        self.observe_rfid(&sol);
         self.drives = Some(drives.to_vec());
         self.observe_lines(now_s, &sol);
         self.observe_matrices(&sol);
+        self.observe_tfts(now_s, &sol);
+        self.observe_thermocouples(now_s, &sol);
+        self.observe_can(&sol);
         self.observe_relays(now_s, &sol);
         self.observe_shift_registers(&sol);
         self.observe_tm1637(now_s, &sol);
@@ -4162,6 +4476,20 @@ impl CircuitSim {
                             (fresh.gyro, fresh.temp) = (m.gyro, m.temp);
                             **m = fresh;
                         }
+                        Some(Device::Tft(t)) => {
+                            v.tft = Some(TftView {
+                                width: t.cfg.panel_w,
+                                height: t.cfg.panel_h,
+                                version: t.frame_version(),
+                                lit: t.lit() && powered_now,
+                                backlight: avg.get(1).copied().unwrap_or(0.0),
+                                sleeping: t.sleeping,
+                                display_on: t.display_on,
+                                inverted: t.inverted,
+                                madctl: t.madctl,
+                                colmod: t.colmod,
+                            });
+                        }
                         Some(Device::Matrix(m)) => {
                             v.matrix = Some(MatrixView {
                                 rows: (0..m.count).flat_map(|i| m.rows(i)).collect(),
@@ -4276,6 +4604,26 @@ impl CircuitSim {
                                 .into(),
                             );
                         }
+                        Some(Device::Rfid(r)) => {
+                            r.advance(
+                                self.clock.1 + (time as f64 - self.clock.0 as f64) / self.clock.2,
+                            );
+                            v.on = Some(if r.field { 1.0 } else { 0.0 });
+                            v.text = Some(r.card_state().into());
+                        }
+                        Some(Device::Tc(x)) => {
+                            // The word the next read gives, in hex.
+                            let t =
+                                self.clock.1 + (time as f64 - self.clock.0 as f64) / self.clock.2;
+                            if x.powered {
+                                let digits = x.chip.bits() as usize / 4;
+                                v.text = Some(format!("{:0digits$X}", x.word(t)));
+                            }
+                        }
+                        Some(Device::Can(c)) => {
+                            v.text = Some(c.display());
+                            v.on = Some(if c.int_active() { 1.0 } else { 0.0 });
+                        }
                         Some(Device::Sd(sd)) => {
                             if !powered_now {
                                 sd.power_cycle();
@@ -4376,6 +4724,122 @@ impl CircuitSim {
         }
     }
 
+    /// TFT displays (M35) watch their supply, RESET and (bit-banged) serial
+    /// lines.
+    fn observe_tfts(&mut self, now: f64, sol: &Solution) {
+        for part in &self.tft_parts {
+            let Some(Device::Tft(t)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            let high = |n: usize| sol.v[n] > VDD / 2.0;
+            if sol.v[part.vcc] - sol.v[part.gnd] < TFT_VMIN {
+                // Without power the controller forgets everything.
+                if t.powered {
+                    **t = Tft::new(t.cfg);
+                }
+                continue;
+            }
+            if !t.powered {
+                t.power_on(now);
+            }
+            // Wired to nothing that drives it (an MCU pin counts even while
+            // it is still an input).
+            let open = |n: usize| !sol.driven[n] && !self.mcu.iter().any(|&(_, m)| m == n);
+            if open(part.res) {
+                self.warnings.insert(format!(
+                    "{}: RESET is not connected — the controller stays in reset; connect it to a GPIO (or to 3V3)",
+                    part.id
+                ));
+            }
+            if open(part.led) {
+                self.warnings.insert(format!(
+                    "{}: LED (backlight) is not connected — the screen stays dark; connect it to 3V3 or a GPIO",
+                    part.id
+                ));
+            }
+            t.reset_pin(now, !high(part.res));
+            t.pins(
+                now,
+                high(part.sck),
+                high(part.cs),
+                high(part.mosi),
+                high(part.dc),
+            );
+            if let Some(w) = t.warning.take() {
+                self.warnings.insert(format!("{}: {w}", part.id));
+            }
+        }
+    }
+
+    /// Thermocouple modules power up and down, and watch CS (and SCK, for
+    /// bit-banged reads).
+    fn observe_thermocouples(&mut self, now: f64, sol: &Solution) {
+        for part in &self.tc_parts {
+            let Some(Device::Tc(t)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            t.power(now, sol.v[part.vcc] - sol.v[part.gnd] >= TC_VMIN);
+            let high = |n: usize| sol.v[n] > VDD / 2.0;
+            t.pins(now, high(part.sck), high(part.cs));
+            if let Some(w) = t.warning.take() {
+                self.warnings.insert(format!("{}: {w}", part.id));
+            }
+        }
+    }
+
+    /// Hardware SPI on SCK `sck` into the thermocouple modules selected by
+    /// a low CS (they have no data input): what those whose SO is on
+    /// `miso` return, and who they are.
+    fn spi_thermocouples(&mut self, sck: (u8, u8), miso: Option<(u8, u8)>) -> (u8, Vec<String>) {
+        let (mut reply, mut drivers) = (0xFF, Vec::new());
+        let Some(kn) = self.mcu_node(sck) else {
+            return (reply, drivers);
+        };
+        let miso_n = miso.and_then(|p| self.mcu_node(p));
+        let (hz, cpol, cpha) = self
+            .spi_clocks
+            .get(&sck)
+            .copied()
+            .unwrap_or((1e6, false, false));
+        for i in 0..self.tc_parts.len() {
+            let part = self.tc_parts[i].clone();
+            let v = |n: usize| self.node_voltage(n);
+            if part.sck != kn || v(part.vcc) - v(part.gnd) < TC_VMIN || v(part.cs) >= 0.3 * VDD {
+                continue;
+            }
+            let Some(Device::Tc(t)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            let r = t.exchange(hz, cpol, cpha);
+            if let Some(w) = t.warning.take() {
+                self.warnings.insert(format!("{}: {w}", part.id));
+            }
+            if miso_n == Some(part.so) {
+                reply &= r;
+                drivers.push(part.id);
+            }
+        }
+        (reply, drivers)
+    }
+
+    /// The SCK rate and mode of the hardware SPI on `sck` (before its bytes).
+    pub fn spi_clock(&mut self, sck: (u8, u8), hz: f64, cpol: bool, cpha: bool) {
+        self.spi_clocks.insert(sck, (hz, cpol, cpha));
+    }
+
+    /// One byte of a receive-only SPI master (RXONLY: SCK and MISO, MOSI
+    /// not driven): only the thermocouple modules take part.
+    pub fn spi_rx(&mut self, _time: Cycles, sck: (u8, u8), miso: Option<(u8, u8)>) -> u8 {
+        let (reply, drivers) = self.spi_thermocouples(sck, miso);
+        if drivers.len() > 1 {
+            self.warnings.insert(format!(
+                "SPI: {} are selected at once and both drive MISO",
+                drivers.join(" and ")
+            ));
+        }
+        reply
+    }
+
     /// LED matrix drivers watch CLK and CS: bit-banged frames shift in on
     /// CLK rising edges, and every frame (SPI too) is taken when CS rises.
     fn observe_matrices(&mut self, sol: &Solution) {
@@ -4394,6 +4858,26 @@ impl CircuitSim {
         }
     }
 
+    /// MFRC522 modules (M35): supply, NRSTPD and the end of an SPI frame
+    /// (SDA/NSS high).
+    fn observe_rfid(&mut self, sol: &Solution) {
+        for part in &self.spi_parts {
+            let Some(Device::Rfid(r)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            let supply = sol.v[part.vcc] - sol.v[part.gnd];
+            let high = |n: usize| sol.v[n] - sol.v[part.gnd] > 0.5 * supply.max(0.0);
+            let rst = part.res.is_some_and(high);
+            r.pins(supply >= part.vmin, rst, sol.v[part.cs] >= 0.3 * VDD);
+            if supply > crate::rc522::VMAX {
+                self.warnings.insert(format!(
+                    "{}: the MFRC522 runs on 3.3 V (2.5–3.6 V) — {supply:.1} V on 3.3V can damage it",
+                    part.id
+                ));
+            }
+        }
+    }
+
     /// When a device next changes a line by itself (a DHT's reply), in
     /// core cycles.
     pub fn next_event(&self) -> Option<Cycles> {
@@ -4404,6 +4888,7 @@ impl CircuitSim {
             .chain(self.relay_parts.iter().map(|r| &r.id))
             .filter_map(|id| self.devices.get(id).and_then(|d| d.next_change()))
             .chain(self.phase_state.values().filter_map(|b| b.next_change()))
+            .chain(self.can_next())
             .map(|t| c + ((t - s) * hz).ceil().max(0.0) as Cycles)
             // A probed net that a turning motor's back-EMF moves.
             .chain(
@@ -4411,6 +4896,115 @@ impl CircuitSim {
                     .then(|| self.x_time + (EMF_PROBE_INTERVAL * hz).ceil() as Cycles),
             )
             .min()
+    }
+
+    /// The CAN chips by part id.
+    fn can_chips(&mut self) -> Chips<'_> {
+        self.devices
+            .iter_mut()
+            .filter_map(|(id, d)| match d {
+                Device::Can(c) => Some((id.as_str(), c.as_mut())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Bring the CAN buses up to `now` (s).
+    fn advance_can(&mut self, now: f64) {
+        if self.can_parts.is_empty() {
+            return;
+        }
+        let mut can = std::mem::take(&mut self.can);
+        can.advance(&mut self.can_chips(), now);
+        self.can = can;
+    }
+
+    /// When the CAN buses next do something (s).
+    fn can_next(&self) -> Option<f64> {
+        if self.can_parts.is_empty() {
+            return None;
+        }
+        self.can
+            .next_event(self.devices.iter().filter_map(|(id, d)| match d {
+                Device::Can(c) => Some((id.as_str(), &**c)),
+                _ => None,
+            }))
+    }
+
+    /// The CAN modules' supply, transceiver supply and chip select.
+    fn observe_can(&mut self, sol: &Solution) {
+        for part in &self.can_parts {
+            let Some(Device::Can(c)) = self.devices.get_mut(&part.id) else {
+                continue;
+            };
+            let vs = sol.v[part.vcc] - sol.v[part.gnd];
+            let powered = vs >= crate::mcp2515::CHIP_VMIN;
+            if c.powered && !powered {
+                c.power_cycle();
+            }
+            c.powered = powered;
+            c.transceiver = vs >= crate::mcp2515::TRANSCEIVER_VMIN;
+            if powered && !c.transceiver {
+                self.warnings.insert(format!(
+                    "{}: the TJA1050 transceiver needs 5 V (VCC is {vs:.1} V) — the module cannot reach the CAN bus",
+                    part.id
+                ));
+            }
+            if sol.v[part.cs] >= 0.3 * VDD {
+                c.deselect();
+            }
+        }
+    }
+
+    /// Probe part pins as a CAN bus's level: `"can1.CANH"` or
+    /// `"can1.CANL"` of a CAN module shows the bus it is on (high:
+    /// recessive, as a transceiver's RXD). Other names show nothing.
+    pub fn set_line_probes(&mut self, names: &[String]) {
+        self.can_probes = names.to_vec();
+        self.can_logging();
+    }
+
+    /// The bus a line probe shows.
+    fn line_bus(&self, name: &str) -> Option<usize> {
+        let (part, pin) = name.split_once('.')?;
+        if !matches!(pin, "CANH" | "CANL") || !self.can_parts.iter().any(|p| p.id == part) {
+            return None;
+        }
+        self.can.bus_of(part)
+    }
+
+    fn can_logging(&mut self) {
+        let buses: Vec<usize> = self
+            .can_probes
+            .iter()
+            .filter_map(|n| self.line_bus(n))
+            .collect();
+        self.can.set_logging(&buses);
+    }
+
+    /// Levels of the line probes now (`None`: not a CAN pin).
+    pub fn line_levels(&self) -> Vec<Option<bool>> {
+        self.can_probes
+            .iter()
+            .map(|n| self.line_bus(n).map(|b| self.can.level(b)))
+            .collect()
+    }
+
+    /// Level changes of the line probes up to `time`: (seconds, probe,
+    /// level).
+    pub fn take_line_edges(&mut self, time: Cycles) -> Vec<(f64, usize, bool)> {
+        let now = self.seconds_at(time);
+        let edges = self.can.take_edges(now);
+        let probes: Vec<Option<usize>> = self.can_probes.iter().map(|n| self.line_bus(n)).collect();
+        let mut out = Vec::new();
+        for (bus, t, level) in edges {
+            for (k, b) in probes.iter().enumerate() {
+                if *b == Some(bus) {
+                    out.push((t, k, level));
+                }
+            }
+        }
+        out
     }
 
     /// Turn a rotary encoder by `detents` (negative: counter-clockwise),
@@ -4556,13 +5150,15 @@ impl CircuitSim {
         miso: Option<(u8, u8)>,
         out: u8,
     ) -> u8 {
+        // Thermocouple modules need SCK only (they have no data input).
+        let (mut reply, mut drivers) = self.spi_thermocouples(sck, miso);
         let (Some(kn), Some(mn)) = (self.mcu_node(sck), self.mcu_node(mosi)) else {
-            return 0xFF;
+            return reply;
         };
         let miso_n = miso.and_then(|p| self.mcu_node(p));
+        let now_s = self.seconds_at(time);
         let name = |(port, pin): (u8, u8)| format!("P{}{}", (b'A' + port) as char, pin);
-        let mut reply = 0xFF;
-        let mut drivers = Vec::new();
+        self.advance_can(now_s);
         // Bits that left a matrix on DOUT during this byte, by part.
         let mut overflow = Vec::new();
         for i in 0..self.spi_parts.len() {
@@ -4592,8 +5188,35 @@ impl CircuitSim {
                     }
                 }
                 Some(Device::Matrix(m)) => overflow.push((part.id.clone(), m.byte(out))),
-                Some(Device::Sd(sd)) => {
-                    let r = sd.exchange(out);
+                Some(Device::Rfid(rfid)) => {
+                    let r = rfid.exchange(now_s, out);
+                    match (part.miso, miso_n) {
+                        (Some(a), Some(b)) if a == b => {
+                            reply &= r;
+                            drivers.push(part.id.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                Some(Device::Tft(t)) => {
+                    let r = t.byte(now_s, dc_high, out);
+                    if let Some(w) = t.warning.take() {
+                        self.warnings.insert(format!("{}: {w}", part.id));
+                    }
+                    match (r, part.miso, miso_n) {
+                        (Some(r), Some(a), Some(b)) if a == b => {
+                            reply &= r;
+                            drivers.push(part.id.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                Some(Device::Sd(_)) | Some(Device::Can(_)) => {
+                    let r = match self.devices.get_mut(&part.id) {
+                        Some(Device::Sd(sd)) => sd.exchange(out),
+                        Some(Device::Can(c)) => c.spi_byte(out, now_s),
+                        _ => 0xFF,
+                    };
                     match (part.miso, miso_n) {
                         (Some(a), Some(b)) if a == b => {
                             reply &= r;
@@ -4689,6 +5312,15 @@ impl CircuitSim {
                     fed.insert(m.id);
                 }
             }
+        }
+    }
+
+    /// What the TFT display in part `id` shows, RGB565 little-endian row by
+    /// row (`width × height × 2` bytes, empty while it is not lit).
+    pub fn tft_pixels(&self, id: &str) -> Option<Vec<u8>> {
+        match self.devices.get(id) {
+            Some(Device::Tft(t)) => Some(t.screen565()),
+            _ => None,
         }
     }
 
@@ -5907,6 +6539,145 @@ mod tests {
         );
         s.update(0, &drives(&s, |_| Drive::Float));
         assert_eq!(read_ay(&mut s), -8192 + 12288);
+    }
+
+    /// An RC522 on SPI1 (PA5/PA6/PA7), SDA on PB6, IRQ on PA8 and RST on
+    /// PA9, powered from `supply`.
+    fn rc522_sim(supply: &str) -> CircuitSim {
+        sim(
+            vec![part("rfid", "rfid-rc522", &[])],
+            vec![
+                wire(("rfid", "3V3"), ("mcu", supply)),
+                wire(("rfid", "GND"), ("mcu", "GND")),
+                wire(("rfid", "SCK"), ("mcu", "PA5")),
+                wire(("rfid", "MISO"), ("mcu", "PA6")),
+                wire(("rfid", "MOSI"), ("mcu", "PA7")),
+                wire(("rfid", "SDA"), ("mcu", "PB6")),
+                wire(("rfid", "IRQ"), ("mcu", "PA8")),
+                wire(("rfid", "RST"), ("mcu", "PA9")),
+            ],
+        )
+    }
+
+    /// Drive SDA (PB6), RST (PA9: None = not driven) and pull PA8 up.
+    fn rc522_pins(s: &mut CircuitSim, t: Cycles, cs_high: bool, rst: Option<bool>) {
+        let level = |h: bool| if h { Drive::High } else { Drive::Low };
+        let d = drives(s, |p| match p {
+            (1, 6) => level(cs_high),
+            (0, 9) => rst.map_or(Drive::Float, level),
+            (0, 8) => Drive::PullUp,
+            _ => Drive::Float,
+        });
+        s.update(t, &d);
+    }
+
+    /// One register access as the MFRC522 libraries do it: SDA low,
+    /// address byte, data byte, SDA high. Returns the second MISO byte.
+    fn rc522_access(s: &mut CircuitSim, t: &mut Cycles, addr_byte: u8, data: u8) -> u8 {
+        let (sck, mosi, miso) = ((0, 5), (0, 7), Some((0, 6)));
+        rc522_pins(s, *t, false, Some(true));
+        s.spi(*t, sck, mosi, miso, addr_byte);
+        let r = s.spi(*t + 16, sck, mosi, miso, data);
+        rc522_pins(s, *t + 32, true, Some(true));
+        *t += 48;
+        r
+    }
+
+    #[test]
+    fn rc522_answers_on_spi_and_a_placed_card_raises_irq() {
+        use crate::rc522::*;
+        let mut s = rc522_sim("3V3");
+        let mut t = 0;
+        rc522_pins(&mut s, t, true, Some(true));
+        let rd = |s: &mut CircuitSim, t: &mut Cycles, a: u8| rc522_access(s, t, 0x80 | a << 1, 0);
+        let wr = |s: &mut CircuitSim, t: &mut Cycles, a: u8, v: u8| {
+            rc522_access(s, t, a << 1, v);
+        };
+        assert_eq!(rd(&mut s, &mut t, VERSION_REG), 0x92);
+        // The address without the shift (a classic mistake) reads another
+        // register: 0x37 >> 1 = 0x1B (reserved, 0).
+        assert_eq!(rc522_access(&mut s, &mut t, 0x80 | VERSION_REG, 0), 0x00);
+        // Not selected: nobody drives MISO.
+        assert_eq!(
+            s.spi(t, (0, 5), (0, 7), Some((0, 6)), 0x80 | VERSION_REG << 1),
+            0xFF
+        );
+        // Antenna on, 100 % ASK, TAuto timer 25 ms, RxIEn on the IRQ pin.
+        for (a, v) in [
+            (TX_ASK, 0x40),
+            (MODE, 0x3D),
+            (T_MODE, 0x80),
+            (T_PRESCALER, 0xA9),
+            (T_RELOAD_H, 0x03),
+            (T_RELOAD_L, 0xE8),
+            (TX_CONTROL, 0x83),
+            (COM_IEN, 0xA0),
+            (COM_IRQ, 0x7F),
+        ] {
+            wr(&mut s, &mut t, a, v);
+        }
+        let v = s.end_frame(t, 0.01);
+        assert_eq!(visual(&v, "rfid").on, Some(1.0), "field on");
+        assert_eq!(visual(&v, "rfid").text.as_deref(), Some("none"));
+        let irq = |s: &CircuitSim| s.mcu_voltage(0, 8).unwrap() > VDD / 2.0;
+        assert!(irq(&s), "IRQ released, pulled up");
+        set_props(&mut s, "rfid", &[("card", "1")], t);
+        let v = s.end_frame(t, 0.01);
+        assert_eq!(visual(&v, "rfid").text.as_deref(), Some("idle"));
+        // REQA: 7 bits.
+        wr(&mut s, &mut t, FIFO_DATA, 0x26);
+        wr(&mut s, &mut t, BIT_FRAMING, 0x07);
+        wr(&mut s, &mut t, COMMAND, CMD_TRANSCEIVE);
+        wr(&mut s, &mut t, BIT_FRAMING, 0x87);
+        let due = s.next_event().expect("the answer is scheduled");
+        assert!(irq(&s));
+        // ATQA arrives within about 0.4 ms (16 MHz cycles).
+        let mut at = t;
+        while irq(&s) && at < t + 16_000 {
+            at = s.next_event().unwrap_or(at + 160).max(at + 1);
+            rc522_pins(&mut s, at, true, Some(true));
+        }
+        assert!(!irq(&s), "IRQ low on RxIRq");
+        assert!(at >= due && at - t > 16 * 100, "{} cycles", at - t);
+        t = at + 16;
+        assert_eq!(rd(&mut s, &mut t, FIFO_LEVEL), 2);
+        assert_eq!(rd(&mut s, &mut t, FIFO_DATA), 0x04);
+        assert_eq!(rd(&mut s, &mut t, FIFO_DATA), 0x00);
+        let v = s.end_frame(t, 0.01);
+        assert_eq!(visual(&v, "rfid").text.as_deref(), Some("ready"));
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        // NRSTPD low: hard power-down, MISO released, field off.
+        rc522_pins(&mut s, t, false, Some(false));
+        assert_eq!(
+            s.spi(t, (0, 5), (0, 7), Some((0, 6)), 0x80 | VERSION_REG << 1),
+            0xFF
+        );
+        let v = s.end_frame(t + 10, 0.01);
+        assert_eq!(visual(&v, "rfid").on, Some(0.0));
+        assert_eq!(visual(&v, "rfid").text.as_deref(), Some("off"));
+        // RST left open: the module's pull-up keeps the chip running.
+        let t = t + 100;
+        let d = drives(&s, |p| match p {
+            (1, 6) => Drive::Low,
+            _ => Drive::Float,
+        });
+        s.update(t, &d);
+        s.spi(t, (0, 5), (0, 7), Some((0, 6)), 0x80 | VERSION_REG << 1);
+        assert_eq!(s.spi(t, (0, 5), (0, 7), Some((0, 6)), 0), 0x92);
+    }
+
+    #[test]
+    fn rc522_on_5v_warns() {
+        let mut s = rc522_sim("5V");
+        rc522_pins(&mut s, 0, true, Some(true));
+        assert!(
+            s.warnings.iter().any(|w| w.contains("3.3 V")),
+            "{:?}",
+            s.warnings
+        );
+        let mut s = rc522_sim("3V3");
+        rc522_pins(&mut s, 0, true, Some(true));
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
     }
 
     #[test]
@@ -7839,5 +8610,293 @@ mod tests {
         assert!(s.warnings.is_empty(), "{:?}", s.warnings);
         // No sensorless part: the hall motor's halls are not needed.
         assert!(motor(&mut s, 2.5, "mot").text.is_none());
+    }
+
+    #[test]
+    fn thermocouples_answer_spi_receive_only_and_bit_banged_reads() {
+        use crate::thermocouple::{decode_max31855, decode_max6675};
+        let mut s = sim(
+            vec![
+                part("k", "max6675", &[("temp", "100")]),
+                part("j", "max31855", &[("temp", "300"), ("ambient", "22")]),
+                part("x", "max31855", &[("unplugged", "1")]),
+            ],
+            vec![
+                wire(("k", "VCC"), ("mcu", "3V3")),
+                wire(("k", "GND"), ("mcu", "GND_1")),
+                wire(("k", "SCK"), ("mcu", "PA5")),
+                wire(("k", "SO"), ("mcu", "PA6")),
+                wire(("k", "CS"), ("mcu", "PB6")),
+                wire(("j", "VIN"), ("mcu", "3V3")),
+                wire(("j", "GND"), ("mcu", "GND_1")),
+                wire(("j", "CLK"), ("mcu", "PA5")),
+                wire(("j", "DO"), ("mcu", "PA6")),
+                wire(("j", "CS"), ("mcu", "PC7")),
+                wire(("x", "VIN"), ("mcu", "3V3")),
+                wire(("x", "GND"), ("mcu", "GND_1")),
+                wire(("x", "CLK"), ("mcu", "PA5")),
+                wire(("x", "DO"), ("mcu", "PA6")),
+                wire(("x", "CS"), ("mcu", "PB10")),
+            ],
+        );
+        let (sck, miso) = ((0, 5), (0, 6));
+        let pins = s.mcu_pins();
+        let so = pins.iter().position(|&p| p == miso).unwrap();
+        // Levels of SCK (None: the SPI peripheral's) and the three CS lines.
+        let set = |s: &mut CircuitSim, t: Cycles, clk: Option<bool>, sel: Option<(u8, u8)>| {
+            let d = drives(s, |p| {
+                let high = match p {
+                    (0, 5) => match clk {
+                        Some(c) => c,
+                        None => return Drive::Float,
+                    },
+                    (1, 6) | (2, 7) | (1, 10) => sel != Some(p),
+                    _ => return Drive::Float,
+                };
+                if high {
+                    Drive::High
+                } else {
+                    Drive::Low
+                }
+            });
+            s.update(t, &d)
+        };
+        let ms = |m: f64| (m * 16e3) as Cycles;
+        set(&mut s, 0, None, None);
+        // Hardware SPI, 2-line (MOSI is not wired) at 2.625 MHz, mode 0.
+        s.spi_clock(sck, 2.625e6, false, false);
+        let read = |s: &mut CircuitSim, t: Cycles, cs: (u8, u8), n: usize, rx: bool| {
+            set(s, t, None, Some(cs));
+            let w = (0..n).fold(0u32, |a, _| {
+                let b = if rx {
+                    s.spi_rx(t, sck, Some(miso))
+                } else {
+                    s.spi(t, sck, (0, 7), Some(miso), 0)
+                };
+                a << 8 | b as u32
+            });
+            set(s, t + 100, None, None);
+            w
+        };
+        let k = read(&mut s, ms(300.0), (1, 6), 2, false);
+        let (c, open) = decode_max6675(k as u16);
+        assert!(!open && (c - 100.5).abs() < 0.3, "{k:04X}");
+        // Receive-only: MAX31855, 32 bits.
+        let (hot, cold, f) = decode_max31855(read(&mut s, ms(310.0), (2, 7), 4, true));
+        assert_eq!((cold, f), (22.0, 0));
+        // (E(300) − E(22)) / 41.276 µV/°C + 22: the straight line reads low.
+        assert_eq!(hot, 296.5);
+        let w = read(&mut s, ms(320.0), (1, 10), 4, true);
+        assert_eq!((w & 7, w >> 16 & 1), (1, 1), "open: OC and the fault bit");
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        // The part shows the word the next read gives.
+        let v = s.end_frame(ms(330.0), 0.01);
+        assert_eq!(
+            visual(&v, "k").text.as_deref(),
+            Some(&*format!("{:04X}", k & !1))
+        );
+        // Bit-banged: SCK as a GPIO, SO read on the rising edges.
+        let mut t = ms(600.0);
+        let mut level = set(&mut s, t, Some(false), Some((1, 6))).unwrap();
+        let mut bits = 0u32;
+        for _ in 0..16 {
+            if let Some(l) = set(&mut s, t + 10, Some(true), Some((1, 6))) {
+                level = l;
+            }
+            bits = bits << 1 | level[so].unwrap_or(true) as u32;
+            if let Some(l) = set(&mut s, t + 20, Some(false), Some((1, 6))) {
+                level = l;
+            }
+            t += 20;
+        }
+        assert_eq!(bits & !1, k & !1, "{bits:04X}");
+        // Too soon after the last read: the conversion was stopped.
+        set(&mut s, t + 10, None, None);
+        read(&mut s, t + ms(50.0), (1, 6), 2, false);
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.starts_with("k: read 50 ms after CS went high")),
+            "{:?}",
+            s.warnings
+        );
+    }
+    /// M35: two MCP2515 modules on SPI1 (CS PB6 and PB0), INT of `b` on
+    /// PA10, CANH to CANH and CANL to CANL.
+    fn can_pair(props: &[(&str, &str)]) -> CircuitSim {
+        let mut w = vec![];
+        for (id, cs) in [("a", "PB6"), ("b", "PB0")] {
+            w.extend([
+                wire((id, "VCC"), ("mcu", "5V")),
+                wire((id, "GND"), ("mcu", "GND")),
+                wire((id, "SCK"), ("mcu", "PA5")),
+                wire((id, "SI"), ("mcu", "PA7")),
+                wire((id, "SO"), ("mcu", "PA6")),
+                wire((id, "CS"), ("mcu", cs)),
+            ]);
+        }
+        w.extend([
+            wire(("b", "INT"), ("mcu", "PA10")),
+            wire(("a", "CANH"), ("b", "CANH")),
+            wire(("a", "CANL"), ("b", "CANL")),
+        ]);
+        sim(
+            vec![
+                part("a", "can-mcp2515", props),
+                part("b", "can-mcp2515", props),
+            ],
+            w,
+        )
+    }
+
+    /// The MCU's drives with `low` (if any) of the two CS pins low.
+    fn can_drives(s: &CircuitSim, low: Option<(u8, u8)>) -> Vec<Drive> {
+        drives(s, |p| match p {
+            (1, 6) | (1, 0) if Some(p) == low => Drive::Low,
+            (1, 6) | (1, 0) => Drive::High,
+            (0, 10) => Drive::PullUp,
+            _ => Drive::Float,
+        })
+    }
+
+    /// CS `cs` low, the bytes, CS high; returns what came back on MISO.
+    fn can_spi(s: &mut CircuitSim, t: &mut Cycles, cs: (u8, u8), bytes: &[u8]) -> Vec<u8> {
+        let d = can_drives(s, Some(cs));
+        s.update(*t, &d);
+        let out = bytes
+            .iter()
+            .map(|&b| s.spi(*t, (0, 5), (0, 7), Some((0, 6)), b))
+            .collect();
+        *t += 100;
+        let d = can_drives(s, None);
+        s.update(*t, &d);
+        *t += 100;
+        out
+    }
+
+    /// Both modules at 125 kbit/s (8 MHz), any message into RXB0 with its
+    /// interrupt, normal mode.
+    fn can_setup(s: &mut CircuitSim, t: &mut Cycles) {
+        for cs in [(1, 6), (1, 0)] {
+            can_spi(s, t, cs, &[0xC0]);
+            can_spi(s, t, cs, &[0x02, 0x28, 0x85, 0xB1, 0x01, 0x01]);
+            can_spi(s, t, cs, &[0x02, 0x60, 0x60]);
+            can_spi(s, t, cs, &[0x05, 0x0F, 0xE0, 0x00]);
+            assert_eq!(can_spi(s, t, cs, &[0x03, 0x0E, 0])[2], 0x00, "normal mode");
+        }
+    }
+
+    /// Run the circuit's own events up to `until`.
+    fn can_run(s: &mut CircuitSim, t: &mut Cycles, until: Cycles) {
+        let d = can_drives(s, None);
+        while let Some(e) = s.next_event() {
+            if e > until {
+                break;
+            }
+            *t = e;
+            s.update(e, &d);
+        }
+        *t = until.max(*t);
+        s.update(*t, &d);
+    }
+
+    #[test]
+    fn mcp2515_modules_send_frames_over_the_bus() {
+        let mut s = can_pair(&[]);
+        let (ca, cb) = ((1, 6), (1, 0));
+        let mut t = 0;
+        let pa10 = s.mcu_pins().iter().position(|&p| p == (0, 10)).unwrap();
+        can_setup(&mut s, &mut t);
+        s.set_line_probes(&["a.CANH".into(), "b.CANL".into(), "PA1".into()]);
+        assert_eq!(s.line_levels(), [Some(true), Some(true), None]);
+        assert_eq!(s.inputs_now[pa10], Some(true), "INT idles high");
+        // a: ID 0x123, 2 bytes, then RTS.
+        can_spi(&mut s, &mut t, ca, &[0x40, 0x24, 0x60, 0, 0, 2, 0xCA, 0xFE]);
+        can_spi(&mut s, &mut t, ca, &[0x81]);
+        assert!(s.next_event().is_some_and(|e| e > t));
+        // At 16 MHz: 11 bits to join, then about 60 bits of 8 µs.
+        can_run(&mut s, &mut t, 16_000_000 / 100);
+        assert_eq!(s.inputs_now[pa10], Some(false), "INT low");
+        let rx = can_spi(&mut s, &mut t, cb, &[0x90, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(rx[1..], [0x24, 0x60, 0, 0, 2, 0xCA, 0xFE]);
+        assert_eq!(
+            s.inputs_now[pa10],
+            Some(true),
+            "READ RX BUFFER cleared RX0IF"
+        );
+        // a got its TX0IF, TXREQ is clear.
+        assert_eq!(can_spi(&mut s, &mut t, ca, &[0xA0, 0])[1], 0x08);
+        let edges = s.take_line_edges(t);
+        assert!(edges.len() > 20, "{}", edges.len());
+        assert!(edges.iter().any(|e| e.1 == 0) && edges.iter().any(|e| e.1 == 1));
+        assert!(!edges[0].2, "SOF is dominant");
+        // SOF 11 bits after the last mode change (8 µs bits at 16 MHz).
+        let sof = edges[0].0;
+        assert!(sof > 11.0 * 8e-6, "{sof}");
+        let v = s.end_frame(t, 0.01);
+        let text = visual(&v, "b").text.clone().unwrap();
+        assert!(
+            text.starts_with("normal 125 kbit/s error-active TEC 0 REC 0 TX 0 RX 1"),
+            "{text}"
+        );
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    }
+
+    #[test]
+    fn mcp2515_without_termination_gets_no_ack() {
+        let mut s = can_pair(&[("term", "off")]);
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.contains("no 120 Ω termination")),
+            "{:?}",
+            s.warnings
+        );
+        let mut t = 0;
+        can_setup(&mut s, &mut t);
+        can_spi(&mut s, &mut t, (1, 6), &[0x40, 0x24, 0x60, 0, 0, 1, 0x55]);
+        can_spi(&mut s, &mut t, (1, 6), &[0x81]);
+        can_run(&mut s, &mut t, 16_000_000 / 100);
+        // TXERR, TXREQ still set (retransmitting), TEC up; b got nothing.
+        let ctrl = can_spi(&mut s, &mut t, (1, 6), &[0x03, 0x30, 0])[2];
+        assert_eq!(ctrl & 0x18, 0x18, "{ctrl:#x}");
+        let tec = can_spi(&mut s, &mut t, (1, 6), &[0x03, 0x1C, 0])[2];
+        assert!(tec >= 8, "{tec}");
+        assert_eq!(can_spi(&mut s, &mut t, (1, 0), &[0xA0, 0])[1] & 1, 0);
+    }
+
+    #[test]
+    fn mcp2515_wiring_faults_are_warned() {
+        let mut s = can_pair(&[]);
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        // CANH to CANL.
+        let mut c = s.circuit.clone();
+        c.wires
+            .retain(|w| !(w.a.pin == "CANH" || w.a.pin == "CANL"));
+        c.wires.push(wire(("a", "CANH"), ("b", "CANL")));
+        c.wires.push(wire(("a", "CANL"), ("b", "CANH")));
+        s.set_circuit(&c, 0);
+        assert!(
+            s.warnings.iter().any(|w| w.contains("CANH is wired to")),
+            "{:?}",
+            s.warnings
+        );
+        // 3.3 V supply: the transceiver does not work.
+        let mut c = s.circuit.clone();
+        for w in &mut c.wires {
+            if w.b.pin == "5V" {
+                w.b.pin = "3V3".into();
+            }
+        }
+        s.set_circuit(&c, 0);
+        let d = can_drives(&s, None);
+        s.update(10, &d);
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.contains("TJA1050 transceiver needs 5 V")),
+            "{:?}",
+            s.warnings
+        );
     }
 }

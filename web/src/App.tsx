@@ -62,6 +62,7 @@ function localName(name: string): string {
 
 const PROP_LABEL: Record<string, string> = {
   bands: t("색띠 수"),
+  card: t("안테나 위 카드 (0 없음 · 1 카드 A · 2 카드 B · 3 키 태그 · 4 NFC 스티커)"),
   tolerance: t("오차"),
   tempco: t("온도계수 (ppm/K, 6띠)"),
   color: t("색"),
@@ -493,6 +494,7 @@ export function App() {
         register: v.register,
         digits: v.digits,
         motor: v.motor,
+        tft: v.tft && { ...v.tft, id: v.id },
       };
       if (v.id === "LD2") {
         if (boardId) out[boardId] = { ...out[boardId], brightness: state.brightness, overcurrent: state.overcurrent };

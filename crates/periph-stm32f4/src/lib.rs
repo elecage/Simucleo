@@ -147,6 +147,14 @@ pub trait ExternalCircuit {
     ) -> u8 {
         0xFF
     }
+    /// The SCK rate (Hz) and mode of the SPI controller on `sck`, given
+    /// before each of its bytes.
+    fn spi_clock(&mut self, _sck: (u8, u8), _hz: f64, _cpol: bool, _cpha: bool) {}
+    /// One byte of a receive-only master (RXONLY) on `sck`: what the
+    /// selected device puts on `miso` (0xFF: nothing).
+    fn spi_rx(&mut self, _time: Cycles, _sck: (u8, u8), _miso: Option<(u8, u8)>) -> u8 {
+        0xFF
+    }
 }
 
 /// Pins as (port, pin, alternate function).
@@ -295,10 +303,17 @@ const SPIS: [SpiInfo; 4] = [
 /// SCK, MOSI and (if routed) MISO of an SPI controller.
 type SpiPins = ((u8, u8), (u8, u8), Option<(u8, u8)>);
 
+/// SCK and (if routed) MISO of a receive-only SPI master.
+type SpiRxPins = ((u8, u8), Option<(u8, u8)>);
+
 /// The devices an SPI controller reaches through the external circuit.
 struct CircuitSpi<'a> {
     circuit: Option<&'a mut Box<dyn ExternalCircuit>>,
     pins: Option<SpiPins>,
+    /// Receive-only master: SCK and (if routed) MISO, MOSI not needed.
+    rx_only: Option<SpiRxPins>,
+    /// SCK in Hz, CPOL, CPHA.
+    clock: (f64, bool, bool),
     time: Cycles,
     /// Bytes exchanged (MOSI, MISO), logged for probes.
     log: Option<Vec<(u8, u8)>>,
@@ -306,8 +321,16 @@ struct CircuitSpi<'a> {
 
 impl SpiBus for CircuitSpi<'_> {
     fn exchange(&mut self, out: u8) -> u8 {
-        let inp = match (&mut self.circuit, self.pins) {
-            (Some(c), Some((sck, mosi, miso))) => c.spi(self.time, sck, mosi, miso, out),
+        let (hz, cpol, cpha) = self.clock;
+        let inp = match (&mut self.circuit, self.rx_only, self.pins) {
+            (Some(c), Some((sck, miso)), _) => {
+                c.spi_clock(sck, hz, cpol, cpha);
+                c.spi_rx(self.time, sck, miso)
+            }
+            (Some(c), None, Some((sck, mosi, miso))) => {
+                c.spi_clock(sck, hz, cpol, cpha);
+                c.spi(self.time, sck, mosi, miso, out)
+            }
             _ => 0xFF,
         };
         if let Some(log) = &mut self.log {
@@ -882,6 +905,35 @@ impl Stm32f401Bus {
         Some((routed(c.sck)?, routed(c.mosi)?, routed(c.miso)))
     }
 
+    /// A receive-only master's pins (RXONLY): SCK and, if routed, MISO.
+    fn spi_rx_pins(&self, i: usize) -> Option<SpiRxPins> {
+        if !self.spi[i].rx_only() {
+            return None;
+        }
+        let routed = |pins: I2cPins| {
+            pins.iter()
+                .find(|&&(port, pin, af)| {
+                    let g = &self.gpio[port as usize];
+                    g.mode(pin) == gpio::PinMode::Alternate && g.af(pin) == af
+                })
+                .map(|&(port, pin, _)| (port, pin))
+        };
+        let c = &SPIS[i];
+        Some((routed(c.sck)?, routed(c.miso)))
+    }
+
+    /// SCK frequency (Hz), CPOL and CPHA of an SPI controller.
+    fn spi_clock(&self, i: usize) -> (f64, bool, bool) {
+        let pclk = if SPIS[i].apb2 {
+            self.clocks.pclk2
+        } else {
+            self.clocks.pclk1
+        };
+        let cr1 = self.spi[i].cr1;
+        let div = 2u64 << ((cr1 >> 3) & 7);
+        (pclk as f64 / div as f64, cr1 & 2 != 0, cr1 & 1 != 0)
+    }
+
     fn spi_frame_cycles(&self, i: usize) -> Cycles {
         let pclk = if SPIS[i].apb2 {
             self.clocks.pclk2
@@ -1049,19 +1101,28 @@ impl Stm32f401Bus {
                     let i = idx as usize;
                     if self.spi[i].gen == gen {
                         let (pins, cycles) = (self.spi_pins(i), self.spi_frame_cycles(i));
-                        let logging = pins.is_some_and(|(sck, mosi, miso)| {
+                        let (rx_only, clock) = (self.spi_rx_pins(i), self.spi_clock(i));
+                        // The wires a probe sees: SCK, MOSI unless receive-only, MISO.
+                        let wires = match (rx_only, pins) {
+                            (Some((sck, miso)), _) => Some((sck, None, miso)),
+                            (None, Some((sck, mosi, miso))) => Some((sck, Some(mosi), miso)),
+                            _ => None,
+                        };
+                        let logging = wires.is_some_and(|(sck, mosi, miso)| {
                             self.probed(sck)
-                                || self.probed(mosi)
+                                || mosi.is_some_and(|m| self.probed(m))
                                 || miso.is_some_and(|m| self.probed(m))
                         });
                         let mut bus = CircuitSpi {
                             circuit: self.circuit.as_mut(),
                             pins,
+                            rx_only,
+                            clock,
                             time: at,
                             log: logging.then(Vec::new),
                         };
                         self.spi[i].event(at, cycles, &mut self.sched, idx, &mut bus);
-                        if let (Some(bytes), Some((sck, mosi, miso))) = (bus.log, pins) {
+                        if let (Some(bytes), Some((sck, mosi, miso))) = (bus.log, wires) {
                             if !bytes.is_empty() {
                                 let cr1 = self.spi[i].cr1;
                                 self.wire_events.push(WireEvent::Spi {
@@ -1822,6 +1883,43 @@ impl Bus for Stm32f401Bus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn receive_only_spi_is_logged_for_probes_without_mosi() {
+        // A MAX6675-style read: SPI1 RXONLY master, SCK on PA5 and MISO on
+        // PA6, MOSI (PA7) left as a plain GPIO; probes on PA5 and PA6.
+        let mut bus = Stm32f401Bus::new();
+        bus.write(map::RCC_BASE + 0x30, AccessSize::Word, 1)
+            .unwrap(); // GPIOAEN
+        bus.write(map::RCC_BASE + 0x44, AccessSize::Word, 1 << 12)
+            .unwrap(); // SPI1EN
+        bus.write(
+            map::GPIOA_BASE,
+            AccessSize::Word,
+            0xA800_0000 | 0b1010 << 10,
+        )
+        .unwrap(); // PA5, PA6 alternate
+        bus.write(map::GPIOA_BASE + 0x20, AccessSize::Word, 0x55 << 20)
+            .unwrap(); // AF5
+        bus.probe_mask[0] = 1 << 5 | 1 << 6;
+        let cr1 = 1 << 2 | 1 << 9 | 1 << 8 | 1 << 10 | 7 << 3; // MSTR SSM SSI RXONLY, /256
+        bus.write(0x4001_3000, AccessSize::Word, cr1).unwrap();
+        bus.write(0x4001_3000, AccessSize::Word, cr1 | 1 << 6)
+            .unwrap(); // SPE
+        bus.run_events(200_000);
+        let spi: Vec<_> = bus
+            .take_wire_events()
+            .into_iter()
+            .filter_map(|e| match e {
+                WireEvent::Spi {
+                    sck, mosi, miso, ..
+                } => Some((sck, mosi, miso)),
+                _ => None,
+            })
+            .collect();
+        assert!(!spi.is_empty(), "receive-only frames reach the probes");
+        assert_eq!(spi[0], ((0, 5), None, Some((0, 6))));
+    }
 
     #[test]
     fn boot_alias_maps_to_flash() {

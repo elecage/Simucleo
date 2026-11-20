@@ -8,6 +8,8 @@
 // edge, and compares. `npm test` (m26.test.ts) checks that the file is what
 // the TypeScript decoders give now; `node scripts/decode-parity.ts` writes it.
 import {
+  canCrc,
+  decodeCan,
   decodeI2c,
   decodeNec,
   decodeOneWire,
@@ -23,7 +25,7 @@ import {
 } from "../src/run/decode.ts";
 
 export interface ParityDecoder {
-  type: "uart" | "i2c" | "spi" | "onewire" | "tm1637" | "ws2812" | "nec";
+  type: "uart" | "i2c" | "spi" | "onewire" | "tm1637" | "ws2812" | "nec" | "can";
   pins: string[];
   baud: number;
   parity: Parity;
@@ -457,6 +459,112 @@ function necStream(seed: number) {
   return [l.line()];
 }
 
+
+/** A CAN frame to put on a line (M35). */
+export interface CanFrameSpec {
+  id: number;
+  ext?: boolean;
+  rtr?: boolean;
+  data?: number[];
+  /** Sent DLC (default: the data's length). */
+  dlc?: number;
+  /** Send a CRC off by one bit. */
+  badCrc?: boolean;
+}
+
+/**
+ * The bits of a CAN frame (true = recessive): SOF through the CRC with
+ * stuff bits, then the CRC delimiter, ACK slot (recessive), ACK delimiter
+ * and EOF; `ack` is the ACK slot's index.
+ */
+export function canFrameBits(f: CanFrameSpec): { bits: boolean[]; ack: number } {
+  const raw: boolean[] = [false];
+  const put = (v: number, n: number) => {
+    for (let i = n - 1; i >= 0; i--) raw.push(Math.floor(v / 2 ** i) % 2 === 1);
+  };
+  const data = f.rtr ? [] : (f.data ?? []);
+  if (f.ext) {
+    put(Math.floor(f.id / 0x40000) & 0x7ff, 11);
+    raw.push(true, true);
+    put(f.id & 0x3ffff, 18);
+    raw.push(!!f.rtr, false, false);
+  } else {
+    put(f.id & 0x7ff, 11);
+    raw.push(!!f.rtr, false, false);
+  }
+  put(f.dlc ?? (f.data ?? []).length, 4);
+  for (const b of data.slice(0, 8)) put(b, 8);
+  put(canCrc(raw) ^ (f.badCrc ? 1 : 0), 15);
+  const bits: boolean[] = [];
+  let last: boolean | null = null;
+  let run = 0;
+  for (const b of raw) {
+    bits.push(b);
+    if (b === last) run++;
+    else {
+      last = b;
+      run = 1;
+    }
+    if (run === 5) {
+      bits.push(!b);
+      last = !b;
+      run = 1;
+    }
+  }
+  bits.push(true);
+  const ack = bits.length;
+  bits.push(true, true, true, true, true, true, true, true, true);
+  return { bits, ack };
+}
+
+/**
+ * CAN traffic at `bitrate`: standard, extended and remote frames,
+ * acknowledged; a NACK with the transmitter's error flag; a frame cut by
+ * an error flag (stuff error); a bad CRC; bit times a little off.
+ */
+function canStream(seed: number, bitrate: number) {
+  const r = rng(seed);
+  const l = new L(true);
+  const bit = 1e9 / bitrate;
+  let t = 20 * bit;
+  const send = (bits: boolean[], scale: number) => {
+    for (const b of bits) {
+      l.at(t, b);
+      t += bit * scale;
+    }
+    l.at(t, true);
+  };
+  const ids = [0x123, 0x7ff, 0x000, 0x555, 0x0f0];
+  // Each kind of trouble at least once, then at random.
+  const plan = [0.05, 0.12, 0.2, 0.28, 0.5, 0.95];
+  for (let n = 0; n < 24; n++) {
+    const x = plan[n] ?? r();
+    const scale = 1 + (r() - 0.5) * 0.03;
+    const ext = n === 4 || r() < 0.35;
+    const id = ext ? (n === 4 ? 0x1abcde01 : Math.floor(r() * 0x20000000)) : ids[Math.floor(r() * ids.length)];
+    const len = Math.floor(r() * 9);
+    const data = Array.from({ length: len }, () => (r() < 0.2 ? 0x55 : r() < 0.2 ? 0x00 : Math.floor(r() * 256)));
+    const f: CanFrameSpec = { id, ext, data, rtr: x > 0.9, badCrc: x >= 0.24 && x < 0.3 };
+    const { bits, ack } = canFrameBits(f);
+    if (x < 0.1) {
+      // No ACK: the transmitter's error flag from the ACK delimiter on.
+      send([...bits.slice(0, ack + 1), false, false, false, false, false, false, true, true, true, true, true, true, true, true], scale);
+    } else if (x < 0.18) {
+      // An error flag after a few bits (a node at the wrong bit rate).
+      const at = 6 + Math.floor(r() * 20);
+      send([...bits.slice(0, at), false, false, false, false, false, false, true, true, true, true, true, true, true, true], scale);
+    } else {
+      const acked = bits.slice();
+      acked[ack] = f.badCrc ? true : false;
+      send(acked, scale);
+    }
+    t += (3 + Math.floor(r() * 30)) * bit;
+  }
+  t += 20 * bit;
+  l.at(t, true);
+  return [l.line()];
+}
+
 // ------------------------------------------------------------- decoding
 
 export function decodeCase(d: ParityDecoder, lines: (Line | null)[], from: number): Annotation[] {
@@ -476,6 +584,8 @@ export function decodeCase(d: ParityDecoder, lines: (Line | null)[], from: numbe
       return decodeWs2812(a!, from);
     case "nec":
       return decodeNec(a!);
+    case "can":
+      return decodeCan(a!, { bitrate: d.baud });
   }
 }
 
@@ -577,6 +687,19 @@ export function parityCases(): ParityCase[] {
         { kind: "nec", cmd: 0x1c, addr: 0 },
         { kind: "nec", cmd: 0x45, addr: 1 },
         { kind: "nec", cmd: 0x16 },
+      ]),
+    );
+  for (const [seed, rate] of [
+    [13, 125000],
+    [14, 500000],
+  ] as const)
+    cases.push(
+      makeCase(`can ${rate / 1000}k (seed ${seed})`, dec("can", ["can1.CANH"], { baud: rate }), canStream(seed, rate), [
+        { kind: "address", addr: 0x123, rw: "W" },
+        { kind: "address", addr: 0x1abcde01, rw: "any" },
+        { kind: "address", addr: 0x7ff, rw: "R" },
+        byte(0x55),
+        byte(0x00),
       ]),
     );
   return cases;

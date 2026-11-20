@@ -607,4 +607,7 @@ test("배선 대조: parts on pins that are not configured, or configured the wr
   assert.ok(m2.some((m) => m.startsWith("PB2:") && m.includes("ADC 입력이 없습니다")), m2.join("\n"));
   assert.ok(m2.some((m) => m.startsWith("PA5:") && m.includes("버튼")), m2.join("\n"));
   assert.deepEqual(wiringCheck(assignPin(c, "PB3", "GPIO_Output"), { PB3: [led] }), []);
+  // An LED on an input pin is never lit.
+  const m3 = wiringCheck(assignPin(c, "PB4", "GPIO_Input"), { PB4: [led] }).map((i) => `${i.pin}:${i.message}`);
+  assert.ok(m3.some((m) => m.startsWith("PB4:") && m.includes("GPIO_Output(또는 TIM PWM)") && m.includes("GPIO_Input")), m3.join("\n"));
 });

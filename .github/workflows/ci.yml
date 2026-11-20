@@ -145,3 +145,12 @@ jobs:
           npx playwright install --with-deps chromium
           npm run e2e
         working-directory: web
+      # A failing test leaves its page snapshot (error-context.md) and
+      # screenshot here: what the page showed when it hung or failed.
+      - name: Keep the failed tests' context
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: web/test-results/
+          retention-days: 14

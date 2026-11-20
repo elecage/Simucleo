@@ -10,7 +10,7 @@ import { nucleoSignal } from "./parts/nucleo";
 import { BottomPanel } from "./run/BottomPanel";
 import type { ScopeSettings } from "./run/scopeSettings";
 import { RunControls, useExamples, type Example } from "./run/RunControls";
-import { ProjectMenu } from "./run/ProjectMenu";
+import { ProjectMenu, saveProjectFile } from "./run/ProjectMenu";
 import { fromBase64, idbGet, idbSet, parse, serialize, toBase64, type Loaded } from "./editor/project";
 import { createSimulator, type Netlist, type SimHandle } from "./sim/simulator";
 import { useRunner } from "./sim/useRunner";
@@ -28,6 +28,11 @@ import { ACTIVE_KEY, BACKUP_KEY } from "./lessons/progress";
 import type { LoadedResult } from "./lessons/teacher";
 import type { Lesson } from "./lessons/types";
 import type { WiringContext } from "./lessons/wiring";
+import { LESSONS } from "./lessons/index";
+import type { ResultsFile } from "./lessons/progress";
+import { ShareDialog, type ShareFirmware } from "./share/ShareDialog";
+import { ReceiveDialog } from "./share/ReceiveDialog";
+import { decodeShare, findFragment, type Received } from "./share/link";
 
 const WIRE_COLORS = ["#e53935", "#1e88e5", "#43a047", "#fdd835", "#fb8c00", "#8e24aa", "#212121"];
 const CATEGORY_LABEL: Record<string, string> = {
@@ -278,18 +283,61 @@ export function App() {
   // Autosave to IndexedDB, and restore the last session once the
   // simulator is ready (so its firmware can be loaded too).
   const restored = useRef(false);
+  // The autosave is back (or there was none): a share link may be opened now.
+  const [restoredDone, setRestoredDone] = useState(false);
   useEffect(() => {
     if (!runner.ready || restored.current) return;
-    void idbGet<string>("autosave").then((text) => {
+    void idbGet<string>("autosave").then(async (text) => {
       restored.current = true;
-      if (!text) return;
-      try {
-        void applyLoaded(parse(text));
-      } catch {
-        // A broken autosave is not worth a message.
+      if (text) {
+        try {
+          await applyLoaded(parse(text));
+        } catch {
+          // A broken autosave is not worth a message.
+        }
       }
+      setRestoredDone(true);
     });
   }, [runner.ready, applyLoaded]);
+  // ------------------------------------------------ share links (M30)
+  const [share, setShare] = useState<{ mode: "share" | "teacher"; result?: ResultsFile; lesson?: { id: string; title: string } | null } | null>(null);
+  const [activeLesson, setActiveLesson] = useState<{ id: string; title: string } | null>(null);
+  const [lessonKey, setLessonKey] = useState(0);
+  // A link opened (#s1=…): asked about once the autosave is back.
+  const [incoming, setIncoming] = useState<{ received?: Received; error?: string } | null>(null);
+  useEffect(() => {
+    const read = () => {
+      if (!findFragment(location.hash)) return;
+      decodeShare(location.hash, PART_BY_KIND).then(
+        (received) => setIncoming({ received }),
+        (e: Error) => setIncoming({ error: e.message }),
+      );
+    };
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, []);
+  /** Take the link out of the address bar so a reload does not ask again. */
+  const clearHash = () => history.replaceState(history.state, "", location.pathname + location.search);
+  const lessonById = (id: string) => [...LESSONS.map((e) => e.lesson), ...myLessons].find((l) => l.id === id) ?? null;
+  const openIncoming = async () => {
+    const r = incoming?.received;
+    if (!r || !confirmReplace()) return;
+    clearHash();
+    setIncoming(null);
+    restored.current = true;
+    await applyLoaded(r.loaded);
+    if (r.lesson && lessonById(r.lesson)) {
+      await idbSet(ACTIVE_KEY, r.lesson);
+      setLessonKey((k) => k + 1);
+      setLessonOpen(true);
+    }
+  };
+  const cancelIncoming = () => {
+    clearHash();
+    setIncoming(null);
+  };
+
   // SD cards keep what the firmware wrote, per project (IndexedDB).
   const sdCards = useSdPersistence(runner, project, projectName);
   const { firmware, firmwareBytes, firmwareExample } = runner;
@@ -548,6 +596,11 @@ export function App() {
     setReveal((r) => ({ id, seq: (r?.seq ?? 0) + 1 }));
   };
 
+  const shareFirmware = useMemo<ShareFirmware | undefined>(
+    () => (firmware ? { name: firmware, example: firmwareExample ?? undefined, bytes: firmwareBytes ?? undefined } : undefined),
+    [firmware, firmwareExample, firmwareBytes],
+  );
+
   const deleteSelected = useCallback(() => {
     if (!selected) return;
     setProject((p) => ({
@@ -574,12 +627,25 @@ export function App() {
     <div className={lessonOpen ? "app with-lesson" : "app"}>
       <header className="toolbar">
         <strong>Simucleo</strong>
-        <input
-          className="project-name"
-          value={projectName}
-          onChange={(e) => setProjectName(e.target.value)}
-          aria-label="프로젝트 이름"
-        />
+        {/* M30: the share button sits inside the name field's box, so the
+            toolbar keeps its width budget and height (the canvas below must
+            not move: drags in progress would land elsewhere). */}
+        <span className="project-name-box">
+          <input
+            className="project-name"
+            value={projectName}
+            onChange={(e) => setProjectName(e.target.value)}
+            aria-label="프로젝트 이름"
+          />
+          <button
+            className="share-btn"
+            onClick={() => setShare({ mode: "share", lesson: activeLesson })}
+            aria-label="🔗 공유"
+            title="회로·펌웨어·설정을 링크나 QR 코드로 보내기 (주소의 # 뒤에 담겨 서버로 가지 않습니다)"
+          >
+            🔗 공유
+          </button>
+        </span>
         <ProjectMenu project={project} name={projectName} runner={runner} onNew={onNew} onOpenText={openText} />
         <RunControls runner={runner} examples={examples} onExampleProject={onExampleProject} />
         <button
@@ -733,6 +799,7 @@ export function App() {
 
       {lessonOpen && (
         <LessonPanel
+          key={lessonKey}
           runner={runner}
           mineLoaded={mineLoaded}
           project={project}
@@ -752,6 +819,8 @@ export function App() {
           onTeacher={() => setTeacherOpen(true)}
           preview={preview}
           onMarks={setGradeMarks}
+          onActive={setActiveLesson}
+          onSendToTeacher={(result, lesson) => setShare({ mode: "teacher", result, lesson })}
         />
       )}
       {editorOpen && draft && (
@@ -772,6 +841,34 @@ export function App() {
         />
       )}
       {teacherOpen && <TeacherView files={teacherFiles} onFiles={setTeacherFiles} onClose={() => setTeacherOpen(false)} />}
+      {share && (
+        <ShareDialog
+          project={project}
+          name={projectName}
+          firmware={shareFirmware}
+          lesson={share.lesson ?? undefined}
+          result={share.result}
+          mode={share.mode}
+          onSaveFile={() => saveProjectFile(project, projectName, runner, true)}
+          onClose={() => setShare(null)}
+        />
+      )}
+      {incoming && restoredDone && (
+        <ReceiveDialog
+          incoming={incoming}
+          current={{ name: projectName, parts: project.parts.length, wires: project.wires.length, dirty }}
+          lessonTitle={incoming.received?.lesson ? (lessonById(incoming.received.lesson)?.title ?? null) : null}
+          onOpen={() => void openIncoming()}
+          onCancel={cancelIncoming}
+          onSaveCurrent={() => saveProjectFile(project, projectName, runner, true)}
+          onAddResult={() => {
+            const r = incoming.received?.result;
+            if (r) setTeacherFiles((f) => [...f, r]);
+            setTeacherOpen(true);
+            cancelIncoming();
+          }}
+        />
+      )}
 
       <aside className="inspector">
         <h3>속성</h3>

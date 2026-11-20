@@ -4,6 +4,7 @@ import { App } from "./App";
 import { startPwa } from "./PwaUi";
 import "./styles.css";
 import "./lessons/classroom.css";
+import "./share/share.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

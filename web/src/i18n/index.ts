@@ -71,7 +71,7 @@ export function setLang(l: Lang) {
   current = l;
 }
 
-export type Vars =Record<string, string | number>;
+export type Vars = Record<string, string | number>;
 
 const PLACEHOLDER = /\{(\w+)(?:([|#])([^{}]*))?\}/g;
 

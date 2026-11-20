@@ -4,16 +4,16 @@
 import { parseNumber, type ContentMatch, type Format, type Parity } from "./decode.ts";
 import { TIMEBASE_NS } from "./scope.ts";
 
-export type DecoderType = "uart" | "i2c" | "spi" | "onewire" | "tm1637" | "ws2812";
+export type DecoderType = "uart" | "i2c" | "spi" | "onewire" | "tm1637" | "ws2812" | "nec";
 
-export const DECODER_TYPES: DecoderType[] = ["uart", "i2c", "spi", "onewire", "tm1637", "ws2812"];
+export const DECODER_TYPES: DecoderType[] = ["uart", "i2c", "spi", "onewire", "tm1637", "ws2812", "nec"];
 
 export interface DecoderCfg {
   /** Numbers the decoder within the view (a content trigger names it). */
   id: number;
   type: DecoderType;
   /** UART: [line]; I2C: [SCL, SDA]; SPI: [SCK, MOSI, MISO, CS] ("" = none);
-   * 1-Wire: [DQ]; TM1637: [CLK, DIO]; WS2812: [DIN]. */
+   * 1-Wire: [DQ]; TM1637: [CLK, DIO]; WS2812: [DIN]; NEC: [OUT] (the IR receiver's). */
   pins: string[];
   baud: number;
   parity: Parity;
@@ -30,6 +30,7 @@ export const DECODER_PINS: Record<DecoderType, string[]> = {
   onewire: ["PA10"],
   tm1637: ["PA10", "PB3"],
   ws2812: ["PB4"],
+  nec: ["PB3"],
 };
 export const PIN_ROLES: Record<DecoderType, string[]> = {
   uart: ["TX/RX"],
@@ -38,6 +39,7 @@ export const PIN_ROLES: Record<DecoderType, string[]> = {
   onewire: ["DQ"],
   tm1637: ["CLK", "DIO"],
   ws2812: ["DIN"],
+  nec: ["OUT"],
 };
 export const DECODER_NAMES: Record<DecoderType, string> = {
   uart: "UART",
@@ -46,6 +48,7 @@ export const DECODER_NAMES: Record<DecoderType, string> = {
   onewire: "1-Wire",
   tm1637: "TM1637",
   ws2812: "WS2812",
+  nec: "IR (NEC)",
 };
 
 export interface AnalogCfg {
@@ -65,6 +68,8 @@ export interface ContentCfg {
   /** WS2812 pixel index and (optional) colour "#RRGGBB". */
   index: number;
   color: string;
+  /** NEC: the address ("" = any; the command is `text`). */
+  addr: string;
 }
 
 export interface TriggerSettings {
@@ -91,7 +96,7 @@ export interface ScopeSettings {
   trigger: TriggerSettings;
 }
 
-export const DEFAULT_CONTENT: ContentCfg = { kind: "byte", text: "0x41", rw: "any", index: 0, color: "" };
+export const DEFAULT_CONTENT: ContentCfg = { kind: "byte", text: "0x41", rw: "any", index: 0, color: "", addr: "" };
 
 export function defaultScope(): ScopeSettings {
   return {
@@ -129,6 +134,8 @@ export function contentKinds(type: DecoderType): ContentMatch["kind"][] {
       return ["address", "byte"];
     case "ws2812":
       return ["pixel"];
+    case "nec":
+      return ["nec"];
     default:
       return ["byte"];
   }
@@ -154,7 +161,23 @@ export function contentMatch(c: ContentCfg, type: DecoderType): ContentMatch | n
       const v = parseNumber(c.color.trim().startsWith("#") ? c.color : `#${c.color.trim()}`);
       return v === null || v > 0xffffff ? null : { kind, index: c.index, color: v };
     }
+    case "nec": {
+      const cmd = parseNumber(c.text);
+      if (cmd === null || cmd > 0xff) return null;
+      if (!c.addr.trim()) return { kind, cmd };
+      const addr = parseNumber(c.addr);
+      return addr === null || addr > 0xff ? null : { kind, cmd, addr };
+    }
   }
+}
+
+/**
+ * Whether the simulator's trigger engine can look for `m` in decoder
+ * `type` (M26: it has the same decoders, taking every edge as it is
+ * simulated); otherwise the view decodes the live stream itself (M25).
+ */
+export function exactContent(type: DecoderType, m: ContentMatch): boolean {
+  return contentKinds(type).includes(m.kind);
 }
 
 // ----------------------------------------------------------- loading
@@ -206,11 +229,12 @@ export function sanitizeScope(raw: unknown): ScopeSettings | undefined {
   const t = isObj(raw.trigger) ? raw.trigger : {};
   const c = isObj(t.content) ? t.content : {};
   const content: ContentCfg = {
-    kind: pick(c.kind, ["byte", "text", "address", "pixel"] as const, DEFAULT_CONTENT.kind),
+    kind: pick(c.kind, ["byte", "text", "address", "pixel", "nec"] as const, DEFAULT_CONTENT.kind),
     text: str(c.text, DEFAULT_CONTENT.text),
     rw: pick(c.rw, ["R", "W", "any"] as const, "any"),
     index: num(c.index, 0, (v) => Number.isInteger(v) && v >= 0),
     color: str(c.color, ""),
+    addr: str(c.addr, ""),
   };
   return {
     pins,

@@ -560,7 +560,7 @@ function settings(): ScopeSettings {
       pause: true,
       level: 2.5,
       hysteresis: 0.2,
-      content: { kind: "text", text: "Hello", rw: "R", index: 4, color: "#FF0000" },
+      content: { kind: "text", text: "Hello", rw: "R", index: 4, color: "#FF0000", addr: "" },
     },
   };
 }

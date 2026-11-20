@@ -1,4 +1,6 @@
 /** Messages between the UI thread and the simulation worker. */
+import type { DecoderCfg } from "../run/scopeSettings";
+import type { ContentMatch } from "../run/decode";
 
 export interface PinFrame {
   port: string;
@@ -145,6 +147,8 @@ export interface TriggerConfig {
   level?: number;
   /** … and hysteresis in volts. */
   hysteresis?: number;
+  /** M26: a content trigger the simulator runs — its decoder (pins, settings) and what to look for. */
+  content?: { decoder: DecoderCfg; match: ContentMatch };
 }
 
 export interface RtosTask {

@@ -18,6 +18,8 @@ use std::collections::VecDeque;
 
 use serde::Deserialize;
 
+use crate::decode::{Decoder, DecoderSpec, Item, Match, Matcher};
+
 /// Most edges kept per probed pin (the pre-trigger history).
 pub const RING_EDGES: usize = 65536;
 /// Most edges a capture holds per pin.
@@ -86,6 +88,102 @@ pub struct Config {
     /// side of the threshold before it can trigger again.
     #[serde(default)]
     pub hysteresis: f64,
+    /// A content trigger (M26): decode the probed pins and trigger where
+    /// the decoded item that matches starts. `source` and `edge` are then
+    /// only names.
+    #[serde(default)]
+    pub content: Option<Content>,
+}
+
+/// A decoder over probed pins and what to look for in what it decodes.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Content {
+    pub decoder: DecoderSpec,
+    #[serde(rename = "match")]
+    pub matcher: Match,
+}
+
+/// A content trigger at work: the decoder, fed every edge of its pins.
+#[derive(Debug)]
+struct ContentRun {
+    dec: Decoder,
+    /// The channel of each of the decoder's pins (None: an optional pin
+    /// left out).
+    roles: Vec<Option<usize>>,
+    matcher: Matcher,
+    items: Vec<Item>,
+    hits: Vec<f64>,
+}
+
+impl ContentRun {
+    /// The decoder on its pins, brought up to `now` from what the rings
+    /// hold (no matches: they are in the past). None when a pin it needs
+    /// is not probed.
+    fn new(c: &Content, rings: &[Ring], now: f64) -> Option<Self> {
+        let (n, need) = c.decoder.roles()?;
+        let mut roles = vec![None; n];
+        for (k, role) in roles.iter_mut().enumerate() {
+            let pin = c.decoder.pins.get(k).map_or("", String::as_str);
+            *role = if pin.is_empty() {
+                None
+            } else {
+                rings.iter().position(|r| r.name == pin)
+            };
+            if k < need && role.is_none() {
+                return None;
+            }
+        }
+        // From when all its pins' edges are known.
+        let from = roles
+            .iter()
+            .flatten()
+            .map(|&ch| {
+                let r = &rings[ch];
+                r.lost_until.map_or(r.since, |l| l.max(r.since))
+            })
+            .fold(f64::MIN, f64::max);
+        let level_at = |ch: usize| {
+            let r = &rings[ch];
+            let i = r.edges.partition_point(|e| e.0 <= from);
+            if i == 0 {
+                r.level0
+            } else {
+                r.edges[i - 1].1
+            }
+        };
+        let levels: Vec<bool> = roles.iter().map(|r| r.is_some_and(level_at)).collect();
+        let present: Vec<bool> = roles.iter().map(Option::is_some).collect();
+        let mut dec = Decoder::new(&c.decoder, &levels, &present, from)?;
+        let mut matcher = Matcher::new(c.matcher.clone());
+        // Replay the history in time order.
+        let mut hist: Vec<(f64, usize, bool)> = roles
+            .iter()
+            .enumerate()
+            .filter_map(|(k, r)| r.map(|ch| (k, ch)))
+            .flat_map(|(k, ch)| {
+                let r = &rings[ch];
+                let i = r.edges.partition_point(|e| e.0 <= from);
+                r.edges.range(i..).map(move |&(t, l)| (t, k, l))
+            })
+            .collect();
+        hist.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut items = Vec::new();
+        for (t, k, l) in hist {
+            dec.edge(k, t, l, &mut items);
+        }
+        dec.advance(now, &mut items);
+        for it in &items {
+            matcher.item(it);
+        }
+        items.clear();
+        Some(Self {
+            dec,
+            roles,
+            matcher,
+            items,
+            hits: Vec::new(),
+        })
+    }
 }
 
 /// One pin of a capture. Times are in ns relative to the trigger.
@@ -182,6 +280,8 @@ impl ARing {
 enum Src {
     Digital(usize),
     Analog(usize),
+    /// A content trigger's decoder (all its pins probed).
+    Content,
 }
 
 #[derive(Debug)]
@@ -234,6 +334,8 @@ pub struct Scope {
     seq: u32,
     ready: Option<Capture>,
     pause_hit: bool,
+    /// The content trigger's decoder.
+    content: Option<ContentRun>,
 }
 
 impl Default for Scope {
@@ -256,6 +358,7 @@ impl Scope {
             seq: 0,
             ready: None,
             pause_hit: false,
+            content: None,
         }
     }
 
@@ -309,6 +412,12 @@ impl Scope {
     }
 
     fn resolve_source(&mut self) {
+        let content = self.config.as_ref().and_then(|c| c.content.as_ref());
+        self.content = content.and_then(|c| ContentRun::new(c, &self.rings, self.now));
+        if content.is_some() {
+            self.source = self.content.as_ref().map(|_| Src::Content);
+            return;
+        }
         self.source = self.config.as_ref().and_then(|c| {
             self.rings
                 .iter()
@@ -371,6 +480,7 @@ impl Scope {
         }
         self.now = f64::MIN;
         self.ready = None;
+        self.resolve_source();
         self.arm();
     }
 
@@ -449,14 +559,59 @@ impl Scope {
                     c.to_ns = rel;
                 }
             }
-            return;
-        }
-        if let State::Armed { after } = self.state {
+        } else if let State::Armed { after } = self.state {
             if Some(Src::Digital(ch)) == self.source && t >= after {
                 if let Some(t0) = self.trigger_at(ch, level) {
                     self.start(t0);
                 }
             }
+        }
+        if self.content.is_some() {
+            self.feed_content(Some((ch, t, level)));
+        }
+    }
+
+    /// Give the content trigger's decoder an edge (or tell it time has
+    /// reached `now`), and trigger where a matching item starts.
+    fn feed_content(&mut self, edge: Option<(usize, f64, bool)>) {
+        let Some(run) = &mut self.content else {
+            return;
+        };
+        match edge {
+            Some((ch, t, level)) => {
+                for (role, &c) in run.roles.iter().enumerate() {
+                    if c == Some(ch) {
+                        run.dec.edge(role, t, level, &mut run.items);
+                    }
+                }
+            }
+            None => run.dec.advance(self.now, &mut run.items),
+        }
+        if run.items.is_empty() {
+            return;
+        }
+        for it in run.items.drain(..) {
+            if let Some(t0) = run.matcher.item(&it) {
+                run.hits.push(t0);
+            }
+        }
+        if run.hits.is_empty() {
+            return;
+        }
+        let hits = std::mem::take(&mut run.hits);
+        for &t0 in &hits {
+            // (Items end in order, so their starts do too, but a text
+            // starts frames back: only matches after the arming time or
+            // the last window count.)
+            if let State::Armed { after } = self.state {
+                if t0 > after {
+                    self.start(t0);
+                }
+            }
+        }
+        if let Some(run) = &mut self.content {
+            run.hits = hits;
+            run.hits.clear();
         }
     }
 
@@ -529,6 +684,9 @@ impl Scope {
     /// Time has reached `now` (ns) with no further edge.
     pub fn advance(&mut self, now: f64) {
         self.now = self.now.max(now);
+        if self.content.is_some() {
+            self.feed_content(None);
+        }
         if let State::Collecting { end, .. } = self.state {
             if self.now >= end {
                 self.finish();
@@ -678,6 +836,7 @@ mod tests {
             pause: false,
             level: None,
             hysteresis: 0.0,
+            content: None,
         }
     }
 
@@ -1140,5 +1299,257 @@ mod tests {
         }
         assert_eq!(s.analog[0].samples.len(), RING_SAMPLES);
         assert!(s.analog[0].lost_until.is_some());
+    }
+
+    // ------------------------------------------------- content trigger (M26)
+
+    use crate::decode::{DecoderSpec, Match, Parity};
+
+    const BIT: f64 = 1e9 / 115_200.0;
+
+    /// Edges of back-to-back 8N1 frames from `t0`, and each frame's start.
+    fn uart_edges(text: &[u8], t0: f64) -> (Vec<(f64, bool)>, Vec<f64>) {
+        let mut e = Vec::new();
+        let mut starts = Vec::new();
+        let mut level = true;
+        for (i, &v) in text.iter().enumerate() {
+            let t = t0 + i as f64 * 10.0 * BIT;
+            starts.push(t);
+            let bits = std::iter::once(false)
+                .chain((0..8).map(|k| v >> k & 1 == 1))
+                .chain(std::iter::once(true));
+            for (k, b) in bits.enumerate() {
+                if b != level {
+                    e.push((t + k as f64 * BIT, b));
+                    level = b;
+                }
+            }
+        }
+        (e, starts)
+    }
+
+    fn uart_content(m: Match, mode: Mode, window_ns: f64, pre: f64, pause: bool) -> Scope {
+        let mut s = Scope::new();
+        s.set_channels(vec![("PA2".into(), true), ("PA5".into(), false)], f64::MIN);
+        s.configure(Some(Config {
+            source: "dec:1".into(),
+            edge: Edge::Rising,
+            mode,
+            window_ns,
+            pre,
+            width: None,
+            pause,
+            level: None,
+            hysteresis: 0.0,
+            content: Some(Content {
+                decoder: DecoderSpec {
+                    kind: "uart".into(),
+                    pins: vec!["PA2".into()],
+                    baud: 115_200.0,
+                    parity: Parity::None,
+                    mode: 0,
+                    lsb_first: false,
+                },
+                matcher: m,
+            }),
+        }));
+        s
+    }
+
+    fn text(t: &str) -> Match {
+        Match::Text { text: t.into() }
+    }
+
+    /// Push every edge (time order), with `advance` after each when
+    /// `slices` (the run stepping in short slices), then run on to `end`.
+    fn feed(s: &mut Scope, edges: &[(f64, bool)], slices: bool, end: f64) {
+        for &(t, l) in edges {
+            s.push(0, t, l);
+            if slices {
+                s.advance(t + BIT / 3.0);
+            }
+        }
+        s.advance(end);
+    }
+
+    #[test]
+    fn content_trigger_fires_at_the_start_of_the_matched_text() {
+        let (e, starts) = uart_edges(b"Hello tick 0\r\ntick 1\r\n", 1e6);
+        let mut s = uart_content(text("tick 1"), Mode::Single, 2e6, 0.25, false);
+        assert_eq!(s.status(), Status::Armed);
+        // A clock on the other channel, captured too.
+        for k in 0..400 {
+            s.push(1, 1e6 + k as f64 * 5000.0, k % 2 == 0);
+        }
+        feed(&mut s, &e, false, 1e7);
+        let cap = s.take_capture().expect("a capture");
+        // The 't' of "tick 1": the 15th frame's start bit, to the cycle.
+        assert_eq!(cap.trigger_ns, starts[14]);
+        assert_eq!(cap.source, "dec:1");
+        let ch = &cap.channels[0];
+        assert!(ch.edges.contains(&(0.0, false)), "the start bit at t = 0");
+        // The quarter before it holds the frames before ("\r\n").
+        let before: Vec<_> = ch.edges.iter().filter(|e| e.0 < 0.0).collect();
+        assert!(!before.is_empty());
+        assert!(before.iter().all(|e| e.0 >= -0.5e6));
+        assert!(
+            before
+                .iter()
+                .any(|e| (e.0 - (starts[13] - starts[14])).abs() < 1e-6),
+            "the \\n frame"
+        );
+        assert_eq!(cap.start_ns, -0.5e6);
+        assert_eq!(cap.end_ns, 1.5e6);
+        assert!(!cap.channels[1].edges.is_empty());
+        assert_eq!(s.status(), Status::Stopped);
+    }
+
+    #[test]
+    fn content_trigger_fires_when_the_match_is_complete_and_pauses_at_the_window_end() {
+        let (e, starts) = uart_edges(b"xx tick 1 yy", 1e6);
+        let mut s = uart_content(text("tick 1"), Mode::Normal, 2e6, 0.5, true);
+        assert!(s.watching_for_pause());
+        // The '1' (index 8) is complete in the middle of its stop bit.
+        let done = starts[8] + 9.5 * BIT;
+        let n = e.partition_point(|x| x.0 < done);
+        for &(t, l) in &e[..n] {
+            s.push(0, t, l);
+        }
+        s.advance(done - 1.0);
+        assert_eq!(s.status(), Status::Armed, "not before the last frame is in");
+        // (Within rounding of the decoder's own sum.)
+        let done = done + 1e-6;
+        s.advance(done);
+        assert_eq!(s.status(), Status::Collecting);
+        let end = starts[3] + 1e6;
+        assert!(!s.take_pause_hit());
+        // The run goes in steps up to the window's end…
+        assert_eq!(s.step_ns(done), end - done);
+        s.advance(end - 1.0);
+        assert!(!s.take_pause_hit(), "not before the window's end");
+        s.advance(end);
+        assert!(s.take_pause_hit(), "right at the window's end");
+        assert_eq!(s.take_capture().unwrap().trigger_ns, starts[3]);
+        // Normal: armed again from the window's end.
+        assert_eq!(s.status(), Status::Armed);
+    }
+
+    #[test]
+    fn content_trigger_finds_the_same_match_in_run_slices() {
+        let (e, starts) = uart_edges(b"tick 0 tick 1 tick 2", 1e6);
+        for slices in [false, true] {
+            let mut s = uart_content(text("k 1"), Mode::Single, 1e6, 0.1, false);
+            feed(&mut s, &e, slices, 1e8);
+            assert_eq!(
+                s.take_capture().unwrap().trigger_ns,
+                starts[10],
+                "slices {slices}"
+            );
+        }
+    }
+
+    #[test]
+    fn content_trigger_normal_rearms_after_the_window_single_waits_for_arm() {
+        // "ab" every 1 ms; the window is 1.5 ms (0.75 ms after the match).
+        let mut e = Vec::new();
+        let mut at = Vec::new();
+        for k in 0..6 {
+            let (x, st) = uart_edges(b"ab", 1e6 + k as f64 * 1e6);
+            e.extend(x);
+            at.push(st[0]);
+        }
+        let mut s = uart_content(text("ab"), Mode::Normal, 1.5e6, 0.5, false);
+        let mut got = Vec::new();
+        for &(t, l) in &e {
+            s.push(0, t, l);
+            if let Some(c) = s.take_capture() {
+                got.push(c.trigger_ns);
+            }
+        }
+        s.advance(1e8);
+        got.extend(s.take_capture().map(|c| c.trigger_ns));
+        // Each window ends 0.75 ms after its match: the next match (1 ms on)
+        // is after it, so all are caught.
+        assert_eq!(got, at);
+        // A window of 2.5 ms (1.25 ms after) skips every other one.
+        let mut s = uart_content(text("ab"), Mode::Normal, 2.5e6, 0.5, false);
+        let mut got = Vec::new();
+        for &(t, l) in &e {
+            s.push(0, t, l);
+            got.extend(s.take_capture().map(|c| c.trigger_ns));
+        }
+        s.advance(1e8);
+        got.extend(s.take_capture().map(|c| c.trigger_ns));
+        assert_eq!(got, [at[0], at[2], at[4]]);
+        // Single: one, then the next after arming.
+        let mut s = uart_content(text("ab"), Mode::Single, 0.2e6, 0.5, false);
+        let split = e.partition_point(|x| x.0 < 2.5e6);
+        feed(&mut s, &e[..split], false, 2.5e6);
+        assert_eq!(s.take_capture().unwrap().trigger_ns, at[0]);
+        assert_eq!(s.status(), Status::Stopped);
+        s.arm();
+        feed(&mut s, &e[split..], false, 1e8);
+        assert_eq!(s.take_capture().unwrap().trigger_ns, at[2]);
+    }
+
+    #[test]
+    fn content_trigger_set_mid_stream_picks_up_the_history() {
+        // Back-to-back frames; the trigger is set in the middle of one.
+        // (Taken from the trigger's time on, frame 11's falling edge at bit
+        // 4 would be a start bit, and that frame would run over the 't'.)
+        let msg = b"\xf0\xf0\xf0\xf0\xf0\xf0\xf0\xf0\x0f\xf0\x0f\x0ftick 1\x0f\xf0\x0f";
+        let (e, starts) = uart_edges(msg, 1e6);
+        let reference = {
+            let mut s = uart_content(text("tick 1"), Mode::Single, 1e6, 0.5, false);
+            feed(&mut s, &e, false, 1e8);
+            s.take_capture().map(|c| c.trigger_ns)
+        };
+        assert_eq!(reference, Some(starts[12]));
+        // Probing from the start, the trigger set 3.5 bits into frame 11.
+        let mut s = Scope::new();
+        s.set_channels(vec![("PA2".into(), true)], f64::MIN);
+        let cut = starts[11] + 3.5 * BIT;
+        let n = e.partition_point(|x| x.0 < cut);
+        for &(t, l) in &e[..n] {
+            s.push(0, t, l);
+        }
+        s.advance(cut);
+        let c = uart_content(text("tick 1"), Mode::Single, 1e6, 0.5, false)
+            .config
+            .clone();
+        s.configure(c);
+        feed(&mut s, &e[n..], false, 1e8);
+        assert_eq!(s.take_capture().map(|c| c.trigger_ns), reference);
+    }
+
+    #[test]
+    fn content_trigger_needs_its_pins_probed() {
+        let mut s = uart_content(Match::Byte { value: 0x41 }, Mode::Auto, 1e6, 0.5, false);
+        assert_eq!(s.status(), Status::Armed);
+        s.set_channels(vec![("PA5".into(), false)], 0.0);
+        assert_eq!(s.status(), Status::NoSource);
+        // SPI without MISO and CS: only SCK and MOSI are needed.
+        let mut c = s.config.clone().unwrap();
+        let content = c.content.as_mut().unwrap();
+        content.decoder.kind = "spi".into();
+        content.decoder.pins = vec!["PA5".into(), "PA7".into(), "".into(), "PB6".into()];
+        s.configure(Some(c.clone()));
+        assert_eq!(s.status(), Status::NoSource, "MOSI not probed");
+        s.set_channels(vec![("PA5".into(), false), ("PA7".into(), false)], 0.0);
+        assert_eq!(s.status(), Status::Armed, "CS left out when not probed");
+        c.content.as_mut().unwrap().decoder.kind = "can".into();
+        s.configure(Some(c));
+        assert_eq!(s.status(), Status::NoSource, "unknown decoder");
+    }
+
+    #[test]
+    fn reset_restarts_the_content_decoder() {
+        let (e, starts) = uart_edges(b"tick 1", 1e6);
+        let mut s = uart_content(text("tick 1"), Mode::Normal, 1e6, 0.5, false);
+        // Half a frame, then the machine resets (time starts again).
+        s.push(0, e[0].0, e[0].1);
+        s.reset(&[true, false], &[]);
+        feed(&mut s, &e, false, 1e8);
+        assert_eq!(s.take_capture().unwrap().trigger_ns, starts[0]);
     }
 }

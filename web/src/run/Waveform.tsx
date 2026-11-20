@@ -34,12 +34,15 @@ import {
 import {
   annotationLabel,
   decodeI2c,
+  decodeNec,
   decodeOneWire,
   decodeSpi,
   decodeTm1637,
   decodeUart,
   decodeWs2812,
+  fmtByte,
   fmtColor,
+  necLast,
   scanStep,
   tm1637Display,
   uartText,
@@ -59,6 +62,7 @@ import {
   contentKinds,
   contentMatch,
   defaultScope,
+  exactContent,
   newDecoder,
   type ContentCfg,
   type DecoderCfg,
@@ -110,12 +114,15 @@ const KIND_TEXT: Record<AnnotationKind, string> = {
   reset: "리셋",
   triplet: "탐색",
   pixel: "픽셀",
+  leader: "리더",
+  repeat: "반복",
 };
 const CONTENT_KIND_TEXT: Record<ContentCfg["kind"], string> = {
   byte: "바이트",
   text: "텍스트",
   address: "주소",
   pixel: "픽셀",
+  nec: "명령",
 };
 /** A content trigger decodes at most this far back (ns) for the context it needs. */
 const CONTENT_SPAN = 200e6;
@@ -237,6 +244,9 @@ export function Waveform({
   const contentDecoder = source.startsWith("dec:") ? decoders.find((d) => `dec:${d.id}` === source) : undefined;
   const contentSource = source.startsWith("dec:");
   const match = contentDecoder ? contentMatch(content, contentDecoder.type) : null;
+  // M26: the simulator looks for it, on every edge as it is simulated;
+  // otherwise (a condition it does not know) the view does, frame by frame.
+  const exact = contentDecoder !== undefined && match !== null && exactContent(contentDecoder.type, match);
   const sourceProbed = pins.includes(source) || analogNames.includes(source) || contentDecoder !== undefined;
 
   useEffect(() => {
@@ -249,12 +259,16 @@ export function Waveform({
   }, [analogKey, ready, setAnalogProbes]);
   useEffect(() => () => setAnalogProbes([]), [setAnalogProbes]);
 
-  // The simulator's trigger (none for a content trigger, which is done here).
-  const config = useMemo<TriggerConfig | null>(
-    () =>
-      contentSource
-        ? null
-        : {
+  // The simulator's trigger (none for a content trigger done here).
+  const contentKey0 = exact ? JSON.stringify([contentDecoder, match]) : "";
+  const config = useMemo<TriggerConfig | null>(() => {
+    if (contentKey0) {
+      const [decoder, m] = JSON.parse(contentKey0) as [DecoderCfg, ContentMatch];
+      return { source, edge: "rising", mode, windowNs, pre, pause, content: { decoder, match: m } };
+    }
+    return contentSource
+      ? null
+      : {
             source,
             edge,
             mode,
@@ -263,9 +277,8 @@ export function Waveform({
             width: widthCmp === "off" || analogSource ? undefined : { cmp: widthCmp, ns: widthUs * 1000 },
             pause,
             ...(analogSource ? { level, hysteresis } : {}),
-          },
-    [contentSource, source, edge, mode, windowNs, pre, widthCmp, widthUs, pause, analogSource, level, hysteresis],
-  );
+          };
+  }, [contentKey0, contentSource, source, edge, mode, windowNs, pre, widthCmp, widthUs, pause, analogSource, level, hysteresis]);
   const configRef = useRef(config);
   configRef.current = config;
   // New settings: wait for a capture taken with them.
@@ -278,7 +291,7 @@ export function Waveform({
   // The content trigger, run on every frame (see `onFrame` below).
   const contentRef = useRef<ContentRun | null>(null);
   contentRef.current =
-    contentDecoder && match ? { dec: contentDecoder, match, mode, pre, windowNs, pause, pins, analog: analogNames } : null;
+    contentDecoder && match && !exact ? { dec: contentDecoder, match, mode, pre, windowNs, pause, pins, analog: analogNames } : null;
   // (Probes added or removed do not re-arm.)
   const contentKey = contentRef.current ? JSON.stringify({ ...contentRef.current, pins: 0, analog: 0 }) : "";
   /** Where the content trigger stands (see `contentStep`), and the state shown. */
@@ -383,7 +396,7 @@ export function Waveform({
 
   const f = runner.frame;
   const now = f?.timeMs ?? 0;
-  const state: ScopeState = contentSource ? contentState : (f?.scope?.state ?? "armed");
+  const state: ScopeState = contentSource && !exact ? contentState : (f?.scope?.state ?? "armed");
   const windowMs = windowNs / 1e6;
   // Auto free-runs when the triggers stop coming.
   const stale = capture !== null && now - (capture.triggerMs + capture.endNs / 1e6) > Math.max(2 * windowMs, 100);
@@ -613,7 +626,23 @@ export function Waveform({
           </select>
         </label>
         {contentDecoder ? (
-          <ContentControls cfg={content} type={contentDecoder.type} valid={match !== null} onChange={setContent} />
+          <>
+            <ContentControls cfg={content} type={contentDecoder.type} valid={match !== null} onChange={setContent} />
+            {match && (
+              <span
+                className={`content-mode${exact ? " exact" : ""}`}
+                data-testid="content-mode"
+                data-mode={exact ? "exact" : "view"}
+                title={
+                  exact
+                    ? "시뮬레이터가 모든 에지를 해독해 일치한 항목의 시작 사이클에 트리거합니다"
+                    : "화면이 프레임마다 실시간 기록을 해독합니다 (빠른 신호는 놓칠 수 있음)"
+                }
+              >
+                {exact ? "정확(시뮬레이터)" : "화면 해독"}
+              </span>
+            )}
+          </>
         ) : contentSource ? null : analogSource ? (
           <>
             <label>
@@ -683,7 +712,7 @@ export function Waveform({
         <label>
           <input type="checkbox" checked={pause} onChange={(e) => setPause(e.target.checked)} /> 트리거 시 일시정지
         </label>
-        {mode === "single" && <button onClick={contentSource ? rearm : armTrigger}>다시 대기 (Arm)</button>}
+        {mode === "single" && <button onClick={contentSource && !exact ? rearm : armTrigger}>다시 대기 (Arm)</button>}
         <label>
           <input
             type="checkbox"
@@ -731,7 +760,7 @@ export function Waveform({
             <option value="ascii">ASCII</option>
           </select>
         </label>
-        {decoders.length === 0 && <span className="hint">UART·I2C·SPI·1-Wire·TM1637·WS2812를 파형 위에 풀어 보여 줍니다.</span>}
+        {decoders.length === 0 && <span className="hint">UART·I2C·SPI·1-Wire·TM1637·WS2812·IR(NEC)을 파형 위에 풀어 보여 줍니다.</span>}
       </div>
       {decoders.map((d, di) => (
         <div key={d.id} className="wave-controls scope-controls decoder-cfg" data-testid={`decoder-${di}`}>
@@ -1043,6 +1072,7 @@ function DecodedTable({ index, cfg, anns, fmt }: { index: number; cfg: DecoderCf
   const errors = anns.filter((a) => a.error).length;
   const shown = cfg.type === "tm1637" ? tm1637Display(anns) : null;
   const frame = cfg.type === "ws2812" ? ws2812Frame(anns) : null;
+  const ir = cfg.type === "nec" ? necLast(anns) : null;
   return (
     <div className="decode-table">
       <table data-testid={`decode-table-${index}`}>
@@ -1058,6 +1088,12 @@ function DecodedTable({ index, cfg, anns, fmt }: { index: number; cfg: DecoderCf
             <span className="decode-text" data-testid={`decode-display-${index}`} data-text={shown.text}>
               {" "}
               표시 “{shown.text}”
+            </span>
+          )}
+          {ir && (
+            <span className="decode-text" data-testid={`decode-ir-${index}`} data-addr={ir.addr} data-cmd={ir.cmd}>
+              {" "}
+              마지막 주소 {fmtByte(ir.addr, "hex")} · 명령 {fmtByte(ir.cmd, "hex")}
             </span>
           )}
           {frame && frame.length > 0 && (
@@ -1149,13 +1185,25 @@ function ContentControls({ cfg, type, valid, onChange }: { cfg: ContentCfg; type
         </>
       ) : (
         <label>
-          {kind === "text" ? "글자" : kind === "address" ? "주소" : "값"}{" "}
+          {kind === "text" ? "글자" : kind === "address" ? "주소" : kind === "nec" ? "명령" : "값"}{" "}
           <input
             className="num wide"
             value={cfg.text}
             placeholder={kind === "text" ? "OK\\r\\n" : "0x41"}
             aria-label="해독 트리거 값"
             onChange={(e) => set({ text: e.target.value })}
+          />
+        </label>
+      )}
+      {kind === "nec" && (
+        <label>
+          주소{" "}
+          <input
+            className="num wide"
+            value={cfg.addr}
+            placeholder="아무 주소"
+            aria-label="해독 트리거 IR 주소"
+            onChange={(e) => set({ addr: e.target.value })}
           />
         </label>
       )}
@@ -1240,6 +1288,8 @@ function runDecoder(d: DecoderCfg, lineOf: LineOf, from: number): Annotation[] {
       return ls[0] && ls[1] ? decodeTm1637(ls[0].line, ls[1].line) : [];
     case "ws2812":
       return ls[0] ? decodeWs2812(ls[0].line, from, ls[0].to) : [];
+    case "nec":
+      return ls[0] ? decodeNec(ls[0].line) : [];
   }
 }
 

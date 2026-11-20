@@ -7,6 +7,7 @@ export default defineConfig({
     baseURL: "http://localhost:4173",
     viewport: { width: 1400, height: 820 },
     trace: "off",
+    screenshot: "only-on-failure",
   },
   webServer: {
     command: "npx vite preview --port 4173 --strictPort",

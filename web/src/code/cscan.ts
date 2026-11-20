@@ -253,7 +253,7 @@ const BASE = /^(?:(?:unsigned|signed|long|short)\s+)*(?:struct\s+|enum\s+|union\
 export function varDecls(masked: string, base = 0): VarDecl[] {
   const out: VarDecl[] = [];
   const re =
-    /(?:^|[;{}(,]\s*)((?:(?:static|extern|const|volatile|__IO|register)\s+)*(?:(?:unsigned|signed|long|short)\s+)*(?:struct\s+|enum\s+|union\s+)?[A-Za-z_]\w*(?:\s+(?:const|volatile))?)\s*(\*+\s*)?([A-Za-z_]\w*)\s*(\[[^\]]*\]\s*)*(?=[=;,)\[])/dg;
+    /(?:^|[;{}(,]\s*)((?:(?:static|extern|const|volatile|__IO|register)\s+)*(?:(?:unsigned|signed|long|short)\s+)*(?:struct\s+|enum\s+|union\s+)?[A-Za-z_]\w*(?:\s+(?:const|volatile))?)\s*(\*+\s*)?([A-Za-z_]\w*)\s*(\[[^\]]*\]\s*)*(?=[=;,)\[]|$)/dg;
   for (const m of masked.matchAll(re)) {
     const full = m[1];
     const type = full.replace(QUALIFIERS, " ").replace(/\s+/g, " ").trim();

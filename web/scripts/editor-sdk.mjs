@@ -6,9 +6,13 @@
 //   public/toolchain/                  only when firmware/editor-sdk is built and the
 //                                      compiler package is installed:
 //     clang.js                         the compiler package's loader (microbit-clang-wasm)
-//     llvm.core*.wasm.gz               clang + ld.lld as WebAssembly, gzip
-//     clang-include.tar.gz             clang's own headers for Arm (stdint.h, …)
-//     sdk-hal.tar.gz                   HAL/CMSIS/newlib headers + the prebuilt libraries
+//     llvm.core*.wasm.gz.bin           clang + ld.lld as WebAssembly, gzip
+//     clang-include.tar.gz.bin         clang's own headers for Arm (stdint.h, …)
+//     sdk-hal.tar.gz.bin               HAL/CMSIS/newlib headers + the prebuilt libraries
+//
+// (".gz.bin", not ".gz": some servers send a .gz file with Content-Encoding:
+// gzip, the browser unpacks it, and the bytes no longer match the service
+// worker's integrity hash. Unpacked in JavaScript instead.)
 //     manifest.json                    sizes and a version (cache name)
 //     LICENSE*.txt / *.md              the package's licences
 //
@@ -111,6 +115,8 @@ function toolchain() {
     return;
   }
   mkdirSync(outDir, { recursive: true });
+  // Files of an older layout would be shipped (and listed) too.
+  for (const f of readdirSync(outDir)) if (f.endsWith(".gz")) rmSync(join(outDir, f));
   const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
   const files = {};
 
@@ -123,19 +129,19 @@ function toolchain() {
     const stamp = join(stampDir, `${name}.gz.src`);
     const key = `${statSync(src).size}:${statSync(src).mtimeMs}:${pkg.version}`;
     // Gzipping 60 MB at level 9 takes a while: only when the package changed.
-    if (!existsSync(join(outDir, `${name}.gz`)) || !existsSync(stamp) || readFileSync(stamp, "utf8") !== key) {
-      writeFileSync(join(outDir, `${name}.gz`), gz(readFileSync(src)));
+    if (!existsSync(join(outDir, `${name}.gz.bin`)) || !existsSync(stamp) || readFileSync(stamp, "utf8") !== key) {
+      writeFileSync(join(outDir, `${name}.gz.bin`), gz(readFileSync(src)));
       writeFileSync(stamp, key);
     }
-    files[name] = { url: `toolchain/${name}.gz`, bytes: statSync(join(outDir, `${name}.gz`)).size, gzip: true };
+    files[name] = { url: `toolchain/${name}.gz.bin`, bytes: statSync(join(outDir, `${name}.gz.bin`)).size, gzip: true };
   }
   // In place of the package's 35 MB resource tar (sysroot for another board,
   // C++ headers): only clang's builtin headers for Arm.
   const resources = readTar(new Uint8Array(readFileSync(join(gen, "llvm-resources.tar"))));
   const headers = resources.filter((e) => CLANG_HEADER.test(e.name));
   if (!headers.some((e) => e.name.endsWith("/stdint.h"))) throw new Error("toolchain: no clang stdint.h in the package");
-  put("clang-include.tar.gz", gz(writeTar(headers)));
-  files["llvm-resources.tar"] = { url: "toolchain/clang-include.tar.gz", bytes: statSync(join(outDir, "clang-include.tar.gz")).size, gzip: true };
+  put("clang-include.tar.gz.bin", gz(writeTar(headers)));
+  files["llvm-resources.tar"] = { url: "toolchain/clang-include.tar.gz.bin", bytes: statSync(join(outDir, "clang-include.tar.gz.bin")).size, gzip: true };
 
   // The SDK bundle.
   const entries = [];
@@ -159,7 +165,7 @@ function toolchain() {
     if (existsSync(from)) entries.push({ name: `sdk/${to}`, data: new Uint8Array(readFileSync(from)) });
   }
   const sdkTar = gz(writeTar(entries));
-  put("sdk-hal.tar.gz", sdkTar);
+  put("sdk-hal.tar.gz.bin", sdkTar);
 
   for (const lic of ["LICENSE.txt", "LICENSES.md"]) if (existsSync(join(pkgDir, lic))) copyFileSync(join(pkgDir, lic), join(outDir, `clang-${lic}`));
 
@@ -169,7 +175,7 @@ function toolchain() {
       .concat(sha(sdkTar), sha(readFileSync(join(outDir, "clang.js"))))
       .join("\n"),
   ).slice(0, 12);
-  const manifest = { version, llvm: `${pkg.name}@${pkg.version} (LLVM ${pkg.llvm?.version ?? "?"})`, files, sdk: { url: "toolchain/sdk-hal.tar.gz", bytes: sdkTar.length } };
+  const manifest = { version, llvm: `${pkg.name}@${pkg.version} (LLVM ${pkg.llvm?.version ?? "?"})`, files, sdk: { url: "toolchain/sdk-hal.tar.gz.bin", bytes: sdkTar.length } };
   writeFileSync(join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
   const total = Object.values(files).reduce((s, f) => s + f.bytes, 0) + sdkTar.length + statSync(join(outDir, "clang.js")).size;
   console.log(`toolchain: ${manifest.llvm}, ${(total / 1048576).toFixed(1)} MB to download (SDK ${(sdkTar.length / 1024).toFixed(0)} KB), version ${version}`);

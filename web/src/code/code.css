@@ -1,0 +1,51 @@
+/* The code tab (M33). In the bottom panel it fills the tab body; "크게"
+   floats it over the canvas (position: fixed), so nothing else moves. */
+.code-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 4px; }
+.code-panel.big {
+  position: fixed; z-index: 40; left: 190px; right: 12px; top: 56px; bottom: 12px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
+}
+.code-empty { display: block; }
+.code-empty p { margin: 0 0 8px; max-width: 70ch; }
+.code-bar { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; min-width: 0; }
+.code-files { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; flex: 0 1 auto; }
+.code-file { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 4px 4px 0 0; background: var(--panel); }
+.code-file.on { border-bottom-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+.code-file button { border: 0; background: transparent; padding: 2px 6px; font-family: ui-monospace, monospace; font-size: 12px; }
+.code-file .code-file-x { padding: 2px 4px; color: var(--muted); }
+.header-file { padding: 2px 6px; font-family: ui-monospace, monospace; font-size: 12px; }
+.code-status { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); text-align: right; }
+.code-status.error { color: #c62828; }
+.code-menu { position: relative; }
+.code-menu > summary { cursor: pointer; list-style: none; padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; user-select: none; }
+.code-menu > summary::-webkit-details-marker { display: none; }
+.code-menu .upload-pop { left: auto; right: 0; top: auto; bottom: 100%; margin-bottom: 2px; }
+.code-panel.big .code-menu .upload-pop { top: 100%; bottom: auto; }
+.code-progress { width: 100%; height: 6px; }
+.code-main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 34%); gap: 6px; }
+.code-editor { min-height: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); }
+.code-editor .cm-editor { height: 100%; }
+.code-problems { min-height: 0; overflow: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); padding: 4px 6px; font-size: 12px; }
+.code-problems-title { font-weight: 600; margin-bottom: 2px; }
+.code-problems ul { list-style: none; margin: 0; padding: 0; }
+.problem { padding: 2px 0; border-bottom: 1px dashed var(--border); }
+.problem-where { border: 0; background: transparent; padding: 0; cursor: pointer; font: inherit; color: inherit; }
+.problem.error b { color: #c62828; }
+.problem.warning b { color: #b26a00; }
+.problem.info b { color: var(--accent); }
+.problem-source { color: var(--muted); }
+.problem-msg { font-family: ui-monospace, monospace; }
+.why { font-size: 11px; padding: 0 6px; }
+.why-text { margin: 4px 0; padding: 4px 6px; background: var(--bg); border-radius: 4px; line-height: 1.5; }
+.cm-signature { padding: 4px 8px; font-size: 12px; max-width: 560px; }
+.cm-signature b { color: var(--accent); }
+.cm-signature-doc { color: var(--muted); margin-top: 2px; }
+.cm-sym-info { max-width: 420px; font-size: 12px; }
+.cm-sym-info code { display: block; white-space: pre-wrap; margin-bottom: 4px; }
+.cm-sym-info p { margin: 0; }
+@media (prefers-color-scheme: dark) {
+  .code-editor .cm-editor { background: #1b1e22; color: #e6e8eb; }
+  .code-editor .cm-gutters { background: #1e2125; color: #8a929c; border-color: #33373d; }
+  .code-editor .cm-activeLine { background: #262a30; }
+  .code-editor .cm-activeLineGutter { background: #2a2f36; }
+}

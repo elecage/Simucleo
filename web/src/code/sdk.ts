@@ -39,7 +39,10 @@ export function compileFlags(projectIncludes: string[]): string[] {
     `${SDK_ROOT}/${SDK_LIBC}`,
     "-DUSE_HAL_DRIVER",
     "-DSTM32F401xE",
-    "-Og",
+    // -O0 as CubeIDE's Debug configuration: every line can take a breakpoint
+    // and every variable can be watched (clang's -Og is -O1 and merges, for
+    // example, the two HAL_Delay calls of hal-blinky's if/else into one).
+    "-O0",
     "-g",
     "-Wall",
     "-ffunction-sections",

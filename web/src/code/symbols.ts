@@ -92,7 +92,12 @@ export function splitParams(params: string): string[] {
     } else cur += ch;
   }
   if (cur.trim()) out.push(cur.trim());
-  const norm = out.map((p) => p.replace(/\s+/g, " ").replace(/\s*\*\s*/g, " *").replace(/ \*(\w)/g, " *$1"));
+  const norm = out.map((p) =>
+    p
+      .replace(/\s+/g, " ")
+      .replace(/(\w)\s*(\*+)\s*/g, "$1 $2")
+      .replace(/\(\s*\*\s*/g, "(*"),
+  );
   return norm.length === 1 && norm[0] === "void" ? [] : norm;
 }
 
@@ -242,7 +247,7 @@ function enumValues(masked: string, text: string, cms: Comment[], from: number, 
       if (m) {
         const sym: Sym = { name: m[1], kind: "enum", parent, file, line: lineAt(starts, stmt + part.indexOf(m[1])) };
         if (m[2]) sym.detail = norm(m[2]);
-        const doc = docAfter(text, cms, i + (i === to ? 0 : 1)) ?? docBefore(text, cms, stmt + (part.length - part.trimStart().length));
+        const doc = docAfter(text, cms, stmt + part.trimEnd().length) ?? docBefore(text, cms, stmt + (part.length - part.trimStart().length));
         if (doc) sym.doc = doc;
         out.push(sym);
       }
@@ -326,6 +331,7 @@ export function indexHeader(text: string, file: string): Sym[] {
     }
     if (ch !== ";" || depth !== 0) continue;
     const s = masked.slice(stmt, i).replace(ATTRS, " ");
+    const stmt0 = stmt;
     const start = stmt + (masked.slice(stmt, i).length - masked.slice(stmt, i).trimStart().length);
     stmt = i + 1;
     const st = norm(s);
@@ -341,7 +347,7 @@ export function indexHeader(text: string, file: string): Sym[] {
     if (fn && !/[=]/.test(fn[1]) && fn[1].trim()) {
       const type = norm(fn[1].replace(/\bextern\b/g, ""));
       const params = splitParams(fn[3]);
-      const sym: Sym = { name: fn[2], kind: "function", params, detail: `${type} ${fn[2]}(${params.join(", ")})`.replace(/\* /g, "*").replace(/(\w)\*/g, "$1 *"), file, line: lineAt(starts, start + s.indexOf(fn[2])) };
+      const sym: Sym = { name: fn[2], kind: "function", params, detail: `${type} ${fn[2]}(${params.join(", ")})`.replace(/\* /g, "*").replace(/(\w)\*/g, "$1 *"), file, line: lineAt(starts, stmt0 + s.indexOf(fn[2])) };
       const doc = docBefore(text, cms, startOfLine(text, start));
       if (doc) sym.doc = doc;
       out.push(sym);

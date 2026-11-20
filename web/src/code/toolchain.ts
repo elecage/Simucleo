@@ -22,6 +22,15 @@ export interface Loaded {
   manifest: ToolchainManifest;
 }
 
+/**
+ * Unpack a `.gz` the site ships — unless the server already did: some (vite
+ * preview) send `.gz` files with `Content-Encoding: gzip`, and the browser
+ * hands over the unpacked bytes.
+ */
+export async function maybeGunzip(b: Uint8Array): Promise<Uint8Array> {
+  return b[0] === 0x1f && b[1] === 0x8b ? gunzip(b) : b;
+}
+
 /** Total download, for the progress bar. */
 export const downloadBytes = (m: ToolchainManifest) => Object.values(m.files).reduce((s, f) => s + f.bytes, 0) + m.sdk.bytes;
 
@@ -38,10 +47,10 @@ export async function prepare(module: ClangModule, manifest: ToolchainManifest, 
   };
   module.setAssetLoader(async (name) => {
     const f = manifest.files[name];
-    if (!f) return null;
+    if (!f) throw new Error(`the toolchain asked for ${name}, which the site does not ship`);
     const raw = await fetcher(f.url, tick);
-    return f.gzip ? gunzip(raw) : raw;
+    return f.gzip ? maybeGunzip(raw) : raw;
   });
-  const sdk = readTar(await gunzip(await fetcher(manifest.sdk.url, tick)));
+  const sdk = readTar(await maybeGunzip(await fetcher(manifest.sdk.url, tick)));
   return { module, sdk, manifest };
 }

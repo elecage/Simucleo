@@ -101,6 +101,27 @@ test("printf over USART2 and a second user file with a header", { skip, timeout:
   assert.match(a.console, /SystemCoreClock = 84000000/);
 });
 
+test("every example the code tab offers builds with the shipped SDK and runs", { skip: skip || (!existsSync(join(pub, "examples", "index.json")) && "run npm run examples"), timeout: 600_000 }, async () => {
+  const index = JSON.parse(readFileSync(join(pub, "examples", "index.json"), "utf8")) as { file: string; code?: { main: string } }[];
+  const editable = index.filter((e) => e.code);
+  assert.ok(editable.length >= 30, `${editable.length} editable examples`);
+  const failed: string[] = [];
+  for (const ex of editable) {
+    const text = readFileSync(join(pub, "examples", "src", ex.code!.main), "utf8");
+    const r = await build([{ path: "Core/Src/main.c", text }]);
+    if (!r.ok) {
+      failed.push(`${ex.file}: ${r.diagnostics.filter((d) => d.severity === "error").map((d) => `${d.file}:${d.line} ${d.message}`).join("; ")}`);
+      continue;
+    }
+    // Without its circuit an example may stop (hal-i2c-oled: no OLED answers):
+    // as the gcc build of the same main.c does.
+    const a = await run(r.elf!, 300);
+    const gcc = await run(new Uint8Array(readFileSync(join(pub, "examples", ex.file))), 300);
+    if (a.stopped !== gcc.stopped) failed.push(`${ex.file}: stopped ${a.stopped}, the gcc build ${gcc.stopped}`);
+  }
+  assert.deepEqual(failed, []);
+});
+
 test("a syntax error gives a parsed error at its line and no ELF; an undefined function a linker error", { skip, timeout: 240_000 }, async () => {
   const lines = BLINKY.split("\n");
   const at = lines.findIndex((l) => l.includes("HAL_Delay(500);"));

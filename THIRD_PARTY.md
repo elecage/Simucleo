@@ -3,6 +3,18 @@
 Simucleo 자체는 MIT다. 사이트가 함께 내려보내거나 빌드에 쓰는 다른 프로젝트의 것과 라이선스를 적는다.
 원문은 각 위치에 그대로 있다.
 
+## 소스 탭에 함께 보이는 라이브러리 소스
+
+예제 펌웨어가 이 라이브러리로 빌드되므로, 그 안(예: `HAL_Delay`)에서 멈췄을 때 소스 탭이 그 코드를 보여 주도록 원본을 그대로
+사이트에 넣는다(`web/scripts/examples.mjs` → `web/public/examples/src/vendor/`, 라이선스 파일도 같은 자리에).
+
+| 무엇 | 어디에 | 라이선스 | 원문 |
+|---|---|---|---|
+| STM32F4 HAL 드라이버 `Src/` (예제가 쓰는 20개) | `examples/src/vendor/stm32f4xx_hal_driver/Src`; 원본 `firmware/vendor/stm32f4xx_hal_driver` | BSD-3-Clause | 같은 자리의 `LICENSE.md` |
+| FreeRTOS 커널과 CMSIS-RTOS2 래퍼 | `examples/src/vendor/freertos`; 원본 `firmware/vendor/freertos` | MIT | 같은 자리의 `LICENSE.md` |
+| FatFs | `examples/src/vendor/fatfs`; 원본 `firmware/vendor/fatfs` | FatFs 라이선스(BSD 계열, ChaN·ST 고지) | 같은 자리의 `LICENSE.md` |
+| CMSIS Core 헤더 | `examples/src/vendor/CMSIS/Include`; 원본 `firmware/vendor/CMSIS` | Apache-2.0 | 같은 자리의 `LICENSE.txt` |
+
 ## 브라우저 안 C 빌드 (M33)
 
 | 무엇 | 어디에 | 라이선스 | 원문 |

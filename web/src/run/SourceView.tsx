@@ -255,6 +255,29 @@ export function SourceView({
   useEffect(() => {
     if (showAsm && paused && shownFrame) requestDisasm(shownFrame.pc);
   }, [showAsm, paused, shownFrame, requestDisasm]);
+  // Stopped in code without a source here (newlib's printf, a library
+  // built without its sources): show the first frame up the call stack
+  // that has one — the line that called it — instead of "no source". Once
+  // per stop: a frame the student picks stays picked.
+  const picked = useRef(-1);
+  const [skipped, setSkipped] = useState<string | null>(null);
+  useEffect(() => {
+    if (!debugState || picked.current === pause.n) return;
+    picked.current = pause.n;
+    setSkipped(null);
+    const has = (f: (typeof debugState.frames)[number]) => {
+      const df = f.file == null ? undefined : files.find((x) => x.index === f.file);
+      return !!df && sourceKey(df.path) !== null;
+    };
+    const fs = debugState.frames;
+    if (frame !== 0 || !fs.length || has(fs[0])) return;
+    const i = fs.findIndex(has);
+    if (i <= 0) return;
+    setSkipped(fs[0].function ?? `0x${fs[0].pc.toString(16)}`);
+    setFrame(i);
+    requestDebugState(i, fs[i].file ?? fileIdx ?? -1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debugState]);
   useEffect(() => {
     const f = debugState?.frames[frame];
     if (f?.file != null && files.some((x) => x.index === f.file)) setFileIdx(f.file);
@@ -543,6 +566,11 @@ export function SourceView({
           </p>
         )}
         <h4>호출 스택</h4>
+        {paused && skipped && frame > 0 && (
+          <p className="hint" data-testid="frame-skipped">
+            {skipped}에서 멈췄지만 그 소스가 없어, 그것을 부른 곳을 보여 줍니다.
+          </p>
+        )}
         {paused && tasks.length > 0 && (
           <select
             aria-label="태스크"

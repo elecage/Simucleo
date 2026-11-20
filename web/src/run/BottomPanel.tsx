@@ -128,7 +128,7 @@ export function BottomPanel({
         {code && (tab === "code" || codeOpened) && (
           <div className="tab-keep" hidden={tab !== "code"}>
             <Suspense fallback={<p className="hint">편집기를 불러오는 중…</p>}>
-              <CodePanel runner={runner} {...code} />
+              <CodePanel runner={runner} {...code} visible={tab === "code"} />
             </Suspense>
           </div>
         )}

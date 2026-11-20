@@ -70,9 +70,13 @@ export interface CodePanelProps {
   /** Build once now (a received link with code but no firmware), then call `onAutoBuilt`. */
   autoBuild?: boolean;
   onAutoBuilt?: () => void;
+  /** The code tab is on screen (it stays mounted while hidden). */
+  visible?: boolean;
+  /** The last session is back (its code may still be on its way before). */
+  restored?: boolean;
 }
 
-export default function CodePanel({ runner, code, onCode, examples, codeSeq, autoBuild = false, onAutoBuilt }: CodePanelProps) {
+export default function CodePanel({ runner, code, onCode, examples, codeSeq, autoBuild = false, onAutoBuilt, visible = true, restored = true }: CodePanelProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const states = useRef(new Map<string, EditorState>());
@@ -165,6 +169,13 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
   // The view shows the active file (or a header, read-only).
   const [headerText, setHeaderText] = useState<string | null>(null);
   useEffect(() => {
+    // The view lives in `host`, which is not there while the tab has no
+    // code (its start screen): a view kept from before would get the new
+    // state but stay off screen, and the editor showed no text.
+    if (view.current && view.current.dom.parentNode !== host.current) {
+      view.current.destroy();
+      view.current = null;
+    }
     if (!host.current) return;
     let state: EditorState | undefined;
     if (header !== null) {
@@ -270,13 +281,23 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
   }, [build]);
 
   // ------------------------------------------------ files
-  const startFrom = async (file: string) => {
+  /**
+   * Start the code from an example's main.c; false if it could not be read.
+   * `still`: checked once it is read (not used if false).
+   */
+  const startFrom = async (file: string, still?: () => boolean): Promise<boolean> => {
     const ex = editable.find((e) => e.file === file);
-    if (!ex?.code) return;
-    const r = await fetch(`./examples/src/${ex.code.main}`);
-    if (!r.ok) return setNotice(`${ex.code.main}을(를) 받지 못했습니다.`);
-    onCode({ template: "hal", base: ex.file, files: [{ path: MAIN_C, text: await r.text() }], active: MAIN_C });
+    if (!ex?.code) return false;
+    const r = await fetch(`./examples/src/${ex.code.main}`).catch(() => null);
+    if (!r?.ok) {
+      setNotice(`${ex.code.main}을(를) 받지 못했습니다.`);
+      return false;
+    }
+    const text = await r.text();
+    if (still && !still()) return true;
+    onCode({ template: "hal", base: ex.file, files: [{ path: MAIN_C, text }], active: MAIN_C });
     setLocalSeq((k) => k + 1);
+    return true;
   };
   const addFile = async () => {
     const name = window.prompt("새 파일 이름 (.c 또는 .h, 예: led.c, led.h, main.h)", "");
@@ -310,8 +331,34 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
     if (!ex || !window.confirm("편집한 코드를 지우고 예제의 원래 main.c로 되돌릴까요?")) return;
     await startFrom(ex.file);
   };
+  // No code yet and the firmware running is an example that can be
+  // edited: open its main.c when the tab is shown, rather than an empty
+  // tab that asks for an example (loading an example's project, its
+  // circuit with it, replaces the project's code — and may arrive after
+  // its firmware, dropping a main.c opened meanwhile: it opens again).
+  // Not after "코드 지우기" for that firmware, nor again after a failure.
+  const dismissed = useRef<string | null>(null);
+  const opening = useRef(false);
+  // (What it was opened for: dropped if the project or firmware changed
+  // while main.c was on its way — it would be the other example's.)
+  const nowRef = useRef({ codeSeq, fw: runner.firmwareExample, code });
+  nowRef.current = { codeSeq, fw: runner.firmwareExample, code };
+  useEffect(() => {
+    const fw = runner.firmwareExample;
+    if (code || !visible || !restored || !fw || opening.current || dismissed.current === fw || !editable.some((e) => e.file === fw)) return;
+    opening.current = true;
+    const seq = codeSeq;
+    void startFrom(fw, () => nowRef.current.codeSeq === seq && nowRef.current.fw === fw && !nowRef.current.code)
+      .then((ok) => {
+        if (!ok) dismissed.current = fw;
+      })
+      .finally(() => (opening.current = false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, visible, restored, runner.firmwareExample, editable, codeSeq]);
+
   const removeCode = () => {
     if (!window.confirm("이 프로젝트의 코드를 모두 지울까요? (회로와 펌웨어는 그대로)")) return;
+    dismissed.current = runner.firmwareExample ?? null;
     onCode(undefined);
   };
 

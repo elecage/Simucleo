@@ -132,7 +132,17 @@ function copySources(rel) {
     }
   }
 }
-for (const project of new Set([...EXAMPLES.map(([p]) => p), "hal-common", "freertos-common"])) copySources(project);
+// With the libraries the examples are built from (HAL drivers, FreeRTOS,
+// FatFs, CMSIS core): a stop inside HAL_Delay or a FreeRTOS call shows
+// that code, as CubeIDE does, instead of "no source".
+const LIBRARIES = ["vendor/stm32f4xx_hal_driver/Src", "vendor/freertos", "vendor/fatfs", "vendor/CMSIS/Include"];
+for (const project of new Set([...EXAMPLES.map(([p]) => p), "hal-common", "freertos-common", ...LIBRARIES])) copySources(project);
+// (Their licences go with them, next to the sources.)
+for (const l of ["vendor/stm32f4xx_hal_driver/LICENSE.md", "vendor/freertos/LICENSE.md", "vendor/fatfs/LICENSE.md", "vendor/CMSIS/LICENSE.txt"]) {
+  if (!existsSync(join(root, l))) continue;
+  mkdirSync(dirname(join(srcOut, l)), { recursive: true });
+  copyFileSync(join(root, l), join(srcOut, l));
+}
 writeFileSync(join(out, "sources.json"), JSON.stringify(sources.sort()) + "\n");
 console.log(`${sources.length} source files → public/examples/src`);
 console.log(`${index.length} examples → public/examples (${index.filter((e) => e.code).length} editable in the code tab)`);

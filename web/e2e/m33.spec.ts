@@ -68,7 +68,10 @@ async function openCodeTab(page: Page) {
 
 async function startFromBlinky(page: Page) {
   await openCodeTab(page);
-  await page.getByLabel("코드를 시작할 예제").selectOption("hal-blinky.elf");
+  // With hal-blinky running and no code yet, the tab opens its main.c
+  // itself; otherwise it is picked from the list.
+  const runs = /hal-blinky/.test((await status(page).textContent()) ?? "");
+  if (!runs) await page.getByLabel("코드를 시작할 예제").selectOption("hal-blinky.elf");
   await expect(line(page, "HAL_Delay(500);")).toBeVisible();
 }
 
@@ -366,5 +369,46 @@ test("edits and file switches during a build: the project keeps the edit, each f
   await openCodeTab(page);
   await page.locator(`[data-file="Core/Inc/led.h"]`).click();
   await expect(line(page, "#define LED_PERIOD 250")).toBeVisible();
+  await context.close();
+});
+
+test("the code tab opens the running example's main.c, not an empty tab; '코드 지우기' leaves it empty", async ({ browser }) => {
+  // Loading an example (its project, the circuit with it) replaces the
+  // project's code: the tab then asked for an example again while that
+  // example ran, and showed no source.
+  // (The service worker is off so the route below sees the ELF fetch.)
+  const context = await browser.newContext({ viewport: { width: 1400, height: 820 }, serviceWorkers: "block" });
+  // hal-pwm-led's firmware comes 2 s after its project: meanwhile the
+  // runner still names blinky, whose main.c must not land in pwm's project.
+  await context.route("**/examples/hal-pwm-led.elf", async (route) => {
+    await new Promise((r) => setTimeout(r, 2000));
+    await route.continue();
+  });
+  const page = await context.newPage();
+  page.on("dialog", (d) => void d.accept());
+  await page.goto("/");
+  await expect(status(page)).toContainText("예제를");
+  await page.getByLabel("예제 펌웨어").selectOption("hal-blinky.elf");
+  await expect(status(page)).toContainText("hal-blinky");
+  await openCodeTab(page);
+  await expect(line(page, "HAL_Delay(500);")).toBeVisible();
+  // Another example from the toolbar: its own main.c.
+  // (Its first line: the editor draws only the lines in view.)
+  const pwm = readFileSync("public/examples/src/hal-pwm-led/main.c", "utf8").split("\n").find((l) => l.trim())!.trim();
+  await page.getByLabel("예제 펌웨어").selectOption("hal-pwm-led.elf");
+  await expect(status(page)).toContainText("hal-pwm-led");
+  await expect(line(page, "PWM brightness")).toBeVisible();
+  await expect(line(page, pwm).first()).toBeVisible();
+  await expect(page.locator('[data-file="Core/Src/main.c"]')).toBeVisible();
+  // Removed on purpose: the empty tab stays (with the configuration tool's start).
+  await page.locator(".code-panel details summary").first().click();
+  await page.getByRole("button", { name: "코드 지우기" }).click();
+  await expect(page.getByLabel("코드를 시작할 예제")).toBeVisible();
+  await page.waitForTimeout(800);
+  await expect(page.getByLabel("코드를 시작할 예제")).toBeVisible();
+  // And picked again from there: the editor shows it (the view had stayed
+  // with the start screen's predecessor and showed no text).
+  await page.getByLabel("코드를 시작할 예제").selectOption("hal-blinky.elf");
+  await expect(line(page, "HAL_Delay(500);")).toBeVisible();
   await context.close();
 });

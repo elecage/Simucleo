@@ -178,3 +178,42 @@ test("RTOS: each task's call stack and locals", async ({ page }) => {
   await expect(frames.filter({ hasText: "osSemaphoreAcquire" })).toHaveCount(1);
   await expect(frames.filter({ hasText: "ButtonTask" })).toHaveCount(1);
 });
+
+test("paused inside HAL_Delay: the HAL driver's source is shown, at the line that runs", async ({ page }) => {
+  // Blinky spends nearly all its time in HAL_Delay: a pause stops there.
+  // The site carries the HAL sources the examples are built from, so the
+  // view shows stm32f4xx_hal.c rather than "no source".
+  await page.goto("/");
+  await expect(status(page)).toContainText("예제를");
+  await page.getByLabel("예제 펌웨어").selectOption("hal-blinky.elf");
+  await expect(status(page)).toContainText("hal-blinky");
+  await page.getByRole("button", { name: "소스 (디버그)" }).click();
+  await page.getByRole("button", { name: "▶ 실행" }).click();
+  await page.waitForTimeout(800);
+  await page.getByRole("button", { name: "⏸ 일시정지" }).first().click();
+  await expect(page.getByTestId("debug-status")).toContainText("일시정지", { timeout: 5000 });
+  await expect(page.locator(".frames li").first()).toContainText("HAL_");
+  await expect(page.locator(".src-line.here")).toHaveCount(1);
+  await expect(page.locator(".src-line").first()).toBeVisible();
+  await expect(page.getByLabel("소스 파일").locator("option:checked")).toContainText("stm32f4xx_hal");
+  await expect(page.locator(".source-view")).not.toContainText("의 소스가 없습니다");
+});
+
+test("stepping into code without a source (newlib's printf) shows the line that called it", async ({ page }) => {
+  await page.goto("/");
+  await expect(status(page)).toContainText("예제를");
+  await page.getByLabel("예제 펌웨어").selectOption("hal-uart-printf.elf");
+  await expect(status(page)).toContainText("hal-uart-printf");
+  await page.getByRole("button", { name: "소스 (디버그)" }).click();
+  await expect(page.locator(".src-line[data-line='22']")).toContainText('printf("Hello from Simucleo!');
+  await page.getByTestId("gutter-22").click();
+  await page.getByRole("button", { name: "▶ 실행" }).click();
+  await expect(page.getByTestId("debug-status")).toContainText("중단점", { timeout: 5000 });
+  await page.getByRole("button", { name: "↘ 들어가기" }).click();
+  // In printf (newlib, no source here): the caller, main.c:22, with a note.
+  await expect(page.locator(".frames li").first()).not.toContainText(/^main/);
+  await expect(page.getByTestId("frame-skipped")).toBeVisible();
+  await expect(page.locator(".frames li.on")).toContainText("main");
+  await expect(page.locator(".src-line.here")).toHaveAttribute("data-line", "22");
+  await expect(page.locator(".source-view")).not.toContainText("의 소스가 없습니다");
+});

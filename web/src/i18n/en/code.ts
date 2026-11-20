@@ -81,7 +81,7 @@ export const CODE: Record<string, string> = {
   "코드 지우기": "Delete code",
   " · 시작 {s}초": " · started in {s} s",
   "문제": "Problems",
-  "없음": "none",
+  "없음": "None",
   "왜?": "Why?",
   "빌드: 경고 없음": "Build: no warnings",
 

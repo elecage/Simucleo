@@ -19,6 +19,7 @@ interface Perf {
   hz: number;
   ratio: number | null;
   workerRatio: number | null;
+  workerShare: number;
   busy: number;
   uiMs: number;
 }
@@ -352,15 +353,19 @@ test("the worker spends most of its time simulating: flat out it gets near the h
   const [raw] = await page.evaluate(() =>
     (window as unknown as { __simucleoBench(n: string[], f?: unknown, ms?: number): Promise<{ ratio: number }[]> }).__simucleoBench(["hal-bldc-pwm"], undefined, 3000),
   );
-  // The worker computes 12 ms of every 16, so "최대" reaches about ×0.75 of
-  // that; before M31 it slept 16 ms after each 12 ms of work: about ×0.43,
-  // and a heavy example fell below real time on a machine fast enough for it.
+  // The worker computes 12 ms of every 16: flat out, about 0.75 of its
+  // thread goes to the simulation; before M31 it slept 16 ms after each
+  // 12 ms of work: about 0.43, and a heavy example fell below real time on
+  // a machine fast enough for it. The share is the worker's own measure:
+  // the speeds of two runs at different moments, with another test on the
+  // same two cores, differ by more than that (x0.6 to x1.45 of each other).
   await page.getByLabel("실행 속도").selectOption("최대");
   await page.getByRole("button", { name: "▶ 실행" }).click();
   await page.waitForTimeout(5000);
   const p = await perf(page);
-  console.log(`headless ×${raw.ratio.toFixed(2)}, flat out in the app ×${p.workerRatio!.toFixed(2)}`);
-  expect(p.workerRatio! / raw.ratio).toBeGreaterThan(0.6);
+  console.log(`headless ×${raw.ratio.toFixed(2)}, flat out in the app ×${p.workerRatio!.toFixed(2)}, worker busy ${(p.workerShare * 100).toFixed(0)} %`);
+  expect(p.workerShare).toBeGreaterThan(0.65);
+  expect(p.workerShare).toBeLessThan(0.9);
 });
 
 test("the ratio on the status line is what really happens: simulated time over wall time", async ({ page }) => {

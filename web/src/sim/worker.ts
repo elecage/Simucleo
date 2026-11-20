@@ -17,6 +17,10 @@ let lastWall = 0;
 /** Achieved simulated time / wall time over the last 1.5 s (M31). */
 const meter = new RatioMeter();
 let achieved = 0;
+/** Simulating time / wall time of the worker over the last 1.5 s (M31). */
+const workMeter = new RatioMeter();
+let workMs = 0;
+let workShare = 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let epoch = 0;
 /** The `gen` of the last trigger message (see `FrameMsg.triggerGen`). */
@@ -34,7 +38,7 @@ const post = (m: FromWorker) => (self as unknown as Worker).postMessage(m);
 
 function flush() {
   if (!batch.length) return;
-  post({ type: "frames", frames: batch, speed: achieved });
+  post({ type: "frames", frames: batch, speed: achieved, work: workShare });
   batch = [];
   lastBatch = performance.now();
   inFlight = true;
@@ -47,7 +51,7 @@ function sendFrame(now = true) {
   const m: FrameMsg = { frame, console: sim.takeConsole(), running, epoch, triggerGen };
   const hz = batchHz(uiHz, speedCap);
   if (hz === null) {
-    post({ type: "frame", ...m, speed: achieved });
+    post({ type: "frame", ...m, speed: achieved, work: workShare });
     return;
   }
   batch.push(m);
@@ -84,8 +88,12 @@ function tick() {
       break;
     }
   }
-  meter.add(performance.now(), sim.timeMs());
+  const done = performance.now();
+  meter.add(done, sim.timeMs());
   achieved = meter.ratio() ?? achieved;
+  workMs += done - now;
+  workMeter.add(done, workMs);
+  workShare = workMeter.ratio() ?? workShare;
   // Stopped: shown at once, not with the next batch.
   sendFrame(!running);
   // The next tick FRAME_MS after this one began (M31: not FRAME_MS after
@@ -101,6 +109,10 @@ function start() {
   lastWall = performance.now();
   meter.reset();
   meter.add(lastWall, sim.timeMs());
+  workMeter.reset();
+  workMs = 0;
+  workShare = 0;
+  workMeter.add(lastWall, 0);
   timer = setTimeout(tick, 0);
 }
 

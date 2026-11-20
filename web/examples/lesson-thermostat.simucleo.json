@@ -1,0 +1,236 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "스마트 온도조절기 (AHT20, OLED, 릴레이)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "oled",
+      "kind": "oled-ssd1306",
+      "x": 46,
+      "y": 4,
+      "props": {
+        "address": "0x3C"
+      }
+    },
+    {
+      "id": "aht",
+      "kind": "aht20",
+      "x": 46,
+      "y": 20,
+      "props": {
+        "temp": 23.5,
+        "humidity": 45
+      }
+    },
+    {
+      "id": "k1",
+      "kind": "relay",
+      "x": 66,
+      "y": 18,
+      "props": {
+        "trigger": "low"
+      }
+    },
+    {
+      "id": "rh",
+      "kind": "resistor",
+      "x": 82,
+      "y": 26,
+      "props": {
+        "ohms": "330"
+      }
+    },
+    {
+      "id": "heat",
+      "kind": "led-5mm",
+      "x": 86,
+      "y": 20,
+      "props": {
+        "color": "red"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "D15"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "SCL"
+      }
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "D14"
+      },
+      "b": {
+        "part": "oled",
+        "pin": "SDA"
+      }
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "oled",
+        "pin": "VCC"
+      },
+      "b": {
+        "part": "aht",
+        "pin": "VCC"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "oled",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "aht",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "oled",
+        "pin": "SCL"
+      },
+      "b": {
+        "part": "aht",
+        "pin": "SCL"
+      }
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "oled",
+        "pin": "SDA"
+      },
+      "b": {
+        "part": "aht",
+        "pin": "SDA"
+      }
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "k1",
+        "pin": "VCC"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "k1",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w11",
+      "a": {
+        "part": "nucleo",
+        "pin": "D7"
+      },
+      "b": {
+        "part": "k1",
+        "pin": "IN"
+      },
+      "color": "#43a047"
+    },
+    {
+      "id": "w12",
+      "a": {
+        "part": "k1",
+        "pin": "VCC"
+      },
+      "b": {
+        "part": "k1",
+        "pin": "COM"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w13",
+      "a": {
+        "part": "k1",
+        "pin": "NO"
+      },
+      "b": {
+        "part": "rh",
+        "pin": "1"
+      }
+    },
+    {
+      "id": "w14",
+      "a": {
+        "part": "rh",
+        "pin": "2"
+      },
+      "b": {
+        "part": "heat",
+        "pin": "A"
+      }
+    },
+    {
+      "id": "w15",
+      "a": {
+        "part": "heat",
+        "pin": "K"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P2"
+      },
+      "color": "#212121"
+    }
+  ]
+}

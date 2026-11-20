@@ -1,0 +1,157 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "조이스틱 팬·틸트 (서보 2개)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    },
+    {
+      "id": "js",
+      "kind": "joystick",
+      "x": 48,
+      "y": 14,
+      "props": {
+        "x": 0.5,
+        "y": 0.5,
+        "sw": 0
+      }
+    },
+    {
+      "id": "s1",
+      "kind": "servo",
+      "x": 64,
+      "y": 8,
+      "props": {}
+    },
+    {
+      "id": "s2",
+      "kind": "servo",
+      "x": 64,
+      "y": 22,
+      "props": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "a": {
+        "part": "nucleo",
+        "pin": "3V3"
+      },
+      "b": {
+        "part": "js",
+        "pin": "+5V"
+      },
+      "color": "#e53935"
+    },
+    {
+      "id": "w2",
+      "a": {
+        "part": "js",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_P1"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w3",
+      "a": {
+        "part": "nucleo",
+        "pin": "A0"
+      },
+      "b": {
+        "part": "js",
+        "pin": "VRx"
+      }
+    },
+    {
+      "id": "w4",
+      "a": {
+        "part": "nucleo",
+        "pin": "A1"
+      },
+      "b": {
+        "part": "js",
+        "pin": "VRy"
+      }
+    },
+    {
+      "id": "w5",
+      "a": {
+        "part": "nucleo",
+        "pin": "5V"
+      },
+      "b": {
+        "part": "s1",
+        "pin": "V+"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w6",
+      "a": {
+        "part": "s1",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "nucleo",
+        "pin": "GND_D"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w7",
+      "a": {
+        "part": "nucleo",
+        "pin": "D5"
+      },
+      "b": {
+        "part": "s1",
+        "pin": "SIG"
+      }
+    },
+    {
+      "id": "w8",
+      "a": {
+        "part": "s1",
+        "pin": "V+"
+      },
+      "b": {
+        "part": "s2",
+        "pin": "V+"
+      },
+      "color": "#fb8c00"
+    },
+    {
+      "id": "w9",
+      "a": {
+        "part": "s1",
+        "pin": "GND"
+      },
+      "b": {
+        "part": "s2",
+        "pin": "GND"
+      },
+      "color": "#212121"
+    },
+    {
+      "id": "w10",
+      "a": {
+        "part": "nucleo",
+        "pin": "D9"
+      },
+      "b": {
+        "part": "s2",
+        "pin": "SIG"
+      }
+    }
+  ]
+}

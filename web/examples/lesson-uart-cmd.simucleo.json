@@ -1,0 +1,15 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "UART 명령 줄 (LD2)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    }
+  ],
+  "wires": []
+}

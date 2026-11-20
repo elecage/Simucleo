@@ -1,0 +1,27 @@
+/* Share links and QR codes (M30). */
+.overlay-box.share-box { width: min(860px, 100%); align-self: flex-start; max-height: 100%; overflow: auto; }
+.overlay-box.receive-box { width: min(620px, 100%); }
+.share-body { display: flex; gap: 16px; padding: 12px 14px; flex-wrap: wrap; }
+.share-main { flex: 1 1 380px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.receive-box .share-main { padding: 12px 14px; }
+.share-main p { margin: 0; }
+.share-summary { margin: 0; padding-left: 18px; line-height: 1.6; overflow-wrap: anywhere; }
+.share-options { display: flex; flex-direction: column; gap: 4px; }
+.share-options label { display: block; }
+.share-link { width: 100%; box-sizing: border-box; font-size: 12px !important; word-break: break-all; }
+.share-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.share-box button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.share-box .warn { color: #92400e; }
+.share-qr-box { flex: 0 0 260px; display: flex; align-items: flex-start; justify-content: center; }
+.share-qr-box figure { margin: 0; text-align: center; }
+.share-qr { width: 240px; height: 240px; display: block; border: 1px solid var(--border); border-radius: 6px; }
+.share-qr-box .hint { border: 1px dashed var(--border); border-radius: 8px; padding: 10px; }
+.teacher-links { margin: 0 14px 10px; display: flex; gap: 8px; align-items: flex-start; }
+.teacher-links textarea { flex: 1; min-height: 2.6em; }
+/* The share button inside the project name's box: no room of its own in the toolbar. */
+.project-name-box { position: relative; display: inline-block; flex: none; }
+.project-name-box .project-name { display: block; padding-right: 52px; }
+.project-name-box .share-btn { position: absolute; right: 2px; top: 2px; bottom: 2px; padding: 0 5px; font-size: 11px; line-height: 1; border-radius: 3px; }
+@media (prefers-color-scheme: dark) {
+  .share-box .warn { color: #fcd34d; }
+}

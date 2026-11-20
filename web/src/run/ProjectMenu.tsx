@@ -15,22 +15,25 @@ interface Props {
 // Keep letters of any script (Korean names stay readable), digits, . and -.
 const slug = (s: string) => s.trim().replace(/[^\p{L}\p{N}.-]+/gu, "_") || "simucleo";
 
+/** Download the project as a `.simucleo.json` file. */
+export function saveProjectFile(project: Project, name: string, runner: Pick<Runner, "firmware" | "firmwareExample" | "firmwareBytes">, withElf: boolean) {
+  let fw;
+  if (runner.firmware) {
+    fw = { name: runner.firmware, example: runner.firmwareExample ?? undefined } as {
+      name: string;
+      example?: string;
+      data?: string;
+    };
+    if (withElf && runner.firmwareBytes) fw.data = toBase64(runner.firmwareBytes);
+  }
+  download(`${slug(name)}.simucleo.json`, new Blob([serialize(project, name, fw)], { type: "application/json" }));
+}
+
 export function ProjectMenu({ project, name, runner, onNew, onOpenText }: Props) {
   const [withElf, setWithElf] = useState(true);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const save = () => {
-    let fw;
-    if (runner.firmware) {
-      fw = { name: runner.firmware, example: runner.firmwareExample ?? undefined } as {
-        name: string;
-        example?: string;
-        data?: string;
-      };
-      if (withElf && runner.firmwareBytes) fw.data = toBase64(runner.firmwareBytes);
-    }
-    download(`${slug(name)}.simucleo.json`, new Blob([serialize(project, name, fw)], { type: "application/json" }));
-  };
+  const save = () => saveProjectFile(project, name, runner, withElf);
 
   // The view on screen: the schematic or the breadboard.
   const svg = () =>

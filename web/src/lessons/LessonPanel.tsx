@@ -28,6 +28,7 @@ import {
   type ExpectedCheck,
   type LessonProgress,
   type Progress,
+  type ResultsFile,
 } from "./progress";
 import { isWiring, type BehaviourCheck, type CheckResult, type Lesson, type WiringCheck } from "./types";
 import { evaluateWiring, shortName, wiringLabel, type WiringContext } from "./wiring";
@@ -68,6 +69,10 @@ interface Props {
   preview?: { lesson: Lesson; seq: number } | null;
   /** Wiring checks that failed at the last grading, for the schematic. */
   onMarks?: (marks: Involved[] | null) => void;
+  /** "선생님께 보내기" (M30): the sealed results and the open lesson. */
+  onSendToTeacher?: (result: ResultsFile, lesson: { id: string; title: string } | null) => void;
+  /** The lesson open in the panel (M30: share links take it along). */
+  onActive?: (lesson: { id: string; title: string } | null) => void;
 }
 
 /** The bundled lessons by `track` (M32), in the order of their first lesson. */
@@ -99,6 +104,8 @@ export function LessonPanel({
   onTeacher,
   preview,
   onMarks,
+  onSendToTeacher,
+  onActive,
 }: Props) {
   const [activeId, setActiveId] = useState<string | null>(null);
   // Progress as stored; `progress` below is it matched to the lessons' current checks.
@@ -163,6 +170,13 @@ export function LessonPanel({
   }, [progress, loaded]);
   const lesson = all.find((e) => e.lesson.id === activeId)?.lesson ?? null;
   const mine = lesson ? progress[lesson.id] : undefined;
+  // The open lesson, for share links (M30); none once the panel closes.
+  const openId = lesson && lesson.id !== PREVIEW_ID ? lesson.id : null;
+  const openTitle = lesson?.title ?? "";
+  useEffect(() => {
+    onActive?.(openId ? { id: openId, title: openTitle } : null);
+  }, [openId, openTitle, onActive]);
+  useEffect(() => () => onActive?.(null), [onActive]);
 
   // ------------------------------------------------------ live wiring checks
   const warnings = runner.frame?.circuitWarnings;
@@ -374,10 +388,11 @@ export function LessonPanel({
   };
 
   // -------------------------------------------------------------- export
-  const exportResults = async (kind: "json" | "csv") => {
+  /** The results file; `only`: that lesson's results alone. */
+  const buildResults = (only?: string) => {
     const order = all.map((e) => e.lesson.id);
     // Not the editor's preview runs.
-    const handedIn = Object.fromEntries(Object.entries(progress).filter(([id]) => id !== PREVIEW_ID));
+    const handedIn = Object.fromEntries(Object.entries(progress).filter(([id]) => id !== PREVIEW_ID && (!only || id === only)));
     const titles = Object.fromEntries(all.map((e) => [e.lesson.id, e.lesson.steps.map((s) => s.title)]));
     // Every check of each lesson: those not run yet (behaviour checks before
     // "채점") go in as pending, so the teacher does not see unfinished work as done.
@@ -393,13 +408,22 @@ export function LessonPanel({
         ),
       ]),
     );
-    const file = resultsJson(handedIn, student.trim(), now(), order, titles, expected);
+    return resultsJson(handedIn, student.trim(), now(), order, titles, expected);
+  };
+  const exportResults = async (kind: "json" | "csv") => {
+    const file = buildResults();
     const base = `lesson-results_${student.trim().replace(/[^\p{L}\p{N}.-]+/gu, "_") || "noname"}`;
     if (kind === "json") {
       // With a SHA-256 of its content: the teacher view flags casual edits (M24).
       const sealed = await seal(file);
       download(`${base}.json`, new Blob([JSON.stringify(sealed, null, 2) + "\n"], { type: "application/json" }));
     } else download(`${base}.csv`, new Blob([resultsCsv(file)], { type: "text/csv" }));
+  };
+  // "선생님께 보내기" (M30): the open lesson's results (all of them from the
+  // list), sealed as for the JSON file, in a share link with the circuit.
+  const sendToTeacher = async () => {
+    const open = lesson && lesson.id !== PREVIEW_ID ? lesson : null;
+    onSendToTeacher?.(await seal(buildResults(open?.id)), open ? { id: open.id, title: open.title } : null);
   };
 
   // ------------------------------------------------------- my lessons
@@ -480,6 +504,17 @@ export function LessonPanel({
         <button onClick={() => void exportResults("json")} title="같은 내용을 JSON으로 저장 (변조 확인용 해시 포함, 선생님용 모아보기에 권장)">
           JSON
         </button>
+        {onSendToTeacher && (
+          <>
+            {" "}
+            <button
+              onClick={() => void sendToTeacher()}
+              title="지금 회로와 실습 결과(변조 확인용 해시 포함)를 링크·QR로 만들어 선생님께 보냅니다. 서버로는 아무것도 가지 않습니다"
+            >
+              📤 선생님께 보내기
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

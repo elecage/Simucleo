@@ -4,6 +4,8 @@
 import { useMemo, useState, type DragEvent } from "react";
 import { download } from "../editor/project";
 import { LESSONS } from "./index";
+import { PART_BY_KIND } from "../parts";
+import { decodeShare, findFragments } from "../share/link";
 import {
   fmtDuration,
   mergeResults,
@@ -41,6 +43,7 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
   const [tamperedOnly, setTamperedOnly] = useState(false);
   const [sort, setSort] = useState<NonNullable<TableOptions["sort"]>>({ by: "student" });
   const [over, setOver] = useState(false);
+  const [links, setLinks] = useState("");
 
   const merged = useMemo(() => mergeResults(files, KNOWN), [files]);
   const rates = useMemo(() => passRates(merged), [merged]);
@@ -52,6 +55,22 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
     const read: LoadedResult[] = [];
     for (const f of list) read.push(...(await parseResults(f.name, await f.text())));
     onFiles([...files, ...read]);
+  };
+  // Share links from "선생님께 보내기" (M30): each one's result, verified like a file.
+  const addLinks = async (text: string) => {
+    const frags = findFragments(text);
+    const read: LoadedResult[] = [];
+    if (!frags.length) read.push({ source: "붙여 넣은 글", kind: "json", integrity: "unverified", error: "Simucleo 공유 링크(#s1=…)가 없습니다" });
+    for (const [i, frag] of frags.entries()) {
+      try {
+        const r = await decodeShare(frag, PART_BY_KIND);
+        read.push(r.result ?? { source: `링크 ${i + 1}`, kind: "json", integrity: "unverified", error: "이 링크에는 실습 결과가 없습니다 (회로만 든 공유 링크)" });
+      } catch (e) {
+        read.push({ source: `링크 ${i + 1}`, kind: "json", integrity: "unverified", error: (e as Error).message });
+      }
+    }
+    onFiles([...files, ...read]);
+    setLinks("");
   };
   const drop = (e: DragEvent) => {
     e.preventDefault();
@@ -107,6 +126,18 @@ export function TeacherView({ files, onFiles, onClose }: Props) {
               <button onClick={() => onFiles([])}>모두 지우기</button>
             </>
           )}
+        </div>
+        <div className="teacher-links">
+          <textarea
+            value={links}
+            onChange={(e) => setLinks(e.target.value)}
+            placeholder="학생이 '선생님께 보내기'로 보낸 링크를 붙여 넣으세요 (여러 개면 줄마다 하나씩)"
+            aria-label="공유 링크 붙여넣기"
+            rows={2}
+          />
+          <button onClick={() => void addLinks(links)} disabled={!links.trim()}>
+            링크 추가
+          </button>
         </div>
 
         {sources.length > 0 && (

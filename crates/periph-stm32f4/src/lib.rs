@@ -11,8 +11,10 @@
 pub mod adc;
 pub mod dma;
 pub mod exti;
+pub mod flash;
 pub mod gpio;
 pub mod i2c;
+pub mod iwdg;
 pub mod map;
 pub mod rcc;
 pub mod regmap;
@@ -30,8 +32,10 @@ use std::collections::BTreeSet;
 use adc::{Adc, AdcAction};
 use dma::{Dma, Request};
 use exti::Exti;
+use flash::{FlashFault, FlashIf};
 use gpio::{Gpio, PinDrive, PinEvent};
 use i2c::{I2c, I2cBus, I2cOp, I2cReply};
+use iwdg::Iwdg;
 use rcc::{Clocks, Rcc, ResetCause};
 use regmap::RegisterFile;
 use simucleo_core::bus::{AccessSize, Bus, BusError, Memory};
@@ -39,7 +43,7 @@ use simucleo_core::cortexm::CortexM;
 use simucleo_core::sched::Scheduler;
 use simucleo_core::Cycles;
 use spi::{Spi, SpiBus};
-use sysctl::{FlashIf, Pwr, Syscfg};
+use sysctl::{Pwr, Syscfg};
 use timer::{Timer, TIMERS};
 use usart::{TerminalByte, Usart, UsartEventKind};
 use wire::{WireEvent, WireSignal};
@@ -72,6 +76,14 @@ pub enum Event {
     Circuit {
         gen: u32,
     },
+    /// A flash erase or programming operation ends.
+    Flash {
+        gen: u32,
+    },
+    /// The independent watchdog reaches 0.
+    Iwdg {
+        gen: u32,
+    },
 }
 
 /// Something the firmware did that would misbehave on real hardware.
@@ -89,6 +101,8 @@ pub enum Warning {
         latency: u32,
         required: u32,
     },
+    /// A write to the flash array that did not program it.
+    FlashWrite { fault: FlashFault },
 }
 
 impl std::fmt::Display for Warning {
@@ -101,6 +115,17 @@ impl std::fmt::Display for Warning {
                 f,
                 "HCLK {:.0} MHz needs {required} flash wait states but FLASH.ACR.LATENCY is {latency}",
                 *hclk as f64 / 1e6
+            ),
+            Warning::FlashWrite { fault } => write!(
+                f,
+                "a write to flash did nothing: {}",
+                match fault {
+                    FlashFault::Locked => "FLASH_CR is locked (HAL_FLASH_Unlock first)",
+                    FlashFault::Sequence => "FLASH_CR.PG is not set (PGSERR)",
+                    FlashFault::Parallelism => "the access size differs from FLASH_CR.PSIZE (PGPERR)",
+                    FlashFault::Alignment => "the data crosses a 128-bit row (PGAERR)",
+                    FlashFault::Protected => "the sector is write-protected (WRPERR)",
+                }
             ),
         }
     }
@@ -428,6 +453,10 @@ pub struct Stm32f401Bus {
     pub rcc: Rcc,
     pub pwr: Pwr,
     pub flash_if: FlashIf,
+    pub iwdg: Iwdg,
+    /// A reset the chip asked for itself (the watchdog), for the owner to
+    /// carry out; see [`Stm32f401Bus::take_reset_request`].
+    pub reset_request: Option<ResetCause>,
     /// USART1, USART2 (ST-LINK virtual COM port), USART6.
     pub usart: [Usart; 3],
     pub exti: Exti,
@@ -477,7 +506,7 @@ impl Stm32f401Bus {
         let rcc = Rcc::new(ResetCause::PowerOn);
         let clocks = rcc.clocks();
         let mut bus = Self {
-            flash: Memory::new(map::FLASH_BASE, map::FLASH_SIZE, false),
+            flash: erased_flash(),
             sram: Memory::new(map::SRAM_BASE, map::SRAM_SIZE, true),
             gpio: std::array::from_fn(|i| Gpio::new(i as u8)),
             pin_events: Vec::new(),
@@ -490,6 +519,8 @@ impl Stm32f401Bus {
             rcc,
             pwr: Pwr::default(),
             flash_if: FlashIf::default(),
+            iwdg: Iwdg::default(),
+            reset_request: None,
             usart: USARTS.map(|(name, _, irq, apb2, ..)| Usart::new(name, irq, apb2)),
             exti: Exti::default(),
             syscfg: Syscfg::default(),
@@ -1019,7 +1050,9 @@ impl Stm32f401Bus {
         }
         self.rcc.system_reset(cause);
         self.pwr = Pwr::default();
-        self.flash_if = FlashIf::default();
+        self.flash_if.system_reset();
+        self.iwdg = Iwdg::default();
+        self.reset_request = None;
         for u in &mut self.usart {
             u.reset();
         }
@@ -1050,6 +1083,39 @@ impl Stm32f401Bus {
         self.clocks = self.rcc.clocks();
         self.clock_changed = true;
         self.retime_timers();
+        self.flash_if.set_clock(self.clocks.hclk, now);
+        self.iwdg.set_clock(self.clocks.hclk, now);
+        if self.flash_if.hardware_watchdog() {
+            self.start_iwdg(now);
+        }
+    }
+
+    /// A reset the chip asked for (the watchdog ran out), taken once.
+    pub fn take_reset_request(&mut self) -> Option<ResetCause> {
+        self.reset_request.take()
+    }
+
+    fn start_iwdg(&mut self, now: Cycles) {
+        // The IWDG forces the LSI on.
+        self.rcc.csr |= 0b11;
+        if let Some(at) = self.iwdg.start(now) {
+            let gen = self.iwdg.gen;
+            self.sched.schedule_at(at, Event::Iwdg { gen });
+        }
+    }
+
+    fn schedule_flash(&mut self, at: Option<Cycles>) {
+        if let Some(at) = at {
+            let gen = self.flash_if.gen;
+            self.sched.schedule_at(at, Event::Flash { gen });
+        }
+    }
+
+    fn schedule_iwdg(&mut self, at: Option<Cycles>) {
+        if let Some(at) = at {
+            let gen = self.iwdg.gen;
+            self.sched.schedule_at(at, Event::Iwdg { gen });
+        }
     }
 
     /// Program a firmware segment into flash or SRAM.
@@ -1142,6 +1208,16 @@ impl Stm32f401Bus {
                 Event::Circuit { gen } => {
                     if self.circuit_gen == gen {
                         self.circuit_update_forced(at);
+                    }
+                }
+                Event::Flash { gen } => {
+                    if self.flash_if.gen == gen {
+                        self.flash_if.complete(&mut self.flash);
+                    }
+                }
+                Event::Iwdg { gen } => {
+                    if self.iwdg.gen == gen && self.iwdg.running() {
+                        self.reset_request = Some(ResetCause::Watchdog);
                     }
                 }
                 Event::Adc { gen } => {
@@ -1271,6 +1347,11 @@ impl Stm32f401Bus {
             self.clocks = c;
             self.clock_changed = true;
             self.retime_timers();
+            let now = self.now;
+            let f = self.flash_if.set_clock(c.hclk, now);
+            self.schedule_flash(f);
+            let w = self.iwdg.set_clock(c.hclk, now);
+            self.schedule_iwdg(w);
         }
         let required = FlashIf::required_latency(c.hclk);
         let latency = self.flash_if.latency();
@@ -1391,6 +1472,7 @@ impl Stm32f401Bus {
             match a & !0x3FF {
                 map::RCC_BASE => self.rcc.read(off),
                 map::FLASH_IF_BASE => self.flash_if.read(off),
+                IWDG_BASE => self.iwdg.read(off, self.now),
                 map::EXTI_BASE => self.exti.read(off),
                 DMA1_BASE | DMA2_BASE => {
                     let d = (a & !0x3FF == DMA2_BASE) as usize;
@@ -1474,6 +1556,7 @@ impl Stm32f401Bus {
         match a & !0x3FF {
             map::RCC_BASE => return self.rcc.read(off),
             map::FLASH_IF_BASE => return self.flash_if.read(off),
+            IWDG_BASE => return self.iwdg.read(off, self.now),
             map::EXTI_BASE => return self.exti.read(off),
             DMA1_BASE | DMA2_BASE => {
                 let d = (a & !0x3FF == DMA2_BASE) as usize;
@@ -1596,7 +1679,19 @@ impl Stm32f401Bus {
                 return;
             }
             map::FLASH_IF_BASE => {
-                self.flash_if.write(off, value, lanes);
+                let at = self.flash_if.write(off, value, lanes, self.now);
+                self.schedule_flash(at);
+                return;
+            }
+            IWDG_BASE => {
+                // KR, PR, RLR take 16-bit values: the lanes hold them.
+                let v = (value & lanes) >> (8 * (a & 3));
+                let was = self.iwdg.running();
+                let at = self.iwdg.write(off, v, self.now);
+                if !was && self.iwdg.running() {
+                    self.rcc.csr |= 0b11;
+                }
+                self.schedule_iwdg(at);
                 return;
             }
             map::EXTI_BASE => {
@@ -1707,8 +1802,18 @@ impl Stm32f401Bus {
             return Ok(());
         }
         if self.flash.contains(a, size) {
-            // Flash programming goes through the FLASH interface (later).
-            return Err(BusError::ReadOnly(addr));
+            // Programming goes through the FLASH interface: with PG set the
+            // write programs the cells, otherwise it only sets an error flag.
+            match self
+                .flash_if
+                .program(&mut self.flash, a, size, value, self.now)
+            {
+                Ok(at) => self.schedule_flash(Some(at)),
+                Err(fault) => {
+                    self.warnings.insert(Warning::FlashWrite { fault });
+                }
+            }
+            return Ok(());
         }
         if map::is_peripheral_space(a) {
             let shift = (a & 3) * 8;
@@ -1720,6 +1825,14 @@ impl Stm32f401Bus {
 }
 
 const DMA1_BASE: u32 = 0x4002_6000;
+const IWDG_BASE: u32 = 0x4000_3000;
+
+/// Flash as it leaves the factory: every cell erased (0xFF).
+fn erased_flash() -> Memory {
+    let mut m = Memory::new(map::FLASH_BASE, map::FLASH_SIZE, false);
+    m.load(map::FLASH_BASE, &vec![0xFF; map::FLASH_SIZE]).ok();
+    m
+}
 const DMA2_BASE: u32 = 0x4002_6400;
 
 /// Index in [`TIMERS`] of the timer whose register block starts at `base`.
@@ -1817,6 +1930,9 @@ impl Bus for Stm32f401Bus {
         if self.adc.irq_line() {
             raise(18);
         }
+        if self.flash_if.irq_line() {
+            raise(4);
+        }
         for s in &self.spi {
             if s.irq_line() {
                 raise(s.irq);
@@ -1883,6 +1999,78 @@ impl Bus for Stm32f401Bus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flash_is_erased_programmed_and_erased_through_the_interface() {
+        let mut bus = Stm32f401Bus::new();
+        let a = 0x0802_0000;
+        assert_eq!(
+            bus.read_u32(a).unwrap(),
+            0xFFFF_FFFF,
+            "erased from the factory"
+        );
+        // A plain store does nothing but flag it (no bus fault).
+        bus.write(a, AccessSize::Word, 0).unwrap();
+        assert_eq!(bus.read_u32(a).unwrap(), 0xFFFF_FFFF);
+        assert!(bus.warnings.contains(&Warning::FlashWrite {
+            fault: FlashFault::Locked
+        }));
+        let f = map::FLASH_IF_BASE;
+        bus.write(f + 0x04, AccessSize::Word, 0x4567_0123).unwrap();
+        bus.write(f + 0x04, AccessSize::Word, 0xCDEF_89AB).unwrap();
+        bus.write(f + 0x10, AccessSize::Word, 2 << 8 | 1).unwrap(); // x32, PG
+        bus.write(a, AccessSize::Word, 0xCAFE_F00D).unwrap();
+        assert_ne!(bus.read_u32(f + 0x0C).unwrap() & flash::BSY, 0);
+        bus.run_events(16 * 16 + 1);
+        assert_eq!(bus.read_u32(f + 0x0C).unwrap() & flash::BSY, 0);
+        assert_eq!(bus.read_u32(a).unwrap(), 0xCAFE_F00D);
+        // Sector 5 erase, with the end-of-operation interrupt.
+        let cr = 1 << 24 | 2 << 8 | 5 << 3 | 2;
+        bus.write(f + 0x10, AccessSize::Word, cr).unwrap();
+        bus.write(f + 0x10, AccessSize::Word, cr | 1 << 16).unwrap();
+        let end = bus.next_deadline().unwrap();
+        assert_eq!(end - bus.now, 1_100_000 * 16, "1.1 s at 16 MHz");
+        bus.run_events(end);
+        assert_eq!(bus.read_u32(a).unwrap(), 0xFFFF_FFFF);
+        assert_eq!(bus.flash_if.erase_counts[5], 1);
+        let mut sys = CortexM::new();
+        bus.poll(&mut sys);
+        assert_ne!(
+            sys.peek(0xE000_E200, AccessSize::Word) & (1 << 4),
+            0,
+            "FLASH IRQ pending in NVIC_ISPR0"
+        );
+        // Cells survive a reset; the interface locks again.
+        bus.flash_if.write(0x10, 0, u32::MAX, 0);
+        bus.write(f + 0x10, AccessSize::Word, 2 << 8 | 1).unwrap();
+        bus.write(a + 4, AccessSize::Word, 0x1234).unwrap();
+        bus.run_events(end + 1000);
+        bus.system_reset(ResetCause::Pin);
+        assert_eq!(bus.read_u32(a + 4).unwrap(), 0x1234);
+        assert_ne!(bus.read_u32(f + 0x10).unwrap() & 1 << 31, 0);
+    }
+
+    #[test]
+    fn the_independent_watchdog_resets_unless_refreshed() {
+        let mut bus = Stm32f401Bus::new();
+        let kr = 0x4000_3000;
+        bus.write(kr, AccessSize::Word, 0x5555).unwrap();
+        bus.write(kr + 4, AccessSize::Word, 0).unwrap(); // /4
+        bus.write(kr + 8, AccessSize::Word, 799).unwrap(); // 100 ms
+        bus.write(kr, AccessSize::Word, 0xCCCC).unwrap();
+        assert_eq!(bus.rcc.csr & 0b11, 0b11, "LSI forced on");
+        // Refreshed at 50 ms, it does not fire at 100 ms.
+        bus.run_events(800_000);
+        Bus::set_time(&mut bus, 800_000);
+        bus.write(kr, AccessSize::Word, 0xAAAA).unwrap();
+        bus.run_events(1_700_000);
+        assert!(bus.take_reset_request().is_none());
+        bus.run_events(2_400_001);
+        assert_eq!(bus.take_reset_request(), Some(ResetCause::Watchdog));
+        bus.system_reset(ResetCause::Watchdog);
+        assert_ne!(bus.rcc.csr & 1 << 29, 0, "IWDGRSTF");
+        assert!(!bus.iwdg.running(), "stopped by the reset");
+    }
 
     #[test]
     fn receive_only_spi_is_logged_for_probes_without_mosi() {

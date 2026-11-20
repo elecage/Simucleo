@@ -38,6 +38,8 @@ pub enum ResetCause {
     PowerOn,
     Pin,
     Software,
+    /// The independent watchdog ran out.
+    Watchdog,
 }
 
 /// Bus clock frequencies in Hz.
@@ -111,6 +113,8 @@ impl Rcc {
             ResetCause::Pin => 0x0400_0000,
             // SFTRSTF | PINRSTF (the reset pin is driven during any reset)
             ResetCause::Software => 0x1400_0000,
+            // IWDGRSTF | PINRSTF
+            ResetCause::Watchdog => 0x2400_0000,
         };
         r
     }

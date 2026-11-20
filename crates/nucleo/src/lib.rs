@@ -159,6 +159,8 @@ pub struct Nucleo {
     pub firmware: Option<FirmwareImage>,
     debug: debugger::DebugState,
     resets: u32,
+    /// Resets by the independent watchdog so far.
+    watchdog_resets: u32,
     timeline: Vec<Segment>,
     /// Everything wired to the board, plus LD2 and B1.
     circuit: Rc<RefCell<CircuitSim>>,
@@ -190,6 +192,7 @@ impl Nucleo {
             firmware: None,
             debug: Default::default(),
             resets: 0,
+            watchdog_resets: 0,
             timeline: Vec::new(),
             circuit: Rc::new(RefCell::new(CircuitSim::new(
                 &Circuit::default(),
@@ -248,6 +251,7 @@ impl Nucleo {
         }
         self.firmware = Some(fw);
         self.resets = 0;
+        self.watchdog_resets = 0;
         self.cpu
             .reset(&mut self.bus, &mut self.sys)
             .map_err(LoadError::VectorTable)
@@ -436,6 +440,13 @@ impl Nucleo {
     /// Process due peripheral events and forward interrupt lines.
     fn after_step(&mut self) {
         self.bus.run_events(self.sys.cycles);
+        if let Some(cause) = self.bus.take_reset_request() {
+            // The watchdog ran out: the chip resets at once.
+            self.watchdog_resets += 1;
+            // A vector table it cannot read shows up when the core runs.
+            self.system_reset(cause).ok();
+            return;
+        }
         // Bytes on USART1/USART6 go to the modules wired to them.
         if !self.uart_links.is_empty()
             && !(self.bus.usart[0].terminal.is_empty() && self.bus.usart[2].terminal.is_empty())
@@ -711,6 +722,11 @@ impl Nucleo {
     /// Type into the virtual COM port (delivered at the UART's baud rate).
     pub fn console_send(&mut self, bytes: &[u8]) {
         self.bus.terminal_send(VCP, bytes);
+    }
+
+    /// Number of resets by the independent watchdog so far.
+    pub fn watchdog_resets(&self) -> u32 {
+        self.watchdog_resets
     }
 
     /// Number of software resets (SYSRESETREQ) performed so far.

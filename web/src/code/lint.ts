@@ -3,6 +3,7 @@
 // look at the text (a light scanner, no compiler), so they can be wrong in
 // unusual code; they are suggestions (warnings and notes), never errors, and
 // never block a build. Unit tested in test/m33.test.ts.
+import { t } from "../i18n/index.ts";
 import { functionDefs, lineAt, lineStarts, maskC, matchBrace, topStatements, varDecls, type FunctionDef } from "./cscan.ts";
 
 export type LintRule =
@@ -37,46 +38,33 @@ export interface LintFile {
 export type MacroLookup = (name: string) => string | undefined;
 
 export const RULE_TITLE: Record<LintRule, string> = {
-  "delay-in-isr": "인터럽트 안의 HAL_Delay",
-  "loop-in-isr": "인터럽트 안의 무한 루프",
-  "clock-missing": "GPIO 클럭을 켜지 않음",
-  "write-input": "입력으로 설정한 핀에 쓰기",
-  "assign-in-if": "조건문 안의 =",
-  "printf-uart": "printf가 나갈 UART가 초기화되지 않음",
-  "printf-newline": "줄바꿈 없는 printf",
-  "volatile-shared": "인터럽트와 함께 쓰는 변수에 volatile 없음",
+  "delay-in-isr": t("인터럽트 안의 HAL_Delay"),
+  "loop-in-isr": t("인터럽트 안의 무한 루프"),
+  "clock-missing": t("GPIO 클럭을 켜지 않음"),
+  "write-input": t("입력으로 설정한 핀에 쓰기"),
+  "assign-in-if": t("조건문 안의 ="),
+  "printf-uart": t("printf가 나갈 UART가 초기화되지 않음"),
+  "printf-newline": t("줄바꿈 없는 printf"),
+  "volatile-shared": t("인터럽트와 함께 쓰는 변수에 volatile 없음"),
 };
 
 const WHY: Record<LintRule, string> = {
   "delay-in-isr":
-    "HAL_Delay는 SysTick 인터럽트가 1 ms마다 올리는 uwTick을 보며 기다립니다. 인터럽트 처리 함수(…_IRQHandler, …Callback) 안에서는 " +
-    "SysTick이 같거나 낮은 우선순위라 끼어들지 못해 uwTick이 멈추고, 함수가 영원히 돌아오지 않을 수 있습니다. 그렇지 않더라도 인터럽트 안에서 " +
-    "기다리면 그동안 다른 인터럽트와 main이 멈춥니다. 인터럽트에서는 플래그만 세우고, 기다리는 일은 main의 while(1)에서 하세요.",
+    t("HAL_Delay는 SysTick 인터럽트가 1 ms마다 올리는 uwTick을 보며 기다립니다. 인터럽트 처리 함수(…_IRQHandler, …Callback) 안에서는 SysTick이 같거나 낮은 우선순위라 끼어들지 못해 uwTick이 멈추고, 함수가 영원히 돌아오지 않을 수 있습니다. 그렇지 않더라도 인터럽트 안에서 기다리면 그동안 다른 인터럽트와 main이 멈춥니다. 인터럽트에서는 플래그만 세우고, 기다리는 일은 main의 while(1)에서 하세요."),
   "loop-in-isr":
-    "인터럽트 처리 함수는 짧게 끝나야 합니다. 그 안의 while(1)이나 for(;;)은 빠져나오지 못해 main과 우선순위가 같거나 낮은 인터럽트가 " +
-    "모두 멈춥니다(펌웨어가 \"멈춘\" 것처럼 보임). 반복할 일은 main의 루프에서 하고, 인터럽트에서는 변수나 플래그만 바꾸세요.",
+    t("인터럽트 처리 함수는 짧게 끝나야 합니다. 그 안의 while(1)이나 for(;;)은 빠져나오지 못해 main과 우선순위가 같거나 낮은 인터럽트가 모두 멈춥니다(펌웨어가 \"멈춘\" 것처럼 보임). 반복할 일은 main의 루프에서 하고, 인터럽트에서는 변수나 플래그만 바꾸세요."),
   "clock-missing":
-    "STM32의 주변장치는 전력을 아끼려고 클럭이 꺼진 채로 시작합니다. GPIO 포트도 RCC에서 클럭을 켜야(__HAL_RCC_GPIOx_CLK_ENABLE()) " +
-    "레지스터에 쓴 값이 들어갑니다. 켜지 않으면 HAL_GPIO_Init이 아무 일도 하지 않은 것처럼 핀이 그대로입니다. CubeMX는 MX_GPIO_Init의 " +
-    "맨 앞에서 쓰는 포트마다 클럭을 켭니다.",
+    t("STM32의 주변장치는 전력을 아끼려고 클럭이 꺼진 채로 시작합니다. GPIO 포트도 RCC에서 클럭을 켜야(__HAL_RCC_GPIOx_CLK_ENABLE()) 레지스터에 쓴 값이 들어갑니다. 켜지 않으면 HAL_GPIO_Init이 아무 일도 하지 않은 것처럼 핀이 그대로입니다. CubeMX는 MX_GPIO_Init의 맨 앞에서 쓰는 포트마다 클럭을 켭니다."),
   "write-input":
-    "HAL_GPIO_WritePin·TogglePin은 출력 데이터 레지스터(ODR)를 바꿉니다. 핀이 입력(GPIO_MODE_INPUT, 인터럽트 모드)으로 설정되어 있으면 " +
-    "출력 드라이버가 꺼져 있어 핀 전압은 바뀌지 않습니다(입력에서는 ODR이 풀업·풀다운에도 쓰이지 않음 — PUPDR이 정함). 그 핀을 출력으로 " +
-    "쓰려면 Mode를 GPIO_MODE_OUTPUT_PP로 설정하세요.",
+    t("HAL_GPIO_WritePin·TogglePin은 출력 데이터 레지스터(ODR)를 바꿉니다. 핀이 입력(GPIO_MODE_INPUT, 인터럽트 모드)으로 설정되어 있으면 출력 드라이버가 꺼져 있어 핀 전압은 바뀌지 않습니다(입력에서는 ODR이 풀업·풀다운에도 쓰이지 않음 — PUPDR이 정함). 그 핀을 출력으로 쓰려면 Mode를 GPIO_MODE_OUTPUT_PP로 설정하세요."),
   "assign-in-if":
-    "C에서 =는 대입이고 비교는 ==입니다. if (x = 5)는 x에 5를 넣고 그 값(0이 아님)을 참으로 보므로 항상 실행됩니다. 비교하려면 ==를 쓰세요. " +
-    "정말 대입한 값을 검사하려는 것이면 괄호를 한 번 더 써서 if ((x = f()))처럼 뜻을 보이세요.",
+    t("C에서 =는 대입이고 비교는 ==입니다. if (x = 5)는 x에 5를 넣고 그 값(0이 아님)을 참으로 보므로 항상 실행됩니다. 비교하려면 ==를 쓰세요. 정말 대입한 값을 검사하려는 것이면 괄호를 한 번 더 써서 if ((x = f()))처럼 뜻을 보이세요."),
   "printf-uart":
-    "이 템플릿의 printf는 syscalls.c의 _write가 huart2(USART2, ST-LINK 가상 COM 포트)로 보냅니다. huart2를 HAL_UART_Init으로 초기화하지 " +
-    "않으면 HAL_UART_Transmit이 바로 오류로 돌아와 콘솔에 아무것도 나오지 않습니다. hal-uart-printf 예제의 MX_USART2_UART_Init처럼 " +
-    "huart2.Instance = USART2, BaudRate 115200 등을 정하고 HAL_UART_Init(&huart2)를 부르세요.",
+    t("이 템플릿의 printf는 syscalls.c의 _write가 huart2(USART2, ST-LINK 가상 COM 포트)로 보냅니다. huart2를 HAL_UART_Init으로 초기화하지 않으면 HAL_UART_Transmit이 바로 오류로 돌아와 콘솔에 아무것도 나오지 않습니다. hal-uart-printf 예제의 MX_USART2_UART_Init처럼 huart2.Instance = USART2, BaudRate 115200 등을 정하고 HAL_UART_Init(&huart2)를 부르세요."),
   "printf-newline":
-    "newlib의 stdout은 줄 단위로 버퍼링됩니다. \\n이 나오거나 버퍼가 찰 때까지 printf한 글자는 UART로 나가지 않습니다. 바로 보이게 하려면 " +
-    "끝에 \\n을 넣거나 fflush(stdout)을 부르세요.",
+    t("newlib의 stdout은 줄 단위로 버퍼링됩니다. \\n이 나오거나 버퍼가 찰 때까지 printf한 글자는 UART로 나가지 않습니다. 바로 보이게 하려면 끝에 \\n을 넣거나 fflush(stdout)을 부르세요."),
   "volatile-shared":
-    "인터럽트에서 바꾸고 main에서 읽는 변수는 volatile이어야 합니다. 컴파일러는 main의 루프만 보고 값이 바뀌지 않는다고 가정해 변수를 " +
-    "레지스터에 한 번 읽어 두고 다시 읽지 않을 수 있습니다(최적화). 그러면 인터럽트가 값을 바꿔도 main은 모릅니다. " +
-    "volatile은 \"매번 메모리에서 읽어라\"는 뜻입니다.",
+    t("인터럽트에서 바꾸고 main에서 읽는 변수는 volatile이어야 합니다. 컴파일러는 main의 루프만 보고 값이 바뀌지 않는다고 가정해 변수를 레지스터에 한 번 읽어 두고 다시 읽지 않을 수 있습니다(최적화). 그러면 인터럽트가 값을 바꿔도 main은 모릅니다. volatile은 \"매번 메모리에서 읽어라\"는 뜻입니다."),
 };
 
 const isIsr = (name: string) => /(_IRQHandler|Callback)$/.test(name);
@@ -155,12 +143,12 @@ function isrRules(s: Scanned): LintIssue[] {
   const out: LintIssue[] = [];
   for (const fn of s.fns.filter((f) => isIsr(f.name))) {
     for (const c of calls(s.masked, "HAL_Delay", fn.bodyStart, fn.bodyEnd)) {
-      out.push(issue(s, "delay-in-isr", c.at, c.end, "warning", `인터럽트 처리 함수 ${fn.name} 안에서 HAL_Delay를 부릅니다. 멈출 수 있습니다.`));
+      out.push(issue(s, "delay-in-isr", c.at, c.end, "warning", t("인터럽트 처리 함수 {fn} 안에서 HAL_Delay를 부릅니다. 멈출 수 있습니다.", { fn: fn.name })));
     }
     const body = s.masked.slice(fn.bodyStart, fn.bodyEnd);
     for (const m of body.matchAll(/\bwhile\s*\(\s*(?:1[uUlL]*|true)\s*\)|\bfor\s*\(\s*;\s*;\s*\)/g)) {
       const at = fn.bodyStart + m.index!;
-      out.push(issue(s, "loop-in-isr", at, at + m[0].length, "warning", `인터럽트 처리 함수 ${fn.name} 안의 무한 루프: 빠져나오지 못합니다.`));
+      out.push(issue(s, "loop-in-isr", at, at + m[0].length, "warning", t("인터럽트 처리 함수 {fn} 안의 무한 루프: 빠져나오지 못합니다.", { fn: fn.name })));
     }
   }
   return out;
@@ -181,7 +169,7 @@ function clockRule(all: Scanned[], resolve: (e: string) => string): LintIssue[] 
       if (!port || enabled.has(port[1]) || reported.has(port[1])) continue;
       reported.add(port[1]);
       out.push(
-        issue(s, "clock-missing", c.at, c.end, "warning", `GPIO${port[1]}를 설정하지만 클럭을 켜지 않았습니다: 먼저 __HAL_RCC_GPIO${port[1]}_CLK_ENABLE();`),
+        issue(s, "clock-missing", c.at, c.end, "warning", t("GPIO{port}를 설정하지만 클럭을 켜지 않았습니다: 먼저 __HAL_RCC_GPIO{port}_CLK_ENABLE();", { port: port[1] })),
       );
     }
   }
@@ -243,7 +231,7 @@ function writeInputRule(all: Scanned[], resolve: (e: string) => string): LintIss
         });
         if (!bad.length) continue;
         const pname = `P${port.replace(/^GPIO/, "")}${bad[0]}`;
-        out.push(issue(s, "write-input", c.at, c.end, "warning", `${pname}는 입력으로 설정되어 있어 ${name}가 핀을 바꾸지 못합니다.`));
+        out.push(issue(s, "write-input", c.at, c.end, "warning", t("{pin}는 입력으로 설정되어 있어 {fn}가 핀을 바꾸지 못합니다.", { pin: pname, fn: name })));
       }
     }
   }
@@ -257,8 +245,8 @@ function assignInIf(s: Scanned): LintIssue[] {
     const close = matchBrace(s.masked, open, "(", ")");
     const inner = s.masked.slice(open + 1, close);
     // `if ((x = f()))`: deliberate.
-    const t = inner.trim();
-    if (t.startsWith("(") && matchBrace(t, 0, "(", ")") === t.length - 1) continue;
+    const trimmed = inner.trim();
+    if (trimmed.startsWith("(") && matchBrace(trimmed, 0, "(", ")") === trimmed.length - 1) continue;
     let depth = 0;
     for (let i = 0; i < inner.length; i++) {
       const ch = inner[i];
@@ -273,7 +261,7 @@ function assignInIf(s: Scanned): LintIssue[] {
         }
         if ("=!<>+-*/%&|^".includes(prev)) continue;
         const at = open + 1 + i;
-        out.push(issue(s, "assign-in-if", at, at + 1, "warning", `${m[1]} 조건 안에 = (대입)이 있습니다. 비교하려면 ==입니다.`));
+        out.push(issue(s, "assign-in-if", at, at + 1, "warning", t("{kw} 조건 안에 = (대입)이 있습니다. 비교하려면 ==입니다.", { kw: m[1] })));
         break;
       }
     }
@@ -288,14 +276,14 @@ function printfRules(all: Scanned[]): LintIssue[] {
   for (const s of all) {
     for (const c of calls(s.masked, "printf")) {
       if (!uartInit && first) {
-        out.push(issue(s, "printf-uart", c.at, c.end, "warning", "printf를 쓰지만 huart2(USART2)를 HAL_UART_Init으로 초기화하지 않았습니다. 콘솔에 아무것도 나오지 않습니다."));
+        out.push(issue(s, "printf-uart", c.at, c.end, "warning", t("printf를 쓰지만 huart2(USART2)를 HAL_UART_Init으로 초기화하지 않았습니다. 콘솔에 아무것도 나오지 않습니다.")));
         first = false;
       }
       // The format string as written (the masked copy has blanked it).
       const open = s.masked.indexOf("(", c.at);
       const lit = /^\s*"((?:[^"\\\n]|\\.)*)"\s*[,)]/.exec(s.file.text.slice(open + 1));
       if (lit && !lit[1].includes("\\n") && !lit[1].includes("\\r")) {
-        out.push(issue(s, "printf-newline", c.at, c.end, "info", "줄바꿈(\\n) 없는 printf: \\n이나 fflush(stdout) 전까지 콘솔에 나오지 않습니다."));
+        out.push(issue(s, "printf-newline", c.at, c.end, "info", t("줄바꿈(\\n) 없는 printf: \\n이나 fflush(stdout) 전까지 콘솔에 나오지 않습니다.")));
       }
     }
   }
@@ -317,7 +305,7 @@ function volatileRule(all: Scanned[]): LintIssue[] {
         const inIsr = fns.some((x) => isIsr(x.f.name) && writes(x.body, v.name));
         const inMain = fns.some((x) => !isIsr(x.f.name) && uses(x.body, v.name));
         if (inIsr && inMain) {
-          out.push(issue(s, "volatile-shared", v.at, v.at + v.name.length, "warning", `${v.name}는 인터럽트에서 바꾸고 다른 곳에서 읽지만 volatile이 아닙니다.`));
+          out.push(issue(s, "volatile-shared", v.at, v.at + v.name.length, "warning", t("{name}는 인터럽트에서 바꾸고 다른 곳에서 읽지만 volatile이 아닙니다.", { name: v.name })));
         }
       }
     }

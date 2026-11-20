@@ -4,6 +4,7 @@
 // UTF-8 names, CRC-32 checked. The input is untrusted: a cap on entries and
 // on the bytes unpacked (declared and actual), no ZIP64, no encryption, and
 // names that climb out of the folder (`..`, `/x`, `C:`) reject the whole zip.
+import { t } from "../i18n/index.ts";
 
 export const MAX_ZIP_ENTRIES = 20_000;
 /** Total bytes we unpack from one zip (only the entries asked for count). */
@@ -43,9 +44,9 @@ export function crc32(data: Uint8Array, crc = 0): number {
 /** Whether a stored path stays inside the folder. */
 export function safePath(name: string): string {
   const p = name.replace(/\\/g, "/");
-  if (p.startsWith("/") || /^[A-Za-z]:/.test(p)) throw new ZipError(`zip 안의 경로가 절대 경로입니다: ${name}`);
+  if (p.startsWith("/") || /^[A-Za-z]:/.test(p)) throw new ZipError(t("zip 안의 경로가 절대 경로입니다: {name}", { name }));
   const parts = p.split("/").filter((s) => s !== "" && s !== ".");
-  if (parts.includes("..")) throw new ZipError(`zip 안의 경로가 폴더 밖을 가리킵니다(..): ${name}`);
+  if (parts.includes("..")) throw new ZipError(t("zip 안의 경로가 폴더 밖을 가리킵니다(..): {name}", { name }));
   return parts.join("/");
 }
 
@@ -67,20 +68,20 @@ export function listZip(buf: Uint8Array): ZipEntry[] {
       break;
     }
   }
-  if (eocd < 0) throw new ZipError("zip 파일이 아니거나 끝이 잘렸습니다.");
+  if (eocd < 0) throw new ZipError(t("zip 파일이 아니거나 끝이 잘렸습니다."));
   if (eocd >= 20 && v.getUint32(eocd - 20, true) === 0x07064b50)
-    throw new ZipError("ZIP64 형식(4 GB 넘는 zip)은 지원하지 않습니다.");
+    throw new ZipError(t("ZIP64 형식(4 GB 넘는 zip)은 지원하지 않습니다."));
   const count = v.getUint16(eocd + 10, true);
   const cdSize = v.getUint32(eocd + 12, true);
   const cdOff = v.getUint32(eocd + 16, true);
-  if (count === 0xffff || cdOff === 0xffffffff) throw new ZipError("ZIP64 형식은 지원하지 않습니다.");
-  if (count > MAX_ZIP_ENTRIES) throw new ZipError(`zip에 파일이 너무 많습니다(${count}개, 최대 ${MAX_ZIP_ENTRIES}개).`);
-  if (cdOff + cdSize > eocd) throw new ZipError("zip의 목록(중앙 디렉터리)이 손상되었습니다.");
+  if (count === 0xffff || cdOff === 0xffffffff) throw new ZipError(t("ZIP64 형식은 지원하지 않습니다."));
+  if (count > MAX_ZIP_ENTRIES) throw new ZipError(t("zip에 파일이 너무 많습니다({count}개, 최대 {max}개).", { count, max: MAX_ZIP_ENTRIES }));
+  if (cdOff + cdSize > eocd) throw new ZipError(t("zip의 목록(중앙 디렉터리)이 손상되었습니다."));
   const utf8 = new TextDecoder("utf-8");
   const out: ZipEntry[] = [];
   let p = cdOff;
   for (let n = 0; n < count; n++) {
-    if (p + 46 > eocd || v.getUint32(p, true) !== 0x02014b50) throw new ZipError("zip의 목록(중앙 디렉터리)이 손상되었습니다.");
+    if (p + 46 > eocd || v.getUint32(p, true) !== 0x02014b50) throw new ZipError(t("zip의 목록(중앙 디렉터리)이 손상되었습니다."));
     const flags = v.getUint16(p + 8, true);
     const method = v.getUint16(p + 10, true);
     const time = v.getUint16(p + 12, true);
@@ -92,7 +93,7 @@ export function listZip(buf: Uint8Array): ZipEntry[] {
     const extraLen = v.getUint16(p + 30, true);
     const commentLen = v.getUint16(p + 32, true);
     const local = v.getUint32(p + 42, true);
-    if (p + 46 + nameLen + extraLen + commentLen > eocd) throw new ZipError("zip의 목록(중앙 디렉터리)이 손상되었습니다.");
+    if (p + 46 + nameLen + extraLen + commentLen > eocd) throw new ZipError(t("zip의 목록(중앙 디렉터리)이 손상되었습니다."));
     let name = utf8.decode(buf.subarray(p + 46, p + 46 + nameLen));
     // Info-ZIP Unicode Path (0x7075): the UTF-8 name when the main one is not.
     for (let e = p + 46 + nameLen; e + 4 <= p + 46 + nameLen + extraLen; ) {
@@ -102,12 +103,12 @@ export function listZip(buf: Uint8Array): ZipEntry[] {
       e += 4 + len;
     }
     if (compSize === 0xffffffff || size === 0xffffffff || local === 0xffffffff)
-      throw new ZipError("ZIP64 형식은 지원하지 않습니다.");
-    if (flags & 1) throw new ZipError(`암호가 걸린 zip은 열 수 없습니다: ${name}`);
+      throw new ZipError(t("ZIP64 형식은 지원하지 않습니다."));
+    if (flags & 1) throw new ZipError(t("암호가 걸린 zip은 열 수 없습니다: {name}", { name }));
     const path = safePath(name);
-    if (local + 30 > buf.length || v.getUint32(local, true) !== 0x04034b50) throw new ZipError(`zip이 손상되었습니다: ${name}`);
+    if (local + 30 > buf.length || v.getUint32(local, true) !== 0x04034b50) throw new ZipError(t("zip이 손상되었습니다: {name}", { name }));
     const dataStart = local + 30 + v.getUint16(local + 26, true) + v.getUint16(local + 28, true);
-    if (dataStart + compSize > buf.length) throw new ZipError(`zip이 손상되었거나 잘렸습니다: ${name}`);
+    if (dataStart + compSize > buf.length) throw new ZipError(t("zip이 손상되었거나 잘렸습니다: {name}", { name }));
     out.push({ path, size, mtime: dosTime(time, date), method, crc, compSize, dataStart, dir: name.endsWith("/") });
     p += 46 + nameLen + extraLen + commentLen;
   }
@@ -130,13 +131,13 @@ async function inflateRaw(data: Uint8Array, limit: number, name: string): Promis
       // More than the central directory said: a lie, stop unpacking.
       if (total > limit) {
         void reader.cancel().catch(() => {});
-        throw new ZipError(`zip 안의 파일이 적힌 크기보다 큽니다(압축 폭탄?): ${name}`);
+        throw new ZipError(t("zip 안의 파일이 적힌 크기보다 큽니다(압축 폭탄?): {name}", { name }));
       }
       chunks.push(value);
     }
   } catch (e) {
     if (e instanceof ZipError) throw e;
-    throw new ZipError(`zip 안의 파일을 풀지 못했습니다(손상): ${name}`);
+    throw new ZipError(t("zip 안의 파일을 풀지 못했습니다(손상): {name}", { name }));
   }
   const out = new Uint8Array(total);
   let o = 0;
@@ -167,7 +168,7 @@ export async function readZip(
   const declared = entries.reduce((s, e) => s + e.size, 0);
   if (declared > maxTotal)
     throw new ZipError(
-      `zip을 풀면 너무 큽니다(${(declared / 1048576).toFixed(1)} MB, 최대 ${(maxTotal / 1048576).toFixed(0)} MB).`,
+      t("zip을 풀면 너무 큽니다({size} MB, 최대 {max} MB).", { size: (declared / 1048576).toFixed(1), max: (maxTotal / 1048576).toFixed(0) }),
     );
   const out: UnzippedFile[] = [];
   for (const e of entries) {
@@ -175,9 +176,9 @@ export async function readZip(
     let data: Uint8Array;
     if (e.method === 0) data = raw.slice();
     else if (e.method === 8) data = await inflateRaw(raw, e.size, e.path);
-    else throw new ZipError(`지원하지 않는 압축 방식(${e.method})입니다: ${e.path}`);
-    if (data.length !== e.size) throw new ZipError(`zip 안의 파일 크기가 맞지 않습니다(손상): ${e.path}`);
-    if (crc32(data) !== e.crc) throw new ZipError(`zip 안의 파일이 손상되었습니다(CRC 불일치): ${e.path}`);
+    else throw new ZipError(t("지원하지 않는 압축 방식({method})입니다: {name}", { method: e.method, name: e.path }));
+    if (data.length !== e.size) throw new ZipError(t("zip 안의 파일 크기가 맞지 않습니다(손상): {name}", { name: e.path }));
+    if (crc32(data) !== e.crc) throw new ZipError(t("zip 안의 파일이 손상되었습니다(CRC 불일치): {name}", { name: e.path }));
     out.push({ path: e.path, data, mtime: e.mtime });
   }
   return out;

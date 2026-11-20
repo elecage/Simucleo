@@ -5,6 +5,8 @@
 // where. Messages stay as the tools print them (English); only the labels
 // around them are Korean.
 
+import { t } from "../i18n/index.ts";
+
 export type Severity = "error" | "warning" | "note";
 
 export interface Diagnostic {
@@ -98,6 +100,6 @@ export function parseDiagnostics(output: string, root = "/project"): Diagnostic[
 export function countText(diags: Diagnostic[]): string {
   const e = diags.filter((d) => d.severity === "error").length;
   const w = diags.filter((d) => d.severity === "warning").length;
-  if (!e && !w) return "문제 없음";
-  return [e && `오류 ${e}개`, w && `경고 ${w}개`].filter(Boolean).join(" · ");
+  if (!e && !w) return t("문제 없음");
+  return [e && t("오류 {n}개", { n: e }), w && t("경고 {n}개", { n: w })].filter(Boolean).join(" · ");
 }

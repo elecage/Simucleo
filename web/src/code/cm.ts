@@ -21,6 +21,7 @@ import {
   showTooltip,
   type Tooltip,
 } from "@codemirror/view";
+import { t } from "../i18n/index.ts";
 import { candidates, signatureAt, type Candidate, type SymbolTable } from "./complete.ts";
 import type { Diagnostic } from "./diagnostics.ts";
 import { lint, RULE_TITLE, type LintFile, type LintIssue, type MacroLookup } from "./lint.ts";
@@ -204,7 +205,7 @@ export function extensions(h: EditorHooks): Extension[] {
           from: p.from,
           to: p.to,
           severity: BUILD_SEVERITY[p.d.severity],
-          source: p.d.tool === "ld" ? "링커" : "컴파일러",
+          source: p.d.tool === "ld" ? t("링커") : t("컴파일러"),
           message: p.d.message + (p.d.flag ? ` [${p.d.flag}]` : ""),
         }));
         // The rules see every file; the editor shows this file's.
@@ -215,14 +216,14 @@ export function extensions(h: EditorHooks): Extension[] {
             from: i.from,
             to: i.to,
             severity: i.severity,
-            source: `규칙: ${RULE_TITLE[i.rule]}`,
+            source: t("규칙: {rule}", { rule: RULE_TITLE[i.rule] }),
             message: i.message,
-            actions: h.onWhy ? [{ name: "왜?", apply: () => h.onWhy!(i) }] : [],
+            actions: h.onWhy ? [{ name: t("왜?"), apply: () => h.onWhy!(i) }] : [],
           });
         }
         return out;
       },
-      { delay: 400, needsRefresh: (u) => u.transactions.some((t) => t.effects.some((e) => e.is(setBuildDiagnostics))) },
+      { delay: 400, needsRefresh: (u) => u.transactions.some((tr) => tr.effects.some((e) => e.is(setBuildDiagnostics))) },
     ),
   );
   if (h.onChange) {

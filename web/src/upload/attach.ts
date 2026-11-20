@@ -1,5 +1,6 @@
 // Sources attached to an uploaded ELF (M39): which DWARF file shows which
 // uploaded text, what is missing, and what is kept in IndexedDB.
+import { t } from "../i18n/index.ts";
 import { matchSources, segments, suffixLength, type MatchTie } from "./match.ts";
 import { crc32 } from "./zip.ts";
 import type { SourceFile } from "./folder.ts";
@@ -64,12 +65,12 @@ export function attachSources(key: string, dwarfPaths: string[], sources: Source
 /** "소스 12개 연결 · DWARF에 있지만 없는 파일 3개(HAL 드라이버 등)". */
 export function summary(a: Attached): string {
   const n = Object.keys(a.files).length;
-  let s = `소스 ${n}개 연결`;
+  let s = t("소스 {n}개 연결", { n });
   if (a.missing.length) {
     const drivers = a.missing.some((p) => /\/(drivers|middlewares)\//i.test(p));
-    s += ` · DWARF에 있지만 없는 파일 ${a.missing.length}개${drivers ? "(HAL 드라이버 등)" : ""}`;
+    s += t(" · DWARF에 있지만 없는 파일 {n}개", { n: a.missing.length }) + (drivers ? t("(HAL 드라이버 등)") : "");
   }
-  if (a.ties.length) s += ` · 이름이 같은 후보가 여럿인 파일 ${a.ties.length}개`;
+  if (a.ties.length) s += t(" · 이름이 같은 후보가 여럿인 파일 {n}개", { n: a.ties.length });
   return s;
 }
 

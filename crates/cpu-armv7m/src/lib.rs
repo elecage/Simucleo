@@ -458,6 +458,11 @@ impl ArmV7M {
     /// `HAL_Delay()` and flag-polling loops cheap; their observable
     /// behaviour (including when they exit) is unchanged.
     fn watch_loop(&mut self, ctx: &mut Ctx, end: Cycles) {
+        // A DWT comparator traces data accesses: every iteration's reads
+        // must be reported, so none is skipped.
+        if ctx.sys.trace_data {
+            return;
+        }
         let mut r = [0u32; 15];
         r.copy_from_slice(&self.r[..15]);
         let state = LoopState {

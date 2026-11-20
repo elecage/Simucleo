@@ -862,6 +862,46 @@ mod tests {
         }
     }
 
+    /// `r0 = 0x2000_0000; loop: ldr r1, [r0]; cmp r1, #1; bne loop; b .`
+    const POLL_PROGRAM: [u8; 20] = [
+        0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, // SP, reset
+        0x20, 0x20, 0x00, 0x06, // movs r0, #0x20; lsls r0, r0, #24
+        0x01, 0x68, 0x01, 0x29, 0xfc, 0xd1, // ldr r1, [r0]; cmp r1, #1; bne loop
+        0xfe, 0xe7, // b .
+    ];
+
+    #[test]
+    fn traced_reads_in_a_polling_loop_are_all_reported() {
+        // The loop reads the same word without changing anything: the CPU
+        // would skip through it, but a data trace comparator on the word
+        // must see every read (as on the chip).
+        use crate::swv::{DataMode, DataTrace, SwvConfig};
+        let mut board = Nucleo::new();
+        board.bus.load(0x0800_0000, &POLL_PROGRAM).unwrap();
+        board.reset().unwrap();
+        board.swv_configure(Some(SwvConfig {
+            ports: 0,
+            pc_sampling: None,
+            exceptions: false,
+            data: vec![DataTrace {
+                addr: 0x2000_0000,
+                size: 4,
+                mode: DataMode::Read,
+            }],
+        }));
+        board.run(12_000);
+        let reads = board.swv_take().data.len();
+        // One read per iteration of about 6 cycles.
+        assert!(
+            (1_500..=2_500).contains(&reads),
+            "{reads} reads in 12000 cycles"
+        );
+        // Without the comparator the loop is still skipped through.
+        board.swv_configure(None);
+        board.run(12_000);
+        assert!(board.swv_take().data.is_empty());
+    }
+
     /// Enable DWT CYCCNT, then poll it with `lsrs r1, r1, #8; beq` (exits
     /// once CYCCNT >= 256) and write a mark to SRAM[0].
     const CYCCNT_PROGRAM: [u8; 36] = [

@@ -281,8 +281,11 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
   }, [build]);
 
   // ------------------------------------------------ files
-  /** Start the code from an example's main.c; false if it could not be read. */
-  const startFrom = async (file: string): Promise<boolean> => {
+  /**
+   * Start the code from an example's main.c; false if it could not be read.
+   * `still`: checked once it is read (not used if false).
+   */
+  const startFrom = async (file: string, still?: () => boolean): Promise<boolean> => {
     const ex = editable.find((e) => e.file === file);
     if (!ex?.code) return false;
     const r = await fetch(`./examples/src/${ex.code.main}`).catch(() => null);
@@ -290,7 +293,9 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
       setNotice(`${ex.code.main}을(를) 받지 못했습니다.`);
       return false;
     }
-    onCode({ template: "hal", base: ex.file, files: [{ path: MAIN_C, text: await r.text() }], active: MAIN_C });
+    const text = await r.text();
+    if (still && !still()) return true;
+    onCode({ template: "hal", base: ex.file, files: [{ path: MAIN_C, text }], active: MAIN_C });
     setLocalSeq((k) => k + 1);
     return true;
   };
@@ -334,17 +339,22 @@ export default function CodePanel({ runner, code, onCode, examples, codeSeq, aut
   // Not after "코드 지우기" for that firmware, nor again after a failure.
   const dismissed = useRef<string | null>(null);
   const opening = useRef(false);
+  // (What it was opened for: dropped if the project or firmware changed
+  // while main.c was on its way — it would be the other example's.)
+  const nowRef = useRef({ codeSeq, fw: runner.firmwareExample, code });
+  nowRef.current = { codeSeq, fw: runner.firmwareExample, code };
   useEffect(() => {
     const fw = runner.firmwareExample;
     if (code || !visible || !restored || !fw || opening.current || dismissed.current === fw || !editable.some((e) => e.file === fw)) return;
     opening.current = true;
-    void startFrom(fw)
+    const seq = codeSeq;
+    void startFrom(fw, () => nowRef.current.codeSeq === seq && nowRef.current.fw === fw && !nowRef.current.code)
       .then((ok) => {
         if (!ok) dismissed.current = fw;
       })
       .finally(() => (opening.current = false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code, visible, restored, runner.firmwareExample, editable]);
+  }, [code, visible, restored, runner.firmwareExample, editable, codeSeq]);
 
   const removeCode = () => {
     if (!window.confirm("이 프로젝트의 코드를 모두 지울까요? (회로와 펌웨어는 그대로)")) return;

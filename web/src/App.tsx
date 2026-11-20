@@ -172,14 +172,22 @@ export function App() {
       const fw = l.firmware;
       if (fw?.data) {
         ++fwGen.current;
+        setFwPending(false);
         load(fw.name, fromBase64(fw.data).buffer as ArrayBuffer, fw.example);
       } else if (fw?.example) {
         const gen = ++fwGen.current;
-        const r = await fetch(`./examples/${fw.example}`);
-        const bytes = r.ok ? await r.arrayBuffer() : null;
-        if (gen !== fwGen.current) return;
-        if (bytes) load(fw.name, bytes, fw.example);
-        else setNotice(`예제 펌웨어 ${fw.example}을 찾지 못했습니다.`);
+        // (Until it is loaded the runner still names the old firmware: the
+        // code tab waits before it opens an example's main.c.)
+        setFwPending(true);
+        try {
+          const r = await fetch(`./examples/${fw.example}`);
+          const bytes = r.ok ? await r.arrayBuffer() : null;
+          if (gen !== fwGen.current) return;
+          if (bytes) load(fw.name, bytes, fw.example);
+          else setNotice(`예제 펌웨어 ${fw.example}을 찾지 못했습니다.`);
+        } finally {
+          if (gen === fwGen.current) setFwPending(false);
+        }
       }
       // Code but no firmware (a link, a "write the code" lesson): show the code.
       if (l.project.code && !fw) setCodeTabSeq((k) => k + 1);
@@ -326,6 +334,8 @@ export function App() {
   const restored = useRef(false);
   // The autosave is back (or there was none): a share link may be opened now.
   const [restoredDone, setRestoredDone] = useState(false);
+  /** A project's example firmware is being fetched (see applyLoaded). */
+  const [fwPending, setFwPending] = useState(false);
   useEffect(() => {
     if (!runner.ready || restored.current) return;
     const gen = loadGen.current;
@@ -387,6 +397,7 @@ export function App() {
   const userLoad = useCallback(() => {
     ++loadGen.current;
     ++fwGen.current;
+    setFwPending(false);
   }, []);
   const sourceUpload = useSourceUpload(runner, userLoad);
   // Files dragged over the window: a fixed overlay (it moves nothing), and a
@@ -920,7 +931,7 @@ export function App() {
         onScope={onScope}
         status={<PwaStatus extra={<PerfStatus runner={runner} />} />}
         upload={sourceUpload}
-        code={{ code: project.code, onCode, examples, codeSeq, autoBuild, onAutoBuilt: () => setAutoBuild(false), restored: restoredDone }}
+        code={{ code: project.code, onCode, examples, codeSeq, autoBuild, onAutoBuilt: () => setAutoBuild(false), restored: restoredDone && !fwPending }}
         codeSources={codeSources}
         codeTabSeq={codeTabSeq}
       />

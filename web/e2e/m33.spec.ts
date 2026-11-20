@@ -376,7 +376,14 @@ test("the code tab opens the running example's main.c, not an empty tab; '코드
   // Loading an example (its project, the circuit with it) replaces the
   // project's code: the tab then asked for an example again while that
   // example ran, and showed no source.
-  const context = await browser.newContext({ viewport: { width: 1400, height: 820 } });
+  // (The service worker is off so the route below sees the ELF fetch.)
+  const context = await browser.newContext({ viewport: { width: 1400, height: 820 }, serviceWorkers: "block" });
+  // hal-pwm-led's firmware comes 2 s after its project: meanwhile the
+  // runner still names blinky, whose main.c must not land in pwm's project.
+  await context.route("**/examples/hal-pwm-led.elf", async (route) => {
+    await new Promise((r) => setTimeout(r, 2000));
+    await route.continue();
+  });
   const page = await context.newPage();
   page.on("dialog", (d) => void d.accept());
   await page.goto("/");
@@ -390,6 +397,7 @@ test("the code tab opens the running example's main.c, not an empty tab; '코드
   const pwm = readFileSync("public/examples/src/hal-pwm-led/main.c", "utf8").split("\n").find((l) => l.trim())!.trim();
   await page.getByLabel("예제 펌웨어").selectOption("hal-pwm-led.elf");
   await expect(status(page)).toContainText("hal-pwm-led");
+  await expect(line(page, "PWM brightness")).toBeVisible();
   await expect(line(page, pwm).first()).toBeVisible();
   await expect(page.locator('[data-file="Core/Src/main.c"]')).toBeVisible();
   // Removed on purpose: the empty tab stays (with the configuration tool's start).

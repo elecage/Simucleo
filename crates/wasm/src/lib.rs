@@ -846,7 +846,11 @@ impl Simulator {
             .take(4)
             .map(|d| match self.board.address_of(&d.expr, 0) {
                 Ok((addr, len)) => {
-                    data.push(DataTrace { addr, size: len, mode: d.mode });
+                    data.push(DataTrace {
+                        addr,
+                        size: len,
+                        mode: d.mode,
+                    });
                     let ty = self
                         .board
                         .evaluate(&d.expr, 0)

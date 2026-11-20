@@ -62,7 +62,7 @@
 
 ### M29 완료 (오프라인 설치형 앱)
 
-![오프라인에서 연 Simucleo. 툴바 오른쪽에 주황색 "오프라인" 배지와 초록 "오프라인 사용 준비됨"이 보이고, 캐시에서 연 hal-button-exti 예제가 실행 중이다](images/m29-offline.png)
+![오프라인에서 연 Simucleo. 아래 탭 줄 오른쪽에 주황색 "오프라인" 배지와 초록 "오프라인 사용 준비됨"이 보이고, 캐시에서 연 hal-button-exti 예제가 실행 중이다](images/m29-offline.png)
 
 인터넷이 자주 끊기는 교실에서 한 번 연 뒤에는 오프라인으로 쓰게 했다. 서버는 그대로 없다. 사용법은
 [offline.md](offline.md). 모두 웹 쪽이고 Rust 코어는 바뀌지 않았다. 새 의존성도 없다(vite-plugin-pwa·workbox 대신
@@ -88,7 +88,7 @@
   `SKIP_WAITING`을 보내고 새 버전이 페이지를 맡은 뒤(`controllerchange`) 그 탭만 새로 고친다. 시뮬레이션이 실행 중이면 먼저
   묻고, 아니라고 하면 아무것도 하지 않는다. 다른 탭에서 바뀐 경우에는 배너만 보이고 스스로 새로 고치지 않는다. 다시
   연결되면(`online`) 새 버전을 찾아본다. 등록은 프로덕션 빌드에서만(`import.meta.env.PROD`), `updateViaCache: "none"`
-- [x] **UI**(`web/src/pwa.ts`, `PwaUi.tsx`): 툴바에 `beforeinstallprompt`가 오면 **⬇ 설치**, `navigator.onLine`과
+- [x] **UI**(`web/src/pwa.ts`, `PwaUi.tsx`): 아래 패널 탭 줄 오른쪽(툴바 높이가 바뀌어 캔버스가 움직이지 않도록)에 `beforeinstallprompt`가 오면 **⬇ 설치**, `navigator.onLine`과
   online/offline 이벤트로 주황 **오프라인** 배지, 코어 버전 옆에 **오프라인 준비 중 n%** → 서비스 워커가 목록이 모두
   캐시에 있다고 답하면(`GET_STATUS` → `STATUS`) 초록 **오프라인 사용 준비됨**(툴팁에 캐시 버전)
 - [x] 테스트: 웹 단위 15개(`web/test/m29.test.ts`, 전체 129개: 목록에 index.html·WASM·모든 예제 ELF와 배선·예제 소스가 있고

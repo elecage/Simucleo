@@ -21,15 +21,17 @@ export function startPwa() {
 const usePwa = () => useSyncExternalStore(pwa.subscribe, pwa.state);
 
 /**
- * Toolbar items: offline badge, install button, offline-ready status. The
- * status has a fixed width (styles.css) so that its changing text never
- * re-wraps the toolbar under the user's pointer.
+ * Offline badge, install button, offline-ready status, at the right end of
+ * the bottom panel's tab row: a slot that is always there and no taller than
+ * the tabs (styles.css), so none of them appearing, going or changing its
+ * text ever changes the layout — above all never the toolbar, whose height
+ * moves the canvas under the user's pointer.
  */
 export function PwaStatus() {
   const s = usePwa();
   const o = s.offline;
   return (
-    <>
+    <span className="pwa-slot" data-testid="pwa-slot">
       {!s.online && (
         <span className="offline-badge" data-testid="offline-badge" title="네트워크에 연결되어 있지 않습니다. 캐시된 앱으로 실행 중입니다.">
           오프라인
@@ -51,7 +53,7 @@ export function PwaStatus() {
                 : "오프라인 준비 중…"}
         </span>
       )}
-    </>
+    </span>
   );
 }
 

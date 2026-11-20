@@ -607,7 +607,6 @@ export function App() {
         <span className="version" title="시뮬레이터 코어 버전">
           {simError ? `WASM 로드 실패: ${simError}` : sim ? `core v${sim.version}` : "WASM 로딩 중…"}
         </span>
-        <PwaStatus />
       </header>
       <UpdateBanner running={runner.running} />
 
@@ -723,7 +722,14 @@ export function App() {
         </div>
       </main>
 
-      <BottomPanel runner={runner} parts={project.parts} scope={project.scope} scopeSeq={scopeSeq} onScope={onScope} />
+      <BottomPanel
+        runner={runner}
+        parts={project.parts}
+        scope={project.scope}
+        scopeSeq={scopeSeq}
+        onScope={onScope}
+        status={<PwaStatus />}
+      />
 
       {lessonOpen && (
         <LessonPanel

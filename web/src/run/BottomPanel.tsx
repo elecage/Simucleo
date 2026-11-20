@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { btLinked, type Runner } from "../sim/useRunner";
 import { Waveform } from "./Waveform";
 import type { ScopeSettings } from "./scopeSettings";
@@ -16,6 +16,7 @@ export function BottomPanel({
   scope,
   scopeSeq,
   onScope,
+  status,
 }: {
   runner: Runner;
   parts?: { id: string; kind: string }[];
@@ -23,6 +24,8 @@ export function BottomPanel({
   scope?: ScopeSettings;
   scopeSeq?: number;
   onScope?: (s: ScopeSettings) => void;
+  /** Items at the right end of the tab row (the offline status, M29). */
+  status?: ReactNode;
 }) {
   const [tab, setTab] = useState<Tab>("console");
   // The waveform view keeps its trigger and capture once opened.
@@ -58,6 +61,7 @@ export function BottomPanel({
             {label}
           </button>
         ))}
+        {status}
       </nav>
       <div className="tab-body">
         {tab === "console" && <Console runner={runner} />}

@@ -163,3 +163,51 @@ test("a new version waits for the banner; a running simulation is asked first", 
     server.close();
   }
 });
+
+// The offline badge, the 설치 button and the status line come and go while
+// people work; the canvas must stay where it is (a drag in progress would
+// otherwise land on the wrong hole).
+test("the offline items never move the canvas", async ({ page, context }) => {
+  await page.goto("/");
+  await expect(status(page)).toContainText("예제를");
+  const canvas = page.locator("main");
+  const before = await canvas.boundingBox();
+  // Everything at once: the browser offers to install, the network goes,
+  // and the status line shows whatever state it is in.
+  await page.evaluate(() => {
+    const e = new Event("beforeinstallprompt") as Event & { prompt?: () => Promise<void>; userChoice?: Promise<unknown> };
+    e.prompt = async () => {};
+    e.userChoice = new Promise(() => {});
+    window.dispatchEvent(e);
+  });
+  await context.setOffline(true);
+  await expect(page.getByTestId("offline-badge")).toBeVisible();
+  await expect(page.getByRole("button", { name: "⬇ 설치" })).toBeVisible();
+  await expect(offlineStatus(page)).toBeVisible();
+  expect(await canvas.boundingBox()).toEqual(before);
+  await context.setOffline(false);
+  await expect(page.getByTestId("offline-badge")).toHaveCount(0);
+  expect(await canvas.boundingBox()).toEqual(before);
+  // They take no room of their own (the toolbar is as tall as without
+  // them) and cover none of the toolbar's other items.
+  const layout = await page.evaluate(() => {
+    const slot = document.querySelector<HTMLElement>(".pwa-slot")!;
+    const r = slot.getBoundingClientRect();
+    const overlaps = [...slot.parentElement!.children]
+      .filter((c) => c !== slot)
+      .map((c) => c.getBoundingClientRect())
+      .filter((c) => c.left < r.right && r.left < c.right && c.top < r.bottom && r.top < c.bottom).length;
+    const main = () => {
+      const m = document.querySelector("main")!.getBoundingClientRect();
+      const body = document.querySelector(".tab-body")!.getBoundingClientRect();
+      return `${m.top} ${m.height} ${body.top}`;
+    };
+    const withSlot = main();
+    slot.style.display = "none";
+    const without = main();
+    slot.style.display = "";
+    return { withSlot, without, overlaps };
+  });
+  expect(layout.withSlot).toBe(layout.without);
+  expect(layout.overlaps).toBe(0);
+});

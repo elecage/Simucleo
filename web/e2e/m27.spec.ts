@@ -312,15 +312,17 @@ test("live: a new probe's moving average is unknown until its window holds recor
   await runButton(page).click();
   await expect(consoleOut(page)).toContainText("pot 2047", { timeout: 5000 });
   await openScope(page);
-  // A math channel on a channel probed just now: a 1.5 s average needs 1.5 s of its history.
+  // A math channel on a channel probed just now: a 3.5 s average needs 3.5 s of its history
+  // (long, so that the steps below are done well before it is full, even on a busy machine).
   await page.getByRole("button", { name: "수학 채널 추가" }).click();
+  // Read before the probe is added: the window can be full no sooner than 3.5 s after this.
+  const t0 = Number(await plot(page).getAttribute("data-now-ms"));
   await page.getByLabel("아날로그 채널 추가").selectOption("pot.W");
   await page.getByLabel("M1 연산").selectOption("avg");
   await page.getByLabel("M1 소스 A").selectOption("V(pot.W)");
-  await page.getByLabel("M1 평균 창 (µs)").fill("1500000");
+  await page.getByLabel("M1 평균 창 (µs)").fill("3500000");
   await page.getByRole("button", { name: "시간 + 스펙트럼" }).click();
   await page.getByLabel("스펙트럼 소스").selectOption("M1");
-  const t0 = Number(await plot(page).getAttribute("data-now-ms"));
   // Unknown: no measurements, the whole row hatched, no spectrum.
   const row = page.getByTestId("analog-M1");
   await expect(page.getByTestId("analog-pot.W")).toHaveAttribute("data-mean", /\d/);
@@ -329,7 +331,7 @@ test("live: a new probe's moving average is unknown until its window holds recor
   await expect(page.getByTestId("fft-info")).toHaveCount(0);
   // Once the window lies in the recorded part: the wiper's 1.65 V.
   await expect.poll(async () => Number((await row.getAttribute("data-mean")) ?? NaN), { timeout: 20000 }).toBeCloseTo(1.65, 1);
-  expect(Number(await plot(page).getAttribute("data-now-ms")) - t0).toBeGreaterThan(1500);
+  expect(Number(await plot(page).getAttribute("data-now-ms")) - t0).toBeGreaterThan(3500);
   await expect(page.getByTestId("fft-info")).toHaveCount(1);
   // Longer than the history kept (4 s): never known.
   await page.getByLabel("M1 평균 창 (µs)").fill("5000000");

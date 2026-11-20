@@ -20,7 +20,7 @@ import {
 import { parseLesson, validateLesson } from "../src/lessons/validate.ts";
 import { checksFromWiring, involved } from "../src/lessons/fromWiring.ts";
 import { evaluateWiring, type PinRef, type WiringContext } from "../src/lessons/wiring.ts";
-import { blankLesson, removeLesson, upsertLesson } from "../src/lessons/mine.ts";
+import { blankLesson, normalizeLesson, removeLesson, upsertLesson } from "../src/lessons/mine.ts";
 import type { Lesson, WiringCheck } from "../src/lessons/types.ts";
 
 // ------------------------------------------------------------- fixtures
@@ -451,4 +451,42 @@ test("involved: the pins and signals a failed wiring check is about", () => {
     signals: ["PB9"],
   });
   assert.deepEqual(involved({ type: "part", kind: "led-5mm" }, ctx), { pins: [], signals: [] });
+});
+
+// ------------------------------------------- review fixes (PR #29)
+
+test("a malformed lesson draft is normalized to something the editor can show, with its errors", () => {
+  // The reviewer's example: passed the editor's guard and crashed on `start`.
+  const l = normalizeLesson({ steps: [{ title: "Step", text: "", checks: [] }] })!;
+  assert.equal(l.start, "empty");
+  assert.deepEqual([l.id, l.title, l.level, l.goal], ["", "", "", ""]);
+  assert.equal(typeof l.order, "number");
+  assert.deepEqual(l.steps, [{ title: "Step", text: "", checks: [] }]);
+  const errors = validateLesson(l, KINDS);
+  assert.ok(errors.includes("'id'가 없습니다") && errors.includes("'goal'가 없습니다"), errors.join("; "));
+  // Garbage everywhere: every field the editor and the list read has its type.
+  const g = normalizeLesson({
+    id: 7,
+    title: { x: 1 },
+    start: { project: null },
+    firmware: null,
+    grade: [1],
+    steps: [null, { title: 3, text: [1, "a"], checks: [null, 2, { type: "part", kind: "led-5mm" }] }],
+  })!;
+  assert.equal(g.id, "7");
+  assert.equal(g.title, "");
+  assert.deepEqual(g.start, { project: { parts: [], wires: [] } });
+  assert.equal("firmware" in g, false);
+  assert.equal("grade" in g, false);
+  assert.deepEqual(g.steps[0], { title: "", text: "", checks: [] });
+  assert.deepEqual(g.steps[1], { title: "3", text: ["1", "a"], checks: [{ type: "part", kind: "led-5mm" }] });
+  assert.deepEqual(normalizeLesson({ start: { example: {} }, steps: "x" })!.start, { example: "" });
+  for (const x of [null, undefined, 3, "lesson", [], [{ steps: [] }]]) assert.equal(normalizeLesson(x), null);
+  // A good lesson comes through unchanged.
+  assert.deepEqual(normalizeLesson(good()), good());
+  assert.deepEqual(normalizeLesson({ ...good(), firmware: "upload" }), { ...good(), firmware: "upload" });
+  // The schema check itself never throws on garbage (the "레슨 파일 불러오기" path).
+  for (const x of [{ steps: [null] }, { steps: [{ checks: [null, 1, { type: "series", through: "x" }] }] }, { start: null, grade: { stimuli: [null] } }]) {
+    assert.ok(validateLesson(x, KINDS).length > 0);
+  }
 });

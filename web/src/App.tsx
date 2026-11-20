@@ -21,7 +21,7 @@ import { LessonPanel } from "./lessons/LessonPanel";
 import { LessonEditor } from "./lessons/LessonEditor";
 import { TeacherView } from "./lessons/TeacherView";
 import type { Involved } from "./lessons/fromWiring";
-import { blankLesson, DRAFT_KEY, MINE_KEY, removeLesson, upsertLesson } from "./lessons/mine";
+import { blankLesson, DRAFT_KEY, MINE_KEY, normalizeLesson, removeLesson, upsertLesson } from "./lessons/mine";
 import { ACTIVE_KEY, BACKUP_KEY } from "./lessons/progress";
 import type { LoadedResult } from "./lessons/teacher";
 import type { Lesson } from "./lessons/types";
@@ -176,8 +176,15 @@ export function App() {
   useEffect(() => {
     void idbGet<string>(ACTIVE_KEY).then((a) => a && setLessonOpen(true));
     void idbGet<string>(BACKUP_KEY).then((b) => setHasBackup(!!b));
-    void idbGet<Lesson[]>(MINE_KEY).then((l) => setMyLessons(Array.isArray(l) ? l : []));
-    void idbGet<Lesson>(DRAFT_KEY).then((d) => d && setDraft(d));
+    // Stored lessons are normalized: a broken one (an older version, an edited
+    // database) shows its errors instead of crashing the list or the editor.
+    void idbGet<unknown>(MINE_KEY).then((l) =>
+      setMyLessons(Array.isArray(l) ? l.map(normalizeLesson).filter((x): x is Lesson => x !== null) : []),
+    );
+    void idbGet<unknown>(DRAFT_KEY).then((d) => {
+      const n = normalizeLesson(d);
+      if (n) setDraft(n);
+    });
   }, []);
   const saveMine = (lessons: Lesson[]) => {
     const next = lessons.reduce(upsertLesson, myLessons);
@@ -194,7 +201,7 @@ export function App() {
     void idbSet(DRAFT_KEY, l);
   };
   const openEditor = (l: Lesson | null) => {
-    if (l) changeDraft(structuredClone(l));
+    if (l) changeDraft(normalizeLesson(structuredClone(l)) ?? blankLesson(myLessons.map((m) => m.id)));
     else if (!draft) changeDraft(blankLesson(myLessons.map((m) => m.id)));
     setEditorOpen(true);
   };

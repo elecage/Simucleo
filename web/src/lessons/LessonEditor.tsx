@@ -9,6 +9,7 @@ import { PARTS, PART_BY_KIND } from "../parts";
 import type { Example } from "../run/RunControls";
 import { checksFromWiring, POWER } from "./fromWiring";
 import { LESSONS } from "./index";
+import { normalizeLesson } from "./mine";
 import { BEHAVIOUR_TYPES, WIRING_TYPES, type Check, type Lesson, type LessonStep, type Stimulus } from "./types";
 import { REQUIRED, THROUGH, validateLesson } from "./validate";
 import type { WiringContext } from "./wiring";
@@ -277,7 +278,8 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
   const elfs = examples.map((e) => e.file).filter((f) => f.endsWith(".elf"));
   const projects = [...new Set(examples.flatMap((e) => (e.project ? [e.project] : [])))];
 
-  const startKind = draft.start === "empty" ? "empty" : "example" in draft.start ? "example" : "project";
+  const startKind =
+    typeof draft.start === "object" && draft.start && "example" in draft.start ? "example" : typeof draft.start === "object" && draft.start ? "project" : "empty";
   const currentCircuit = () => ({
     parts: project.parts.map((p) => ({ id: p.id, kind: p.kind, x: p.x, y: p.y, ...(Object.keys(p.props).length ? { props: p.props } : {}) })),
     wires: project.wires.map((w) => ({ id: w.id, a: w.a, b: w.b, ...(w.color ? { color: w.color } : {}), ...(w.points?.length ? { points: w.points } : {}) })),
@@ -307,8 +309,11 @@ export function LessonEditor({ draft, onChange, examples, project, wiring, onSav
       setLoadError(`${f.name}: JSON 오류: ${(e as Error).message}`);
       return;
     }
-    const l = raw as Lesson;
-    if (!l || typeof l !== "object" || !Array.isArray(l.steps) || !l.steps.every((s) => s && Array.isArray(s.checks))) {
+    const r = raw as Partial<Lesson> | null;
+    // Missing or mistyped fields get safe defaults (the error list names them);
+    // something that is not a lesson at all is refused.
+    const l = normalizeLesson(raw);
+    if (!l || !Array.isArray(r?.steps) || !r.steps.every((s) => s && typeof s === "object" && Array.isArray(s.checks))) {
       setLoadError(`${f.name}: 레슨 파일이 아닙니다 ('steps'와 각 단계의 'checks'가 필요합니다)`);
       return;
     }

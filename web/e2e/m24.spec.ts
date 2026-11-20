@@ -272,3 +272,73 @@ test("a wiring check that fails at grading marks its pins and nets on the schema
   await expect(sch.locator("[data-mark]")).toHaveCount(0);
   await expect(page.getByTestId("sch-marks")).toHaveCount(0);
 });
+
+// ------------------------------------------------- review fixes (PR #29)
+
+/** Put a value in the app's IndexedDB (as an older version or an edited database would have). */
+async function idbPut(page: Page, key: string, value: unknown) {
+  await page.evaluate(
+    ([k, v]) =>
+      new Promise<void>((resolve, reject) => {
+        const req = indexedDB.open("simucleo", 1);
+        req.onupgradeneeded = () => req.result.createObjectStore("kv");
+        req.onsuccess = () => {
+          const tx = req.result.transaction("kv", "readwrite");
+          tx.objectStore("kv").put(v, k);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        };
+        req.onerror = () => reject(req.error);
+      }),
+    [key, value] as const,
+  );
+}
+
+async function openEditorFromPanel(page: Page) {
+  if (!(await panel(page).count())) await page.getByRole("button", { name: "📝 실습" }).click();
+  if (await panel(page).getByRole("button", { name: "← 목록" }).count()) await panel(page).getByRole("button", { name: "← 목록" }).click();
+  await panel(page).getByRole("button", { name: "✏️ 레슨 편집기" }).click();
+  await expect(editor(page)).toBeVisible();
+}
+
+test("a malformed lesson JSON shows its errors in the editor instead of crashing, also after a reload", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await ready(page);
+  await openEditorFromPanel(page);
+  const malformed = { steps: [{ title: "Step", text: "", checks: [] }] };
+  await editor(page).getByTestId("editor-load").setInputFiles(asFile("bad.json", JSON.stringify(malformed)));
+  await expect(editor(page).getByTestId("editor-errors")).toContainText("'id'가 없습니다");
+  await expect(editor(page).getByTestId("editor-errors")).toContainText("'goal'가 없습니다");
+  await expect(editor(page).getByLabel("단계 1 제목")).toHaveValue("Step");
+  await expect(editor(page).getByLabel("시작 회로")).toHaveValue("empty");
+  await expect(editor(page).getByRole("button", { name: "내 레슨에 저장" })).toBeDisabled();
+  // Not a lesson at all: refused with a reason, the draft stays.
+  await editor(page).getByTestId("editor-load").setInputFiles(asFile("list.json", "[1, 2]"));
+  await expect(editor(page).getByRole("alert")).toContainText("레슨 파일이 아닙니다");
+  await expect(editor(page).getByLabel("단계 1 제목")).toHaveValue("Step");
+
+  // The draft was saved; it opens again after a reload.
+  await page.waitForTimeout(600);
+  await page.reload();
+  await expect(status(page)).toContainText("예제를");
+  await openEditorFromPanel(page);
+  await expect(editor(page).getByTestId("editor-errors")).toContainText("'id'가 없습니다");
+  await expect(editor(page).getByLabel("단계 1 제목")).toHaveValue("Step");
+
+  // A draft and a 내 레슨 already stored broken (before this fix) do not brick the app either.
+  await idbPut(page, "lessons:draft", { title: { x: 1 }, start: null, firmware: null, steps: [null, { title: "둘째", checks: [7] }] });
+  await idbPut(page, "lessons:mine", [null, { id: "broken", title: "고장 난 레슨", start: { project: {} }, steps: 3 }]);
+  await page.reload();
+  await expect(status(page)).toContainText("예제를");
+  await openEditorFromPanel(page);
+  await expect(editor(page).getByLabel("단계 2 제목")).toHaveValue("둘째");
+  await expect(editor(page).getByTestId("editor-errors")).toContainText("'title'가 없습니다");
+  await editor(page).getByRole("button", { name: "레슨 편집기 닫기" }).click();
+  const broken = panel(page).getByRole("region", { name: "내 레슨" }).locator('[data-lesson="broken"]');
+  await expect(broken).toContainText("레슨 파일 오류");
+  await broken.getByRole("button", { name: "편집" }).click();
+  await expect(editor(page).getByLabel("레슨 제목")).toHaveValue("고장 난 레슨");
+  await expect(editor(page).getByTestId("editor-errors")).toContainText("'steps'가 비어 있습니다");
+  expect(errors).toEqual([]);
+});

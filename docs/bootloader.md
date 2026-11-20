@@ -130,6 +130,20 @@ USART2(ST-LINK 가상 COM 포트, 115200 8N1)로 한 글자 명령을 받습니�
 - **IWDG**: 32 kHz LSI, `KR` = `0xCCCC` 시작, `0xAAAA` 새로 고침, `0x5555` `PR`/`RLR` 쓰기 허용, `SR`의 `PVU`/`RVU`.
   카운터가 0이 되면 보드를 리셋하고 `RCC_CSR.IWDGRSTF`를 세웁니다. 리셋 말고는 멈추지 않습니다.
 
+## 웹에서 해 보기
+
+1. 예제 목록에서 **hal-bootloader**를 고르고 실행하면 콘솔에 배너와 `no valid image in slot A`, 메뉴가 나옵니다.
+2. 콘솔 입력칸에 `u`를 보내면 슬롯 B를 지우고(약 1.1 s) `waiting for XMODEM-CRC upload ...`를 출력합니다.
+3. 콘솔 아래 **파일 보내기 (XMODEM)**에서 `iap-app-v1.bin`(또는 직접 올린 `.bin`)을 골라 **보내기**를 누릅니다.
+   블록 수와 재전송 횟수가 진행 막대로 보이고, 시간 초과는 시뮬레이션 시간으로 셉니다(시뮬레이션이 실제보다 빠르거나 느려도 같음).
+   전송하는 동안 ACK/NAK 같은 제어 바이트는 콘솔에 나오지 않습니다.
+4. 이미지가 검증되면 재부팅해 `app v1`이 돌고 LD2가 1 Hz로 깜빡입니다. 앱에서 `b`를 보내면 부트로더로 돌아갑니다.
+5. `iap-app-v2.bin`으로 바꾼 뒤 `iap-app-bad.bin`을 보내 보세요. 워치독 리셋 세 번 뒤 v2로 롤백됩니다.
+
+아래 탭 **FLASH**는 섹터 8개(크기, 쓴 양, 지운 횟수, 쓰기 보호, 지우는 중 표시), FLASH_CR 잠금, 옵션 바이트,
+IWDG(꺼짐/동작 중, 남은 시간), 워치독 리셋 횟수와 마지막 리셋 원인(RCC_CSR)을 보여 줍니다. 업데이트할 때마다 슬롯 B·A·C의
+지운 횟수가 늘지만, 부트 기록을 덧붙여 쓰는 섹터 2는 가득 찰 때까지 지워지지 않는 것을 볼 수 있습니다.
+
 ## 테스트
 
 `crates/nucleo/tests/firmware.rs`의 `bootloader_updates_over_xmodem_and_rolls_back`이 PC 쪽 XMODEM 송신기

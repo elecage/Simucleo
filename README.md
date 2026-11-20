@@ -8,6 +8,8 @@
 
 ![PWM으로 RGB LED와 LD2 밝기 제어](docs/images/m3-pwm-rgb.png)
 
+> **M37: 보드 펌웨어 교체 실습.** 부트로더가 UART(XMODEM)로 새 펌웨어를 받아 플래시를 지우고 쓰고 검증한 뒤 점프한다. 이중 이미지와 워치독 롤백, 플래시 컨트롤러(지우기·쓰기 시간, 오류 플래그, 쓰기 보호)와 IWDG를 칩처럼. 콘솔의 **파일 보내기(XMODEM)**, 아래 탭 **FLASH**. 예제 hal-bootloader([부트로더와 IAP](docs/bootloader.md)).
+>
 > **M35: 부품 추가.** 컬러 TFT(ST7735S·ILI9341), RC522 RFID 리더와 카드, MCP2515 CAN 모듈(모듈끼리 CAN 버스, 오실로스코프 CAN 해독), K형 열전대(MAX6675·MAX31855). 예제 hal-tft-st7735, hal-rfid-rc522, hal-can-mcp2515, hal-thermocouple([부품 목록](docs/parts.md)).
 >
 > **SWV(Serial Wire Viewer).** 아래 탭의 **SWV**에서 STM32CubeIDE처럼 프로그램을 멈추지 않고 들여다본다. `ITM_SendChar`로 보낸 글자(ITM 콘솔), 변수 값의 변화(데이터 추적 그래프, DWT 비교기), 함수별 CPU 시간(PC 샘플링 통계 프로파일), 인터럽트 횟수·처리 시간·타임라인(예외 추적)을 보여 준다. 예제 hal-swv-trace([SWV로 프로그램을 멈추지 않고 들여다보기](docs/swv.md)).

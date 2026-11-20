@@ -3,332 +3,169 @@
   "version": 1,
   "name": "가변저항·센서 → 서보·모터",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "bb1",
-      "kind": "breadboard-half",
-      "x": 42,
-      "y": 4,
-      "props": {}
-    },
-    {
-      "id": "pot",
-      "kind": "potentiometer",
-      "x": 44,
-      "y": 28,
-      "props": {
-        "ohms": "10k",
-        "position": 0.5
-      }
-    },
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "pot", "kind": "potentiometer", "x": 46, "y": 9, "props": { "ohms": "10k", "position": 0.5 } },
     {
       "id": "r1",
       "kind": "resistor",
-      "x": 50,
-      "y": 28,
-      "props": {
-        "ohms": "10k",
-        "bands": "4",
-        "tolerance": "5%",
-        "tempco": "100"
-      }
+      "x": 57,
+      "y": 10,
+      "props": { "ohms": "10k", "bands": "4", "tolerance": "5%", "tempco": "100" }
     },
-    {
-      "id": "ldr",
-      "kind": "ldr",
-      "x": 56,
-      "y": 26,
-      "props": {
-        "lux": 300
-      }
-    },
-    {
-      "id": "tmp",
-      "kind": "temp-sensor",
-      "x": 60,
-      "y": 28,
-      "props": {
-        "model": "TMP36",
-        "temp": 25
-      }
-    },
-    {
-      "id": "sv",
-      "kind": "servo",
-      "x": 66,
-      "y": 27,
-      "props": {}
-    },
-    {
-      "id": "m",
-      "kind": "dc-motor",
-      "x": 72,
-      "y": 27,
-      "props": {}
-    }
+    { "id": "ldr", "kind": "ldr", "x": 61, "y": 5, "props": { "lux": 300 } },
+    { "id": "tmp", "kind": "temp-sensor", "x": 51, "y": 9, "props": { "model": "TMP36", "temp": 25 } },
+    { "id": "sv", "kind": "servo", "x": 50, "y": 29, "props": {} },
+    { "id": "m", "kind": "dc-motor", "x": 60, "y": 29, "props": {} }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "tp1"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "a3" },
+      "b": { "part": "bb1", "pin": "tn3" },
+      "color": "#212121",
+      "points": [{ "x": 46, "y": 7 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "tn1"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "a10" },
+      "b": { "part": "bb1", "pin": "tn10" },
+      "color": "#212121",
+      "points": [{ "x": 53, "y": 7 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "5V"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "bp1"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "a5" },
+      "b": { "part": "bb1", "pin": "tp5" },
+      "color": "#e53935",
+      "points": [{ "x": 48, "y": 6 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "GND_P2"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "bn1"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "a14" },
+      "b": { "part": "bb1", "pin": "tp14" },
+      "color": "#e53935",
+      "points": [{ "x": 57, "y": 6 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "pot",
-        "pin": "2"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "tp3"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "a8" },
+      "b": { "part": "bb1", "pin": "tp8" },
+      "color": "#e53935",
+      "points": [{ "x": 51, "y": 6 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "pot",
-        "pin": "1"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "tn3"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "b19" },
+      "b": { "part": "bb1", "pin": "tn20" },
+      "color": "#212121",
+      "points": [{ "x": 63, "y": 9 }]
     },
     {
       "id": "w7",
-      "a": {
-        "part": "pot",
-        "pin": "W"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "A0"
-      },
-      "color": "#fdd835"
+      "a": { "part": "m", "pin": "VCC" },
+      "b": { "part": "sv", "pin": "V+" },
+      "color": "#e53935",
+      "points": [{ "x": 62, "y": 36 }, { "x": 52, "y": 36 }]
     },
     {
       "id": "w8",
-      "a": {
-        "part": "r1",
-        "pin": "1"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "tp8"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "e19" },
+      "b": { "part": "bb1", "pin": "bn19" },
+      "color": "#212121",
+      "points": [{ "x": 62, "y": 21 }, { "x": 61, "y": 21 }, { "x": 61, "y": 23 }]
     },
     {
       "id": "w9",
-      "a": {
-        "part": "r1",
-        "pin": "2"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "A1"
-      },
-      "color": "#43a047"
+      "a": { "part": "m", "pin": "GND" },
+      "b": { "part": "bb1", "pin": "bn20" },
+      "color": "#212121",
+      "points": [{ "x": 63, "y": 35 }, { "x": 66, "y": 35 }, { "x": 66, "y": 24 }, { "x": 63, "y": 24 }]
     },
     {
       "id": "w10",
-      "a": {
-        "part": "ldr",
-        "pin": "1"
-      },
-      "b": {
-        "part": "r1",
-        "pin": "2"
-      },
-      "color": "#43a047"
+      "a": { "part": "sv", "pin": "GND" },
+      "b": { "part": "bb1", "pin": "bn8" },
+      "color": "#212121",
+      "points": [{ "x": 51, "y": 35 }, { "x": 48, "y": 35 }, { "x": 48, "y": 23 }]
     },
     {
       "id": "w11",
-      "a": {
-        "part": "ldr",
-        "pin": "2"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "tn9"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w12",
-      "a": {
-        "part": "tmp",
-        "pin": "VS"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "tp14"
-      },
-      "color": "#e53935"
+      "a": { "part": "nucleo", "pin": "5V" },
+      "b": { "part": "bb1", "pin": "bp1" },
+      "color": "#e53935",
+      "points": [{ "x": 23, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 22 }]
     },
     {
       "id": "w13",
-      "a": {
-        "part": "tmp",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "tn15"
-      },
-      "color": "#212121"
+      "a": { "part": "m", "pin": "VCC" },
+      "b": { "part": "bb1", "pin": "bp19" },
+      "color": "#e53935",
+      "points": [{ "x": 62, "y": 36 }, { "x": 67, "y": 36 }, { "x": 67, "y": 22 }]
     },
     {
       "id": "w14",
-      "a": {
-        "part": "tmp",
-        "pin": "OUT"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "A2"
-      },
-      "color": "#1e88e5"
+      "a": { "part": "nucleo", "pin": "A0" },
+      "b": { "part": "bb1", "pin": "a4" },
+      "color": "#fdd835",
+      "points": [{ "x": 28, "y": 38 }, { "x": 42, "y": 38 }, { "x": 42, "y": 7 }, { "x": 47, "y": 7 }]
     },
     {
       "id": "w15",
-      "a": {
-        "part": "sv",
-        "pin": "V+"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "bp20"
-      },
-      "color": "#e53935"
+      "a": { "part": "nucleo", "pin": "A2" },
+      "b": { "part": "bb1", "pin": "a9" },
+      "color": "#1e88e5",
+      "points": [{ "x": 30, "y": 35 }, { "x": 41, "y": 35 }, { "x": 41, "y": 4 }, { "x": 52, "y": 4 }]
     },
     {
       "id": "w16",
-      "a": {
-        "part": "sv",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "bn20"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "3V3" },
+      "b": { "part": "bb1", "pin": "tp1" },
+      "color": "#e53935",
+      "points": [{ "x": 22, "y": 39 }, { "x": 40, "y": 39 }, { "x": 40, "y": 5 }]
     },
     {
       "id": "w17",
-      "a": {
-        "part": "sv",
-        "pin": "SIG"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "D9"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "bb1", "pin": "e18" },
+      "b": { "part": "nucleo", "pin": "A1" },
+      "color": "#43a047",
+      "points": [{ "x": 61, "y": 20 }, { "x": 45, "y": 20 }, { "x": 45, "y": 40 }, { "x": 29, "y": 40 }]
     },
     {
       "id": "w18",
-      "a": {
-        "part": "m",
-        "pin": "VCC"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "bp26"
-      },
-      "color": "#e53935"
+      "a": { "part": "nucleo", "pin": "D9" },
+      "b": { "part": "sv", "pin": "SIG" },
+      "color": "#fb8c00",
+      "points": [{ "x": 24, "y": 0 }, { "x": 55, "y": 0 }, { "x": 55, "y": 35 }, { "x": 53, "y": 35 }]
     },
     {
       "id": "w19",
-      "a": {
-        "part": "m",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "bn26"
-      },
-      "color": "#212121"
+      "a": { "part": "m", "pin": "IA" },
+      "b": { "part": "nucleo", "pin": "D5" },
+      "color": "#fdd835",
+      "points": [{ "x": 56, "y": 34 }, { "x": 56, "y": -1 }, { "x": 28, "y": -1 }]
     },
     {
       "id": "w20",
-      "a": {
-        "part": "m",
-        "pin": "IA"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "D5"
-      },
-      "color": "#fdd835"
-    },
-    {
-      "id": "w21",
-      "a": {
-        "part": "m",
-        "pin": "IB"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "D4"
-      },
-      "color": "#43a047"
+      "a": { "part": "m", "pin": "IB" },
+      "b": { "part": "nucleo", "pin": "D4" },
+      "color": "#43a047",
+      "points": [
+        { "x": 61, "y": 37 },
+        { "x": 46, "y": 37 },
+        { "x": 46, "y": 21 },
+        { "x": 43, "y": 21 },
+        { "x": 43, "y": 1 },
+        { "x": 29, "y": 1 }
+      ]
     }
   ],
-  "firmware": {
-    "name": "hal-adc-servo",
-    "example": "hal-adc-servo.elf"
-  }
+  "firmware": { "name": "hal-adc-servo", "example": "hal-adc-servo.elf" }
 }

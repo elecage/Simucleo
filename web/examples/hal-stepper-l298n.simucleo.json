@@ -3,203 +3,110 @@
   "version": 1,
   "name": "스테퍼 모터 + L298N (반스텝)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "br",
-      "kind": "l298n",
-      "x": 50,
-      "y": 8,
-      "props": {
-        "jumpers": "off"
-      }
-    },
-    {
-      "id": "mot",
-      "kind": "stepper-nema17",
-      "x": 66,
-      "y": 4,
-      "props": {
-        "load": 0,
-        "inertia": 0,
-        "turn": 0
-      }
-    },
-    {
-      "id": "bat",
-      "kind": "battery",
-      "x": 46,
-      "y": 24,
-      "props": {
-        "voltage": 12
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "br", "kind": "l298n", "x": 50, "y": 10, "props": { "jumpers": "off" } },
+    { "id": "mot", "kind": "stepper-nema17", "x": 66, "y": 8, "props": { "load": 0, "inertia": 0, "turn": 0 } },
+    { "id": "bat", "kind": "battery", "x": 50, "y": 28, "props": { "voltage": 12 } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "D7"
-      },
-      "b": {
-        "part": "br",
-        "pin": "IN1"
-      },
-      "color": "#1e88e5"
+      "a": { "part": "bat", "pin": "+" },
+      "b": { "part": "br", "pin": "12V" },
+      "color": "#e53935",
+      "points": [{ "x": 51, "y": 33 }, { "x": 48, "y": 33 }, { "x": 48, "y": 22 }, { "x": 51, "y": 22 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "nucleo",
-        "pin": "D8"
-      },
-      "b": {
-        "part": "br",
-        "pin": "IN2"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "bat", "pin": "-" },
+      "b": { "part": "br", "pin": "GND" },
+      "color": "#212121",
+      "points": [{ "x": 54, "y": 33 }, { "x": 57, "y": 33 }, { "x": 57, "y": 22 }, { "x": 52, "y": 22 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D2"
-      },
-      "b": {
-        "part": "br",
-        "pin": "IN3"
-      },
-      "color": "#8e24aa"
+      "a": { "part": "br", "pin": "OUT3" },
+      "b": { "part": "mot", "pin": "B+" },
+      "color": "#dc2626",
+      "points": [{ "x": 64, "y": 13 }, { "x": 64, "y": 20 }, { "x": 71, "y": 20 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D12"
-      },
-      "b": {
-        "part": "br",
-        "pin": "IN4"
-      },
-      "color": "#43a047"
+      "a": { "part": "br", "pin": "OUT4" },
+      "b": { "part": "mot", "pin": "B-" },
+      "color": "#2563eb",
+      "points": [{ "x": 63, "y": 14 }, { "x": 63, "y": 21 }, { "x": 72, "y": 21 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "nucleo",
-        "pin": "D5"
-      },
-      "b": {
-        "part": "br",
-        "pin": "ENA"
-      },
-      "color": "#00acc1"
+      "a": { "part": "br", "pin": "OUT1" },
+      "b": { "part": "mot", "pin": "A+" },
+      "color": "#111111",
+      "points": [{ "x": 47, "y": 13 }, { "x": 47, "y": 23 }, { "x": 69, "y": 23 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "nucleo",
-        "pin": "D9"
-      },
-      "b": {
-        "part": "br",
-        "pin": "ENB"
-      },
-      "color": "#fdd835"
+      "a": { "part": "br", "pin": "OUT2" },
+      "b": { "part": "mot", "pin": "A-" },
+      "color": "#16a34a",
+      "points": [{ "x": 49, "y": 14 }, { "x": 49, "y": 24 }, { "x": 70, "y": 24 }]
     },
     {
       "id": "w7",
-      "a": {
-        "part": "bat",
-        "pin": "+"
-      },
-      "b": {
-        "part": "br",
-        "pin": "12V"
-      },
-      "color": "#e53935"
+      "a": { "part": "br", "pin": "ENA" },
+      "b": { "part": "nucleo", "pin": "D5" },
+      "color": "#00acc1",
+      "points": [{ "x": 54, "y": 25 }, { "x": 40, "y": 25 }, { "x": 40, "y": 0 }, { "x": 28, "y": 0 }]
     },
     {
       "id": "w8",
-      "a": {
-        "part": "bat",
-        "pin": "-"
-      },
-      "b": {
-        "part": "br",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "br", "pin": "IN3" },
+      "b": { "part": "nucleo", "pin": "D2" },
+      "color": "#8e24aa",
+      "points": [{ "x": 57, "y": 22 }, { "x": 62, "y": 22 }, { "x": 62, "y": -1 }, { "x": 31, "y": -1 }]
     },
     {
       "id": "w9",
-      "a": {
-        "part": "br",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#212121"
+      "a": { "part": "br", "pin": "IN1" },
+      "b": { "part": "nucleo", "pin": "D7" },
+      "color": "#1e88e5",
+      "points": [{ "x": 55, "y": 26 }, { "x": 41, "y": 26 }, { "x": 41, "y": -2 }, { "x": 26, "y": -2 }]
     },
     {
       "id": "w10",
-      "a": {
-        "part": "br",
-        "pin": "OUT1"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "A+"
-      },
-      "color": "#111111"
+      "a": { "part": "br", "pin": "IN2" },
+      "b": { "part": "nucleo", "pin": "D8" },
+      "color": "#fb8c00",
+      "points": [{ "x": 56, "y": 27 }, { "x": 42, "y": 27 }, { "x": 42, "y": -3 }, { "x": 25, "y": -3 }]
     },
     {
       "id": "w11",
-      "a": {
-        "part": "br",
-        "pin": "OUT2"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "A-"
-      },
-      "color": "#16a34a"
+      "a": { "part": "br", "pin": "ENB" },
+      "b": { "part": "nucleo", "pin": "D9" },
+      "color": "#fdd835",
+      "points": [
+        { "x": 59, "y": 21 },
+        { "x": 61, "y": 21 },
+        { "x": 61, "y": 15 },
+        { "x": 65, "y": 15 },
+        { "x": 65, "y": -4 },
+        { "x": 24, "y": -4 }
+      ]
     },
     {
       "id": "w12",
-      "a": {
-        "part": "br",
-        "pin": "OUT3"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "B+"
-      },
-      "color": "#dc2626"
+      "a": { "part": "br", "pin": "IN4" },
+      "b": { "part": "nucleo", "pin": "D12" },
+      "color": "#43a047",
+      "points": [{ "x": 58, "y": 34 }, { "x": 43, "y": 34 }, { "x": 43, "y": -5 }, { "x": 21, "y": -5 }]
     },
     {
       "id": "w13",
-      "a": {
-        "part": "br",
-        "pin": "OUT4"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "B-"
-      },
-      "color": "#2563eb"
+      "a": { "part": "bat", "pin": "-" },
+      "b": { "part": "nucleo", "pin": "GND_P2" },
+      "color": "#212121",
+      "points": [{ "x": 54, "y": 36 }, { "x": 25, "y": 36 }]
     }
   ],
-  "firmware": {
-    "name": "hal-stepper-l298n",
-    "example": "hal-stepper-l298n.elf"
-  }
+  "firmware": { "name": "hal-stepper-l298n", "example": "hal-stepper-l298n.elf" }
 }

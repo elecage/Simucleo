@@ -3,153 +3,96 @@
   "version": 1,
   "name": "디지털 시계 (DS3231, TM1637, 버튼)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "rtc",
-      "kind": "rtc-ds3231",
-      "x": 46,
-      "y": 4,
-      "props": {
-        "temp": 25
-      }
-    },
-    {
-      "id": "disp",
-      "kind": "tm1637",
-      "x": 60,
-      "y": 6,
-      "props": {}
-    },
-    {
-      "id": "sw1",
-      "kind": "tact-switch",
-      "x": 48,
-      "y": 22,
-      "props": {}
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "rtc", "kind": "rtc-ds3231", "x": 46, "y": 10, "props": { "temp": 25 } },
+    { "id": "disp", "kind": "tm1637", "x": 80, "y": 6, "props": {} },
+    { "id": "sw1", "kind": "tact-switch", "x": 57, "y": 12, "props": {} }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "rtc",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "j7" },
+      "b": { "part": "bb1", "pin": "bn7" },
+      "color": "#212121",
+      "points": [{ "x": 50, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "rtc",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "j14" },
+      "b": { "part": "bb1", "pin": "bn14" },
+      "color": "#212121",
+      "points": [{ "x": 57, "y": 21 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D15"
-      },
-      "b": {
-        "part": "rtc",
-        "pin": "SCL"
-      }
+      "a": { "part": "bb1", "pin": "j6" },
+      "b": { "part": "bb1", "pin": "bp5" },
+      "color": "#e53935",
+      "points": [{ "x": 49, "y": 22 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D14"
-      },
-      "b": {
-        "part": "rtc",
-        "pin": "SDA"
-      }
+      "a": { "part": "disp", "pin": "GND" },
+      "b": { "part": "bb1", "pin": "bn29" },
+      "color": "#212121",
+      "points": [{ "x": 74, "y": 11 }, { "x": 74, "y": 23 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "disp",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "disp", "pin": "VCC" },
+      "b": { "part": "bb1", "pin": "bp29" },
+      "color": "#e53935",
+      "points": [{ "x": 72, "y": 10 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "disp",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w7",
-      "a": {
-        "part": "nucleo",
-        "pin": "D2"
-      },
-      "b": {
-        "part": "disp",
-        "pin": "CLK"
-      }
+      "a": { "part": "nucleo", "pin": "3V3" },
+      "b": { "part": "bb1", "pin": "bp1" },
+      "color": "#e53935",
+      "points": [{ "x": 22, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 22 }]
     },
     {
       "id": "w8",
-      "a": {
-        "part": "nucleo",
-        "pin": "D3"
-      },
-      "b": {
-        "part": "disp",
-        "pin": "DIO"
-      }
+      "a": { "part": "nucleo", "pin": "D4" },
+      "b": { "part": "bb1", "pin": "a14" },
+      "color": "#43a047",
+      "points": [{ "x": 29, "y": 0 }, { "x": 57, "y": 0 }]
     },
     {
       "id": "w9",
-      "a": {
-        "part": "nucleo",
-        "pin": "D4"
-      },
-      "b": {
-        "part": "sw1",
-        "pin": "1a"
-      },
-      "color": "#43a047"
+      "a": { "part": "nucleo", "pin": "D15" },
+      "b": { "part": "bb1", "pin": "g4" },
+      "color": "#1e88e5",
+      "points": [{ "x": 16, "y": -1 }, { "x": 43, "y": -1 }, { "x": 43, "y": 16 }]
     },
     {
       "id": "w10",
-      "a": {
-        "part": "sw1",
-        "pin": "2a"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "D14" },
+      "b": { "part": "bb1", "pin": "g5" },
+      "color": "#43a047",
+      "points": [{ "x": 17, "y": -2 }, { "x": 42, "y": -2 }, { "x": 42, "y": 17 }, { "x": 48, "y": 17 }]
+    },
+    {
+      "id": "w11",
+      "a": { "part": "disp", "pin": "CLK" },
+      "b": { "part": "nucleo", "pin": "D2" },
+      "color": "#fb8c00",
+      "points": [{ "x": 74, "y": 8 }, { "x": 74, "y": 1 }, { "x": 31, "y": 1 }]
+    },
+    {
+      "id": "w12",
+      "a": { "part": "disp", "pin": "DIO" },
+      "b": { "part": "nucleo", "pin": "D3" },
+      "color": "#8e24aa",
+      "points": [{ "x": 75, "y": 9 }, { "x": 75, "y": -3 }, { "x": 30, "y": -3 }]
     }
   ]
 }

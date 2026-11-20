@@ -3,67 +3,32 @@
   "version": 1,
   "name": "저전력 WFI (D7 LED)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "r1",
-      "kind": "resistor",
-      "x": 50,
-      "y": 16,
-      "props": {
-        "ohms": "220"
-      }
-    },
-    {
-      "id": "led1",
-      "kind": "led-5mm",
-      "x": 50,
-      "y": 10,
-      "props": {
-        "color": "green"
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "r1", "kind": "resistor", "x": 53, "y": 16, "props": { "ohms": "220" } },
+    { "id": "led1", "kind": "led-5mm", "x": 56, "y": 12, "props": { "color": "green" } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "D7"
-      },
-      "b": {
-        "part": "r1",
-        "pin": "1"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "bb1", "pin": "j13" },
+      "b": { "part": "bb1", "pin": "bn13" },
+      "color": "#212121",
+      "points": [{ "x": 56, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "r1",
-        "pin": "2"
-      },
-      "b": {
-        "part": "led1",
-        "pin": "A"
-      }
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "led1",
-        "pin": "K"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "D7" },
+      "b": { "part": "bb1", "pin": "f10" },
+      "color": "#fb8c00",
+      "points": [{ "x": 26, "y": 0 }, { "x": 53, "y": 0 }]
     }
   ]
 }

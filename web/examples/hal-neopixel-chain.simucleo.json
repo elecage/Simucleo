@@ -3,108 +3,53 @@
   "version": 1,
   "name": "NeoPixel 링 → 스트립 체인 (DOUT → DIN)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "ring",
-      "kind": "neopixel-ring",
-      "x": 50,
-      "y": 6,
-      "props": {
-        "count": 12
-      }
-    },
-    {
-      "id": "strip",
-      "kind": "neopixel-strip",
-      "x": 66,
-      "y": 20,
-      "props": {
-        "count": 8
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "ring", "kind": "neopixel-ring", "x": 46, "y": 10, "props": { "count": 12 } },
+    { "id": "strip", "kind": "neopixel-strip", "x": 62, "y": 30, "props": { "count": 8 } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "5V"
-      },
-      "b": {
-        "part": "ring",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "ring", "pin": "GND" },
+      "b": { "part": "strip", "pin": "GND" },
+      "color": "#212121",
+      "points": [{ "x": 52, "y": 31 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "ring",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#212121"
+      "a": { "part": "ring", "pin": "DOUT" },
+      "b": { "part": "strip", "pin": "DIN" },
+      "color": "#00acc1",
+      "points": [{ "x": 53, "y": 32 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D5"
-      },
-      "b": {
-        "part": "ring",
-        "pin": "DIN"
-      },
-      "color": "#43a047"
+      "a": { "part": "ring", "pin": "VCC" },
+      "b": { "part": "strip", "pin": "VCC" },
+      "color": "#e53935",
+      "points": [{ "x": 50, "y": 33 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "5V"
-      },
-      "b": {
-        "part": "strip",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "nucleo", "pin": "D5" },
+      "b": { "part": "ring", "pin": "DIN" },
+      "color": "#43a047",
+      "points": [{ "x": 28, "y": 0 }, { "x": 44, "y": 0 }, { "x": 44, "y": 23 }, { "x": 51, "y": 23 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "strip",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P2"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "5V" },
+      "b": { "part": "ring", "pin": "VCC" },
+      "color": "#e53935",
+      "points": [{ "x": 23, "y": 36 }, { "x": 49, "y": 36 }, { "x": 49, "y": 22 }, { "x": 50, "y": 22 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "ring",
-        "pin": "DOUT"
-      },
-      "b": {
-        "part": "strip",
-        "pin": "DIN"
-      },
-      "color": "#00acc1"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "ring", "pin": "GND" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 37 }, { "x": 54, "y": 37 }, { "x": 54, "y": 23 }, { "x": 52, "y": 23 }]
     }
   ],
-  "firmware": {
-    "name": "hal-neopixel-chain",
-    "example": "hal-neopixel-chain.elf"
-  }
+  "firmware": { "name": "hal-neopixel-chain", "example": "hal-neopixel-chain.elf" }
 }

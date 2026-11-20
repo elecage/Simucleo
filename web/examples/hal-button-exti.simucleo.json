@@ -3,110 +3,48 @@
   "version": 1,
   "name": "버튼 인터럽트 (EXTI)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "bb1",
-      "kind": "breadboard-half",
-      "x": 42,
-      "y": 4,
-      "props": {}
-    },
-    {
-      "id": "led1",
-      "kind": "led-5mm",
-      "x": 46,
-      "y": 9,
-      "props": {
-        "color": "red"
-      }
-    },
-    {
-      "id": "r1",
-      "kind": "resistor",
-      "x": 47,
-      "y": 8,
-      "props": {
-        "ohms": "220"
-      }
-    },
-    {
-      "id": "sw1",
-      "kind": "tact-switch",
-      "x": 47,
-      "y": 28,
-      "props": {}
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "led1", "kind": "led-5mm", "x": 49, "y": 12, "props": { "color": "red" } },
+    { "id": "r1", "kind": "resistor", "x": 50, "y": 16, "props": { "ohms": "220" } },
+    { "id": "sw1", "kind": "tact-switch", "x": 63, "y": 12, "props": {} }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "D7"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "b8"
-      },
-      "color": "#fdd835"
+      "a": { "part": "bb1", "pin": "j20" },
+      "b": { "part": "bb1", "pin": "bn20" },
+      "color": "#212121",
+      "points": [{ "x": 63, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "bb1",
-        "pin": "a3"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "tn3"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "j6" },
+      "b": { "part": "bb1", "pin": "bn5" },
+      "color": "#212121",
+      "points": [{ "x": 49, "y": 23 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "tn2"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D2"
-      },
-      "b": {
-        "part": "sw1",
-        "pin": "1a"
-      },
-      "color": "#1e88e5"
+      "a": { "part": "nucleo", "pin": "D2" },
+      "b": { "part": "bb1", "pin": "a20" },
+      "color": "#1e88e5",
+      "points": [{ "x": 31, "y": 0 }, { "x": 63, "y": 0 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "sw1",
-        "pin": "2a"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "D7" },
+      "b": { "part": "bb1", "pin": "f11" },
+      "color": "#fdd835",
+      "points": [{ "x": 26, "y": -1 }, { "x": 54, "y": -1 }]
     }
   ],
-  "firmware": {
-    "name": "hal-button-exti",
-    "example": "hal-button-exti.elf"
-  }
+  "firmware": { "name": "hal-button-exti", "example": "hal-button-exti.elf" }
 }

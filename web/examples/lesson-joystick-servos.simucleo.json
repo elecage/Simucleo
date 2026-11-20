@@ -3,155 +3,81 @@
   "version": 1,
   "name": "조이스틱 팬·틸트 (서보 2개)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "js",
-      "kind": "joystick",
-      "x": 48,
-      "y": 14,
-      "props": {
-        "x": 0.5,
-        "y": 0.5,
-        "sw": 0
-      }
-    },
-    {
-      "id": "s1",
-      "kind": "servo",
-      "x": 64,
-      "y": 8,
-      "props": {}
-    },
-    {
-      "id": "s2",
-      "kind": "servo",
-      "x": 64,
-      "y": 22,
-      "props": {}
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "js", "kind": "joystick", "x": 46, "y": 10, "props": { "x": 0.5, "y": 0.5, "sw": 0 } },
+    { "id": "s1", "kind": "servo", "x": 60, "y": 12, "props": {} },
+    { "id": "s2", "kind": "servo", "x": 68, "y": 12, "props": {} }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "js",
-        "pin": "+5V"
-      },
-      "color": "#e53935"
+      "a": { "part": "s1", "pin": "GND" },
+      "b": { "part": "s2", "pin": "GND" },
+      "color": "#212121",
+      "points": [{ "x": 61, "y": 19 }, { "x": 69, "y": 19 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "js",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#212121"
+      "a": { "part": "s1", "pin": "V+" },
+      "b": { "part": "s2", "pin": "V+" },
+      "color": "#e53935",
+      "points": [{ "x": 62, "y": 20 }, { "x": 70, "y": 20 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "A0"
-      },
-      "b": {
-        "part": "js",
-        "pin": "VRx"
-      }
+      "a": { "part": "js", "pin": "VRx" },
+      "b": { "part": "nucleo", "pin": "A0" },
+      "color": "#1e88e5",
+      "points": [{ "x": 50, "y": 36 }, { "x": 28, "y": 36 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "A1"
-      },
-      "b": {
-        "part": "js",
-        "pin": "VRy"
-      }
+      "a": { "part": "js", "pin": "VRy" },
+      "b": { "part": "nucleo", "pin": "A1" },
+      "color": "#43a047",
+      "points": [{ "x": 51, "y": 37 }, { "x": 29, "y": 37 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "nucleo",
-        "pin": "5V"
-      },
-      "b": {
-        "part": "s1",
-        "pin": "V+"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "js", "pin": "+5V" },
+      "b": { "part": "nucleo", "pin": "3V3" },
+      "color": "#e53935",
+      "points": [{ "x": 49, "y": 38 }, { "x": 22, "y": 38 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "s1",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "js", "pin": "GND" },
+      "b": { "part": "s1", "pin": "GND" },
+      "color": "#212121",
+      "points": [{ "x": 48, "y": 22 }, { "x": 60, "y": 22 }, { "x": 60, "y": 18 }, { "x": 61, "y": 18 }]
     },
     {
       "id": "w7",
-      "a": {
-        "part": "nucleo",
-        "pin": "D5"
-      },
-      "b": {
-        "part": "s1",
-        "pin": "SIG"
-      }
+      "a": { "part": "nucleo", "pin": "D5" },
+      "b": { "part": "s1", "pin": "SIG" },
+      "color": "#fb8c00",
+      "points": [{ "x": 28, "y": 0 }, { "x": 66, "y": 0 }, { "x": 66, "y": 18 }, { "x": 63, "y": 18 }]
     },
     {
       "id": "w8",
-      "a": {
-        "part": "s1",
-        "pin": "V+"
-      },
-      "b": {
-        "part": "s2",
-        "pin": "V+"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "js", "pin": "GND" },
+      "b": { "part": "nucleo", "pin": "GND_P2" },
+      "color": "#212121",
+      "points": [{ "x": 48, "y": 21 }, { "x": 47, "y": 21 }, { "x": 47, "y": 39 }, { "x": 25, "y": 39 }]
     },
     {
       "id": "w9",
-      "a": {
-        "part": "s1",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "s2",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "D9" },
+      "b": { "part": "s2", "pin": "SIG" },
+      "color": "#8e24aa",
+      "points": [{ "x": 24, "y": -1 }, { "x": 74, "y": -1 }, { "x": 74, "y": 18 }, { "x": 71, "y": 18 }]
     },
     {
       "id": "w10",
-      "a": {
-        "part": "nucleo",
-        "pin": "D9"
-      },
-      "b": {
-        "part": "s2",
-        "pin": "SIG"
-      }
+      "a": { "part": "nucleo", "pin": "5V" },
+      "b": { "part": "s1", "pin": "V+" },
+      "color": "#e53935",
+      "points": [{ "x": 23, "y": 40 }, { "x": 63, "y": 40 }, { "x": 63, "y": 19 }, { "x": 62, "y": 19 }]
     }
   ]
 }

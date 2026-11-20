@@ -3,305 +3,189 @@
   "version": 1,
   "name": "SD 카드 데이터 로거 (SPI + I2C)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "sd",
-      "kind": "sd-card",
-      "x": 46,
-      "y": 26,
-      "props": {
-        "size": 32
-      }
-    },
-    {
-      "id": "oled",
-      "kind": "oled-ssd1306-spi",
-      "x": 46,
-      "y": 4,
-      "props": {}
-    },
-    {
-      "id": "rtc",
-      "kind": "rtc-ds3231",
-      "x": 62,
-      "y": 20,
-      "props": {
-        "temp": 25
-      }
-    },
-    {
-      "id": "aht",
-      "kind": "aht20",
-      "x": 71,
-      "y": 21,
-      "props": {
-        "temp": 21,
-        "humidity": 55
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "sd", "kind": "sd-card", "x": 60, "y": 9, "props": { "size": 32 } },
+    { "id": "oled", "kind": "oled-ssd1306-spi", "x": 80, "y": 6, "props": {} },
+    { "id": "rtc", "kind": "rtc-ds3231", "x": 45, "y": 10, "props": { "temp": 25 } },
+    { "id": "aht", "kind": "aht20", "x": 53, "y": 11, "props": { "temp": 21, "humidity": 55 } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "5V"
-      },
-      "b": {
-        "part": "sd",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "j10" },
+      "b": { "part": "bb1", "pin": "bp10" },
+      "color": "#e53935",
+      "points": [{ "x": 53, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "b": {
-        "part": "sd",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "j5" },
+      "b": { "part": "bb1", "pin": "bp5" },
+      "color": "#e53935",
+      "points": [{ "x": 48, "y": 21 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D13"
-      },
-      "b": {
-        "part": "sd",
-        "pin": "SCK"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "bb1", "pin": "j11" },
+      "b": { "part": "bb1", "pin": "bn11" },
+      "color": "#212121",
+      "points": [{ "x": 54, "y": 21 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D12"
-      },
-      "b": {
-        "part": "sd",
-        "pin": "MISO"
-      },
-      "color": "#8e24aa"
+      "a": { "part": "bb1", "pin": "g11" },
+      "b": { "part": "bb1", "pin": "g6" },
+      "color": "#212121",
+      "points": [{ "x": 51, "y": 16 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "nucleo",
-        "pin": "D11"
-      },
-      "b": {
-        "part": "sd",
-        "pin": "MOSI"
-      },
-      "color": "#43a047"
+      "a": { "part": "bb1", "pin": "j18" },
+      "b": { "part": "bb1", "pin": "bn17" },
+      "color": "#212121",
+      "points": [{ "x": 61, "y": 23 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "nucleo",
-        "pin": "D10"
-      },
-      "b": {
-        "part": "sd",
-        "pin": "CS"
-      },
-      "color": "#00897b"
+      "a": { "part": "bb1", "pin": "g12" },
+      "b": { "part": "bb1", "pin": "g3" },
+      "color": "#fbc02d",
+      "points": [{ "x": 55, "y": 20 }, { "x": 45, "y": 20 }, { "x": 45, "y": 16 }]
     },
     {
       "id": "w7",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "oled",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "g13" },
+      "b": { "part": "bb1", "pin": "g4" },
+      "color": "#1e88e5",
+      "points": [{ "x": 56, "y": 18 }, { "x": 48, "y": 18 }, { "x": 48, "y": 16 }]
     },
     {
       "id": "w8",
-      "a": {
-        "part": "sd",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "oled",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "h11" },
+      "b": { "part": "bb1", "pin": "tn11" },
+      "color": "#212121",
+      "points": [{ "x": 52, "y": 17 }, { "x": 52, "y": 6 }]
     },
     {
       "id": "w9",
-      "a": {
-        "part": "sd",
-        "pin": "SCK"
-      },
-      "b": {
-        "part": "oled",
-        "pin": "D0"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "oled", "pin": "GND" },
+      "b": { "part": "bb1", "pin": "tn29" },
+      "color": "#212121",
+      "points": [{ "x": 83, "y": 4 }, { "x": 72, "y": 4 }]
     },
     {
       "id": "w10",
-      "a": {
-        "part": "sd",
-        "pin": "MOSI"
-      },
-      "b": {
-        "part": "oled",
-        "pin": "D1"
-      },
-      "color": "#43a047"
+      "a": { "part": "bb1", "pin": "g19" },
+      "b": { "part": "bb1", "pin": "tp19" },
+      "color": "#e53935",
+      "points": [{ "x": 59, "y": 16 }, { "x": 59, "y": 5 }]
     },
     {
       "id": "w11",
-      "a": {
-        "part": "nucleo",
-        "pin": "D9"
-      },
-      "b": {
-        "part": "oled",
-        "pin": "CS"
-      },
-      "color": "#00897b"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w12",
-      "a": {
-        "part": "nucleo",
-        "pin": "D8"
-      },
-      "b": {
-        "part": "oled",
-        "pin": "DC"
-      },
-      "color": "#6d4c41"
+      "a": { "part": "nucleo", "pin": "3V3" },
+      "b": { "part": "bb1", "pin": "bp1" },
+      "color": "#e53935",
+      "points": [{ "x": 22, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 22 }]
     },
     {
       "id": "w13",
-      "a": {
-        "part": "nucleo",
-        "pin": "D7"
-      },
-      "b": {
-        "part": "oled",
-        "pin": "RES"
-      },
-      "color": "#757575"
+      "a": { "part": "oled", "pin": "VCC" },
+      "b": { "part": "bb1", "pin": "bp29" },
+      "color": "#e53935",
+      "points": [{ "x": 84, "y": 3 }, { "x": 74, "y": 3 }, { "x": 74, "y": 22 }]
     },
     {
       "id": "w14",
-      "a": {
-        "part": "oled",
-        "pin": "VCC"
-      },
-      "b": {
-        "part": "rtc",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "oled", "pin": "D0" },
+      "b": { "part": "bb1", "pin": "i22" },
+      "color": "#fb8c00",
+      "points": [{ "x": 85, "y": 2 }, { "x": 69, "y": 2 }, { "x": 69, "y": 18 }]
     },
     {
       "id": "w15",
-      "a": {
-        "part": "oled",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "rtc",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "oled", "pin": "D1" },
+      "b": { "part": "bb1", "pin": "i21" },
+      "color": "#43a047",
+      "points": [{ "x": 86, "y": 1 }, { "x": 70, "y": 1 }, { "x": 70, "y": 20 }, { "x": 64, "y": 20 }]
     },
     {
       "id": "w16",
-      "a": {
-        "part": "nucleo",
-        "pin": "D15"
-      },
-      "b": {
-        "part": "rtc",
-        "pin": "SCL"
-      },
-      "color": "#fbc02d"
+      "a": { "part": "nucleo", "pin": "D15" },
+      "b": { "part": "bb1", "pin": "h3" },
+      "color": "#fbc02d",
+      "points": [{ "x": 16, "y": 0 }, { "x": 43, "y": 0 }, { "x": 43, "y": 17 }]
     },
     {
       "id": "w17",
-      "a": {
-        "part": "nucleo",
-        "pin": "D14"
-      },
-      "b": {
-        "part": "rtc",
-        "pin": "SDA"
-      },
-      "color": "#1e88e5"
+      "a": { "part": "nucleo", "pin": "D14" },
+      "b": { "part": "bb1", "pin": "h4" },
+      "color": "#1e88e5",
+      "points": [{ "x": 17, "y": -1 }, { "x": 42, "y": -1 }, { "x": 42, "y": 18 }, { "x": 47, "y": 18 }]
     },
     {
       "id": "w18",
-      "a": {
-        "part": "rtc",
-        "pin": "VCC"
-      },
-      "b": {
-        "part": "aht",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "nucleo", "pin": "5V" },
+      "b": { "part": "bb1", "pin": "tp1" },
+      "color": "#e53935",
+      "points": [{ "x": 23, "y": 38 }, { "x": 41, "y": 38 }, { "x": 41, "y": 5 }]
     },
     {
       "id": "w19",
-      "a": {
-        "part": "rtc",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "aht",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "D12" },
+      "b": { "part": "bb1", "pin": "g20" },
+      "color": "#8e24aa",
+      "points": [{ "x": 21, "y": -2 }, { "x": 58, "y": -2 }, { "x": 58, "y": 17 }, { "x": 63, "y": 17 }]
     },
     {
       "id": "w20",
-      "a": {
-        "part": "rtc",
-        "pin": "SCL"
-      },
-      "b": {
-        "part": "aht",
-        "pin": "SCL"
-      },
-      "color": "#fbc02d"
+      "a": { "part": "nucleo", "pin": "D11" },
+      "b": { "part": "bb1", "pin": "j21" },
+      "color": "#43a047",
+      "points": [{ "x": 22, "y": -3 }, { "x": 57, "y": -3 }, { "x": 57, "y": 20 }, { "x": 63, "y": 20 }, { "x": 63, "y": 19 }]
     },
     {
       "id": "w21",
-      "a": {
-        "part": "rtc",
-        "pin": "SDA"
-      },
-      "b": {
-        "part": "aht",
-        "pin": "SDA"
-      },
-      "color": "#1e88e5"
+      "a": { "part": "nucleo", "pin": "D10" },
+      "b": { "part": "bb1", "pin": "g23" },
+      "color": "#00897b",
+      "points": [{ "x": 23, "y": -4 }, { "x": 68, "y": -4 }, { "x": 68, "y": 16 }]
+    },
+    {
+      "id": "w22",
+      "a": { "part": "nucleo", "pin": "D13" },
+      "b": { "part": "bb1", "pin": "h22" },
+      "color": "#fb8c00",
+      "points": [{ "x": 20, "y": -5 }, { "x": 71, "y": -5 }, { "x": 71, "y": 17 }]
+    },
+    {
+      "id": "w23",
+      "a": { "part": "nucleo", "pin": "D7" },
+      "b": { "part": "oled", "pin": "RES" },
+      "color": "#757575",
+      "points": [{ "x": 26, "y": -6 }, { "x": 87, "y": -6 }]
+    },
+    {
+      "id": "w24",
+      "a": { "part": "nucleo", "pin": "D8" },
+      "b": { "part": "oled", "pin": "DC" },
+      "color": "#6d4c41",
+      "points": [{ "x": 25, "y": -7 }, { "x": 88, "y": -7 }]
+    },
+    {
+      "id": "w25",
+      "a": { "part": "nucleo", "pin": "D9" },
+      "b": { "part": "oled", "pin": "CS" },
+      "color": "#00897b",
+      "points": [{ "x": 24, "y": -8 }, { "x": 89, "y": -8 }]
     }
   ],
-  "firmware": {
-    "name": "hal-spi-sd-logger",
-    "example": "hal-spi-sd-logger.elf"
-  }
+  "firmware": { "name": "hal-spi-sd-logger", "example": "hal-spi-sd-logger.elf" }
 }

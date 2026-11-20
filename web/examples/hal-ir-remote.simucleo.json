@@ -3,61 +3,31 @@
   "version": 1,
   "name": "IR 리모컨 (NEC) 수신",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "ir",
-      "kind": "ir-receiver",
-      "x": 52,
-      "y": 4,
-      "props": {}
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "ir", "kind": "ir-receiver", "x": 46, "y": 8, "props": {} }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "ir",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "ir", "pin": "GND" },
+      "b": { "part": "nucleo", "pin": "GND_P2" },
+      "color": "#212121",
+      "points": [{ "x": 47, "y": 36 }, { "x": 25, "y": 36 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "ir",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "ir", "pin": "VCC" },
+      "b": { "part": "nucleo", "pin": "3V3" },
+      "color": "#e53935",
+      "points": [{ "x": 48, "y": 37 }, { "x": 22, "y": 37 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D3"
-      },
-      "b": {
-        "part": "ir",
-        "pin": "OUT"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "ir", "pin": "OUT" },
+      "b": { "part": "nucleo", "pin": "D3" },
+      "color": "#fb8c00",
+      "points": [{ "x": 40, "y": 24 }, { "x": 40, "y": 0 }, { "x": 30, "y": 0 }]
     }
   ],
-  "firmware": {
-    "name": "hal-ir-remote",
-    "example": "hal-ir-remote.elf"
-  }
+  "firmware": { "name": "hal-ir-remote", "example": "hal-ir-remote.elf" }
 }

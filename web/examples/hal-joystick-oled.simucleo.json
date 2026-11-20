@@ -3,144 +3,74 @@
   "version": 1,
   "name": "조이스틱으로 OLED 점 움직이기 (ADC)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "js",
-      "kind": "joystick",
-      "x": 50,
-      "y": 14,
-      "props": {
-        "x": 0.5,
-        "y": 0.5,
-        "sw": 0
-      }
-    },
-    {
-      "id": "oled",
-      "kind": "oled-ssd1306",
-      "x": 64,
-      "y": 6,
-      "props": {}
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "js", "kind": "joystick", "x": 64, "y": 10, "props": { "x": 0.5, "y": 0.5, "sw": 0 } },
+    { "id": "oled", "kind": "oled-ssd1306", "x": 46, "y": 10, "props": {} }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "js",
-        "pin": "+5V"
-      },
-      "color": "#e53935"
+      "a": { "part": "js", "pin": "+5V" },
+      "b": { "part": "oled", "pin": "VCC" },
+      "color": "#e53935",
+      "points": [{ "x": 67, "y": 22 }, { "x": 60, "y": 22 }, { "x": 60, "y": 8 }, { "x": 51, "y": 8 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "js",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#212121"
+      "a": { "part": "js", "pin": "GND" },
+      "b": { "part": "oled", "pin": "GND" },
+      "color": "#212121",
+      "points": [{ "x": 66, "y": 21 }, { "x": 61, "y": 21 }, { "x": 61, "y": 7 }, { "x": 50, "y": 7 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "A0"
-      },
-      "b": {
-        "part": "js",
-        "pin": "VRx"
-      },
-      "color": "#43a047"
+      "a": { "part": "nucleo", "pin": "D15" },
+      "b": { "part": "oled", "pin": "SCL" },
+      "color": "#fdd835",
+      "points": [{ "x": 16, "y": 0 }, { "x": 52, "y": 0 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "A1"
-      },
-      "b": {
-        "part": "js",
-        "pin": "VRy"
-      },
-      "color": "#1e88e5"
+      "a": { "part": "nucleo", "pin": "D14" },
+      "b": { "part": "oled", "pin": "SDA" },
+      "color": "#fb8c00",
+      "points": [{ "x": 17, "y": -1 }, { "x": 53, "y": -1 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "nucleo",
-        "pin": "D4"
-      },
-      "b": {
-        "part": "js",
-        "pin": "SW"
-      },
-      "color": "#8e24aa"
+      "a": { "part": "js", "pin": "VRx" },
+      "b": { "part": "nucleo", "pin": "A0" },
+      "color": "#43a047",
+      "points": [{ "x": 68, "y": 36 }, { "x": 28, "y": 36 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "oled",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "js", "pin": "VRy" },
+      "b": { "part": "nucleo", "pin": "A1" },
+      "color": "#1e88e5",
+      "points": [{ "x": 69, "y": 37 }, { "x": 29, "y": 37 }]
     },
     {
       "id": "w7",
-      "a": {
-        "part": "oled",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "GND_D" },
+      "b": { "part": "oled", "pin": "GND" },
+      "color": "#212121",
+      "points": [{ "x": 19, "y": -2 }, { "x": 49, "y": -2 }, { "x": 49, "y": 9 }, { "x": 50, "y": 9 }]
     },
     {
       "id": "w8",
-      "a": {
-        "part": "nucleo",
-        "pin": "D15"
-      },
-      "b": {
-        "part": "oled",
-        "pin": "SCL"
-      },
-      "color": "#fdd835"
+      "a": { "part": "js", "pin": "SW" },
+      "b": { "part": "nucleo", "pin": "D4" },
+      "color": "#8e24aa",
+      "points": [{ "x": 70, "y": 23 }, { "x": 40, "y": 23 }, { "x": 40, "y": 1 }, { "x": 29, "y": 1 }]
     },
     {
       "id": "w9",
-      "a": {
-        "part": "nucleo",
-        "pin": "D14"
-      },
-      "b": {
-        "part": "oled",
-        "pin": "SDA"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "nucleo", "pin": "3V3" },
+      "b": { "part": "oled", "pin": "VCC" },
+      "color": "#e53935",
+      "points": [{ "x": 22, "y": 38 }, { "x": 44, "y": 38 }, { "x": 44, "y": 8 }, { "x": 51, "y": 8 }]
     }
   ],
-  "firmware": {
-    "name": "hal-joystick-oled",
-    "example": "hal-joystick-oled.elf"
-  }
+  "firmware": { "name": "hal-joystick-oled", "example": "hal-joystick-oled.elf" }
 }

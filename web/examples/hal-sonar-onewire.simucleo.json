@@ -3,120 +3,89 @@
   "version": 1,
   "name": "초음파 거리 + DS18B20 (1-Wire)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "us",
-      "kind": "hc-sr04",
-      "x": 50,
-      "y": 8,
-      "props": {
-        "distance": 50
-      }
-    },
-    {
-      "id": "ds",
-      "kind": "ds18b20",
-      "x": 66,
-      "y": 10,
-      "props": {
-        "temp": 24.5
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "us", "kind": "hc-sr04", "x": 57, "y": 10, "props": { "distance": 50 } },
+    { "id": "ds", "kind": "ds18b20", "x": 48, "y": 10, "props": { "temp": 24.5 } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "5V"
-      },
-      "b": {
-        "part": "us",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "j7" },
+      "b": { "part": "bb1", "pin": "bp7" },
+      "color": "#e53935",
+      "points": [{ "x": 50, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "b": {
-        "part": "us",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "j5" },
+      "b": { "part": "bb1", "pin": "bn5" },
+      "color": "#212121",
+      "points": [{ "x": 48, "y": 21 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D7"
-      },
-      "b": {
-        "part": "us",
-        "pin": "TRIG"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "bb1", "pin": "j20" },
+      "b": { "part": "bb1", "pin": "bn20" },
+      "color": "#212121",
+      "points": [{ "x": 63, "y": 21 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D3"
-      },
-      "b": {
-        "part": "us",
-        "pin": "ECHO"
-      },
-      "color": "#8e24aa"
+      "a": { "part": "bb1", "pin": "g5" },
+      "b": { "part": "bb1", "pin": "tn5" },
+      "color": "#212121",
+      "points": [{ "x": 47, "y": 16 }, { "x": 47, "y": 6 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "ds",
-        "pin": "VDD"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "g17" },
+      "b": { "part": "bb1", "pin": "tp17" },
+      "color": "#e53935",
+      "points": [{ "x": 55, "y": 16 }, { "x": 55, "y": 7 }, { "x": 60, "y": 7 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "b": {
-        "part": "ds",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w7",
-      "a": {
-        "part": "nucleo",
-        "pin": "D2"
-      },
-      "b": {
-        "part": "ds",
-        "pin": "DQ"
-      },
-      "color": "#1e88e5"
+      "a": { "part": "bb1", "pin": "g6" },
+      "b": { "part": "nucleo", "pin": "D2" },
+      "color": "#1e88e5",
+      "points": [{ "x": 49, "y": 17 }, { "x": 40, "y": 17 }, { "x": 40, "y": 0 }, { "x": 31, "y": 0 }]
+    },
+    {
+      "id": "w8",
+      "a": { "part": "nucleo", "pin": "3V3" },
+      "b": { "part": "bb1", "pin": "bp1" },
+      "color": "#e53935",
+      "points": [{ "x": 22, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 22 }]
+    },
+    {
+      "id": "w9",
+      "a": { "part": "nucleo", "pin": "D3" },
+      "b": { "part": "bb1", "pin": "g19" },
+      "color": "#8e24aa",
+      "points": [{ "x": 30, "y": -1 }, { "x": 54, "y": -1 }, { "x": 54, "y": 20 }, { "x": 62, "y": 20 }]
+    },
+    {
+      "id": "w10",
+      "a": { "part": "nucleo", "pin": "D7" },
+      "b": { "part": "bb1", "pin": "g18" },
+      "color": "#fb8c00",
+      "points": [{ "x": 26, "y": -2 }, { "x": 53, "y": -2 }, { "x": 53, "y": 21 }, { "x": 61, "y": 21 }]
+    },
+    {
+      "id": "w11",
+      "a": { "part": "nucleo", "pin": "5V" },
+      "b": { "part": "bb1", "pin": "tp1" },
+      "color": "#e53935",
+      "points": [{ "x": 23, "y": 38 }, { "x": 42, "y": 38 }, { "x": 42, "y": 5 }]
     }
   ],
-  "firmware": {
-    "name": "hal-sonar-onewire",
-    "example": "hal-sonar-onewire.elf"
-  }
+  "firmware": { "name": "hal-sonar-onewire", "example": "hal-sonar-onewire.elf" }
 }

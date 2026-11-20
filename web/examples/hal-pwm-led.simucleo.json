@@ -3,121 +3,49 @@
   "version": 1,
   "name": "PWM 밝기와 RGB LED",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "bb1",
-      "kind": "breadboard-half",
-      "x": 42,
-      "y": 4,
-      "props": {}
-    },
-    {
-      "id": "rgb1",
-      "kind": "rgb-led",
-      "x": 46,
-      "y": 12,
-      "props": {
-        "common": "cathode"
-      }
-    },
-    {
-      "id": "rR",
-      "kind": "resistor",
-      "x": 46,
-      "y": 19,
-      "props": {
-        "ohms": "220"
-      }
-    },
-    {
-      "id": "rG",
-      "kind": "resistor",
-      "x": 48,
-      "y": 18,
-      "props": {
-        "ohms": "220"
-      }
-    },
-    {
-      "id": "rB",
-      "kind": "resistor",
-      "x": 49,
-      "y": 17,
-      "props": {
-        "ohms": "220"
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "rgb1", "kind": "rgb-led", "x": 53, "y": 12, "props": { "common": "cathode" } },
+    { "id": "rR", "kind": "resistor", "x": 53, "y": 16, "props": { "ohms": "220" } },
+    { "id": "rG", "kind": "resistor", "x": 55, "y": 17, "props": { "ohms": "220" } },
+    { "id": "rB", "kind": "resistor", "x": 56, "y": 18, "props": { "ohms": "220" } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "D3"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "g7"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "j11" },
+      "b": { "part": "bb1", "pin": "bn11" },
+      "color": "#212121",
+      "points": [{ "x": 54, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "nucleo",
-        "pin": "D5"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "g9"
-      },
-      "color": "#43a047"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D6"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "g10"
-      },
-      "color": "#1e88e5"
+      "a": { "part": "nucleo", "pin": "D3" },
+      "b": { "part": "bb1", "pin": "f14" },
+      "color": "#1e88e5",
+      "points": [{ "x": 30, "y": 0 }, { "x": 57, "y": 0 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "bb1",
-        "pin": "g4"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "bn4"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "D5" },
+      "b": { "part": "bb1", "pin": "f16" },
+      "color": "#43a047",
+      "points": [{ "x": 28, "y": -1 }, { "x": 59, "y": -1 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "nucleo",
-        "pin": "GND_P2"
-      },
-      "b": {
-        "part": "bb1",
-        "pin": "bn2"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "D6" },
+      "b": { "part": "bb1", "pin": "f17" },
+      "color": "#1e88e5",
+      "points": [{ "x": 27, "y": -2 }, { "x": 60, "y": -2 }]
     }
   ],
-  "firmware": {
-    "name": "hal-pwm-led",
-    "example": "hal-pwm-led.elf"
-  }
+  "firmware": { "name": "hal-pwm-led", "example": "hal-pwm-led.elf" }
 }

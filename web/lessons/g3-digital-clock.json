@@ -16,15 +16,18 @@
     "project": {
       "parts": [
         { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
-        { "id": "rtc", "kind": "rtc-ds3231", "x": 46, "y": 4, "props": { "temp": 25 } },
-        { "id": "disp", "kind": "tm1637", "x": 60, "y": 6, "props": {} },
-        { "id": "sw1", "kind": "tact-switch", "x": 48, "y": 22, "props": {} }
+        { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+        { "id": "rtc", "kind": "rtc-ds3231", "x": 46, "y": 10, "props": { "temp": 25 } },
+        { "id": "disp", "kind": "tm1637", "x": 80, "y": 6, "props": {} },
+        { "id": "sw1", "kind": "tact-switch", "x": 57, "y": 12, "props": {} }
       ],
       "wires": [
-        { "id": "w1", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "rtc", "pin": "VCC" }, "color": "#e53935" },
-        { "id": "w2", "a": { "part": "rtc", "pin": "GND" }, "b": { "part": "nucleo", "pin": "GND_D" }, "color": "#212121" },
-        { "id": "w3", "a": { "part": "nucleo", "pin": "D15" }, "b": { "part": "rtc", "pin": "SCL" } },
-        { "id": "w4", "a": { "part": "nucleo", "pin": "D14" }, "b": { "part": "rtc", "pin": "SDA" } }
+        { "id": "w1", "a": { "part": "bb1", "pin": "j6" }, "b": { "part": "bb1", "pin": "bp5" }, "color": "#e53935", "points": [{ "x": 49, "y": 22 }] },
+        { "id": "w2", "a": { "part": "bb1", "pin": "j7" }, "b": { "part": "bb1", "pin": "bn7" }, "color": "#212121", "points": [{ "x": 50, "y": 21 }] },
+        { "id": "w3", "a": { "part": "nucleo", "pin": "GND_P2" }, "b": { "part": "bb1", "pin": "bn1" }, "color": "#212121", "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }] },
+        { "id": "w4", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "bb1", "pin": "bp1" }, "color": "#e53935", "points": [{ "x": 22, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 22 }] },
+        { "id": "w5", "a": { "part": "nucleo", "pin": "D15" }, "b": { "part": "bb1", "pin": "g4" }, "color": "#1e88e5", "points": [{ "x": 16, "y": 0 }, { "x": 43, "y": 0 }, { "x": 43, "y": 16 }] },
+        { "id": "w6", "a": { "part": "nucleo", "pin": "D14" }, "b": { "part": "bb1", "pin": "g5" }, "color": "#43a047", "points": [{ "x": 17, "y": -1 }, { "x": 42, "y": -1 }, { "x": 42, "y": 17 }, { "x": 48, "y": 17 }] }
       ]
     }
   },

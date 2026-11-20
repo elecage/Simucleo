@@ -3,113 +3,61 @@
   "version": 1,
   "name": "디버거 실습: 평균 필터 (가변저항 A0, LED D7)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "pot",
-      "kind": "potentiometer",
-      "x": 48,
-      "y": 22,
-      "props": {
-        "ohms": "10k",
-        "position": 0.5
-      }
-    },
-    {
-      "id": "r1",
-      "kind": "resistor",
-      "x": 58,
-      "y": 16,
-      "props": {
-        "ohms": "220"
-      }
-    },
-    {
-      "id": "led1",
-      "kind": "led-5mm",
-      "x": 58,
-      "y": 10,
-      "props": {
-        "color": "red"
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "pot", "kind": "potentiometer", "x": 61, "y": 12, "props": { "ohms": "10k", "position": 0.5 } },
+    { "id": "r1", "kind": "resistor", "x": 47, "y": 16, "props": { "ohms": "220" } },
+    { "id": "led1", "kind": "led-5mm", "x": 50, "y": 12, "props": { "color": "red" } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "pot",
-        "pin": "2"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "j20" },
+      "b": { "part": "bb1", "pin": "bp20" },
+      "color": "#e53935",
+      "points": [{ "x": 63, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "pot",
-        "pin": "1"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "j7" },
+      "b": { "part": "bb1", "pin": "bn7" },
+      "color": "#212121",
+      "points": [{ "x": 50, "y": 21 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "pot",
-        "pin": "W"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "A0"
-      },
-      "color": "#43a047"
+      "a": { "part": "bb1", "pin": "j18" },
+      "b": { "part": "bb1", "pin": "bn17" },
+      "color": "#212121",
+      "points": [{ "x": 61, "y": 23 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D7"
-      },
-      "b": {
-        "part": "r1",
-        "pin": "1"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "r1",
-        "pin": "2"
-      },
-      "b": {
-        "part": "led1",
-        "pin": "A"
-      }
+      "a": { "part": "nucleo", "pin": "3V3" },
+      "b": { "part": "bb1", "pin": "bp1" },
+      "color": "#e53935",
+      "points": [{ "x": 22, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 22 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "led1",
-        "pin": "K"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "D7" },
+      "b": { "part": "bb1", "pin": "f4" },
+      "color": "#fb8c00",
+      "points": [{ "x": 26, "y": 0 }, { "x": 47, "y": 0 }]
+    },
+    {
+      "id": "w7",
+      "a": { "part": "nucleo", "pin": "A0" },
+      "b": { "part": "bb1", "pin": "j19" },
+      "color": "#43a047",
+      "points": [{ "x": 28, "y": 38 }, { "x": 62, "y": 38 }]
     }
   ]
 }

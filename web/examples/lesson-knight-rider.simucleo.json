@@ -3,226 +3,80 @@
   "version": 1,
   "name": "나이트라이더 (LED 4개, D2–D5)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "r0",
-      "kind": "resistor",
-      "x": 48,
-      "y": 16,
-      "props": {
-        "ohms": "220"
-      }
-    },
-    {
-      "id": "led0",
-      "kind": "led-5mm",
-      "x": 48,
-      "y": 10,
-      "props": {
-        "color": "red"
-      }
-    },
-    {
-      "id": "r1",
-      "kind": "resistor",
-      "x": 53,
-      "y": 16,
-      "props": {
-        "ohms": "220"
-      }
-    },
-    {
-      "id": "led1",
-      "kind": "led-5mm",
-      "x": 53,
-      "y": 10,
-      "props": {
-        "color": "red"
-      }
-    },
-    {
-      "id": "r2",
-      "kind": "resistor",
-      "x": 58,
-      "y": 16,
-      "props": {
-        "ohms": "220"
-      }
-    },
-    {
-      "id": "led2",
-      "kind": "led-5mm",
-      "x": 58,
-      "y": 10,
-      "props": {
-        "color": "red"
-      }
-    },
-    {
-      "id": "r3",
-      "kind": "resistor",
-      "x": 63,
-      "y": 16,
-      "props": {
-        "ohms": "220"
-      }
-    },
-    {
-      "id": "led3",
-      "kind": "led-5mm",
-      "x": 63,
-      "y": 10,
-      "props": {
-        "color": "red"
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "r0", "kind": "resistor", "x": 47, "y": 16, "props": { "ohms": "220" } },
+    { "id": "led0", "kind": "led-5mm", "x": 50, "y": 12, "props": { "color": "red" } },
+    { "id": "r1", "kind": "resistor", "x": 53, "y": 16, "props": { "ohms": "220" } },
+    { "id": "led1", "kind": "led-5mm", "x": 56, "y": 12, "props": { "color": "red" } },
+    { "id": "r2", "kind": "resistor", "x": 59, "y": 16, "props": { "ohms": "220" } },
+    { "id": "led2", "kind": "led-5mm", "x": 62, "y": 12, "props": { "color": "red" } },
+    { "id": "r3", "kind": "resistor", "x": 65, "y": 16, "props": { "ohms": "220" } },
+    { "id": "led3", "kind": "led-5mm", "x": 68, "y": 12, "props": { "color": "red" } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "D2"
-      },
-      "b": {
-        "part": "r0",
-        "pin": "1"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "bb1", "pin": "j7" },
+      "b": { "part": "bb1", "pin": "bn7" },
+      "color": "#212121",
+      "points": [{ "x": 50, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "r0",
-        "pin": "2"
-      },
-      "b": {
-        "part": "led0",
-        "pin": "A"
-      }
+      "a": { "part": "bb1", "pin": "j13" },
+      "b": { "part": "bb1", "pin": "bn13" },
+      "color": "#212121",
+      "points": [{ "x": 56, "y": 21 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "led0",
-        "pin": "K"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "j19" },
+      "b": { "part": "bb1", "pin": "bn19" },
+      "color": "#212121",
+      "points": [{ "x": 62, "y": 21 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D3"
-      },
-      "b": {
-        "part": "r1",
-        "pin": "1"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "bb1", "pin": "j25" },
+      "b": { "part": "bb1", "pin": "bn25" },
+      "color": "#212121",
+      "points": [{ "x": 68, "y": 21 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "r1",
-        "pin": "2"
-      },
-      "b": {
-        "part": "led1",
-        "pin": "A"
-      }
+      "a": { "part": "nucleo", "pin": "D2" },
+      "b": { "part": "bb1", "pin": "f4" },
+      "color": "#fb8c00",
+      "points": [{ "x": 31, "y": 0 }, { "x": 47, "y": 0 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "led1",
-        "pin": "K"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w7",
-      "a": {
-        "part": "nucleo",
-        "pin": "D4"
-      },
-      "b": {
-        "part": "r2",
-        "pin": "1"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "nucleo", "pin": "D3" },
+      "b": { "part": "bb1", "pin": "f10" },
+      "color": "#fb8c00",
+      "points": [{ "x": 30, "y": -1 }, { "x": 53, "y": -1 }]
     },
     {
       "id": "w8",
-      "a": {
-        "part": "r2",
-        "pin": "2"
-      },
-      "b": {
-        "part": "led2",
-        "pin": "A"
-      }
+      "a": { "part": "nucleo", "pin": "D4" },
+      "b": { "part": "bb1", "pin": "f16" },
+      "color": "#fb8c00",
+      "points": [{ "x": 29, "y": -2 }, { "x": 59, "y": -2 }]
     },
     {
       "id": "w9",
-      "a": {
-        "part": "led2",
-        "pin": "K"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
-    },
-    {
-      "id": "w10",
-      "a": {
-        "part": "nucleo",
-        "pin": "D5"
-      },
-      "b": {
-        "part": "r3",
-        "pin": "1"
-      },
-      "color": "#fb8c00"
-    },
-    {
-      "id": "w11",
-      "a": {
-        "part": "r3",
-        "pin": "2"
-      },
-      "b": {
-        "part": "led3",
-        "pin": "A"
-      }
-    },
-    {
-      "id": "w12",
-      "a": {
-        "part": "led3",
-        "pin": "K"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "D5" },
+      "b": { "part": "bb1", "pin": "f22" },
+      "color": "#fb8c00",
+      "points": [{ "x": 28, "y": -3 }, { "x": 65, "y": -3 }]
     }
   ]
 }

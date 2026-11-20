@@ -16,14 +16,15 @@
     "project": {
       "parts": [
         { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
-        { "id": "r0", "kind": "resistor", "x": 48, "y": 16, "props": { "ohms": "220" } },
-        { "id": "led0", "kind": "led-5mm", "x": 48, "y": 10, "props": { "color": "red" } },
-        { "id": "r1", "kind": "resistor", "x": 53, "y": 16, "props": { "ohms": "220" } },
-        { "id": "led1", "kind": "led-5mm", "x": 53, "y": 10, "props": { "color": "red" } },
-        { "id": "r2", "kind": "resistor", "x": 58, "y": 16, "props": { "ohms": "220" } },
-        { "id": "led2", "kind": "led-5mm", "x": 58, "y": 10, "props": { "color": "red" } },
-        { "id": "r3", "kind": "resistor", "x": 63, "y": 16, "props": { "ohms": "220" } },
-        { "id": "led3", "kind": "led-5mm", "x": 63, "y": 10, "props": { "color": "red" } }
+        { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+        { "id": "r0", "kind": "resistor", "x": 47, "y": 16, "props": { "ohms": "220" } },
+        { "id": "led0", "kind": "led-5mm", "x": 47, "y": 9, "props": { "color": "red" } },
+        { "id": "r1", "kind": "resistor", "x": 54, "y": 16, "props": { "ohms": "220" } },
+        { "id": "led1", "kind": "led-5mm", "x": 54, "y": 9, "props": { "color": "red" } },
+        { "id": "r2", "kind": "resistor", "x": 61, "y": 16, "props": { "ohms": "220" } },
+        { "id": "led2", "kind": "led-5mm", "x": 61, "y": 9, "props": { "color": "red" } },
+        { "id": "r3", "kind": "resistor", "x": 68, "y": 16, "props": { "ohms": "220" } },
+        { "id": "led3", "kind": "led-5mm", "x": 68, "y": 9, "props": { "color": "red" } }
       ],
       "wires": []
     }

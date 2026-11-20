@@ -16,17 +16,17 @@
     "project": {
       "parts": [
         { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
-        { "id": "s1", "kind": "servo", "x": 50, "y": 12, "props": {} },
-        { "id": "s2", "kind": "servo", "x": 58, "y": 12, "props": {} },
-        { "id": "s3", "kind": "servo", "x": 66, "y": 12, "props": {} }
+        { "id": "s1", "kind": "servo", "x": 46, "y": 12, "props": {} },
+        { "id": "s2", "kind": "servo", "x": 54, "y": 12, "props": {} },
+        { "id": "s3", "kind": "servo", "x": 62, "y": 12, "props": {} }
       ],
       "wires": [
-        { "id": "w1", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "s1", "pin": "V+" }, "color": "#e53935" },
-        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_P1" }, "b": { "part": "s1", "pin": "GND" }, "color": "#212121" },
-        { "id": "w4", "a": { "part": "s1", "pin": "V+" }, "b": { "part": "s2", "pin": "V+" }, "color": "#e53935" },
-        { "id": "w5", "a": { "part": "s1", "pin": "GND" }, "b": { "part": "s2", "pin": "GND" }, "color": "#212121" },
-        { "id": "w7", "a": { "part": "s2", "pin": "V+" }, "b": { "part": "s3", "pin": "V+" }, "color": "#e53935" },
-        { "id": "w8", "a": { "part": "s2", "pin": "GND" }, "b": { "part": "s3", "pin": "GND" }, "color": "#212121" }
+        { "id": "w1", "a": { "part": "s1", "pin": "V+" }, "b": { "part": "s2", "pin": "V+" }, "color": "#e53935", "points": [{ "x": 48, "y": 19 }, { "x": 56, "y": 19 }] },
+        { "id": "w2", "a": { "part": "s1", "pin": "GND" }, "b": { "part": "s2", "pin": "GND" }, "color": "#212121", "points": [{ "x": 47, "y": 20 }, { "x": 55, "y": 20 }] },
+        { "id": "w3", "a": { "part": "s2", "pin": "V+" }, "b": { "part": "s3", "pin": "V+" }, "color": "#e53935", "points": [{ "x": 56, "y": 18 }, { "x": 57, "y": 18 }, { "x": 57, "y": 19 }, { "x": 64, "y": 19 }] },
+        { "id": "w4", "a": { "part": "s2", "pin": "GND" }, "b": { "part": "s3", "pin": "GND" }, "color": "#212121", "points": [{ "x": 55, "y": 18 }, { "x": 54, "y": 18 }, { "x": 54, "y": 21 }, { "x": 63, "y": 21 }] },
+        { "id": "w5", "a": { "part": "nucleo", "pin": "GND_P2" }, "b": { "part": "s1", "pin": "GND" }, "color": "#212121", "points": [{ "x": 25, "y": 36 }, { "x": 46, "y": 36 }, { "x": 46, "y": 18 }, { "x": 47, "y": 18 }] },
+        { "id": "w6", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "s1", "pin": "V+" }, "color": "#e53935", "points": [{ "x": 23, "y": 37 }, { "x": 49, "y": 37 }, { "x": 49, "y": 18 }, { "x": 48, "y": 18 }] }
       ]
     }
   },

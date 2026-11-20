@@ -3,77 +3,59 @@
   "version": 1,
   "name": "BMP280 기압·온도·고도 (I2C)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
     {
       "id": "baro",
       "kind": "bmp280",
-      "x": 52,
-      "y": 8,
-      "props": {
-        "address": "0x76",
-        "temp": 25,
-        "pressure": 1013.25
-      }
+      "x": 54,
+      "y": 10,
+      "props": { "address": "0x76", "temp": 25, "pressure": 1013.25 }
     }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "baro",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "j13" },
+      "b": { "part": "bb1", "pin": "bn13" },
+      "color": "#212121",
+      "points": [{ "x": 56, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "baro",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "j12" },
+      "b": { "part": "bb1", "pin": "bp11" },
+      "color": "#e53935",
+      "points": [{ "x": 55, "y": 22 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D15"
-      },
-      "b": {
-        "part": "baro",
-        "pin": "SCL"
-      },
-      "color": "#fdd835"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D14"
-      },
-      "b": {
-        "part": "baro",
-        "pin": "SDA"
-      },
-      "color": "#1e88e5"
+      "a": { "part": "nucleo", "pin": "3V3" },
+      "b": { "part": "bb1", "pin": "bp1" },
+      "color": "#e53935",
+      "points": [{ "x": 22, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 22 }]
+    },
+    {
+      "id": "w5",
+      "a": { "part": "bb1", "pin": "g14" },
+      "b": { "part": "nucleo", "pin": "D15" },
+      "color": "#fdd835",
+      "points": [{ "x": 52, "y": 16 }, { "x": 52, "y": 0 }, { "x": 16, "y": 0 }]
+    },
+    {
+      "id": "w6",
+      "a": { "part": "bb1", "pin": "g15" },
+      "b": { "part": "nucleo", "pin": "D14" },
+      "color": "#1e88e5",
+      "points": [{ "x": 61, "y": 16 }, { "x": 61, "y": -1 }, { "x": 17, "y": -1 }]
     }
   ],
-  "firmware": {
-    "name": "hal-bmp280",
-    "example": "hal-bmp280.elf"
-  }
+  "firmware": { "name": "hal-bmp280", "example": "hal-bmp280.elf" }
 }

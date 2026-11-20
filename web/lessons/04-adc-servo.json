@@ -16,14 +16,14 @@
       "parts": [
         { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
         { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
-        { "id": "pot", "kind": "potentiometer", "x": 46, "y": 28, "props": { "ohms": "10k", "position": 0.5 } },
-        { "id": "sv", "kind": "servo", "x": 62, "y": 27, "props": {} }
+        { "id": "pot", "kind": "potentiometer", "x": 46, "y": 9, "props": { "ohms": "10k", "position": 0.5 } },
+        { "id": "sv", "kind": "servo", "x": 50, "y": 29, "props": {} }
       ],
       "wires": [
-        { "id": "w1", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "bb1", "pin": "tp1" }, "color": "#e53935" },
-        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_P1" }, "b": { "part": "bb1", "pin": "tn1" }, "color": "#212121" },
-        { "id": "w3", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "bb1", "pin": "bp1" }, "color": "#fb8c00" },
-        { "id": "w4", "a": { "part": "nucleo", "pin": "GND_P2" }, "b": { "part": "bb1", "pin": "bn1" }, "color": "#212121" }
+        { "id": "w1", "a": { "part": "bb1", "pin": "tn1" }, "b": { "part": "bb1", "pin": "bn1" }, "color": "#212121", "points": [{ "x": 43, "y": 6 }, { "x": 43, "y": 23 }] },
+        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_P2" }, "b": { "part": "bb1", "pin": "bn2" }, "color": "#212121", "points": [{ "x": 25, "y": 36 }, { "x": 45, "y": 36 }] },
+        { "id": "w3", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "bb1", "pin": "bp1" }, "color": "#e53935", "points": [{ "x": 23, "y": 37 }, { "x": 42, "y": 37 }, { "x": 42, "y": 22 }] },
+        { "id": "w4", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "bb1", "pin": "tp1" }, "color": "#e53935", "points": [{ "x": 22, "y": 38 }, { "x": 41, "y": 38 }, { "x": 41, "y": 5 }] }
       ]
     }
   },

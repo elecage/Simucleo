@@ -3,98 +3,47 @@
   "version": 1,
   "name": "버튼 폴링 (D2 → D7 LED)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "sw1",
-      "kind": "tact-switch",
-      "x": 48,
-      "y": 24,
-      "props": {}
-    },
-    {
-      "id": "r1",
-      "kind": "resistor",
-      "x": 58,
-      "y": 16,
-      "props": {
-        "ohms": "220"
-      }
-    },
-    {
-      "id": "led1",
-      "kind": "led-5mm",
-      "x": 58,
-      "y": 10,
-      "props": {
-        "color": "red"
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "sw1", "kind": "tact-switch", "x": 63, "y": 12, "props": {} },
+    { "id": "r1", "kind": "resistor", "x": 49, "y": 16, "props": { "ohms": "220" } },
+    { "id": "led1", "kind": "led-5mm", "x": 52, "y": 12, "props": { "color": "red" } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "D2"
-      },
-      "b": {
-        "part": "sw1",
-        "pin": "1a"
-      },
-      "color": "#43a047"
+      "a": { "part": "bb1", "pin": "j9" },
+      "b": { "part": "bb1", "pin": "bn9" },
+      "color": "#212121",
+      "points": [{ "x": 52, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "sw1",
-        "pin": "2a"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "j20" },
+      "b": { "part": "bb1", "pin": "bn20" },
+      "color": "#212121",
+      "points": [{ "x": 63, "y": 21 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D7"
-      },
-      "b": {
-        "part": "r1",
-        "pin": "1"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "r1",
-        "pin": "2"
-      },
-      "b": {
-        "part": "led1",
-        "pin": "A"
-      }
+      "a": { "part": "nucleo", "pin": "D7" },
+      "b": { "part": "bb1", "pin": "f6" },
+      "color": "#fb8c00",
+      "points": [{ "x": 26, "y": 0 }, { "x": 49, "y": 0 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "led1",
-        "pin": "K"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "color": "#212121"
+      "a": { "part": "nucleo", "pin": "D2" },
+      "b": { "part": "bb1", "pin": "a20" },
+      "color": "#43a047",
+      "points": [{ "x": 31, "y": -1 }, { "x": 63, "y": -1 }]
     }
   ]
 }

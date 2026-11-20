@@ -3,289 +3,169 @@
   "version": 1,
   "name": "엔코더 → 스테퍼, 문자 LCD, 서미스터",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "enc",
-      "kind": "rotary-encoder",
-      "x": 48,
-      "y": 24,
-      "props": {}
-    },
-    {
-      "id": "mot",
-      "kind": "stepper-28byj48",
-      "x": 58,
-      "y": 24,
-      "props": {}
-    },
-    {
-      "id": "lcd",
-      "kind": "lcd-i2c",
-      "x": 48,
-      "y": 4,
-      "props": {
-        "address": "0x27"
-      }
-    },
-    {
-      "id": "r1",
-      "kind": "resistor",
-      "x": 74,
-      "y": 24,
-      "props": {
-        "ohms": "10k"
-      }
-    },
-    {
-      "id": "ntc",
-      "kind": "thermistor",
-      "x": 78,
-      "y": 24,
-      "props": {
-        "ohms": "10k",
-        "beta": 3950,
-        "temp": 25
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "enc", "kind": "rotary-encoder", "x": 46, "y": 8, "props": {} },
+    { "id": "mot", "kind": "stepper-28byj48", "x": 84, "y": 18, "props": {} },
+    { "id": "lcd", "kind": "lcd-i2c", "x": 80, "y": 2, "props": { "address": "0x27" } },
+    { "id": "r1", "kind": "resistor", "x": 55, "y": 16, "props": { "ohms": "10k" } },
+    { "id": "ntc", "kind": "thermistor", "x": 59, "y": 12, "props": { "ohms": "10k", "beta": 3950, "temp": 25 } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "enc",
-        "pin": "+"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "j6" },
+      "b": { "part": "bb1", "pin": "bp5" },
+      "color": "#e53935",
+      "points": [{ "x": 49, "y": 22 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "b": {
-        "part": "enc",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "j12" },
+      "b": { "part": "bb1", "pin": "bp11" },
+      "color": "#e53935",
+      "points": [{ "x": 55, "y": 22 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D12"
-      },
-      "b": {
-        "part": "enc",
-        "pin": "CLK"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "bb1", "pin": "j7" },
+      "b": { "part": "bb1", "pin": "bn7" },
+      "color": "#212121",
+      "points": [{ "x": 50, "y": 21 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D11"
-      },
-      "b": {
-        "part": "enc",
-        "pin": "DT"
-      },
-      "color": "#8e24aa"
+      "a": { "part": "bb1", "pin": "j17" },
+      "b": { "part": "bb1", "pin": "bn17" },
+      "color": "#212121",
+      "points": [{ "x": 60, "y": 21 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "nucleo",
-        "pin": "D10"
-      },
-      "b": {
-        "part": "enc",
-        "pin": "SW"
-      },
-      "color": "#00897b"
+      "a": { "part": "lcd", "pin": "GND" },
+      "b": { "part": "bb1", "pin": "tn29" },
+      "color": "#212121",
+      "points": [{ "x": 75, "y": 6 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "nucleo",
-        "pin": "5V"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "g7" },
+      "b": { "part": "bb1", "pin": "tn7" },
+      "color": "#212121",
+      "points": [{ "x": 52, "y": 16 }, { "x": 52, "y": 6 }]
     },
     {
       "id": "w7",
-      "a": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "lcd", "pin": "VCC" },
+      "b": { "part": "bb1", "pin": "tp29" },
+      "color": "#e53935",
+      "points": [{ "x": 73, "y": 7 }, { "x": 73, "y": 5 }]
     },
     {
       "id": "w8",
-      "a": {
-        "part": "nucleo",
-        "pin": "D2"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "IN1"
-      },
-      "color": "#43a047"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w9",
-      "a": {
-        "part": "nucleo",
-        "pin": "D3"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "IN2"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "mot", "pin": "GND" },
+      "b": { "part": "bb1", "pin": "bn29" },
+      "color": "#212121",
+      "points": [{ "x": 95, "y": 29 }, { "x": 72, "y": 29 }]
     },
     {
       "id": "w10",
-      "a": {
-        "part": "nucleo",
-        "pin": "D4"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "IN3"
-      },
-      "color": "#8e24aa"
+      "a": { "part": "nucleo", "pin": "3V3" },
+      "b": { "part": "bb1", "pin": "bp1" },
+      "color": "#e53935",
+      "points": [{ "x": 22, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 22 }]
     },
     {
       "id": "w11",
-      "a": {
-        "part": "nucleo",
-        "pin": "D5"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "IN4"
-      },
-      "color": "#00897b"
+      "a": { "part": "bb1", "pin": "g3" },
+      "b": { "part": "nucleo", "pin": "D12" },
+      "color": "#fb8c00",
+      "points": [{ "x": 40, "y": 16 }, { "x": 40, "y": 0 }, { "x": 21, "y": 0 }]
     },
     {
       "id": "w12",
-      "a": {
-        "part": "nucleo",
-        "pin": "5V"
-      },
-      "b": {
-        "part": "lcd",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "g4" },
+      "b": { "part": "nucleo", "pin": "D11" },
+      "color": "#8e24aa",
+      "points": [{ "x": 47, "y": 17 }, { "x": 41, "y": 17 }, { "x": 41, "y": -1 }, { "x": 22, "y": -1 }]
     },
     {
       "id": "w13",
-      "a": {
-        "part": "nucleo",
-        "pin": "GND_P2"
-      },
-      "b": {
-        "part": "lcd",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "g5" },
+      "b": { "part": "nucleo", "pin": "D10" },
+      "color": "#00897b",
+      "points": [{ "x": 48, "y": 20 }, { "x": 42, "y": 20 }, { "x": 42, "y": -2 }, { "x": 23, "y": -2 }]
     },
     {
       "id": "w14",
-      "a": {
-        "part": "nucleo",
-        "pin": "D15"
-      },
-      "b": {
-        "part": "lcd",
-        "pin": "SCL"
-      },
-      "color": "#43a047"
+      "a": { "part": "bb1", "pin": "j16" },
+      "b": { "part": "nucleo", "pin": "A0" },
+      "color": "#00897b",
+      "points": [{ "x": 59, "y": 38 }, { "x": 28, "y": 38 }]
     },
     {
       "id": "w15",
-      "a": {
-        "part": "nucleo",
-        "pin": "D14"
-      },
-      "b": {
-        "part": "lcd",
-        "pin": "SDA"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "nucleo", "pin": "5V" },
+      "b": { "part": "bb1", "pin": "tp1" },
+      "color": "#e53935",
+      "points": [{ "x": 23, "y": 39 }, { "x": 45, "y": 39 }, { "x": 45, "y": 21 }, { "x": 43, "y": 21 }, { "x": 43, "y": 5 }]
     },
     {
       "id": "w16",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "r1",
-        "pin": "1"
-      },
-      "color": "#8e24aa"
+      "a": { "part": "lcd", "pin": "VCC" },
+      "b": { "part": "mot", "pin": "VCC" },
+      "color": "#e53935",
+      "points": [{ "x": 78, "y": 7 }, { "x": 78, "y": 30 }, { "x": 94, "y": 30 }]
     },
     {
       "id": "w17",
-      "a": {
-        "part": "r1",
-        "pin": "2"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "A0"
-      },
-      "color": "#00897b"
+      "a": { "part": "lcd", "pin": "SDA" },
+      "b": { "part": "nucleo", "pin": "D14" },
+      "color": "#fb8c00",
+      "points": [{ "x": 71, "y": 8 }, { "x": 71, "y": -3 }, { "x": 17, "y": -3 }]
     },
     {
       "id": "w18",
-      "a": {
-        "part": "nucleo",
-        "pin": "A0"
-      },
-      "b": {
-        "part": "ntc",
-        "pin": "1"
-      },
-      "color": "#fbc02d"
+      "a": { "part": "lcd", "pin": "SCL" },
+      "b": { "part": "nucleo", "pin": "D15" },
+      "color": "#43a047",
+      "points": [{ "x": 74, "y": 9 }, { "x": 74, "y": -4 }, { "x": 16, "y": -4 }]
     },
     {
       "id": "w19",
-      "a": {
-        "part": "ntc",
-        "pin": "2"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#1e88e5"
+      "a": { "part": "mot", "pin": "IN1" },
+      "b": { "part": "nucleo", "pin": "D2" },
+      "color": "#43a047",
+      "points": [{ "x": 90, "y": 28 }, { "x": 67, "y": 28 }, { "x": 67, "y": 1 }, { "x": 31, "y": 1 }]
+    },
+    {
+      "id": "w20",
+      "a": { "part": "mot", "pin": "IN2" },
+      "b": { "part": "nucleo", "pin": "D3" },
+      "color": "#fb8c00",
+      "points": [{ "x": 91, "y": 31 }, { "x": 62, "y": 31 }, { "x": 62, "y": -5 }, { "x": 30, "y": -5 }]
+    },
+    {
+      "id": "w21",
+      "a": { "part": "mot", "pin": "IN3" },
+      "b": { "part": "nucleo", "pin": "D4" },
+      "color": "#8e24aa",
+      "points": [{ "x": 92, "y": 32 }, { "x": 63, "y": 32 }, { "x": 63, "y": -6 }, { "x": 29, "y": -6 }]
+    },
+    {
+      "id": "w22",
+      "a": { "part": "mot", "pin": "IN4" },
+      "b": { "part": "nucleo", "pin": "D5" },
+      "color": "#00897b",
+      "points": [{ "x": 93, "y": 33 }, { "x": 64, "y": 33 }, { "x": 64, "y": -7 }, { "x": 28, "y": -7 }]
     }
   ],
-  "firmware": {
-    "name": "hal-encoder-stepper-lcd",
-    "example": "hal-encoder-stepper-lcd.elf"
-  }
+  "firmware": { "name": "hal-encoder-stepper-lcd", "example": "hal-encoder-stepper-lcd.elf" }
 }

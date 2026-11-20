@@ -17,22 +17,23 @@
       "parts": [
         { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
         { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
-        { "id": "k1", "kind": "relay", "x": 78, "y": 6, "props": { "trigger": "low" } },
-        { "id": "lamp", "kind": "led-5mm", "x": 63, "y": 9, "props": { "color": "yellow" } },
-        { "id": "r1", "kind": "resistor", "x": 64, "y": 10, "props": { "ohms": "330" } },
-        { "id": "sw1", "kind": "tact-switch", "x": 47, "y": 28, "props": {} }
+        { "id": "k1", "kind": "relay", "x": 82, "y": 12, "props": { "trigger": "low" } },
+        { "id": "lamp", "kind": "led-5mm", "x": 57, "y": 12, "props": { "color": "yellow" } },
+        { "id": "r1", "kind": "resistor", "x": 58, "y": 16, "props": { "ohms": "330" } },
+        { "id": "sw1", "kind": "tact-switch", "x": 49, "y": 12, "props": {} }
       ],
       "wires": [
-        { "id": "w1", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "bb1", "pin": "tp1" }, "color": "#e53935" },
-        { "id": "w2", "a": { "part": "nucleo", "pin": "GND_P1" }, "b": { "part": "bb1", "pin": "tn2" }, "color": "#212121" },
-        { "id": "w4", "a": { "part": "k1", "pin": "GND" }, "b": { "part": "bb1", "pin": "tn29" }, "color": "#212121" },
-        { "id": "w6", "a": { "part": "k1", "pin": "COM" }, "b": { "part": "bb1", "pin": "tp27" }, "color": "#e53935" },
-        { "id": "w7", "a": { "part": "k1", "pin": "NO" }, "b": { "part": "bb1", "pin": "a25" }, "color": "#fdd835" },
-        { "id": "w8", "a": { "part": "bb1", "pin": "a20" }, "b": { "part": "bb1", "pin": "tn19" }, "color": "#212121" },
-        { "id": "w9", "a": { "part": "nucleo", "pin": "D4" }, "b": { "part": "sw1", "pin": "1a" }, "color": "#1e88e5" },
-        { "id": "w10", "a": { "part": "sw1", "pin": "2a" }, "b": { "part": "nucleo", "pin": "GND_P2" }, "color": "#212121" },
-        { "id": "wb1", "a": { "part": "nucleo", "pin": "D8" }, "b": { "part": "k1", "pin": "IN" }, "color": "#43a047" },
-        { "id": "wb2", "a": { "part": "nucleo", "pin": "3V3" }, "b": { "part": "k1", "pin": "VCC" }, "color": "#e53935" }
+        { "id": "w1", "a": { "part": "bb1", "pin": "j14" }, "b": { "part": "bb1", "pin": "bn14" }, "color": "#212121", "points": [{ "x": 57, "y": 21 }] },
+        { "id": "w2", "a": { "part": "bb1", "pin": "j9" }, "b": { "part": "bb1", "pin": "bn9" }, "color": "#212121", "points": [{ "x": 52, "y": 21 }] },
+        { "id": "w3", "a": { "part": "bb1", "pin": "g14" }, "b": { "part": "bb1", "pin": "tn14" }, "color": "#212121", "points": [{ "x": 56, "y": 16 }, { "x": 56, "y": 6 }] },
+        { "id": "w4", "a": { "part": "k1", "pin": "GND" }, "b": { "part": "bb1", "pin": "bn29" }, "color": "#212121", "points": [{ "x": 74, "y": 15 }, { "x": 74, "y": 23 }] },
+        { "id": "w5", "a": { "part": "nucleo", "pin": "D4" }, "b": { "part": "bb1", "pin": "a6" }, "color": "#1e88e5", "points": [{ "x": 29, "y": 0 }, { "x": 49, "y": 0 }] },
+        { "id": "w6", "a": { "part": "nucleo", "pin": "GND_P2" }, "b": { "part": "bb1", "pin": "bn1" }, "color": "#212121", "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }] },
+        { "id": "w7", "a": { "part": "k1", "pin": "COM" }, "b": { "part": "bb1", "pin": "tp29" }, "color": "#e53935", "points": [{ "x": 94, "y": 15 }, { "x": 94, "y": 5 }] },
+        { "id": "w8", "a": { "part": "k1", "pin": "NO" }, "b": { "part": "bb1", "pin": "f19" }, "color": "#fdd835", "points": [{ "x": 93, "y": 14 }, { "x": 93, "y": 10 }, { "x": 74, "y": 10 }, { "x": 74, "y": 14 }, { "x": 62, "y": 14 }] },
+        { "id": "w9", "a": { "part": "nucleo", "pin": "5V" }, "b": { "part": "bb1", "pin": "tp1" }, "color": "#e53935", "points": [{ "x": 23, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 5 }] },
+        { "id": "w10", "a": { "part": "k1", "pin": "IN" }, "b": { "part": "nucleo", "pin": "D8" }, "color": "#43a047", "points": [{ "x": 75, "y": 16 }, { "x": 75, "y": -1 }, { "x": 25, "y": -1 }] },
+        { "id": "w11", "a": { "part": "k1", "pin": "VCC" }, "b": { "part": "nucleo", "pin": "3V3" }, "color": "#e53935", "points": [{ "x": 76, "y": 14 }, { "x": 76, "y": 38 }, { "x": 22, "y": 38 }] }
       ]
     }
   },

@@ -3,228 +3,117 @@
   "version": 1,
   "name": "스테퍼 모터 + A4988 (가속 램프, 1/8 스텝)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "drv",
-      "kind": "a4988",
-      "x": 50,
-      "y": 8,
-      "props": {
-        "model": "A4988",
-        "current": 100
-      }
-    },
-    {
-      "id": "mot",
-      "kind": "stepper-nema17",
-      "x": 64,
-      "y": 6,
-      "props": {
-        "load": 0,
-        "inertia": 0,
-        "turn": 0
-      }
-    },
-    {
-      "id": "bat",
-      "kind": "battery",
-      "x": 50,
-      "y": 24,
-      "props": {
-        "voltage": 12
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "drv", "kind": "a4988", "x": 50, "y": 10, "props": { "model": "A4988", "current": 100 } },
+    { "id": "mot", "kind": "stepper-nema17", "x": 64, "y": 8, "props": { "load": 0, "inertia": 0, "turn": 0 } },
+    { "id": "bat", "kind": "battery", "x": 50, "y": 26, "props": { "voltage": 12 } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "D3"
-      },
-      "b": {
-        "part": "drv",
-        "pin": "STEP"
-      },
-      "color": "#1e88e5"
+      "a": { "part": "drv", "pin": "RST" },
+      "b": { "part": "drv", "pin": "SLP" },
+      "color": "#6d4c41",
+      "points": [{ "x": 49, "y": 15 }, { "x": 49, "y": 16 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "nucleo",
-        "pin": "D4"
-      },
-      "b": {
-        "part": "drv",
-        "pin": "DIR"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "bat", "pin": "-" },
+      "b": { "part": "drv", "pin": "GND2" },
+      "color": "#212121",
+      "points": [{ "x": 54, "y": 31 }, { "x": 57, "y": 31 }, { "x": 57, "y": 18 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D7"
-      },
-      "b": {
-        "part": "drv",
-        "pin": "EN"
-      },
-      "color": "#8e24aa"
+      "a": { "part": "drv", "pin": "1A" },
+      "b": { "part": "mot", "pin": "A+" },
+      "color": "#111111",
+      "points": [{ "x": 62, "y": 15 }, { "x": 62, "y": 20 }, { "x": 67, "y": 20 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D8"
-      },
-      "b": {
-        "part": "drv",
-        "pin": "MS1"
-      },
-      "color": "#43a047"
+      "a": { "part": "drv", "pin": "1B" },
+      "b": { "part": "mot", "pin": "A-" },
+      "color": "#16a34a",
+      "points": [{ "x": 61, "y": 16 }, { "x": 61, "y": 21 }, { "x": 68, "y": 21 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "nucleo",
-        "pin": "D9"
-      },
-      "b": {
-        "part": "drv",
-        "pin": "MS2"
-      },
-      "color": "#00acc1"
+      "a": { "part": "drv", "pin": "2A" },
+      "b": { "part": "mot", "pin": "B+" },
+      "color": "#dc2626",
+      "points": [{ "x": 60, "y": 14 }, { "x": 60, "y": 22 }, { "x": 69, "y": 22 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "nucleo",
-        "pin": "D10"
-      },
-      "b": {
-        "part": "drv",
-        "pin": "MS3"
-      },
-      "color": "#fdd835"
+      "a": { "part": "drv", "pin": "2B" },
+      "b": { "part": "mot", "pin": "B-" },
+      "color": "#2563eb",
+      "points": [{ "x": 59, "y": 13 }, { "x": 59, "y": 23 }, { "x": 70, "y": 23 }]
     },
     {
       "id": "w7",
-      "a": {
-        "part": "drv",
-        "pin": "RST"
-      },
-      "b": {
-        "part": "drv",
-        "pin": "SLP"
-      },
-      "color": "#6d4c41"
+      "a": { "part": "bat", "pin": "+" },
+      "b": { "part": "drv", "pin": "VMOT" },
+      "color": "#e53935",
+      "points": [{ "x": 51, "y": 32 }, { "x": 58, "y": 32 }, { "x": 58, "y": 11 }]
     },
     {
       "id": "w8",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "drv",
-        "pin": "VDD"
-      },
-      "color": "#e53935"
+      "a": { "part": "drv", "pin": "EN" },
+      "b": { "part": "nucleo", "pin": "D7" },
+      "color": "#8e24aa",
+      "points": [{ "x": 40, "y": 11 }, { "x": 40, "y": 0 }, { "x": 26, "y": 0 }]
     },
     {
       "id": "w9",
-      "a": {
-        "part": "drv",
-        "pin": "GND2"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#212121"
+      "a": { "part": "drv", "pin": "MS1" },
+      "b": { "part": "nucleo", "pin": "D8" },
+      "color": "#43a047",
+      "points": [{ "x": 41, "y": 12 }, { "x": 41, "y": -1 }, { "x": 25, "y": -1 }]
     },
     {
       "id": "w10",
-      "a": {
-        "part": "bat",
-        "pin": "+"
-      },
-      "b": {
-        "part": "drv",
-        "pin": "VMOT"
-      },
-      "color": "#e53935"
+      "a": { "part": "drv", "pin": "STEP" },
+      "b": { "part": "nucleo", "pin": "D3" },
+      "color": "#1e88e5",
+      "points": [{ "x": 39, "y": 17 }, { "x": 39, "y": 1 }, { "x": 30, "y": 1 }]
     },
     {
       "id": "w11",
-      "a": {
-        "part": "bat",
-        "pin": "-"
-      },
-      "b": {
-        "part": "drv",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "drv", "pin": "DIR" },
+      "b": { "part": "nucleo", "pin": "D4" },
+      "color": "#fb8c00",
+      "points": [{ "x": 42, "y": 18 }, { "x": 42, "y": -2 }, { "x": 29, "y": -2 }]
     },
     {
       "id": "w12",
-      "a": {
-        "part": "drv",
-        "pin": "1A"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "A+"
-      },
-      "color": "#111111"
+      "a": { "part": "drv", "pin": "MS2" },
+      "b": { "part": "nucleo", "pin": "D9" },
+      "color": "#00acc1",
+      "points": [{ "x": 43, "y": 13 }, { "x": 43, "y": -3 }, { "x": 24, "y": -3 }]
     },
     {
       "id": "w13",
-      "a": {
-        "part": "drv",
-        "pin": "1B"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "A-"
-      },
-      "color": "#16a34a"
+      "a": { "part": "drv", "pin": "MS3" },
+      "b": { "part": "nucleo", "pin": "D10" },
+      "color": "#fdd835",
+      "points": [{ "x": 44, "y": 14 }, { "x": 44, "y": -4 }, { "x": 23, "y": -4 }]
     },
     {
       "id": "w14",
-      "a": {
-        "part": "drv",
-        "pin": "2A"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "B+"
-      },
-      "color": "#dc2626"
+      "a": { "part": "drv", "pin": "VDD" },
+      "b": { "part": "nucleo", "pin": "3V3" },
+      "color": "#e53935",
+      "points": [{ "x": 63, "y": 17 }, { "x": 63, "y": 36 }, { "x": 22, "y": 36 }]
     },
     {
       "id": "w15",
-      "a": {
-        "part": "drv",
-        "pin": "2B"
-      },
-      "b": {
-        "part": "mot",
-        "pin": "B-"
-      },
-      "color": "#2563eb"
+      "a": { "part": "bat", "pin": "-" },
+      "b": { "part": "nucleo", "pin": "GND_P2" },
+      "color": "#212121",
+      "points": [{ "x": 54, "y": 35 }, { "x": 25, "y": 35 }]
     }
   ],
-  "firmware": {
-    "name": "hal-stepper-a4988",
-    "example": "hal-stepper-a4988.elf"
-  }
+  "firmware": { "name": "hal-stepper-a4988", "example": "hal-stepper-a4988.elf" }
 }

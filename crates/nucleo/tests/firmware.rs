@@ -8,6 +8,9 @@ use simucleo_core::bus::Bus;
 use simucleo_core::cpu::StopReason;
 use simucleo_nucleo::Nucleo;
 
+#[path = "support/web_project.rs"]
+mod web_project;
+
 fn firmware(name: &str) -> Vec<u8> {
     let path: PathBuf = [
         env!("CARGO_MANIFEST_DIR"),
@@ -2229,7 +2232,7 @@ fn set_part_props(
     for (k, v) in props.as_object().unwrap() {
         p.props.insert(k.clone(), v.clone());
     }
-    board.set_circuit(circuit, &simucleo_nucleo::BusCatalog::default(), signals);
+    board.set_circuit(circuit, &breadboard_catalog(), signals);
 }
 
 #[test]
@@ -3243,11 +3246,13 @@ fn sensorless_circuit(pot: f64) -> simucleo_nucleo::Circuit {
             p["props"]["position"] = pot.into();
         }
     }
-    serde_json::from_value(serde_json::json!({
-        "parts": project["parts"],
-        "wires": project["wires"],
-    }))
-    .unwrap()
+    // Parts seated in the breadboard are joined to its holes (M38).
+    serde_json::from_value(web_project::circuit(&project)).unwrap()
+}
+
+/// The breadboard's strips and rails, for circuits with parts seated in it.
+fn breadboard_catalog() -> simucleo_nucleo::BusCatalog {
+    serde_json::from_value(web_project::bus_catalog()).unwrap()
 }
 
 fn m28_signals() -> std::collections::HashMap<String, String> {
@@ -3280,7 +3285,7 @@ fn sensorless_bldc_aligns_ramps_and_closes_the_loop_on_zero_crossings() {
     board
         .load_elf(&hal_firmware("hal-bldc-sensorless", "hal-bldc-sensorless"))
         .unwrap();
-    board.set_circuit(&circuit, &simucleo_nucleo::BusCatalog::default(), &signals);
+    board.set_circuit(&circuit, &breadboard_catalog(), &signals);
     // Aligning: held still.
     board.run_for_ns(400e6);
     let v = board.circuit_frame(0.4);

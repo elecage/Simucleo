@@ -3,234 +3,140 @@
   "version": 1,
   "name": "스마트 온도조절기 (AHT20, OLED, 릴레이)",
   "parts": [
-    {
-      "id": "nucleo",
-      "kind": "nucleo-f401re",
-      "x": 4,
-      "y": 2,
-      "props": {}
-    },
-    {
-      "id": "oled",
-      "kind": "oled-ssd1306",
-      "x": 46,
-      "y": 4,
-      "props": {
-        "address": "0x3C"
-      }
-    },
-    {
-      "id": "aht",
-      "kind": "aht20",
-      "x": 46,
-      "y": 20,
-      "props": {
-        "temp": 23.5,
-        "humidity": 45
-      }
-    },
-    {
-      "id": "k1",
-      "kind": "relay",
-      "x": 66,
-      "y": 18,
-      "props": {
-        "trigger": "low"
-      }
-    },
-    {
-      "id": "rh",
-      "kind": "resistor",
-      "x": 82,
-      "y": 26,
-      "props": {
-        "ohms": "330"
-      }
-    },
-    {
-      "id": "heat",
-      "kind": "led-5mm",
-      "x": 86,
-      "y": 20,
-      "props": {
-        "color": "red"
-      }
-    }
+    { "id": "nucleo", "kind": "nucleo-f401re", "x": 4, "y": 2, "props": {} },
+    { "id": "bb1", "kind": "breadboard-half", "x": 42, "y": 4, "props": {} },
+    { "id": "oled", "kind": "oled-ssd1306", "x": 46, "y": 30, "props": { "address": "0x3C" } },
+    { "id": "aht", "kind": "aht20", "x": 47, "y": 11, "props": { "temp": 23.5, "humidity": 45 } },
+    { "id": "k1", "kind": "relay", "x": 82, "y": 12, "props": { "trigger": "low" } },
+    { "id": "rh", "kind": "resistor", "x": 57, "y": 16, "props": { "ohms": "330" } },
+    { "id": "heat", "kind": "led-5mm", "x": 60, "y": 12, "props": { "color": "red" } }
   ],
   "wires": [
     {
       "id": "w1",
-      "a": {
-        "part": "nucleo",
-        "pin": "3V3"
-      },
-      "b": {
-        "part": "oled",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "bb1", "pin": "j4" },
+      "b": { "part": "bb1", "pin": "bp4" },
+      "color": "#e53935",
+      "points": [{ "x": 47, "y": 21 }]
     },
     {
       "id": "w2",
-      "a": {
-        "part": "nucleo",
-        "pin": "GND_D"
-      },
-      "b": {
-        "part": "oled",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "j5" },
+      "b": { "part": "bb1", "pin": "bn5" },
+      "color": "#212121",
+      "points": [{ "x": 48, "y": 21 }]
     },
     {
       "id": "w3",
-      "a": {
-        "part": "nucleo",
-        "pin": "D15"
-      },
-      "b": {
-        "part": "oled",
-        "pin": "SCL"
-      }
+      "a": { "part": "bb1", "pin": "j17" },
+      "b": { "part": "bb1", "pin": "bn17" },
+      "color": "#212121",
+      "points": [{ "x": 60, "y": 21 }]
     },
     {
       "id": "w4",
-      "a": {
-        "part": "nucleo",
-        "pin": "D14"
-      },
-      "b": {
-        "part": "oled",
-        "pin": "SDA"
-      }
+      "a": { "part": "oled", "pin": "GND" },
+      "b": { "part": "bb1", "pin": "bn7" },
+      "color": "#212121",
+      "points": [{ "x": 50, "y": 26 }]
     },
     {
       "id": "w5",
-      "a": {
-        "part": "oled",
-        "pin": "VCC"
-      },
-      "b": {
-        "part": "aht",
-        "pin": "VCC"
-      },
-      "color": "#e53935"
+      "a": { "part": "oled", "pin": "VCC" },
+      "b": { "part": "bb1", "pin": "bp8" },
+      "color": "#e53935",
+      "points": [{ "x": 51, "y": 25 }]
     },
     {
       "id": "w6",
-      "a": {
-        "part": "oled",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "aht",
-        "pin": "GND"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "g5" },
+      "b": { "part": "bb1", "pin": "tn5" },
+      "color": "#212121",
+      "points": [{ "x": 46, "y": 16 }, { "x": 46, "y": 6 }]
     },
     {
       "id": "w7",
-      "a": {
-        "part": "oled",
-        "pin": "SCL"
-      },
-      "b": {
-        "part": "aht",
-        "pin": "SCL"
-      }
+      "a": { "part": "k1", "pin": "COM" },
+      "b": { "part": "k1", "pin": "VCC" },
+      "color": "#e53935",
+      "points": [{ "x": 94, "y": 15 }, { "x": 94, "y": 10 }, { "x": 81, "y": 10 }, { "x": 81, "y": 14 }]
     },
     {
       "id": "w8",
-      "a": {
-        "part": "oled",
-        "pin": "SDA"
-      },
-      "b": {
-        "part": "aht",
-        "pin": "SDA"
-      }
+      "a": { "part": "bb1", "pin": "j6" },
+      "b": { "part": "oled", "pin": "SCL" },
+      "color": "#1e88e5",
+      "points": [{ "x": 49, "y": 21 }, { "x": 52, "y": 21 }]
     },
     {
       "id": "w9",
-      "a": {
-        "part": "nucleo",
-        "pin": "5V"
-      },
-      "b": {
-        "part": "k1",
-        "pin": "VCC"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "bb1", "pin": "j7" },
+      "b": { "part": "oled", "pin": "SDA" },
+      "color": "#43a047",
+      "points": [{ "x": 50, "y": 20 }, { "x": 53, "y": 20 }]
     },
     {
       "id": "w10",
-      "a": {
-        "part": "k1",
-        "pin": "GND"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P1"
-      },
-      "color": "#212121"
+      "a": { "part": "k1", "pin": "GND" },
+      "b": { "part": "bb1", "pin": "bn29" },
+      "color": "#212121",
+      "points": [{ "x": 74, "y": 15 }, { "x": 74, "y": 23 }]
     },
     {
       "id": "w11",
-      "a": {
-        "part": "nucleo",
-        "pin": "D7"
-      },
-      "b": {
-        "part": "k1",
-        "pin": "IN"
-      },
-      "color": "#43a047"
+      "a": { "part": "nucleo", "pin": "GND_P2" },
+      "b": { "part": "bb1", "pin": "bn1" },
+      "color": "#212121",
+      "points": [{ "x": 25, "y": 36 }, { "x": 44, "y": 36 }]
     },
     {
       "id": "w12",
-      "a": {
-        "part": "k1",
-        "pin": "VCC"
-      },
-      "b": {
-        "part": "k1",
-        "pin": "COM"
-      },
-      "color": "#fb8c00"
+      "a": { "part": "nucleo", "pin": "3V3" },
+      "b": { "part": "bb1", "pin": "bp1" },
+      "color": "#e53935",
+      "points": [{ "x": 22, "y": 37 }, { "x": 43, "y": 37 }, { "x": 43, "y": 22 }]
     },
     {
       "id": "w13",
-      "a": {
-        "part": "k1",
-        "pin": "NO"
-      },
-      "b": {
-        "part": "rh",
-        "pin": "1"
-      }
+      "a": { "part": "k1", "pin": "NO" },
+      "b": { "part": "bb1", "pin": "f14" },
+      "color": "#fb8c00",
+      "points": [{ "x": 93, "y": 14 }, { "x": 93, "y": 7 }, { "x": 57, "y": 7 }]
     },
     {
       "id": "w14",
-      "a": {
-        "part": "rh",
-        "pin": "2"
-      },
-      "b": {
-        "part": "heat",
-        "pin": "A"
-      }
+      "a": { "part": "k1", "pin": "VCC" },
+      "b": { "part": "bb1", "pin": "tp29" },
+      "color": "#e53935",
+      "points": [{ "x": 72, "y": 14 }]
     },
     {
       "id": "w15",
-      "a": {
-        "part": "heat",
-        "pin": "K"
-      },
-      "b": {
-        "part": "nucleo",
-        "pin": "GND_P2"
-      },
-      "color": "#212121"
+      "a": { "part": "bb1", "pin": "g6" },
+      "b": { "part": "nucleo", "pin": "D15" },
+      "color": "#1e88e5",
+      "points": [{ "x": 49, "y": 17 }, { "x": 40, "y": 17 }, { "x": 40, "y": 0 }, { "x": 16, "y": 0 }]
+    },
+    {
+      "id": "w16",
+      "a": { "part": "bb1", "pin": "g7" },
+      "b": { "part": "nucleo", "pin": "D14" },
+      "color": "#43a047",
+      "points": [{ "x": 51, "y": 16 }, { "x": 51, "y": -1 }, { "x": 17, "y": -1 }]
+    },
+    {
+      "id": "w17",
+      "a": { "part": "nucleo", "pin": "5V" },
+      "b": { "part": "bb1", "pin": "tp1" },
+      "color": "#e53935",
+      "points": [{ "x": 23, "y": 38 }, { "x": 42, "y": 38 }, { "x": 42, "y": 5 }]
+    },
+    {
+      "id": "w18",
+      "a": { "part": "k1", "pin": "IN" },
+      "b": { "part": "nucleo", "pin": "D7" },
+      "color": "#43a047",
+      "points": [{ "x": 75, "y": 16 }, { "x": 75, "y": -2 }, { "x": 26, "y": -2 }]
     }
   ]
 }

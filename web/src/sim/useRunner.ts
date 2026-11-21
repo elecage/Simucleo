@@ -9,6 +9,7 @@ import type {
   DisasmRow,
   FrameMsg,
   FromWorker,
+  SfrFrame,
   SimFrame,
   ToWorker,
   WatchpointPlaced,
@@ -181,6 +182,12 @@ export interface Runner {
   /** Look at an RTOS task's call stack (null: the running code). */
   selectTask(tcb: number | null): void;
   assigned: { n: number; target: string; result: WatchValue | null };
+  /** SFR view: the registers read (without side effects) and the
+   * peripherals whose clock and model status come with every frame
+   * (`FrameEvent.sfr`); empty lists stop it. */
+  sfrSubscribe(addrs: number[], bases: number[]): void;
+  /** SFR view: write a register word, as the CPU's store does. */
+  sfrWrite(addr: number, value: number): void;
 }
 
 /** A frame as delivered by the worker, with the console text it brought. */
@@ -195,6 +202,8 @@ export interface FrameEvent {
   swv?: SwvData;
   /** M37: the XMODEM transfer (while one runs, and in the frame it ends). */
   xmodem?: XmodemTransfer;
+  /** The SFR view's registers (while it subscribes, see `sfrSubscribe`). */
+  sfr?: SfrFrame;
 }
 export type FrameListener = (e: FrameEvent) => void;
 
@@ -367,7 +376,7 @@ export function useRunner(): Runner {
         case "frame":
           perfWorkerShare(performance.now(), m.work);
           deliver(
-            [{ frame: m.frame, console: m.console, running: m.running, epoch: m.epoch, triggerGen: m.triggerGen, swv: m.swv, xmodem: m.xmodem }],
+            [{ frame: m.frame, console: m.console, running: m.running, epoch: m.epoch, triggerGen: m.triggerGen, swv: m.swv, xmodem: m.xmodem, sfr: m.sfr }],
             m.speed,
             false,
           );
@@ -480,6 +489,8 @@ export function useRunner(): Runner {
       selectTask: (tcb: number | null) => send({ type: "selectTask", tcb }),
       setVariable: (target: string, value: string, frame: number) =>
         send({ type: "setVariable", target, value, frame }),
+      sfrSubscribe: (addrs: number[], bases: number[]) => send({ type: "sfrSubscribe", addrs, bases }),
+      sfrWrite: (addr: number, value: number) => send({ type: "sfrWrite", addr, value }),
     }),
     [send],
   );

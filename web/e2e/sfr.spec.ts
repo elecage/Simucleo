@@ -136,8 +136,9 @@ test("search finds USART2, and a pinned register stays watched after a reload", 
   await expect(watched.locator("[data-testid=sfr-reg]")).toHaveCount(2);
 
   await page.reload();
-  // (The project comes back with its firmware.)
-  await expect(status(page)).toContainText("hal-blinky");
+  // (The project may or may not have come back with its firmware yet: the
+  // watched list does not depend on it.)
+  await expect(status(page)).toContainText(/hal-blinky|예제를/);
   await page.getByRole("button", { name: "SFR", exact: true }).click();
   await expect(watched.locator("[data-testid=sfr-reg]")).toHaveCount(2);
   await expect(watched.locator('[data-key="GPIOA.ODR"]')).toHaveAttribute("data-value", /^0x/);

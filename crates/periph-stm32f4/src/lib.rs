@@ -1545,6 +1545,37 @@ impl Stm32f401Bus {
         Some((word >> ((a & 3) * 8)) & size_mask(size))
     }
 
+    /// The register block at `base` has a behavioural model (else its
+    /// registers are only stored: [`RegisterFile`]).
+    pub fn has_model(base: u32) -> bool {
+        let block = base & !0x3FF;
+        gpio_port(base).is_some()
+            || matches!(
+                block,
+                map::RCC_BASE
+                    | map::FLASH_IF_BASE
+                    | IWDG_BASE
+                    | map::EXTI_BASE
+                    | DMA1_BASE
+                    | DMA2_BASE
+                    | map::ADC1_BASE
+                    | map::SYSCFG_BASE
+                    | map::PWR_BASE
+            )
+            || I2CS.iter().any(|c| c.base == block)
+            || SPIS.iter().any(|c| c.base == block)
+            || timer_index(block).is_some()
+            || USARTS.iter().any(|u| u.1 == block)
+            // DBGMCU: the core's system block.
+            || (map::PPB_BASE..0xE010_0000).contains(&base)
+    }
+
+    /// Whether the bus clock of SVD peripheral `name` is on (its RCC
+    /// enable bit, see [`regmap::clock_enable`]); `None`: it has no gate.
+    pub fn clock_on(&self, name: &str) -> Option<bool> {
+        regmap::clock_enable(name).map(|(enr, bit)| self.rcc.clock_enabled(enr, bit as u32))
+    }
+
     fn periph_read(&mut self, a: u32) -> u32 {
         let off = a & 0x3FC;
         if let Some(port) = gpio_port(a) {

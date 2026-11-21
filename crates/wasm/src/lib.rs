@@ -1017,6 +1017,28 @@ impl Simulator {
             .collect()
     }
 
+    /// SFR view: the word at each address, read without side effects
+    /// (write-only registers read 0, as on the chip).
+    #[wasm_bindgen(js_name = sfrRead)]
+    pub fn sfr_read(&self, addrs: &[u32]) -> Vec<u32> {
+        addrs.iter().map(|&a| self.board.sfr_read(a)).collect()
+    }
+
+    /// SFR view: write a register as the CPU's word store does (side
+    /// effects included). Returns false where nothing answers.
+    #[wasm_bindgen(js_name = sfrWrite)]
+    pub fn sfr_write(&mut self, addr: u32, value: u32) -> bool {
+        self.board.sfr_write(addr, value)
+    }
+
+    /// SFR view: per SVD peripheral base, bit 0 = it has an RCC clock gate,
+    /// bit 1 = its clock is on (or it has no gate), bit 2 = it has a
+    /// behavioural model (else a register file only).
+    #[wasm_bindgen(js_name = sfrStatus)]
+    pub fn sfr_status(&self, bases: &[u32]) -> Vec<u8> {
+        bases.iter().map(|&b| self.board.sfr_status(b)).collect()
+    }
+
     /// Name of the function containing `addr`, for the register view.
     #[wasm_bindgen(js_name = symbolAt)]
     pub fn symbol_at(&self, addr: u32) -> Option<String> {
@@ -1301,6 +1323,36 @@ impl Simulator {
         let circuit: Circuit = serde_json::from_str(circuit_json)?;
         let netlist = build_netlist(&circuit, &self.catalog);
         Ok(serde_json::to_string(&netlist)?)
+    }
+}
+
+#[cfg(test)]
+mod sfr_tests {
+    use super::*;
+
+    #[test]
+    fn sfr_batch_read_write_and_status() {
+        let mut sim = Simulator::new();
+        let (rcc_apb1enr, tim2_psc, usart2) = (0x4002_3840, 0x4000_0028, 0x4000_4400);
+        assert_eq!(
+            sim.sfr_status(&[0x4000_0000, usart2, 0x4002_3800]),
+            vec![0b101, 0b101, 0b110]
+        );
+        // Clock off: the timer reads 0 and ignores the write, as on the chip.
+        assert!(sim.sfr_write(tim2_psc, 99));
+        assert_eq!(sim.sfr_read(&[tim2_psc]), vec![0]);
+        sim.sfr_write(rcc_apb1enr, 1 | 1 << 17);
+        assert_eq!(sim.sfr_status(&[0x4000_0000, usart2]), vec![0b111, 0b111]);
+        sim.sfr_write(tim2_psc, 99);
+        // USART2: SR, DR (read without popping), BRR; TIM2.PSC.
+        let addrs = [usart2, usart2 + 4, usart2 + 8, tim2_psc];
+        let v = sim.sfr_read(&addrs);
+        assert_eq!(v.len(), 4);
+        assert_eq!(v[0], 0xC0, "TXE | TC after reset");
+        assert_eq!(v[3], 99);
+        assert_eq!(sim.sfr_read(&addrs), v, "reading changes nothing");
+        // A write-only register (TIM2.EGR) reads 0.
+        assert_eq!(sim.sfr_read(&[0x4000_0014]), vec![0]);
     }
 }
 

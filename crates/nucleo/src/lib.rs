@@ -782,6 +782,46 @@ impl Nucleo {
         })
     }
 
+    /// A peripheral register's value for the SFR view: the whole word at
+    /// `addr`, read without side effects (no flag cleared, no FIFO popped).
+    /// A write-only register reads 0, as on the chip; unmapped words read 0.
+    pub fn sfr_read(&self, addr: u32) -> u32 {
+        use simucleo_core::bus::AccessSize;
+        use simucleo_periph_stm32f4::{regmap, svd_types::Access};
+        let word = addr & !3;
+        if matches!(regmap::sfr_register_at(word), Some((_, r)) if r.access == Access::WriteOnly) {
+            return 0;
+        }
+        if word >= 0xE000_0000 {
+            return self.sys.peek(word, AccessSize::Word);
+        }
+        self.bus.peek(word, AccessSize::Word).unwrap_or(0)
+    }
+
+    /// Write a peripheral register from the SFR view: one aligned word
+    /// through the bus, like the CPU's store (a 1 written to a W1C flag
+    /// clears it, a start bit starts the conversion). Returns false for an
+    /// address nothing answers.
+    pub fn sfr_write(&mut self, addr: u32, value: u32) -> bool {
+        self.write_memory(addr & !3, &value.to_le_bytes())
+    }
+
+    /// What the SFR view shows of the SVD peripheral at `base`: bit 0, it
+    /// has an RCC clock gate; bit 1, that clock is on (or it has no gate);
+    /// bit 2, it has a behavioural model (else only a register file).
+    /// 0 for a base that is not a peripheral's.
+    pub fn sfr_status(&self, base: u32) -> u8 {
+        use simucleo_periph_stm32f4::svd::PERIPHERALS;
+        let Some(p) = PERIPHERALS.iter().find(|p| p.base == base) else {
+            return 0;
+        };
+        let clock = match self.bus.clock_on(p.name) {
+            Some(on) => 1 | (on as u8) << 1,
+            None => 2,
+        };
+        clock | (Stm32f401Bus::has_model(base) as u8) << 2
+    }
+
     /// Tasks of the RTOS in the firmware (FreeRTOS), or `None` without one.
     pub fn rtos_snapshot(&self) -> Option<RtosSnapshot> {
         let r = self.rtos.as_ref()?;
@@ -852,6 +892,51 @@ mod tests {
         0x10, 0x21, 0x01, 0x60, 0x20, 0xbf, 0x02, 0x23, 0x13, 0x60, 0xfe, 0xe7, 0x00, 0x00, 0x10,
         0xed, 0x00, 0xe0, 0x00, 0xe2, 0x00, 0xe0,
     ];
+
+    #[test]
+    fn sfr_read_write_and_status() {
+        let mut board = Nucleo::new();
+        let (gpioa, rcc, exti) = (0x4002_0000, 0x4002_3800, 0x4001_3C00);
+        // Clock gate, clock on, model.
+        assert_eq!(board.sfr_status(gpioa), 0b101, "GPIOA: clock off at reset");
+        assert_eq!(board.sfr_status(rcc), 0b110, "RCC: no gate");
+        assert_eq!(board.sfr_status(0x4000_2C00), 0b001, "WWDG: register file");
+        assert_eq!(board.sfr_status(0x4000_3800), 0b101, "SPI2");
+        assert_eq!(
+            board.sfr_status(0x4001_2300),
+            0b101,
+            "ADC_Common follows ADC1EN"
+        );
+        assert_eq!(board.sfr_status(0xE004_2000), 0b110, "DBG");
+        assert_eq!(board.sfr_status(0x4000_0004), 0, "not a base");
+        // RCC_AHB1ENR.GPIOAEN through a debugger write.
+        assert!(board.sfr_write(rcc + 0x30, 1));
+        assert_eq!(board.sfr_read(rcc + 0x30), 1);
+        assert_eq!(board.sfr_status(gpioa), 0b111);
+        // PA5 output, high: the pin follows, as for a CPU store.
+        board.sfr_write(gpioa, 0xA800_0000 | 1 << 10);
+        board.sfr_write(gpioa + 0x14, 1 << 5);
+        assert_eq!(board.sfr_read(gpioa + 0x14), 1 << 5);
+        assert!(board.pin('A', 5));
+        // BSRR is write-only: reads 0, and a write resets PA5.
+        board.sfr_write(gpioa + 0x18, 1 << 21);
+        assert_eq!(board.sfr_read(gpioa + 0x18), 0);
+        assert!(!board.pin('A', 5));
+        assert_eq!(
+            board.sfr_read(gpioa + 0x16),
+            board.sfr_read(gpioa + 0x14),
+            "word"
+        );
+        // EXTI_PR: a pending flag stays while read, a written 1 clears it.
+        board.sfr_write(exti, 1);
+        board.sfr_write(exti + 0x10, 1);
+        assert_eq!(board.sfr_read(exti + 0x14), 1);
+        assert_eq!(board.sfr_read(exti + 0x14), 1, "no side effect");
+        board.sfr_write(exti + 0x14, 1);
+        assert_eq!(board.sfr_read(exti + 0x14), 0);
+        // DBGMCU_IDCODE, from the core's block.
+        assert_eq!(board.sfr_read(0xE004_2000) & 0xFFF, 0x433);
+    }
 
     #[test]
     fn sevonpend_wakes_wfe_for_disabled_interrupts() {

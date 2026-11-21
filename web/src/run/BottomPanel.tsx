@@ -11,13 +11,14 @@ import { t } from "../i18n";
 import { DEFAULT_SETTINGS, SwvView, useSwvState } from "./SwvView";
 import type { SwvSettings } from "./swv";
 import { FlashView } from "./FlashView";
+import { SfrView } from "./SfrView";
 import { XmodemSend, type SendFile, type UploadedFile } from "./XmodemSend";
 
 // M33: the code editor and CodeMirror load only when the tab is first opened.
 const CodePanel = lazy(() => import("../code/CodePanel"));
 
 /** A fixed tab, or `bt:<part id>` for an HC-05's phone. */
-type Tab = "console" | "code" | "source" | "waveform" | "rtos" | "swv" | "flash" | "registers" | "memory" | `bt:${string}`;
+type Tab = "console" | "code" | "source" | "waveform" | "rtos" | "swv" | "flash" | "registers" | "sfr" | "memory" | `bt:${string}`;
 
 /** What changes with every frame: a hidden tab does not redraw for these (M31). */
 const LIVE: ReadonlySet<string> = new Set(["frame", "speed", "console", "bluetooth", "memory", "xmodem"]);
@@ -133,6 +134,7 @@ export function BottomPanel({
             ["swv", "SWV"],
             ["flash", "FLASH"],
             ["registers", t("레지스터")],
+            ["sfr", "SFR"],
             ["memory", t("메모리")],
           ] as [Tab, string][]
         ).map(([id, label]) => (
@@ -179,6 +181,7 @@ export function BottomPanel({
         )}
         {tab === "rtos" && <RtosView runner={runner} />}
         {tab === "registers" && <Registers runner={runner} />}
+        {tab === "sfr" && <SfrView runner={runner} />}
         {tab === "memory" && <Memory runner={runner} />}
         {tab === "flash" && <FlashView runner={runner} />}
         {tab === "swv" && (

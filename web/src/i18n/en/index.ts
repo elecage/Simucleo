@@ -10,8 +10,9 @@ import { LESSONS } from "./lessons.ts";
 import { PARTS } from "./parts.ts";
 import { RFID } from "./rfid.ts";
 import { RUN } from "./run.ts";
+import { SFR } from "./sfr.ts";
 import { TFT } from "./tft.ts";
 import { THERMOCOUPLE } from "./thermocouple.ts";
 
-export const GROUPS: Record<string, Record<string, string>> = { APP, CAN, CODE, CUBE, DATA, FLASH, LESSONS, PARTS, RFID, RUN, TFT, THERMOCOUPLE };
+export const GROUPS: Record<string, Record<string, string>> = { APP, CAN, CODE, CUBE, DATA, FLASH, LESSONS, PARTS, RFID, RUN, SFR, TFT, THERMOCOUPLE };
 export const EN: Record<string, string> = Object.assign({}, ...Object.values(GROUPS));

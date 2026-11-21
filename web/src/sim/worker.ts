@@ -50,6 +50,10 @@ let xmFile = { name: "", size: 0 };
  * sender answers the receiver promptly (ms). */
 const XMODEM_STEP_MS = 2;
 
+/** The SFR view's subscription: registers read and peripherals' status sent with each frame. */
+let sfrAddrs = new Uint32Array(0);
+let sfrBases = new Uint32Array(0);
+
 const simSeconds = () => (sim ? sim.timeMs() / 1000 : 0);
 
 /** Take what the virtual COM port received: to the transfer, then the console. */
@@ -95,6 +99,10 @@ function sendFrame(now = true) {
   if (swvSettings) m.swv = JSON.parse(sim.swvTake());
   const x = xmodemReport();
   if (x) m.xmodem = x;
+  // The SFR view's registers: only those it subscribed to are read.
+  if (sfrAddrs.length || sfrBases.length) {
+    m.sfr = { addrs: sfrAddrs, values: sim.sfrRead(sfrAddrs), bases: sfrBases, status: sim.sfrStatus(sfrBases) };
+  }
   const hz = batchHz(uiHz, speedCap);
   if (hz === null) {
     post({ type: "frame", ...m, speed: achieved, work: workShare }, tftPosted());
@@ -361,6 +369,17 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case "sdWipe":
       sim.sdWipe(m.part);
+      if (!running) sendFrame();
+      break;
+    case "sfrSubscribe":
+      sfrAddrs = Uint32Array.from(m.addrs);
+      sfrBases = Uint32Array.from(m.bases);
+      // The values at once, also while paused (a running one sends them with its next frame).
+      if (!running && (sfrAddrs.length || sfrBases.length)) sendFrame();
+      break;
+    case "sfrWrite":
+      // Messages are taken between the run's steps: the write lands there.
+      sim.sfrWrite(m.addr >>> 0, m.value >>> 0);
       if (!running) sendFrame();
       break;
   }

@@ -308,7 +308,24 @@ export type ToWorker =
   /** M31: frames to the page at most `hz` times a second, in batches (null: each frame as it is made). */
   | { type: "uiRate"; hz: number | null }
   /** M31: the page has drawn the last batch. */
-  | { type: "ack" };
+  | { type: "ack" }
+  /** SFR view: the registers whose values every frame carries, and the
+   * peripherals whose status it carries (empty: none); while paused a
+   * frame follows at once. */
+  | { type: "sfrSubscribe"; addrs: number[]; bases: number[] }
+  /** SFR view: write a register word as the CPU's store does (at once:
+   * between two steps of a running simulation). */
+  | { type: "sfrWrite"; addr: number; value: number };
+
+/** The SFR view's registers in one frame (see `sfrSubscribe`). */
+export interface SfrFrame {
+  addrs: Uint32Array;
+  /** The word at each address, read without side effects. */
+  values: Uint32Array;
+  bases: Uint32Array;
+  /** Per base: bit 0 clock gate, bit 1 clock on (or no gate), bit 2 behavioural model. */
+  status: Uint8Array;
+}
 
 /** One frame as the worker hands it to the page. */
 export interface FrameMsg {
@@ -324,6 +341,8 @@ export interface FrameMsg {
   swv?: SwvData;
   /** M37: the XMODEM transfer, while one runs and in the frame it ends. */
   xmodem?: XmodemTransfer;
+  /** The SFR view's registers (while it subscribes to some). */
+  sfr?: SfrFrame;
 }
 
 export type FromWorker =
@@ -345,6 +364,7 @@ export type FromWorker =
       triggerGen: number;
       swv?: SwvData;
       xmodem?: XmodemTransfer;
+      sfr?: SfrFrame;
     }
   /** M31: the frames made since the last batch, oldest first (performance mode). */
   | { type: "frames"; frames: FrameMsg[]; speed: number; work: number }

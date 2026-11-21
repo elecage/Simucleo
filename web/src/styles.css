@@ -761,3 +761,44 @@ main.schematic-on .notice { top: 44px; }
   .xmodem-status.bad { color: #fca5a5; }
   .flash-busy.on { background: #3a3011; color: #f5dc8a; border-color: #6e5a1c; }
 }
+/* SFR tab: peripheral registers with their fields. */
+.sfr-view { display: flex; flex-direction: column; gap: 6px; font-size: 12px; min-height: 0; }
+.sfr-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sfr-head input { width: 320px; max-width: 100%; font: 12px ui-monospace, monospace; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--text); }
+.sfr-head .hint { flex: 1; min-width: 240px; }
+.sfr-watched { border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; background: var(--bg); }
+.sfr-watched h4 { margin: 0 0 2px; font-size: 12px; color: var(--muted); }
+.sfr-periph { border-bottom: 1px solid var(--border); }
+.sfr-periph-head { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none; border: 0; padding: 3px 2px; color: var(--text); font: inherit; cursor: pointer; }
+.sfr-periph-head:hover { background: var(--bg); }
+.sfr-caret { display: inline-block; width: 12px; color: var(--muted); }
+.sfr-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sfr-addr { font: 12px ui-monospace, Menlo, monospace; color: var(--muted); }
+.sfr-badge { padding: 0 6px; border-radius: 8px; font-size: 11px; white-space: nowrap; border: 1px solid var(--border); }
+.sfr-badge.off { background: #fde8e8; color: #991b1b; border-color: #f5b5b5; }
+.sfr-badge.file { background: var(--bg); color: var(--muted); }
+.sfr-regs { border-collapse: collapse; font: 12px/1.5 ui-monospace, Menlo, monospace; margin: 0 0 4px 14px; }
+.sfr-regs td { padding: 0 10px 0 0; vertical-align: top; }
+.sfr-reg-name, .sfr-pin, .sfr-val.edit { background: none; border: 0; padding: 0; font: inherit; color: var(--text); cursor: pointer; text-align: left; }
+.sfr-reg-name:disabled { cursor: default; }
+.sfr-pin { color: var(--muted); }
+.sfr-pin.on { color: #d97706; }
+.sfr-val { display: inline-block; padding: 0 3px; border-radius: 3px; }
+.sfr-val.edit:hover { outline: 1px dashed var(--border); }
+.sfr-val.changed { animation: sfr-changed 1.2s ease-out; }
+@keyframes sfr-changed { from { background: #fde68a; } to { background: transparent; } }
+.sfr-reset { color: var(--muted); }
+.sfr-reset.differs { color: var(--accent); }
+.sfr-input { width: 96px; font: 12px ui-monospace, monospace; padding: 0 3px; border: 1px solid var(--accent); border-radius: 3px; background: var(--panel); color: var(--text); }
+.sfr-input.small { width: 72px; border-color: var(--border); }
+.sfr-input.bad { border-color: #dc2626; }
+.sfr-field-name { padding-left: 18px !important; }
+.sfr-bits { color: var(--muted); }
+.sfr-field-desc { font: 11px/1.6 system-ui, sans-serif; color: var(--muted); max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sfr-enum { color: var(--accent); }
+.sfr-field select, .sfr-field button { font: 11px ui-monospace, monospace; padding: 0 4px; }
+@media (prefers-color-scheme: dark) {
+  .sfr-badge.off { background: #3b1717; color: #fca5a5; border-color: #6b2525; }
+  .sfr-val.changed { animation-name: sfr-changed-dark; }
+  @keyframes sfr-changed-dark { from { background: #6b5a1c; } to { background: transparent; } }
+}

@@ -104,6 +104,13 @@ test("read-modify-write: W1C flags of other fields are written 0, not back as re
   assert.equal(fieldWrite(csr, cur, field("RCC.CSR.LSION"), 1, true), 0x0c00_0001);
   // FLASH_SR: clear EOP only, though PGSERR is set too.
   assert.equal(fieldWrite(reg("FLASH.SR"), 0x81, field("FLASH.SR.EOP"), 1, true), 0x01);
+  // A register-file peripheral stores what is written, W1C or not: other
+  // W1C fields are written back as read, or a zero would erase them.
+  assert.equal(fieldWrite(reg("EXTI.PR"), 0b101, field("EXTI.PR.PR0"), 1, false), 0b101);
+  const hprt = reg("OTG_FS_HOST.FS_HPRT");
+  const pcdet = field("OTG_FS_HOST.FS_HPRT.PCDET");
+  assert.equal(pcdet.effect, "w1c");
+  assert.equal(fieldWrite(hprt, fieldMask(pcdet), field("OTG_FS_HOST.FS_HPRT.PPWR"), 1, false), 0x1002);
 });
 
 test("read-modify-write: rc_w0 flags of other fields are written 1 where modelled", () => {

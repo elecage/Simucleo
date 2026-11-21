@@ -153,8 +153,10 @@ export function enumName(f: SfrField, v: number): string | null {
  * The word to write so that only field `field` of `reg` becomes `v`, from
  * the register's current (peeked) value `current`:
  * - a write-only register starts from 0 (it reads 0 anyway);
- * - another field that a 1 clears (w1c) gets 0, or writing back a set flag
- *   would clear it;
+ * - another field that a 1 clears (w1c) gets 0 where the peripheral has
+ *   a model, or writing back a set flag would clear it; a register-file
+ *   peripheral stores the word as written, so it gets the current value
+ *   back (a 0 there would erase the bit);
  * - another field that a 0 clears (w0c) gets 1 where the peripheral has a
  *   model (a 1 changes nothing there, and a flag that was set after the
  *   value was read stays set); a register-file peripheral keeps what it
@@ -165,7 +167,7 @@ export function fieldWrite(reg: SfrRegister, current: number, field: SfrField, v
   let word = reg.access === "w" ? 0 : current >>> 0;
   for (const f of reg.fields) {
     if (f === field) continue;
-    if (f.effect === "w1c") word &= ~fieldMask(f);
+    if (f.effect === "w1c" && modelled) word &= ~fieldMask(f);
     else if (f.effect === "w0c" && modelled) word |= fieldMask(f);
   }
   return withField(word >>> 0, field, v);

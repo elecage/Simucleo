@@ -24,7 +24,7 @@ use simucleo_cpu_armv7m::ArmV7M;
 use simucleo_elf::{ElfError, FirmwareImage};
 use simucleo_periph_stm32f4::gpio::PinDrive;
 use simucleo_periph_stm32f4::i2c::{I2cOp, I2cReply};
-use simucleo_periph_stm32f4::rcc::ResetCause;
+
 use simucleo_periph_stm32f4::{ExternalCircuit, Stm32f401Bus};
 use thiserror::Error;
 
@@ -32,7 +32,9 @@ pub use diagnose::{Diagnosis, FaultInfo};
 pub use rtos::{RtosSnapshot, TaskInfo, TaskState};
 pub use simucleo_circuit::netlist::{BusCatalog, Circuit};
 pub use simucleo_circuit::sim::{CircuitSim, Drive, MotorView, PartVisual, UartLink};
+pub use simucleo_periph_stm32f4::flash::{FlashActivity, SECTORS as FLASH_SECTORS};
 pub use simucleo_periph_stm32f4::gpio::PinEvent;
+pub use simucleo_periph_stm32f4::rcc::ResetCause;
 pub use simucleo_periph_stm32f4::usart::TerminalByte;
 pub use simucleo_periph_stm32f4::wire::{SynthEdge, WireEvent, WireSignal};
 pub use simucleo_periph_stm32f4::Warning;
@@ -159,6 +161,10 @@ pub struct Nucleo {
     pub firmware: Option<FirmwareImage>,
     debug: debugger::DebugState,
     resets: u32,
+    /// Resets by the independent watchdog so far.
+    watchdog_resets: u32,
+    /// Why the chip last (re)started.
+    last_reset: ResetCause,
     timeline: Vec<Segment>,
     /// Everything wired to the board, plus LD2 and B1.
     circuit: Rc<RefCell<CircuitSim>>,
@@ -190,6 +196,8 @@ impl Nucleo {
             firmware: None,
             debug: Default::default(),
             resets: 0,
+            watchdog_resets: 0,
+            last_reset: ResetCause::PowerOn,
             timeline: Vec::new(),
             circuit: Rc::new(RefCell::new(CircuitSim::new(
                 &Circuit::default(),
@@ -208,6 +216,7 @@ impl Nucleo {
     /// Fresh chip state plus the board wiring around it.
     fn power_on(&mut self) {
         self.bus = Stm32f401Bus::new();
+        self.last_reset = ResetCause::PowerOn;
         // The circuit (LD2, B1 with its pull-up, and anything wired to the
         // headers) sees the chip's reset pin states.
         self.circuit.borrow_mut().reset_time(self.sys.cycles);
@@ -248,6 +257,7 @@ impl Nucleo {
         }
         self.firmware = Some(fw);
         self.resets = 0;
+        self.watchdog_resets = 0;
         self.cpu
             .reset(&mut self.bus, &mut self.sys)
             .map_err(LoadError::VectorTable)
@@ -261,6 +271,7 @@ impl Nucleo {
 
     fn system_reset(&mut self, cause: ResetCause) -> Result<(), simucleo_core::bus::BusError> {
         self.bus.system_reset(cause);
+        self.last_reset = cause;
         self.note_clock();
         self.cpu.reset(&mut self.bus, &mut self.sys)
     }
@@ -436,6 +447,13 @@ impl Nucleo {
     /// Process due peripheral events and forward interrupt lines.
     fn after_step(&mut self) {
         self.bus.run_events(self.sys.cycles);
+        if let Some(cause) = self.bus.take_reset_request() {
+            // The watchdog ran out: the chip resets at once.
+            self.watchdog_resets += 1;
+            // A vector table it cannot read shows up when the core runs.
+            self.system_reset(cause).ok();
+            return;
+        }
         // Bytes on USART1/USART6 go to the modules wired to them.
         if !self.uart_links.is_empty()
             && !(self.bus.usart[0].terminal.is_empty() && self.bus.usart[2].terminal.is_empty())
@@ -711,6 +729,17 @@ impl Nucleo {
     /// Type into the virtual COM port (delivered at the UART's baud rate).
     pub fn console_send(&mut self, bytes: &[u8]) {
         self.bus.terminal_send(VCP, bytes);
+    }
+
+    /// Number of resets by the independent watchdog so far.
+    pub fn watchdog_resets(&self) -> u32 {
+        self.watchdog_resets
+    }
+
+    /// Why the chip last (re)started: power-on (firmware loaded), the reset
+    /// button, a software reset or the independent watchdog.
+    pub fn last_reset_cause(&self) -> ResetCause {
+        self.last_reset
     }
 
     /// Number of software resets (SYSRESETREQ) performed so far.
@@ -1112,6 +1141,7 @@ mod tests {
                 "budget {budget}"
             );
             assert_eq!(board.software_resets(), 1, "budget {budget}");
+            assert_eq!(board.last_reset_cause(), ResetCause::Software);
             assert_eq!(
                 board.bus.read_u32(0x2000_0000).unwrap(),
                 2,
@@ -1123,5 +1153,25 @@ mod tests {
                 "code after the request ran (budget {budget})"
             );
         }
+    }
+
+    #[test]
+    fn the_last_reset_cause_follows_the_watchdog() {
+        let mut board = Nucleo::new();
+        assert_eq!(board.last_reset_cause(), ResetCause::PowerOn);
+        board.bus.load(0x0800_0000, &RESET_PROGRAM).unwrap();
+        board.reset().unwrap();
+        assert_eq!(board.last_reset_cause(), ResetCause::Pin);
+        // The program resets itself once on its first boot.
+        board.run(10_000);
+        assert_eq!(board.last_reset_cause(), ResetCause::Software);
+        // Start the IWDG (KR = 0xCCCC): /4, 4096 ticks = 0.512 s.
+        board
+            .bus
+            .write(0x4000_3000, AccessSize::Word, 0xCCCC)
+            .unwrap();
+        board.run_for_ns(600e6);
+        assert_eq!(board.watchdog_resets(), 1);
+        assert_eq!(board.last_reset_cause(), ResetCause::Watchdog);
     }
 }

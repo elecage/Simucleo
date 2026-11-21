@@ -735,3 +735,29 @@ main.schematic-on .notice { top: 44px; }
 .swv td.bar-cell { width: 200px; }
 .swv .bar { display: inline-block; height: 9px; background: #2563eb; border-radius: 2px; }
 .swv .bar.sleep { background: var(--muted); }
+/* M37: XMODEM transfer in the console, the FLASH tab. */
+.xmodem { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.xmodem-title { font-weight: 600; color: var(--muted); }
+.xmodem select { font: inherit; padding: 3px 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--text); max-width: 220px; }
+.xmodem button, .xmodem .file-btn { padding: 3px 8px; font-size: 12px; }
+.xmodem progress { width: 120px; height: 10px; }
+.xmodem-status { font-variant-numeric: tabular-nums; }
+.xmodem-status.ok { color: #166534; }
+.xmodem-status.bad { color: #b91c1c; }
+.xmodem-close { padding: 0 6px; line-height: 1.2; }
+.flash-view { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.flash-head, .flash-iwdg { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-variant-numeric: tabular-nums; }
+.flash-busy { padding: 0 8px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); color: var(--muted); }
+.flash-busy.on { background: #fff6db; color: #6b5200; border-color: #f0d98a; }
+.flash-map { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; height: 92px; }
+.flash-sector { position: relative; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); overflow: hidden; }
+.flash-fill { position: absolute; left: 0; right: 0; bottom: 0; background: color-mix(in srgb, var(--accent) 35%, transparent); transition: height 0.15s; }
+.flash-label { position: relative; display: flex; flex-direction: column; padding: 3px 5px; line-height: 1.3; white-space: nowrap; overflow: hidden; }
+.flash-sector.erasing { border-color: #f59e0b; box-shadow: inset 0 0 0 2px #f59e0b; animation: blink 0.6s steps(2) infinite; }
+.flash-sector.protected { background: repeating-linear-gradient(135deg, var(--bg) 0 6px, var(--border) 6px 7px); }
+.flash-iwdg progress { width: 120px; height: 10px; }
+@media (prefers-color-scheme: dark) {
+  .xmodem-status.ok { color: #86efac; }
+  .xmodem-status.bad { color: #fca5a5; }
+  .flash-busy.on { background: #3a3011; color: #f5dc8a; border-color: #6e5a1c; }
+}

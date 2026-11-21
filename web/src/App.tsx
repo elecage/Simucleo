@@ -996,6 +996,7 @@ export function App() {
         code={{ code: project.code, onCode, examples, codeSeq, autoBuild, onAutoBuilt: () => setAutoBuild(false), restored: restoredDone && !fwPending, wired: wiredPins }}
         codeSources={codeSources}
         codeTabSeq={codeTabSeq}
+        sendFiles={examples.find((e) => e.file === runner.firmwareExample)?.files}
       />
       {dropping && !teacherOpen && (
         <div className="drop-overlay" data-testid="drop-overlay">

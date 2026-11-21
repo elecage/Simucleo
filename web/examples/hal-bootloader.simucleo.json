@@ -1,0 +1,19 @@
+{
+  "format": "simucleo-project",
+  "version": 1,
+  "name": "부트로더: XMODEM으로 펌웨어 교체 (이중 이미지, 워치독 롤백)",
+  "parts": [
+    {
+      "id": "nucleo",
+      "kind": "nucleo-f401re",
+      "x": 4,
+      "y": 2,
+      "props": {}
+    }
+  ],
+  "wires": [],
+  "firmware": {
+    "name": "hal-bootloader",
+    "example": "hal-bootloader.elf"
+  }
+}

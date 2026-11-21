@@ -50,4 +50,5 @@ export const DATA: Record<string, string> = {
   "스마트 온도조절기 (AHT20, OLED, 릴레이)": "Smart thermostat (AHT20, OLED, relay)",
   "타이머 인터럽트 vs HAL_Delay (D7, D6)": "Timer interrupt vs HAL_Delay (D7, D6)",
   "UART 명령 줄 (LD2)": "UART command line (LD2)",
+  "부트로더: XMODEM으로 펌웨어 교체 (이중 이미지, 워치독 롤백)": "Bootloader: replace the firmware over XMODEM (dual image, watchdog rollback)",
 };

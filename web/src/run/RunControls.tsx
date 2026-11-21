@@ -12,6 +12,8 @@ export interface Example {
   project?: string;
   /** M33: the code tab can start from it (its main.c under examples/src/). */
   code?: { template: "hal"; main: string };
+  /** M37: files to send to the board (the console's XMODEM transfer), under examples/. */
+  files?: { file: string; description: string }[];
 }
 
 const SPEEDS: [string, number][] = [

@@ -11,6 +11,9 @@ use simucleo_nucleo::Nucleo;
 #[path = "support/web_project.rs"]
 mod web_project;
 
+#[path = "support/xmodem.rs"]
+mod xmodem;
+
 fn firmware(name: &str) -> Vec<u8> {
     let path: PathBuf = [
         env!("CARGO_MANIFEST_DIR"),
@@ -4011,4 +4014,244 @@ fn can_bus_without_termination_gets_no_ack() {
         "{:?}",
         board.circuit_warnings()
     );
+}
+
+// ------------------------------------- Bootloader, IAP over XMODEM (M37)
+
+/// An application image for the bootloader (`make -C firmware/iap-app`).
+fn iap_image(variant: &str) -> Vec<u8> {
+    let path: PathBuf = [
+        env!("CARGO_MANIFEST_DIR"),
+        "..",
+        "..",
+        "firmware",
+        "iap-app",
+        "build",
+        &format!("iap-app-{variant}.bin"),
+    ]
+    .iter()
+    .collect();
+    std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("{}: {e} (run `make -C firmware/iap-app`)", path.display()))
+}
+
+/// Half periods (ms) of LD2's blinking over the next `ms`.
+fn ld2_half_periods(board: &mut Nucleo, vcp: &mut xmodem::Vcp, ms: f64) -> Vec<f64> {
+    board.take_pin_events();
+    vcp.run(board, ms);
+    let times: Vec<f64> = edges(board, 0, 5)
+        .into_iter()
+        .map(|(t, _)| board.ns_at(t) / 1e6)
+        .collect();
+    times.windows(2).skip(1).map(|w| w[1] - w[0]).collect()
+}
+
+/// From the menu: `u`, then send `image` with XMODEM. Returns the console
+/// index where the update started and the number of NAKs.
+fn iap_update(
+    board: &mut Nucleo,
+    vcp: &mut xmodem::Vcp,
+    image: &[u8],
+    block: usize,
+    corrupt_once: Option<usize>,
+) -> (usize, u32) {
+    let from = vcp.out.len();
+    board.console_send(b"u");
+    let ready = vcp.wait_for(board, from, "CAN aborts)...\r\n", 3000.0);
+    let naks = vcp.xmodem_send(board, ready, image, block, corrupt_once);
+    (from, naks)
+}
+
+/// From a running app: 'b' resets into the bootloader, a key stops the
+/// countdown, and the menu waits.
+fn iap_enter_menu(board: &mut Nucleo, vcp: &mut xmodem::Vcp) {
+    let from = vcp.out.len();
+    board.console_send(b"b");
+    let at = vcp.wait_for(board, from, "press any key for the menu", 500.0);
+    assert!(
+        vcp.text(from).contains("reset cause: software"),
+        "{}",
+        vcp.text(from)
+    );
+    board.console_send(b"\r");
+    vcp.wait_for(board, at, "> ", 500.0);
+}
+
+#[test]
+#[ignore = "needs arm-none-eabi-gcc build of firmware/hal-bootloader and firmware/iap-app"]
+fn bootloader_updates_over_xmodem_and_rolls_back() {
+    let mut board = Nucleo::new();
+    board
+        .load_elf(&hal_firmware("hal-bootloader", "hal-bootloader"))
+        .unwrap();
+    let mut vcp = xmodem::Vcp::default();
+
+    // A fresh board: flash erased, no image, the menu waits.
+    vcp.wait_for(&mut board, 0, "> ", 500.0);
+    let t = vcp.text(0);
+    assert!(t.contains("=== Simucleo bootloader v1.0 ==="), "{t}");
+    assert!(t.contains("reset cause: power-on"), "{t}");
+    assert!(
+        t.contains("slot A: none\nno valid image in slot A\n"),
+        "{t}"
+    );
+
+    // Update with v1 in 128-byte blocks; one block arrives with a bad CRC
+    // and is sent again after the NAK.
+    let v1 = iap_image("v1");
+    let (from, naks) = iap_update(&mut board, &mut vcp, &v1, 128, Some(3));
+    assert_eq!(naks, 1);
+    let at = vcp.wait_for(&mut board, from, "confirmed", 5000.0);
+    let t = vcp.text(from);
+    // Erasing a 128 KB sector takes 1.1 s at x32.
+    let ms: u32 = t
+        .split("slot B erased in ")
+        .nth(1)
+        .and_then(|r| r.split(' ').next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("{t}"));
+    assert!((1100..1110).contains(&ms), "{ms} ms: {t}");
+    assert!(
+        t.contains(&format!("received {} bytes", v1.len().div_ceil(128) * 128)),
+        "{t}"
+    );
+    assert!(t.contains("image OK: app v1, "), "{t}");
+    assert!(!t.contains("backing up"), "nothing to back up: {t}");
+    assert!(t.contains("installing app v1 into slot A..."), "{t}");
+    assert!(t.contains("rebooting into app v1 (trial)"), "{t}");
+    assert!(t.contains("reset cause: software"), "{t}");
+    assert!(
+        t.contains("trial boot 1/3 of app v1 (watchdog on, 2 s)"),
+        "{t}"
+    );
+    assert!(t.contains("booting app v1"), "{t}");
+    assert!(
+        t.contains("app v1 (version 1) running from 0x08020000, VTOR 0x08020000"),
+        "{t}"
+    );
+    // It blinks at 1 Hz and keeps the watchdog (started for the trial) fed.
+    let half = ld2_half_periods(&mut board, &mut vcp, 4000.0);
+    assert!(half.len() >= 5, "{half:?}");
+    assert!(half.iter().all(|h| (h - 500.0).abs() < 2.0), "{half:?}");
+    assert_eq!(board.watchdog_resets(), 0);
+    assert!(
+        !vcp.text(at).contains("=== Simucleo bootloader"),
+        "{}",
+        vcp.text(at)
+    );
+
+    // The reset button: the bootloader counts down 2 s and boots v1, no
+    // trial any more.
+    let from = vcp.out.len();
+    board.reset().unwrap();
+    vcp.wait_for(&mut board, from, "app v1 (version 1)", 2500.0);
+    let t = vcp.text(from);
+    assert!(t.contains("reset cause: pin (reset button)"), "{t}");
+    assert!(t.contains("slot A: app v1, "), "{t}");
+    assert!(
+        t.contains("booting app v1 in 2 s, press any key for the menu"),
+        "{t}"
+    );
+    assert!(!t.contains("trial"), "{t}");
+    vcp.run(&mut board, 200.0);
+    assert!(!vcp.text(from).contains("confirmed"), "{}", vcp.text(from));
+
+    // Update with v2 in 1 KB blocks: v1 goes to the backup slot.
+    iap_enter_menu(&mut board, &mut vcp);
+    let v2 = iap_image("v2");
+    let (from, naks) = iap_update(&mut board, &mut vcp, &v2, 1024, None);
+    assert_eq!(naks, 0);
+    vcp.wait_for(&mut board, from, "confirmed", 6000.0);
+    let t = vcp.text(from);
+    assert!(t.contains("backing up slot A (app v1) to slot C..."), "{t}");
+    assert!(t.contains("trial boot 1/3 of app v2"), "{t}");
+    assert!(t.contains("app v2 (version 2)"), "{t}");
+    let version_at = |b: &Nucleo, slot: u32| {
+        u32::from_le_bytes(std::array::from_fn(|i| {
+            b.peek_byte(slot + 0x204 + i as u32).unwrap()
+        }))
+    };
+    assert_eq!(version_at(&board, 0x0802_0000), 2);
+    assert_eq!(version_at(&board, 0x0806_0000), 1, "backup");
+    let half = ld2_half_periods(&mut board, &mut vcp, 2000.0);
+    assert!(half.len() >= 10, "{half:?}");
+    assert!(half.iter().all(|h| (h - 125.0).abs() < 2.0), "{half:?}");
+
+    // The bad image hangs without feeding the watchdog: three trial boots
+    // end in watchdog resets, then the bootloader restores v2 from slot C.
+    iap_enter_menu(&mut board, &mut vcp);
+    let (from, _) = iap_update(&mut board, &mut vcp, &iap_image("bad"), 1024, None);
+    let at = vcp.wait_for(&mut board, from, "rolled back to app v2", 15000.0);
+    let t = vcp.text(from);
+    assert!(t.contains("backing up slot A (app v2) to slot C..."), "{t}");
+    for n in 1..=3 {
+        assert!(t.contains(&format!("trial boot {n}/3 of app v3")), "{t}");
+    }
+    assert_eq!(t.matches("app bad (version 3)").count(), 3, "{t}");
+    assert_eq!(t.matches("reset cause: watchdog").count(), 3, "{t}");
+    assert!(
+        t.contains("app v3 not confirmed after 3 tries: rolling back"),
+        "{t}"
+    );
+    assert!(
+        t.contains("restoring the backup app v2 from slot C..."),
+        "{t}"
+    );
+    assert_eq!(board.watchdog_resets(), 3);
+    vcp.wait_for(&mut board, at, "app v2 (version 2)", 500.0);
+    assert!(!vcp.text(at).contains("confirmed"), "{}", vcp.text(at));
+    vcp.run(&mut board, 3000.0);
+    assert_eq!(board.watchdog_resets(), 3, "no watchdog after the rollback");
+    assert_eq!(version_at(&board, 0x0802_0000), 2);
+
+    // The sender gives up (CAN CAN): the update stops, the menu is back.
+    iap_enter_menu(&mut board, &mut vcp);
+    let from = vcp.out.len();
+    board.console_send(b"u");
+    let ready = vcp.wait_for(&mut board, from, "CAN aborts)...\r\n", 3000.0);
+    vcp.wait_for(&mut board, ready, "C", 1500.0);
+    board.console_send(&[xmodem::CAN, xmodem::CAN]);
+    vcp.wait_for(
+        &mut board,
+        ready,
+        "update aborted: cancelled by the sender",
+        2000.0,
+    );
+
+    // A corrupted image (one byte flipped): the CRC catches it and the old
+    // image stays.
+    vcp.wait_for(&mut board, ready, "> ", 500.0);
+    let mut broken = iap_image("v1");
+    broken[0x1000] ^= 0x01;
+    let (from, _) = iap_update(&mut board, &mut vcp, &broken, 1024, None);
+    let at = vcp.wait_for(&mut board, from, "> ", 2000.0);
+    let t = vcp.text(from);
+    assert!(
+        t.contains("image rejected: CRC mismatch (computed 0x"),
+        "{t}"
+    );
+    assert!(!t.contains("installing"), "{t}");
+    board.console_send(b"i");
+    let at2 = vcp.wait_for(&mut board, at, "> ", 1000.0);
+    let t = vcp.text(at);
+    assert!(t.contains("slot A 0x08020000: app v2, "), "{t}");
+    assert!(
+        t.contains("slot B 0x08040000: invalid (CRC mismatch"),
+        "{t}"
+    );
+    assert!(t.contains("slot C 0x08060000: app v2, "), "{t}");
+    assert!(
+        t.contains("metadata: rolled back, app v2, tries 0 (11 of 1024 records used in sector 2)"),
+        "{t}"
+    );
+    board.console_send(b"b");
+    vcp.wait_for(&mut board, at2, "app v2 (version 2)", 1000.0);
+
+    // Wear: four erases of slot A (three installs, one rollback), five of
+    // B (one per update), two of C; the metadata records were appended into
+    // sector 2 without erasing it (11 records of 16 bytes).
+    let f = &board.bus.flash_if;
+    assert_eq!(f.erase_counts, [0, 0, 0, 0, 0, 4, 5, 2]);
+    assert_eq!(f.programmed[2], 11 * 16);
+    assert!(board.bus.warnings.is_empty(), "{:?}", board.bus.warnings);
 }

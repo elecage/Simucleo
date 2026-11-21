@@ -79,6 +79,11 @@ impl Memory {
         self.data.is_empty()
     }
 
+    /// The contents, for views that look at a whole region (no side effects).
+    pub fn as_slice(&self) -> &[u8] {
+        &self.data
+    }
+
     pub fn contains(&self, addr: u32, size: AccessSize) -> bool {
         addr >= self.base
             && (addr - self.base) as u64 + size.bytes() as u64 <= self.data.len() as u64

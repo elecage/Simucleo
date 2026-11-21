@@ -5,6 +5,7 @@ import type { FrameMsg, FromWorker, SimFrame, ToWorker } from "./protocol";
 import type { SwvSettings } from "../run/swv";
 import { batchDue, batchHz, RatioMeter } from "./perf";
 import { attachTftPixels, tftPosted } from "./tftStore";
+import { XmodemSender } from "../run/xmodem";
 
 const FRAME_MS = 16; // ~60 Hz display updates
 const WORK_BUDGET_MS = 12; // wall time we allow ourselves per frame
@@ -38,6 +39,39 @@ let batch: FrameMsg[] = [];
 let lastBatch = 0;
 let inFlight = false;
 
+// The virtual COM port's bytes (M37): text for the console, decoded here
+// (a character split over two frames stays whole), except what an XMODEM
+// transfer takes — it runs here, next to the simulation, on simulated time.
+let decoder = new TextDecoder();
+let consoleText = "";
+let xm: XmodemSender | null = null;
+let xmFile = { name: "", size: 0 };
+/** While a transfer runs, the simulation advances in shorter steps so the
+ * sender answers the receiver promptly (ms). */
+const XMODEM_STEP_MS = 2;
+
+const simSeconds = () => (sim ? sim.timeMs() / 1000 : 0);
+
+/** Take what the virtual COM port received: to the transfer, then the console. */
+function drainConsole() {
+  if (!sim) return;
+  let bytes = sim.takeConsoleBytes();
+  if (xm && !xm.done) {
+    const r = xm.update(simSeconds(), bytes);
+    if (r.tx.length) sim.consoleSendBytes(r.tx);
+    bytes = r.passthrough;
+  }
+  if (bytes.length) consoleText += decoder.decode(bytes, { stream: true });
+}
+
+function xmodemReport() {
+  if (!xm) return undefined;
+  const report = { ...xm.status(), ...xmFile };
+  // Reported once more in the frame it ended, then forgotten.
+  if (xm.done) xm = null;
+  return report;
+}
+
 const post = (m: FromWorker, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(m, transfer);
 
 function flush() {
@@ -55,8 +89,12 @@ function sendFrame(now = true) {
   // M35: a TFT display's pixels only when its picture changed.
   const s = sim;
   attachTftPixels(frame, (id) => s.tftPixels(id));
-  const m: FrameMsg = { frame, console: sim.takeConsole(), running, epoch, triggerGen };
+  drainConsole();
+  const m: FrameMsg = { frame, console: consoleText, running, epoch, triggerGen };
+  consoleText = "";
   if (swvSettings) m.swv = JSON.parse(sim.swvTake());
+  const x = xmodemReport();
+  if (x) m.xmodem = x;
   const hz = batchHz(uiHz, speedCap);
   if (hz === null) {
     post({ type: "frame", ...m, speed: achieved, work: workShare }, tftPosted());
@@ -76,9 +114,10 @@ function tick() {
   const sp = Math.min(speed, speedCap);
   let target = Number.isFinite(sp) ? wallDt * sp : Infinity;
   while (target > 0 && performance.now() - now < WORK_BUDGET_MS) {
-    const step = Math.min(target, 10);
+    const step = Math.min(target, xm && !xm.done ? XMODEM_STEP_MS : 10);
     const stopped = sim.runForMs(step);
     target -= step;
+    if (xm) drainConsole();
     if (stopped) {
       running = false;
       break;
@@ -174,6 +213,9 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
   switch (m.type) {
     case "load":
       stop();
+      xm?.abort("reload");
+      decoder = new TextDecoder();
+      consoleText = "";
       try {
         sim.loadElf(new Uint8Array(m.bytes));
         loaded = true;
@@ -197,6 +239,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       const was = running;
       stop();
       if (m.epoch !== undefined) epoch = m.epoch;
+      xm?.abort("reset");
       if (loaded) sim.reset();
       sendFrame();
       if (was) start();
@@ -233,6 +276,19 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case "console":
       sim.consoleSend(m.text);
+      break;
+    case "xmodemSend": {
+      if (xm && !xm.done) sim.consoleSendBytes(xm.cancel());
+      const bytes = new Uint8Array(m.bytes);
+      xm = new XmodemSender(bytes, simSeconds());
+      xmFile = { name: m.name, size: bytes.length };
+      // (A 'C' already waiting in the port starts it at once.)
+      if (!running) sendFrame();
+      break;
+    }
+    case "xmodemCancel":
+      if (xm && !xm.done) sim.consoleSendBytes(xm.cancel());
+      if (!running) sendFrame();
       break;
     case "bluetooth":
       sim.bluetoothSend(m.part, m.text);

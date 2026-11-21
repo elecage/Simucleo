@@ -102,6 +102,97 @@ pub struct Simulator {
     at_breakpoint: bool,
     /// The access that hit a watchpoint in the last run: (address, write).
     watch_hit: Option<(u32, bool)>,
+    /// Per flash sector: bytes not erased (0xFF), with the erase count and
+    /// programmed bytes it was counted at (`None`: count again).
+    flash_used: [Option<(u32, u32, u32)>; 8],
+}
+
+impl Simulator {
+    /// Bytes of each flash sector that are not erased (0xFF): the loaded
+    /// image as well as what the firmware programmed. Counted again only
+    /// for a sector whose erase count or programmed bytes changed.
+    fn flash_used(&mut self) -> [u32; 8] {
+        use simucleo_nucleo::FLASH_SECTORS;
+        let bus = &self.board.bus;
+        let f = &bus.flash_if;
+        let base = bus.flash.base();
+        let mut used = [0; 8];
+        for (i, &(start, size)) in FLASH_SECTORS.iter().enumerate() {
+            let key = (f.erase_counts[i], f.programmed[i]);
+            match self.flash_used[i] {
+                Some((e, p, n)) if (e, p) == key => used[i] = n,
+                _ => {
+                    let from = (start - base) as usize;
+                    let n = bus
+                        .flash
+                        .as_slice()
+                        .get(from..from + size as usize)
+                        .map_or(0, |b| b.iter().filter(|&&x| x != 0xFF).count() as u32);
+                    self.flash_used[i] = Some((key.0, key.1, n));
+                    used[i] = n;
+                }
+            }
+        }
+        used
+    }
+
+    fn flash_json(&mut self) -> serde_json::Value {
+        use simucleo_nucleo::{FlashActivity, ResetCause, FLASH_SECTORS};
+        let used = self.flash_used();
+        let bus = &self.board.bus;
+        let f = &bus.flash_if;
+        let erasing = match f.activity() {
+            FlashActivity::Erasing(m) => m,
+            _ => 0,
+        };
+        let protected = f.write_protected();
+        let sectors: Vec<_> = FLASH_SECTORS
+            .iter()
+            .enumerate()
+            .map(|(i, &(start, size))| {
+                json!({
+                    "start": start,
+                    "size": size,
+                    "eraseCount": f.erase_counts[i],
+                    "programmed": f.programmed[i].min(size),
+                    "used": used[i],
+                    "protected": protected & (1 << i) != 0,
+                    "erasing": erasing & (1 << i) != 0,
+                })
+            })
+            .collect();
+        let activity = match f.activity() {
+            FlashActivity::Idle => "idle",
+            FlashActivity::Erasing(_) => "erase",
+            FlashActivity::Programming => "program",
+            FlashActivity::Options => "options",
+        };
+        let now = self.board.now();
+        let w = &bus.iwdg;
+        json!({
+            "sectors": sectors,
+            "busy": f.busy(),
+            "activity": activity,
+            "locked": f.locked(),
+            "optionBytes": f.option_bytes,
+            "watchdog": {
+                "running": w.running(),
+                "hardware": f.hardware_watchdog(),
+                "counter": w.counter(now),
+                "reload": w.rlr,
+                "prescaler": 4u32 << w.pr.min(6),
+                "timeLeftMs": w.time_left_s(now).map(|s| s * 1e3),
+                "resets": self.board.watchdog_resets(),
+            },
+            "resetCause": match self.board.last_reset_cause() {
+                ResetCause::PowerOn => "power",
+                ResetCause::Pin => "pin",
+                ResetCause::Software => "software",
+                ResetCause::Watchdog => "watchdog",
+            },
+            "resetFlags": bus.rcc.csr >> 24,
+        })
+    }
 }
 
 /// Most context switches reported per frame.
@@ -142,6 +233,7 @@ impl Simulator {
             rtos_current: None,
             at_breakpoint: false,
             watch_hit: None,
+            flash_used: [None; 8],
         }
     }
 
@@ -149,6 +241,7 @@ impl Simulator {
     #[wasm_bindgen(js_name = loadElf)]
     pub fn load_elf(&mut self, bytes: &[u8]) -> Result<(), JsError> {
         self.board.load_elf(bytes)?;
+        self.flash_used = [None; 8];
         self.after_reset();
         Ok(())
     }
@@ -618,6 +711,7 @@ impl Simulator {
     /// as JSON, or `{error}`.
     #[wasm_bindgen(js_name = setVariable)]
     pub fn set_variable(&mut self, target: &str, value: &str, frame: usize) -> String {
+        self.flash_used = [None; 8];
         match self.board.set_variable(target, value, frame) {
             Ok(v) => serde_json::to_string(&v).unwrap_or_default(),
             Err(e) => serde_json::json!({ "error": e }).to_string(),
@@ -838,6 +932,7 @@ impl Simulator {
             "scope": scope,
             "rtos": rtos,
             "bluetooth": self.board.bluetooth(),
+            "flash": self.flash_json(),
         })
         .to_string()
     }
@@ -951,6 +1046,35 @@ impl Simulator {
     #[wasm_bindgen(js_name = consoleSend)]
     pub fn console_send(&mut self, text: &str) {
         self.board.console_send(text.as_bytes());
+    }
+
+    /// Bytes received by the ST-LINK virtual COM port since the last call,
+    /// as they are (for binary protocols such as XMODEM; the page decodes
+    /// the text itself). Shares the queue with `takeConsole`.
+    #[wasm_bindgen(js_name = takeConsoleBytes)]
+    pub fn take_console_bytes(&mut self) -> Vec<u8> {
+        self.board.take_console().iter().map(|b| b.byte).collect()
+    }
+
+    /// Send raw bytes into the virtual COM port (delivered at the UART's
+    /// baud rate, after what is already queued).
+    #[wasm_bindgen(js_name = consoleSendBytes)]
+    pub fn console_send_bytes(&mut self, bytes: &[u8]) {
+        self.board.console_send(bytes);
+    }
+
+    /// The flash controller and the independent watchdog:
+    /// `{ sectors: [{ start, size, eraseCount, programmed, used,
+    ///    protected, erasing }], busy, activity: "idle"|"erase"|"program"|"options",
+    ///    locked, optionBytes, watchdog: { running, hardware, counter,
+    ///    reload, prescaler, timeLeftMs, resets }, resetCause:
+    ///    "power"|"pin"|"software"|"watchdog", resetFlags }`.
+    /// `programmed` counts the bytes written since the sector's last erase,
+    /// `used` the bytes that are not erased (0xFF), the loaded image included;
+    /// `resetFlags` is RCC_CSR[31:24] (LPWR, WWDG, IWDG, SFT, POR, PIN, BOR, RMVF).
+    #[wasm_bindgen(js_name = flashStatus)]
+    pub fn flash_status(&mut self) -> String {
+        self.flash_json().to_string()
     }
 
     /// The phone of HC-05 part `id` sends `text`. Returns whether it went
@@ -1177,5 +1301,36 @@ impl Simulator {
         let circuit: Circuit = serde_json::from_str(circuit_json)?;
         let netlist = build_netlist(&circuit, &self.catalog);
         Ok(serde_json::to_string(&netlist)?)
+    }
+}
+
+#[cfg(test)]
+mod flash_tests {
+    use super::*;
+
+    fn used(sim: &mut Simulator) -> Vec<u64> {
+        let s: serde_json::Value = serde_json::from_str(&sim.flash_status()).unwrap();
+        s["sectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["used"].as_u64().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn used_bytes_follow_the_flash_contents() {
+        let mut sim = Simulator::new();
+        assert_eq!(used(&mut sim), vec![0; 8]);
+        // An image in sector 4, as the ELF loader puts it: counted once the
+        // cache is dropped (a load does that).
+        sim.board.bus.load(0x0801_0000, &[1, 2, 0xFF, 4]).unwrap();
+        assert_eq!(used(&mut sim), vec![0; 8], "cached");
+        sim.flash_used = [None; 8];
+        assert_eq!(used(&mut sim), vec![0, 0, 0, 0, 3, 0, 0, 0]);
+        // The controller's work changes a sector's key: counted again.
+        sim.board.bus.load(0x0801_0010, &[0]).unwrap();
+        sim.board.bus.flash_if.programmed[4] += 1;
+        assert_eq!(used(&mut sim), vec![0, 0, 0, 0, 4, 0, 0, 0]);
     }
 }

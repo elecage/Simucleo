@@ -2,6 +2,7 @@
 import type { DataPlaced, SwvData, SwvSettings } from "../run/swv";
 import type { DecoderCfg } from "../run/scopeSettings";
 import type { ContentMatch } from "../run/decode";
+import type { XmodemStatus } from "../run/xmodem";
 
 export interface PinFrame {
   port: string;
@@ -181,6 +182,55 @@ export interface RtosFrame {
   dense: boolean;
 }
 
+/** A flash sector as `Simulator.flashStatus()` reports it (M37). */
+export interface FlashSector {
+  start: number;
+  size: number;
+  /** Erases so far (wear); kept over resets, not over a firmware load. */
+  eraseCount: number;
+  /** Bytes programmed since the sector's last erase. */
+  programmed: number;
+  /** Bytes not erased (0xFF): what the firmware programmed and the loaded image. */
+  used: number;
+  /** Write-protected by the option bytes (nWRP). */
+  protected: boolean;
+  /** Being erased now. */
+  erasing: boolean;
+}
+
+/** The flash controller and the independent watchdog (`Simulator.flashStatus()`). */
+export interface FlashFrame {
+  sectors: FlashSector[];
+  busy: boolean;
+  activity: "idle" | "erase" | "program" | "options";
+  /** FLASH_CR.LOCK. */
+  locked: boolean;
+  optionBytes: number;
+  watchdog: {
+    running: boolean;
+    /** The WDG_SW option byte is cleared: it runs from reset. */
+    hardware: boolean;
+    counter: number;
+    reload: number;
+    prescaler: number;
+    /** Until it resets the chip (null: not running). */
+    timeLeftMs: number | null;
+    /** Resets by the watchdog since the firmware was loaded. */
+    resets: number;
+  };
+  /** Why the chip last (re)started. */
+  resetCause: "power" | "pin" | "software" | "watchdog";
+  /** RCC_CSR[31:24]: LPWR, WWDG, IWDG, SFT, POR, PIN, BOR (accumulated until RMVF). */
+  resetFlags: number;
+}
+
+/** An XMODEM transfer to the virtual COM port (M37), with the file's name. */
+export interface XmodemTransfer extends XmodemStatus {
+  name: string;
+  /** File size in bytes. */
+  size: number;
+}
+
 /** One display frame produced by `Simulator.frame()`. */
 export interface SimFrame {
   timeMs: number;
@@ -207,6 +257,8 @@ export interface SimFrame {
   rtos: RtosFrame | null;
   /** HC-05 modules in the circuit. */
   bluetooth: BluetoothFrame[];
+  /** M37: flash sectors and the watchdog. */
+  flash?: FlashFrame;
 }
 
 export type ToWorker =
@@ -229,6 +281,10 @@ export type ToWorker =
   /** Wait for the next trigger (Single). */
   | { type: "armTrigger"; gen: number }
   | { type: "console"; text: string }
+  /** M37: send a file over the virtual COM port with XMODEM (the board's receiver starts it). */
+  | { type: "xmodemSend"; name: string; bytes: ArrayBuffer }
+  /** M37: abort the XMODEM transfer (CAN CAN CAN). */
+  | { type: "xmodemCancel" }
   | { type: "bluetooth"; part: string; text: string }
   | { type: "bluetoothConnect"; part: string; on: boolean }
   | { type: "readMemory"; addr: number; len: number }
@@ -266,6 +322,8 @@ export interface FrameMsg {
   triggerGen: number;
   /** SWV trace since the last frame (while the trace is on). */
   swv?: SwvData;
+  /** M37: the XMODEM transfer, while one runs and in the frame it ends. */
+  xmodem?: XmodemTransfer;
 }
 
 export type FromWorker =
@@ -286,6 +344,7 @@ export type FromWorker =
       /** See `FrameMsg.triggerGen`. */
       triggerGen: number;
       swv?: SwvData;
+      xmodem?: XmodemTransfer;
     }
   /** M31: the frames made since the last batch, oldest first (performance mode). */
   | { type: "frames"; frames: FrameMsg[]; speed: number; work: number }
